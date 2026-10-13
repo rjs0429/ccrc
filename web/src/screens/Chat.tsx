@@ -12,6 +12,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const chat = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat : undefined));
   const summary = useApp((s) => s.sessions?.find((x) => x.id === sessionId));
   const models = useApp((s) => s.options?.models ?? []);
+  const othersWaiting = useApp((s) => (s.sessions ?? []).some((x) => x.id !== sessionId && x.pendingCount));
   const [menu, setMenu] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -35,8 +36,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
     <div className="flex h-dvh flex-col">
       <header className="pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-2 py-2">
-          <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="rounded-lg p-2">
+          <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="relative rounded-lg p-2">
             <Icon.back />
+            {othersWaiting && <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-warn" title="다른 세션에서 입력이 필요합니다" />}
           </button>
           <div className="min-w-0 flex-1">
             <div className="truncate text-[15px] font-semibold">{title}</div>

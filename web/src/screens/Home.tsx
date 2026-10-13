@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { SessionSummary } from "../../../broker/src/protocol.ts";
 import { Icon, Spinner } from "../components/ui.tsx";
 import { baseName, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
-import { navigate, useApp } from "../state.ts";
+import { navigate, refreshSessions, useApp } from "../state.ts";
 
 type Filter = "all" | "running" | "waiting";
 const PAGE = 80;
+const REFRESH_MS = 10_000;
 
 function status(s: SessionSummary): { text: string; dot: string } {
   if (s.state === "owned") {
@@ -48,6 +49,13 @@ export function Home() {
   const [filter, setFilter] = useState<Filter>("all");
   const [folder, setFolder] = useState<string | null>(null);
   const [limit, setLimit] = useState(PAGE);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void refreshSessions();
+    }, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   const shown = useMemo(
     () =>

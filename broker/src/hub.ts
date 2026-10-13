@@ -18,6 +18,14 @@ function str(v: unknown, max = 200): string {
   return v;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function sid(v: unknown): string {
+  const s = str(v, 64);
+  if (!UUID.test(s)) throw Error("invalid request");
+  return s;
+}
+
 // Exactly one browser window drives the broker at a time. A second window with the same login
 // waits until its user chooses to take over, which disconnects the first window.
 export class Hub {
@@ -30,6 +38,8 @@ export class Hub {
   private tokens = new WeakMap<WebSocket, string>();
   private viewing: string | null = null;
   private unwatch?: () => void;
+  // Items last sent for the viewed session, by id, as JSON.
+  private shown = new Map<string, string>();
   private changedTimer?: NodeJS.Timeout;
   private pinger: NodeJS.Timeout;
   private alive = new WeakSet<WebSocket>();
@@ -146,10 +156,10 @@ export class Hub {
         if (this.active) send(this.active, { t: "pong" });
         return;
       case "view":
-        await this.setView(msg.sessionId === null ? null : str(msg.sessionId));
+        await this.setView(msg.sessionId === null ? null : sid(msg.sessionId));
         return;
       case "send": {
-        const id = str(msg.sessionId);
+        const id = sid(msg.sessionId);
         const text = str(msg.text, MAX_TEXT);
         const wasOwned = m.isOwned(id);
         this.audit.log("send", { device, sessionId: id, chars: text.length });
@@ -176,30 +186,30 @@ export class Hub {
       case "answer": {
         const answer = msg.answer as Answer;
         this.audit.log("answer", { device, sessionId: msg.sessionId, kind: answer?.kind, decision: "decision" in answer ? answer.decision : undefined });
-        await m.answer(str(msg.sessionId), str(msg.requestId), answer);
+        await m.answer(sid(msg.sessionId), str(msg.requestId), answer);
         return;
       }
       case "interrupt":
         this.audit.log("interrupt", { device, sessionId: msg.sessionId });
-        await m.interrupt(str(msg.sessionId));
+        await m.interrupt(sid(msg.sessionId));
         return;
       case "set_mode":
         if (!PERMISSION_MODES.includes(msg.mode)) throw Error("invalid mode");
         this.audit.log("set_mode", { device, sessionId: msg.sessionId, mode: msg.mode });
-        await m.setMode(str(msg.sessionId), msg.mode);
+        await m.setMode(sid(msg.sessionId), msg.mode);
         return;
       case "set_model":
         this.audit.log("set_model", { device, sessionId: msg.sessionId, model: msg.model });
-        await m.setModel(str(msg.sessionId), str(msg.model));
+        await m.setModel(sid(msg.sessionId), str(msg.model));
         return;
       case "set_effort":
         if (!EFFORTS.includes(msg.effort)) throw Error("invalid effort");
         this.audit.log("set_effort", { device, sessionId: msg.sessionId, effort: msg.effort });
-        await m.setEffort(str(msg.sessionId), msg.effort);
+        await m.setEffort(sid(msg.sessionId), msg.effort);
         return;
       case "release":
         this.audit.log("release", { device, sessionId: msg.sessionId });
-        await m.release(str(msg.sessionId));
+        await m.release(sid(msg.sessionId));
         return;
       default:
         throw Error("unknown request");
@@ -214,12 +224,35 @@ export class Hub {
     if (!sessionId) return;
     await this.pushSnapshot(sessionId);
     if (!this.manager.isOwned(sessionId) && this.viewing === sessionId) {
-      this.unwatch = this.manager.watch(sessionId, () => void this.pushSnapshot(sessionId).catch(() => {}));
+      this.unwatch = this.manager.watch(sessionId, () => void this.pushChanges(sessionId).catch(() => {}));
     }
   }
 
   private async pushSnapshot(sessionId: string): Promise<void> {
     const snap = await this.manager.snapshot(sessionId);
-    if (this.active && this.viewing === sessionId) send(this.active, { t: "snapshot", sessionId, ...snap });
+    if (!this.active || this.viewing !== sessionId) return;
+    this.shown = new Map(snap.items.map((i) => [i.id, JSON.stringify(i)]));
+    send(this.active, { t: "snapshot", sessionId, ...snap });
+  }
+
+  // Sends only the items that changed since the last snapshot; a rewritten history gets a new snapshot.
+  private async pushChanges(sessionId: string): Promise<void> {
+    const snap = await this.manager.snapshot(sessionId);
+    if (!this.active || this.viewing !== sessionId) return;
+    const before = [...this.shown.keys()];
+    const start = before.indexOf(snap.items[0]?.id ?? "");
+    const ids = new Set(snap.items.map((i) => i.id));
+    if ((before.length && start === -1) || before.slice(Math.max(start, 0)).some((id) => !ids.has(id))) {
+      this.shown = new Map(snap.items.map((i) => [i.id, JSON.stringify(i)]));
+      send(this.active, { t: "snapshot", sessionId, ...snap });
+      return;
+    }
+    for (const item of snap.items) {
+      const json = JSON.stringify(item);
+      if (this.shown.get(item.id) === json) continue;
+      this.shown.set(item.id, json);
+      send(this.active, { t: "item", sessionId, item });
+    }
+    send(this.active, { t: "state", sessionId, state: snap.state });
   }
 }

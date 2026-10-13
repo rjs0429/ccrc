@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Runs the broker CLI with Node 22.18+ (the one on PATH, else ~/.local/opt/node22).
+NODE=${CCRC_NODE:-}
+if [ -z "$NODE" ]; then
+  NODE=$(command -v node || true)
+  if [ -z "$NODE" ] || ! "$NODE" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=18)?0:1)'; then
+    NODE=$HOME/.local/opt/node22/bin/node
+  fi
+fi
+exec "$NODE" "$(dirname "$(readlink -f "$0")")/../broker/src/main.ts" "$@"
