@@ -6,6 +6,7 @@ import path from "node:path";
 
 const SIGNALS: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
 const LOG_MAX_BYTES = 1024 * 1024;
+const FLUSH_WAIT_MS = 2000;
 
 const [claudePath, ...args] = process.argv.slice(2);
 
@@ -29,13 +30,21 @@ function rotateLog(): void {
   } catch {}
 }
 
+// Ends the way Claude Code ended, once VS Code has been handed everything written to it.
 function exitLike(code: number | null, signal: NodeJS.Signals | null): void {
-  if (signal) {
-    for (const s of SIGNALS) process.removeAllListeners(s);
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 1);
+  let done = false;
+  const end = () => {
+    if (done) return;
+    done = true;
+    if (signal) {
+      for (const s of SIGNALS) process.removeAllListeners(s);
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exit(code ?? 1);
+  };
+  setTimeout(end, FLUSH_WAIT_MS);
+  process.stdout.write("", end);
 }
 
 function runDirect(reason: string): void {

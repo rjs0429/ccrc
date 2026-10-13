@@ -1,9 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import net from "node:net";
+import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { LineSplitter, parseLine } from "../link/lines.ts";
-import { LINK_VERSION, REMOTE_PREFIX, type BrokerFrame, type Hello, type Party, type WrapperFrame } from "../link/protocol.ts";
+import { LINK_VERSION, REMOTE_PREFIX, isPrivateDir, type BrokerFrame, type Hello, type Party, type WrapperFrame } from "../link/protocol.ts";
 
 const NL = Buffer.from("\n");
 const CONTROL = Buffer.from('"control_');
@@ -12,10 +13,13 @@ const STATUS = Buffer.from('"subtype":"status"');
 const MODE = Buffer.from('"permissionMode"');
 const STATE = Buffer.from('"subtype":"session_state_changed"');
 const MODELS = Buffer.from('"models":');
-// Requests from Claude Code that the remote side shows. Only can_use_tool may be answered from there.
+// The broker sees the conversation, these requests from Claude Code (only can_use_tool may be answered
+// remotely), the answer to VS Code's initialize, and these settings changes from VS Code; other control
+// traffic between VS Code and Claude Code stays between them.
 const SHOWN = new Set(["can_use_tool", "elicitation", "request_user_dialog"]);
-// Settings VS Code changes on the fly; the last of each is replayed to a broker that connects later.
 const HOST_SETTINGS = new Set(["set_model", "set_permission_mode", "apply_flag_settings"]);
+// Control requests the broker may send.
+const REMOTE_REQUESTS = new Set(["interrupt", "set_model", "set_permission_mode", "apply_flag_settings", "get_context_usage"]);
 const SETTLED_KEEP = 500;
 const LINK_BUFFER_MAX = 16 * 1024 * 1024;
 
@@ -28,7 +32,7 @@ export interface RelayOptions {
   hostIn: Readable;
   hostOut: Writable;
   log: (msg: string) => void;
-  // How long a launch that resumes a session waits for the broker to acknowledge it, and at most for the hand-over.
+  // How long a launch that resumes a session waits for the broker to acknowledge it, and at most in all.
   claimAckMs?: number;
   claimMaxMs?: number;
   retryMs?: number[];
@@ -57,16 +61,18 @@ class Gate {
   isOpen = false;
   private release!: () => void;
   private timer?: NodeJS.Timeout;
+  private deadline: number;
 
-  constructor(ms: number) {
+  constructor(ms: number, maxMs: number) {
     this.opened = new Promise((resolve) => (this.release = resolve));
+    this.deadline = Date.now() + maxMs;
     this.wait(ms);
   }
 
   wait(ms: number): void {
     if (this.isOpen) return;
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.open(), ms);
+    this.timer = setTimeout(() => this.open(), Math.max(0, Math.min(ms, this.deadline - Date.now())));
   }
 
   open(): void {
@@ -94,6 +100,8 @@ export class Relay extends EventEmitter {
   private sessionId?: string;
   private claim?: string;
   private gate?: Gate;
+  private fork = false;
+  private warnedDir = false;
   private link?: net.Socket;
   private retry = 0;
   private retryTimer?: NodeJS.Timeout;
@@ -118,7 +126,7 @@ export class Relay extends EventEmitter {
       this.child?.stdin?.end();
     });
     this.o.hostOut.on("error", () => (this.hostGone = true));
-    if (this.claim) this.gate = new Gate(this.o.claimAckMs ?? 3000);
+    if (this.claim) this.gate = new Gate(this.o.claimAckMs ?? 3000, this.o.claimMaxMs ?? 45_000);
     this.connect();
     if (this.gate) {
       const t0 = Date.now();
@@ -136,7 +144,9 @@ export class Relay extends EventEmitter {
 
   private spawnChild(): void {
     if (this.finished) return;
-    const child = spawn(this.o.claudePath, this.o.args, { cwd: this.o.cwd, env: this.o.env, stdio: ["pipe", "pipe", "inherit"] });
+    const args = this.fork && !this.o.args.includes("--fork-session") ? [...this.o.args, "--fork-session"] : this.o.args;
+    if (this.fork) this.o.log(`session ${this.claim} is held by another process; starting a copy of it`);
+    const child = spawn(this.o.claudePath, args, { cwd: this.o.cwd, env: this.o.env, stdio: ["pipe", "pipe", "inherit"] });
     this.child = child;
     child.stdin!.on("error", () => {});
     child.on("error", (e) => {
@@ -176,32 +186,37 @@ export class Relay extends EventEmitter {
           if (this.open.delete(id)) this.settle(id, "host");
         }
       }
-      if (msg?.type === "control_request") {
-        const subtype = (msg.request as Record<string, unknown> | undefined)?.subtype;
-        if (typeof subtype === "string" && HOST_SETTINGS.has(subtype)) this.remember(`in:${subtype}`, "in", line);
+      const subtype = msg?.type === "control_request" ? (msg.request as Record<string, unknown> | undefined)?.subtype : undefined;
+      if (typeof subtype === "string" && HOST_SETTINGS.has(subtype)) {
+        this.remember(`in:${subtype}`, "in", line);
+        this.copy("in", line);
       }
-      if (typeof msg?.type === "string" && msg.type.startsWith("control_")) this.copy("in", line);
     }
     this.toChild(line);
   }
 
   private fromChild(line: Buffer): void {
     let msg: Record<string, unknown> | undefined;
+    let shared = true;
     if (line.includes(CONTROL)) {
       msg = parseLine(line);
       const id = msg?.type === "control_response" ? (msg.response as Record<string, unknown> | undefined)?.request_id : msg?.request_id;
-      if (msg?.type === "control_response" && typeof id === "string" && id.startsWith(REMOTE_PREFIX)) {
-        this.copy("reply", line);
-        return;
-      }
-      if (msg?.type === "control_request" && typeof id === "string") {
+      if (msg?.type === "control_response") {
+        if (typeof id === "string" && id.startsWith(REMOTE_PREFIX)) {
+          this.copy("reply", line);
+          return;
+        }
+        shared = line.includes(MODELS);
+      } else if (msg?.type === "control_request") {
         const subtype = (msg.request as Record<string, unknown> | undefined)?.subtype;
-        if (typeof subtype === "string" && SHOWN.has(subtype)) this.open.set(id, { subtype, line });
+        shared = typeof id === "string" && typeof subtype === "string" && SHOWN.has(subtype);
+        if (shared) this.open.set(id as string, { subtype: subtype as string, line });
       } else if (msg?.type === "control_cancel_request" && typeof id === "string" && this.open.delete(id)) {
         this.settle(id, "cli");
       }
     }
     this.toHost(line);
+    if (!shared) return;
     this.noteState(line, msg);
     this.copy("out", line);
   }
@@ -228,7 +243,7 @@ export class Relay extends EventEmitter {
       this.o.log(`rejected remote line: ${reason}`);
       this.send({ t: "rejected", ...(typeof id === "string" ? { id } : {}), reason });
     };
-    if (this.hostEnded || this.finished) return reject("closed");
+    if (this.hostEnded || this.finished) return reject("closed", m.type === "control_request" ? m.request_id : undefined);
     if (m.type === "user") {
       if ((m.message as Record<string, unknown> | undefined)?.role !== "user") return reject("invalid user message");
       this.toChild(Buffer.from(JSON.stringify(m)));
@@ -237,7 +252,12 @@ export class Relay extends EventEmitter {
     if (m.type === "control_request") {
       const req = m.request as Record<string, unknown> | undefined;
       if (typeof m.request_id !== "string" || !m.request_id.startsWith(REMOTE_PREFIX) || !req) return reject("invalid request", m.request_id);
+      if (typeof req.subtype !== "string" || !REMOTE_REQUESTS.has(req.subtype)) return reject("request not allowed", m.request_id);
       if (req.subtype === "set_permission_mode" && req.mode === "bypassPermissions") return reject("mode not allowed", m.request_id);
+      const settings = req.subtype === "apply_flag_settings" ? req.settings : undefined;
+      if (settings !== undefined && (typeof settings !== "object" || settings === null || Object.keys(settings).some((k) => k !== "effortLevel"))) {
+        return reject("setting not allowed", m.request_id);
+      }
       this.toChild(Buffer.from(JSON.stringify(m)));
       return;
     }
@@ -316,6 +336,13 @@ export class Relay extends EventEmitter {
 
   private connect(): void {
     if (this.finished) return;
+    if (!isPrivateDir(path.dirname(this.o.socketPath))) {
+      if (!this.warnedDir) this.o.log(`not connecting: ${path.dirname(this.o.socketPath)} is missing or not private`);
+      this.warnedDir = true;
+      this.gate?.open();
+      this.retryLater();
+      return;
+    }
     const sock = net.createConnection(this.o.socketPath);
     sock.on("connect", () => {
       this.link = sock;
@@ -362,8 +389,13 @@ export class Relay extends EventEmitter {
     const f = parseLine(line) as BrokerFrame | undefined;
     if (!f) return;
     try {
-      if (f.t === "claim_ok") this.gate?.open();
-      else if (f.t === "claim_wait") this.gate?.wait(Math.min(Math.max(0, Number(f.ms) || 0), this.o.claimMaxMs ?? 25_000));
+      if (f.t === "claim_ok") {
+        if (f.fork && this.gate && !this.gate.isOpen) {
+          this.fork = true;
+          this.sessionId = undefined;
+        }
+        this.gate?.open();
+      } else if (f.t === "claim_wait") this.gate?.wait(Math.max(0, Number(f.ms) || 0));
       else if (f.t === "to_cli" && f.m && typeof f.m === "object") this.inject(f.m);
     } catch (e) {
       this.o.log(`broker frame failed: ${e instanceof Error ? e.message : String(e)}`);

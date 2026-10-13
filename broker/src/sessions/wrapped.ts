@@ -5,19 +5,20 @@ import { SessionCore, type Decision } from "./core.ts";
 import type { RawMessage } from "./items.ts";
 
 type Obj = Record<string, unknown>;
+type Held = { from: "out" | "in" | "settled"; v: unknown };
 
 const obj = (v: unknown): Obj => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
 // A conversation that runs in VS Code and is reached through the wrapper between VS Code and Claude Code.
-// Remote input goes in as the same messages VS Code sends. Prompts show on both sides and the wrapper
-// keeps whichever answer comes first; VS Code alone answers everything else it is asked.
+// Remote input goes in as the same messages VS Code sends. Permission prompts show on both sides and the
+// wrapper keeps whichever answer comes first; dialogs show remotely but only VS Code answers them.
 export class WrappedSession extends SessionCore {
   readonly kind = "attached";
   readonly host = "VS Code";
   readonly link: Link;
   private toolUse = new Map<string, string>();
-  private backlog: Obj[] | null = [];
+  private backlog: Held[] | null = [];
 
   constructor(link: Link, id: string, cwd: string, title?: string) {
     super(id, cwd, [], title);
@@ -25,19 +26,27 @@ export class WrappedSession extends SessionCore {
     this.lastActivity = 0;
   }
 
-  // Puts the conversation so far in front of what has arrived live, then applies the lines held meanwhile.
+  // Puts the conversation so far in front of what has arrived live, then applies, in arrival order,
+  // everything the wrapper reported meanwhile.
   seed(history: DisplayItem[]): void {
     this.builder.merge(history);
     const held = this.backlog ?? [];
     this.backlog = null;
-    for (const m of held) this.onOut(m);
+    for (const h of held) {
+      if (h.from === "out") this.onOut(h.v as Obj);
+      else if (h.from === "in") this.onIn(h.v as Obj);
+      else this.onSettled(h.v);
+    }
+  }
+
+  private hold(from: Held["from"], v: unknown): boolean {
+    if (!this.backlog) return false;
+    this.backlog.push({ from, v });
+    return true;
   }
 
   onOut(m: Obj): void {
-    if (this.backlog) {
-      this.backlog.push(m);
-      return;
-    }
+    if (this.hold("out", m)) return;
     if (m.type === "control_request") this.onRequest(m);
     else if (m.type === "control_cancel_request") this.drop(m.request_id);
     else if (m.type === "control_response") this.onResponse(obj(obj(m.response).response));
@@ -46,7 +55,7 @@ export class WrappedSession extends SessionCore {
 
   // VS Code's own control requests, for settings it changes without Claude Code reporting them.
   onIn(m: Obj): void {
-    if (m.type !== "control_request") return;
+    if (this.hold("in", m) || m.type !== "control_request") return;
     const r = obj(m.request);
     if (r.subtype === "set_model" && typeof r.model === "string" && r.model !== "default") this.model = r.model;
     else if (r.subtype === "set_permission_mode" && typeof r.mode === "string") this.permissionMode = r.mode;
@@ -56,7 +65,7 @@ export class WrappedSession extends SessionCore {
   }
 
   onSettled(requestId: unknown): void {
-    this.drop(requestId);
+    if (!this.hold("settled", requestId)) this.drop(requestId);
   }
 
   end(reason: string): void {
@@ -138,7 +147,12 @@ export class WrappedSession extends SessionCore {
   private onRequest(m: Obj): void {
     const id = m.request_id;
     const r = obj(m.request);
-    if (typeof id !== "string" || r.subtype !== "can_use_tool" || this.pending.has(id)) return;
+    if (typeof id !== "string" || this.pending.has(id)) return;
+    if (r.subtype === "request_user_dialog") {
+      this.ask({ requestId: id, kind: "dialog", toolName: String(r.dialog_kind ?? ""), input: obj(r.payload), localOnly: true });
+      return;
+    }
+    if (r.subtype !== "can_use_tool") return;
     if (typeof r.tool_use_id === "string") this.toolUse.set(id, r.tool_use_id);
     this.ask({
       requestId: id,

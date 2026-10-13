@@ -30,9 +30,14 @@ const WATCH_INTERVAL_MS = 2000;
 // Handing a session to VS Code: how long the broker's running turn may go on before it is interrupted,
 // and how long to wait for any other process that still holds the session to end.
 const HANDOFF_TURN_MS = 10_000;
-const HANDOFF_OTHER_MS = 8_000;
+const HANDOFF_OTHER_MS = 9_000;
 const EARLY_LINES_MAX = 500;
 const ENDED_KEEP_MS = 10 * 60_000;
+
+export interface ManagerTiming {
+  handoffTurnMs: number;
+  handoffOtherMs: number;
+}
 
 export interface Snapshot {
   items: DisplayItem[];
@@ -66,17 +71,19 @@ export class SessionManager extends EventEmitter {
   private audit?: Audit;
   private owned = new Map<string, BrokerSession>();
   private wrapped = new Map<string, WrappedSession>();
-  private starting = new Map<string, Promise<BrokerSession>>();
+  private starting = new Map<string, Promise<SessionCore>>();
   private claiming = new Set<string>();
   private ended = new Map<string, { reason: string; at: number }>();
   private catalog?: { at: number; list: SDKSessionInfo[] };
   private viewed: string | null = null;
   private sweeper: NodeJS.Timeout;
+  private timing: ManagerTiming;
 
-  constructor(cfg: Config, audit?: Audit) {
+  constructor(cfg: Config, audit?: Audit, timing: Partial<ManagerTiming> = {}) {
     super();
     this.cfg = cfg;
     this.audit = audit;
+    this.timing = { handoffTurnMs: HANDOFF_TURN_MS, handoffOtherMs: HANDOFF_OTHER_MS, ...timing };
     this.sweeper = setInterval(() => void this.sweep(), SWEEP_MS);
     this.sweeper.unref();
   }
@@ -103,6 +110,11 @@ export class SessionManager extends EventEmitter {
 
   private controlled(sessionId: string): SessionCore | undefined {
     return this.owned.get(sessionId) ?? this.wrapped.get(sessionId);
+  }
+
+  // A session object stays current until another process for the same session replaces it or it closes.
+  private current(s: SessionCore): boolean {
+    return this.owned.get(s.id) === s || this.wrapped.get(s.id) === s;
   }
 
   isControlled(sessionId: string): boolean {
@@ -173,8 +185,8 @@ export class SessionManager extends EventEmitter {
     if (s) return { ...tail(s.builder.items), pending: [...s.pending.values()].map((e) => e.request), state: s.state() };
     const info = await this.info(sessionId);
     if (!info?.cwd) throw Error("unknown session");
-    const l = liveProcesses().find((p) => p.sessionId === sessionId);
     const items = await loadHistory(sessionId, info.cwd);
+    const l = liveProcesses({ fresh: true }).find((p) => p.sessionId === sessionId);
     const ended = this.ended.get(sessionId);
     return {
       ...tail(items),
@@ -213,14 +225,17 @@ export class SessionManager extends EventEmitter {
     if (running) return running;
     const pending = this.starting.get(sessionId);
     if (pending) return pending;
-    const p = (async () => {
+    const p = (async (): Promise<SessionCore> => {
       const info = await this.info(sessionId);
       if (!info?.cwd) throw Error("unknown session");
+      const cwd = await this.resumeFolder(sessionId, info.cwd);
+      const history = await loadHistory(sessionId, cwd);
+      const now = this.controlled(sessionId);
+      if (now) return now;
       if (this.claiming.has(sessionId)) throw Error("session is opening in VS Code");
       const other = liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId);
       if (other) throw Error(`session is open in ${other.host}`);
-      const cwd = await this.resumeFolder(sessionId, info.cwd);
-      const s = new BrokerSession(sessionId, cwd, await loadHistory(sessionId, cwd), titleOf(info));
+      const s = new BrokerSession(sessionId, cwd, history, titleOf(info));
       this.adopt(s);
       s.start({ resume: true, claudePath: this.cfg.claudePath });
       return s;
@@ -287,72 +302,91 @@ export class SessionManager extends EventEmitter {
   }
 
   // A conversation process VS Code started, connected through its wrapper. The session it runs is
-  // known from the launch arguments or from the first line that names it.
+  // known from the launch arguments or from the first line that names it; what the wrapper reports
+  // before that is kept and replayed in order.
   attachLink(link: Link): void {
     let session: WrappedSession | undefined;
-    let early: Record<string, unknown>[] = [];
+    let claiming = false;
+    let early: { from: "out" | "in" | "settled"; v: unknown }[] = [];
     const bind = (id: string) => {
       if (session?.id === id || !link.usable) return;
       session?.end("switched");
       const cwd = link.hello?.cwd ?? "";
       const s = new WrappedSession(link, id, cwd);
       session = s;
+      const prev = this.wrapped.get(id);
       this.wrapped.set(id, s);
+      prev?.end("replaced");
       this.adopt(s);
-      for (const m of early) s.onOut(m);
+      for (const h of early) {
+        if (h.from === "out") s.onOut(h.v as Record<string, unknown>);
+        else if (h.from === "in") s.onIn(h.v as Record<string, unknown>);
+        else s.onSettled(h.v);
+      }
       early = [];
       this.audit?.log("attach", { sessionId: id, wpid: link.hello?.wpid });
       void loadHistory(id, cwd)
         .catch(() => [])
         .then((history) => {
           s.seed(history);
-          if (!s.closed) this.emit("attached", id);
+          if (this.current(s)) this.emit("attached", id);
         });
     };
+    const keep = (from: "out" | "in" | "settled", v: unknown) => {
+      if (early.length < EARLY_LINES_MAX) early.push({ from, v });
+    };
     link.on("hello", (h: Hello) => {
-      void (async () => {
-        if (h.claim) {
-          await this.claim(h.claim, link).catch(() => {});
-          link.send({ t: "claim_ok" });
-        }
+      if (!h.claim) {
         if (link.sessionId) bind(link.sessionId);
-      })();
+        return;
+      }
+      const id = h.claim;
+      claiming = true;
+      this.claiming.add(id);
+      void this.claim(id, link)
+        .catch(() => ({ fork: false }))
+        .then(({ fork }) => {
+          link.send(fork ? { t: "claim_ok", fork: true } : { t: "claim_ok" });
+          if (fork) link.sessionId = undefined;
+          else if (link.sessionId) bind(link.sessionId);
+          claiming = false;
+          this.claiming.delete(id);
+        });
     });
     link.on("session", (id: string) => {
-      if (!link.hello?.claim || session) bind(id);
+      if (!claiming) bind(id);
     });
-    link.on("out", (m: Record<string, unknown>) => {
-      if (session) session.onOut(m);
-      else if (early.length < EARLY_LINES_MAX) early.push(m);
-    });
-    link.on("in", (m: Record<string, unknown>) => session?.onIn(m));
-    link.on("settled", (id: unknown) => session?.onSettled(id));
+    link.on("out", (m: Record<string, unknown>) => (session ? session.onOut(m) : keep("out", m)));
+    link.on("in", (m: Record<string, unknown>) => (session ? session.onIn(m) : keep("in", m)));
+    link.on("settled", (id: unknown) => (session ? session.onSettled(id) : keep("settled", id)));
     link.on("exit", () => session?.end("vscode_closed"));
     link.on("close", () => session?.end("vscode_closed"));
   }
 
-  // Lets a VS Code launch that resumes `sessionId` start: the broker's own process for it is closed
-  // once its turn is over, and any other process that holds it gets a moment to end.
-  private async claim(sessionId: string, link: Link): Promise<void> {
-    this.claiming.add(sessionId);
-    try {
-      await this.starting.get(sessionId)?.catch(() => {});
-      const s = this.owned.get(sessionId);
-      if (s) {
-        link.send({ t: "claim_wait", ms: HANDOFF_TURN_MS + 12_000 });
-        if (!(await s.idle(HANDOFF_TURN_MS))) await s.interrupt().catch(() => {});
-        await s.close("handed_off");
-        this.audit?.log("handoff", { sessionId, to: "VS Code" });
+  // Lets a VS Code launch that resumes `sessionId` start: the broker's own process for it is closed once
+  // its turn is over, and any other process that holds it gets a moment to end. If one still holds it,
+  // VS Code starts on a copy instead, so two processes never write the same session.
+  private async claim(sessionId: string, link: Link): Promise<{ fork: boolean }> {
+    await this.starting.get(sessionId)?.catch(() => {});
+    const s = this.owned.get(sessionId);
+    if (s) {
+      link.send({ t: "claim_wait", ms: this.timing.handoffTurnMs + 12_000 });
+      if (!(await s.idle(this.timing.handoffTurnMs))) await s.interrupt().catch(() => {});
+      await s.close("handed_off");
+      this.audit?.log("handoff", { sessionId, to: "VS Code" });
+    }
+    const until = Date.now() + this.timing.handoffOtherMs;
+    let told = false;
+    for (;;) {
+      const holder = liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId);
+      if (!holder) return { fork: false };
+      if (Date.now() >= until) {
+        this.audit?.log("handoff", { sessionId, to: "VS Code", forked: true, heldBy: holder.host });
+        return { fork: true };
       }
-      const until = Date.now() + HANDOFF_OTHER_MS;
-      let told = false;
-      while (Date.now() < until && liveProcesses({ fresh: true }).some((l) => l.sessionId === sessionId)) {
-        if (!told) link.send({ t: "claim_wait", ms: HANDOFF_OTHER_MS + 2000 });
-        told = true;
-        await sleep(250);
-      }
-    } finally {
-      this.claiming.delete(sessionId);
+      if (!told) link.send({ t: "claim_wait", ms: this.timing.handoffOtherMs + 2000 });
+      told = true;
+      await sleep(250);
     }
   }
 
@@ -369,7 +403,9 @@ export class SessionManager extends EventEmitter {
   private adopt(s: SessionCore): void {
     if (s instanceof BrokerSession) this.owned.set(s.id, s);
     this.ended.delete(s.id);
-    const send = (msg: ServerMsg) => this.emit("event", s.id, msg);
+    const send = (msg: ServerMsg) => {
+      if (this.current(s)) this.emit("event", s.id, msg);
+    };
     s.on("item", (item: DisplayItem) => send({ t: "item", sessionId: s.id, item }));
     s.on("stream", (text: string, thinking: boolean) => send({ t: "stream", sessionId: s.id, text, thinking }));
     s.on("pending_add", (request: PendingRequest) => {
@@ -391,14 +427,14 @@ export class SessionManager extends EventEmitter {
       }));
     });
     s.on("closed", (reason: string) => {
-      const mine = this.owned.get(s.id) === s || this.wrapped.get(s.id) === s;
+      if (!this.current(s)) return;
       if (this.owned.get(s.id) === s) this.owned.delete(s.id);
       if (this.wrapped.get(s.id) === s) this.wrapped.delete(s.id);
       this.ended.set(s.id, { reason, at: Date.now() });
       this.catalog = undefined;
-      send({ t: "state", sessionId: s.id, state: s.state() });
+      this.emit("event", s.id, { t: "state", sessionId: s.id, state: s.state() });
       this.emit("changed");
-      if (mine) this.emit("detached", s.id);
+      this.emit("detached", s.id);
     });
     this.catalog = undefined;
     this.emit("changed");

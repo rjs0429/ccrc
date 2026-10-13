@@ -5,6 +5,7 @@ import {
   type DisplayItem,
   type EffortName,
   type LiveState,
+  type PendingKind,
   type PendingRequest,
   type PermissionModeName,
 } from "../protocol.ts";
@@ -20,6 +21,7 @@ export type Decision =
 // A permission prompt or question from Claude Code, in the shape both transports can fill.
 export interface Ask {
   requestId: string;
+  kind?: PendingKind;
   toolName: string;
   input: Record<string, unknown>;
   suggestions?: unknown[];
@@ -130,13 +132,20 @@ export abstract class SessionCore extends EventEmitter {
       decision = { behavior: "allow", updatedInput: { ...entry.input, answers: answer.answers } };
     } else if (answer.decision === "keep_planning") {
       decision = { behavior: "deny", message: answer.feedback?.trim() || "The user wants to keep planning." };
-    } else {
-      await this.applyPlanMode(answer.decision);
+    } else if (answer.decision === "auto") {
+      await this.applyPlanMode();
       decision = { behavior: "allow", updatedInput: entry.input };
+    } else {
+      decision = {
+        behavior: "allow",
+        updatedInput: entry.input,
+        updatedPermissions: [{ type: "setMode", mode: answer.decision, destination: "session" }],
+      };
     }
-    if (!this.pending.has(requestId)) return;
+    if (!this.pending.has(requestId)) throw Error("request is no longer pending");
     this.unask(requestId);
     this.settle(requestId, decision);
+    if (answer.kind === "plan" && answer.decision !== "keep_planning" && answer.decision !== "auto") this.permissionMode = answer.decision;
     this.touch();
   }
 
@@ -149,20 +158,20 @@ export abstract class SessionCore extends EventEmitter {
     this.emit("state");
   }
 
-  // "auto" needs the classifier to be available; fall back the way the VS Code extension does.
-  private async applyPlanMode(mode: "auto" | "acceptEdits" | "default"): Promise<void> {
+  // Approving a plan the way the VS Code extension does: "auto" switches the mode before the answer and
+  // falls back to acceptEdits when the classifier is unavailable; the other modes travel with the answer.
+  private async applyPlanMode(): Promise<void> {
     try {
-      await this.applyMode(mode);
-      this.permissionMode = mode;
-    } catch (e) {
-      if (mode !== "auto") throw e;
+      await this.applyMode("auto");
+      this.permissionMode = "auto";
+    } catch {
       await this.applyMode("acceptEdits");
       this.permissionMode = "acceptEdits";
     }
   }
 
   protected ask(a: Ask): PendingRequest {
-    const kind = a.toolName === "AskUserQuestion" ? "question" : a.toolName === "ExitPlanMode" ? "plan" : "permission";
+    const kind = a.kind ?? (a.toolName === "AskUserQuestion" ? "question" : a.toolName === "ExitPlanMode" ? "plan" : "permission");
     const request: PendingRequest = {
       id: a.requestId,
       kind,
@@ -174,7 +183,7 @@ export abstract class SessionCore extends EventEmitter {
       input: kind === "plan" ? a.input : (clipInput(a.input) as Record<string, unknown>),
       suggestions: a.suggestions,
       allowAlways: Boolean(a.suggestions?.length) && !a.suppressAlwaysAllowRule,
-      ...(a.localOnly && kind === "permission" ? { localOnly: true } : {}),
+      ...(a.localOnly && (kind === "permission" || kind === "dialog") ? { localOnly: true } : {}),
     };
     this.pending.set(request.id, { request, input: a.input, suggestions: a.suggestions });
     this.emit("pending_add", request);
@@ -207,6 +216,7 @@ export abstract class SessionCore extends EventEmitter {
     }
     if (m.type === "system") {
       if (m.subtype === "init") {
+        this.busy = true;
         if (typeof m.model === "string") this.model = m.model;
         if (typeof m.permissionMode === "string") this.permissionMode = m.permissionMode;
         if (typeof m.effort === "string") this.effort = m.effort;

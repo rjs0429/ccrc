@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -89,8 +91,9 @@ after(async () => {
   for (const c of cleanups.reverse()) await c();
 });
 
-async function setup(opts: { broker?: boolean; args?: string[]; claimAckMs?: number } = {}) {
+async function setup(opts: { broker?: boolean; args?: string[]; claimAckMs?: number; claimMaxMs?: number; env?: Record<string, string>; dirMode?: number } = {}) {
   const dir = tempDir();
+  if (opts.dirMode !== undefined) fs.chmodSync(dir, opts.dirMode);
   const socketPath = path.join(dir, "link.sock");
   const broker = new FakeBroker(socketPath);
   if (opts.broker !== false) await broker.listen();
@@ -103,12 +106,13 @@ async function setup(opts: { broker?: boolean; args?: string[]; claimAckMs?: num
     claudePath: process.execPath,
     args: [FAKE, ...STREAM_ARGS, ...(opts.args ?? [])],
     cwd: dir,
-    env: process.env,
+    env: { ...process.env, ...opts.env },
     socketPath,
     hostIn,
     hostOut,
     log: () => {},
     claimAckMs: opts.claimAckMs ?? 2000,
+    claimMaxMs: opts.claimMaxMs,
     retryMs: [50],
   });
   const exited = new Promise<[number | null, string | null]>((resolve) => relay.on("exit", (code, signal) => resolve([code, signal])));
@@ -307,4 +311,92 @@ test("exits with Claude Code's status after VS Code closes its input", async () 
   assert.equal(code, 0);
   assert.equal(signal, null);
   await t.broker.frames.wait((f) => f.t === "exit" && f.code === 0, "exit reported");
+});
+
+test("only the conversation, prompts and settings reach the broker", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.write({ type: "control_request", request_id: "oauth-1", request: { subtype: "claude_oauth_callback", authorizationCode: "secret" } });
+  await t.host.wait((m) => m.type === "control_response" && (m.response as Msg).request_id === "oauth-1", "CLI answered VS Code");
+  t.write({ type: "control_request", request_id: "init-1", request: { subtype: "initialize" } });
+  await t.broker.frames.wait(frameOut((m) => m.type === "control_response" && JSON.stringify(m).includes('"models"')), "initialize answer shared");
+  t.user("MCP");
+  await t.host.wait((m) => m.type === "control_request" && m.request_id === "mcp-1", "MCP request at VS Code");
+  t.user("hi");
+  await t.broker.frames.wait(frameOut((m) => m.type === "result"), "turn copied");
+  const seen = JSON.stringify(t.broker.frames.items);
+  assert.ok(!seen.includes("secret") && !seen.includes("oauth-1"), "VS Code's other control traffic stays private");
+  assert.ok(!seen.includes("mcp-1"), "Claude Code's requests to VS Code's own tools stay private");
+});
+
+test("broker control requests are limited to the ones it needs", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-a", request: { subtype: "mcp_set_servers", servers: {} } } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-a", "other subtypes refused");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-b", request: { subtype: "apply_flag_settings", settings: { model: "x" } } } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-b", "settings other than effort refused");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-c", request: { subtype: "apply_flag_settings", settings: { effortLevel: "low" } } } });
+  await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-c", "effort allowed");
+});
+
+test("a broker request after VS Code closed its input is refused by id", async () => {
+  const t = await setup({ env: { FAKE_LINGER_MS: "1500" } });
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.hostIn.end();
+  await new Promise((r) => setTimeout(r, 100));
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-late", request: { subtype: "interrupt" } } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-late" && f.reason === "closed", "refused with its id");
+});
+
+test("claim: repeated claim_wait cannot hold Claude Code back past the overall limit", async () => {
+  const t = await setup({ args: ["--resume", "dddd"], claimMaxMs: 600 });
+  t.broker.answerClaims = false;
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  const timer = setInterval(() => t.broker.send({ t: "claim_wait", ms: 5000 }), 100);
+  const t0 = Date.now();
+  await t.broker.frames.wait((f) => f.t === "spawned", "started at the limit");
+  clearInterval(timer);
+  assert.ok(Date.now() - t0 < 1500, `started after ${Date.now() - t0} ms`);
+});
+
+test("claim: a session still held elsewhere starts as a copy", async () => {
+  const t = await setup({ args: ["--resume", "eeee"] });
+  t.broker.answerClaims = false;
+  await t.broker.frames.wait((f) => f.t === "hello" && f.claim === "eeee", "hello with claim");
+  t.broker.send({ t: "claim_ok", fork: true });
+  const init = await t.broker.frames.wait(frameOut((m) => m.type === "system" && m.subtype === "init"), "init of the copy");
+  const m = init.m as Msg;
+  assert.ok((m.args as string[]).includes("--fork-session"));
+  assert.notEqual(m.session_id, "eeee");
+});
+
+test("does not use a socket whose folder others can reach", async () => {
+  const t = await setup({ dirMode: 0o755 });
+  t.user("hi");
+  await t.host.wait((m) => m.type === "assistant", "relay works");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(t.broker.frames.items.length, 0, "no connection to the broker");
+});
+
+test("everything Claude Code wrote reaches VS Code before the wrapper exits", async () => {
+  const bin = new URL("../../bin/ccrc-wrapper", import.meta.url).pathname;
+  const dir = tempDir();
+  const child = spawn(bin, [process.execPath, FAKE, ...STREAM_ARGS], {
+    env: { ...process.env, FAKE_BURST: "1", CCRC_LINK_SOCKET: path.join(dir, "none", "link.sock"), CCRC_WRAPPER_LOG: path.join(dir, "w.log") },
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  child.stdout.pause();
+  await new Promise((r) => setTimeout(r, 400));
+  const lines: string[] = [];
+  const split = new LineSplitter((line) => lines.push(line.toString("utf8")));
+  child.stdout.on("data", (c: Buffer) => split.push(c));
+  child.stdout.resume();
+  const code = await Promise.race([
+    new Promise((resolve) => child.on("close", resolve)),
+    new Promise((_, reject) => setTimeout(() => reject(Error(`output cut short after ${lines.length} lines`)), 10_000)),
+  ]);
+  assert.equal(code, 1);
+  assert.equal(lines.length, 3);
+  assert.equal(JSON.parse(lines[2]).type, "result");
 });

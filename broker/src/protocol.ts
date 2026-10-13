@@ -38,7 +38,8 @@ export type DisplayItem =
   | { kind: "tool"; id: string; ts?: string; name: string; summary: string; input: unknown; result?: ToolResult }
   | { kind: "note"; id: string; ts?: string; code: NoteCode; text?: string };
 
-export type PendingKind = "permission" | "question" | "plan";
+// dialog: a confirmation Claude Code asks for outside a tool call; it can only be answered where the session is open.
+export type PendingKind = "permission" | "question" | "plan" | "dialog";
 
 export interface PendingRequest {
   id: string;

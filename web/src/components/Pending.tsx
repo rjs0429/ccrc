@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Answer, PendingRequest } from "../../../broker/src/protocol.ts";
-import { allowAlwaysLabel } from "../labels.ts";
+import { allowAlwaysLabel, dialogLabel } from "../labels.ts";
 import { Markdown } from "./Markdown.tsx";
 import { ToolInput } from "./ToolInput.tsx";
 import { Button } from "./ui.tsx";
@@ -134,8 +134,17 @@ function PlanCard({ request, reply }: { request: PendingRequest; reply: Reply })
   );
 }
 
+function DialogCard({ request }: { request: PendingRequest }) {
+  return (
+    <Card title="확인 요청" sub={dialogLabel(request.toolName)}>
+      <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted">VS Code에 확인 창이 열려 있습니다. VS Code에서만 응답할 수 있습니다.</div>
+    </Card>
+  );
+}
+
 export function PendingCard({ request, reply }: { request: PendingRequest; reply: Reply }) {
   if (request.kind === "question") return <QuestionCard request={request} reply={reply} />;
   if (request.kind === "plan") return <PlanCard request={request} reply={reply} />;
+  if (request.kind === "dialog") return <DialogCard request={request} />;
   return <PermissionCard request={request} reply={reply} />;
 }

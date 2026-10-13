@@ -35,6 +35,16 @@ export function hostLabel(host?: string): string {
   return host === "Terminal" ? "터미널" : host === "ccrc" ? "원격" : (host ?? "");
 }
 
+const DIALOG_LABEL: Record<string, string> = {
+  refusal_fallback_prompt: "거절 응답 대체 확인",
+  fable_overage_consent_prompt: "사용량 초과 동의",
+  auto_mode_server_fallback: "자동 모드 대체 안내",
+};
+
+export function dialogLabel(kind: string): string {
+  return DIALOG_LABEL[kind] ?? kind;
+}
+
 // Why a session no longer has a process the broker drives, as a sentence that ends with a space.
 export function closedText(reason?: string): string {
   switch (reason) {

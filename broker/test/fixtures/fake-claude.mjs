@@ -1,7 +1,9 @@
 // Stands in for Claude Code in relay tests. Reads stream-json lines and answers in a fixed way:
 // a user message is replayed and answered; "ASK" opens a permission prompt; "CANCEL" opens one and
-// withdraws it; "BIG" answers with a very long line. Control requests get a success response, and
-// each control_response it receives is reported back as {"type":"answered"}.
+// withdraws it; "MCP" sends VS Code an MCP request; "BIG" answers with a very long line. Control
+// requests get a success response, and each control_response it receives is reported back as
+// {"type":"answered"}. FAKE_BURST=1 writes a long line and an error result at start and exits at once;
+// FAKE_LINGER_MS keeps it running that long after its input ends.
 import { randomUUID } from "node:crypto";
 
 const args = process.argv.slice(2);
@@ -11,11 +13,15 @@ const value = (name) => {
     if (args[i].startsWith(name + "=")) return args[i].slice(name.length + 1);
   }
 };
-const sid = value("--session-id") || value("--resume") || randomUUID();
+const sid = value("--session-id") || (args.includes("--fork-session") ? undefined : value("--resume")) || randomUUID();
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 let asks = 0;
 
-out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: "default" });
+out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: "default", args });
+if (process.env.FAKE_BURST) {
+  out({ type: "user", session_id: sid, message: { content: [{ type: "tool_result", content: "y".repeat(3_000_000) }] } });
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, session_id: sid }) + "\n", () => process.exit(1));
+}
 
 let buf = "";
 process.stdin.setEncoding("utf8");
@@ -28,13 +34,17 @@ process.stdin.on("data", (chunk) => {
     if (line) handle(JSON.parse(line));
   }
 });
-process.stdin.on("end", () => process.exit(Number(process.env.FAKE_EXIT_CODE ?? 0)));
+process.stdin.on("end", () => setTimeout(() => process.exit(Number(process.env.FAKE_EXIT_CODE ?? 0)), Number(process.env.FAKE_LINGER_MS ?? 0)));
 
 function handle(m) {
   if (m.type === "user") {
     const content = m.message.content;
     const text = typeof content === "string" ? content : content.map((c) => c.text).join("");
     out({ ...m, session_id: sid, uuid: m.uuid ?? randomUUID(), isReplay: true });
+    if (text === "MCP") {
+      out({ type: "control_request", request_id: "mcp-1", request: { subtype: "mcp_message", server_name: "claude-vscode", message: { method: "x" } } });
+      return;
+    }
     if (text === "ASK" || text === "CANCEL") {
       const request_id = `perm-${++asks}`;
       out({ type: "control_request", request_id, request: { subtype: "can_use_tool", tool_name: "Write", input: { file_path: "x.txt" }, tool_use_id: `toolu_${asks}` } });

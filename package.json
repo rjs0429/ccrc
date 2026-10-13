@@ -7,7 +7,7 @@
     "web"
   ],
   "scripts": {
-    "build": "npm run build -w web",
+    "build": "npm run build -w web && npm run build -w broker",
     "test": "npm test -w broker",
     "typecheck": "npm run typecheck -w broker && npm run typecheck -w web"
   },

@@ -14,11 +14,23 @@ if [ -z "$stream" ] || [ "${CLAUDE_CODE_CONFIG_PROBE:-}" = 1 ] || [ "${CCRC_WRAP
   exec "$@"
 fi
 
-NODE=${CCRC_NODE:-$HOME/.local/opt/node22/bin/node}
-if [ ! -x "$NODE" ]; then
-  NODE=$(command -v node || true)
-  if [ -z "$NODE" ] || ! "$NODE" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=18)?0:1)'; then
-    exec "$@"
+DEFAULT_NODE=$HOME/.local/opt/node22/bin/node
+NODE=${CCRC_NODE:-$DEFAULT_NODE}
+[ -x "$NODE" ] || NODE=$(command -v node || true)
+[ -n "$NODE" ] || exec "$@"
+
+# The relay built by `npm run build` is used while it is newer than its sources; otherwise the sources
+# run directly, which needs a Node that strips TypeScript.
+SRC=$(dirname "$(readlink -f "$0")")/../broker/src
+JS=$SRC/../dist/wrapper/main.js
+if [ -f "$JS" ] && [ "$JS" -nt "$SRC/wrapper/main.ts" ] && [ "$JS" -nt "$SRC/wrapper/relay.ts" ] &&
+  [ "$JS" -nt "$SRC/link/lines.ts" ] && [ "$JS" -nt "$SRC/link/protocol.ts" ]; then
+  MAIN=$JS
+  if [ "$NODE" != "$DEFAULT_NODE" ]; then
+    "$NODE" -e 'process.exit(+process.versions.node.split(".")[0] >= 20 ? 0 : 1)' 2>/dev/null || exec "$@"
   fi
+else
+  MAIN=$SRC/wrapper/main.ts
+  "$NODE" -e 'process.exit(process.features.typescript ? 0 : 1)' 2>/dev/null || exec "$@"
 fi
-exec "$NODE" --no-warnings "$(dirname "$(readlink -f "$0")")/../broker/src/wrapper/main.ts" "$@"
+exec "$NODE" --no-warnings "$MAIN" "$@"

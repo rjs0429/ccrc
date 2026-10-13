@@ -41,13 +41,26 @@ export type WrapperFrame =
 
 export type BrokerFrame =
   | { t: "claim_wait"; ms: number }
-  | { t: "claim_ok" }
+  // fork: the session is still held by another process, so Claude Code starts on a copy of it.
+  | { t: "claim_ok"; fork?: boolean }
   | { t: "to_cli"; m: Record<string, unknown> };
 
+// The user's runtime folder when there is one, else the ccrc state folder; never a shared folder such as /tmp.
 export function linkSocketPath(env: NodeJS.ProcessEnv = process.env): string {
   if (env.CCRC_LINK_SOCKET) return env.CCRC_LINK_SOCKET;
-  const uid = process.getuid?.() ?? 0;
-  const userRun = `/run/user/${uid}`;
-  const runtime = env.XDG_RUNTIME_DIR || (fs.existsSync(userRun) ? userRun : path.join(os.tmpdir(), `ccrc-${uid}`));
-  return path.join(runtime, "ccrc", "link.sock");
+  const userRun = `/run/user/${process.getuid?.() ?? 0}`;
+  const runtime = env.XDG_RUNTIME_DIR || (fs.existsSync(userRun) ? userRun : undefined);
+  if (runtime) return path.join(runtime, "ccrc", "link.sock");
+  const state = env.CCRC_STATE_DIR || path.join(env.XDG_STATE_HOME || path.join(env.HOME || os.homedir(), ".local", "state"), "ccrc");
+  return path.join(state, "link.sock");
+}
+
+// Wrappers and the broker only use a socket whose folder belongs to this user and is closed to everyone else.
+export function isPrivateDir(dir: string): boolean {
+  try {
+    const st = fs.lstatSync(dir);
+    return st.isDirectory() && st.uid === process.getuid?.() && (st.mode & 0o077) === 0;
+  } catch {
+    return false;
+  }
 }

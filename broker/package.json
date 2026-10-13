@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/main.ts serve",
+    "build": "tsc -p tsconfig.wrapper.json",
     "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json"
   },

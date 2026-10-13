@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { LineSplitter, parseLine } from "./lines.ts";
-import { LINK_VERSION, REMOTE_PREFIX, type BrokerFrame, type Hello } from "./protocol.ts";
+import { LINK_VERSION, REMOTE_PREFIX, isPrivateDir, type BrokerFrame, type Hello } from "./protocol.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -140,7 +140,7 @@ export class Link extends EventEmitter {
   }
 }
 
-// Unix socket the wrappers connect to. Only the owner can reach it (0700 folder, 0600 socket).
+// Unix socket the wrappers connect to. Only the owner can reach it (private folder, 0600 socket).
 // Emits "link" (Link) for each connection.
 export class LinkServer extends EventEmitter {
   readonly socketPath: string;
@@ -155,7 +155,10 @@ export class LinkServer extends EventEmitter {
   async listen(): Promise<void> {
     const dir = path.dirname(this.socketPath);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    fs.chmodSync(dir, 0o700);
+    try {
+      fs.chmodSync(dir, 0o700);
+    } catch {}
+    if (!isPrivateDir(dir)) throw Error(`${dir} must be a folder owned by this user with mode 0700`);
     await removeStaleSocket(this.socketPath);
     const server = net.createServer((sock) => {
       const link = new Link(sock);

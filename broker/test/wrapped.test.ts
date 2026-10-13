@@ -301,3 +301,83 @@ test("the models in VS Code's initialize answer are offered", async () => {
   const [list] = (await models) as [unknown[]];
   assert.equal(list.length, 1);
 });
+
+test("a prompt VS Code answers while the history loads does not reappear", async () => {
+  const { s, wrapper } = await session({ seed: false });
+  const arrived = new Promise((r) => s.link.once("settled", r));
+  wrapper.out(ask("p9"));
+  wrapper.send({ t: "settled", id: "p9", by: "host" });
+  await arrived;
+  s.seed([]);
+  assert.equal(s.pending.size, 0);
+});
+
+test("VS Code settings that arrive while the history loads apply in order", async () => {
+  const { s, wrapper } = await session({ seed: false });
+  const arrived = new Promise((r) => s.link.once("in", r));
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "model-a" });
+  wrapper.send({ m: { type: "control_request", request_id: "vs-2", request: { subtype: "set_model", model: "model-b" } }, t: "in" });
+  await arrived;
+  s.seed([]);
+  assert.equal(s.model, "model-b");
+});
+
+test("dialogs show remotely but are answered only in VS Code", async () => {
+  const { s, wrapper, next } = await session();
+  const added = next("pending_add");
+  wrapper.out({ type: "control_request", request_id: "d1", request: { subtype: "request_user_dialog", dialog_kind: "fable_overage_consent_prompt", payload: { a: 1 } } });
+  const [request] = (await added) as [PendingRequest];
+  assert.equal(request.kind, "dialog");
+  assert.equal(request.localOnly, true);
+  assert.equal(request.toolName, "fable_overage_consent_prompt");
+  await assert.rejects(s.answer("d1", { kind: "permission", decision: "allow" }), /only be answered where the session is open/);
+  const removed = next("pending_remove");
+  wrapper.send({ t: "settled", id: "d1", by: "host" });
+  await removed;
+});
+
+test("approving a plan with manual or edit approval sends the mode with the answer", async () => {
+  const { s, wrapper, next } = await session();
+  const added = next("pending_add");
+  wrapper.out({
+    type: "control_request",
+    request_id: "plan2",
+    request: { subtype: "can_use_tool", tool_name: "ExitPlanMode", input: { plan: "x" }, tool_use_id: "toolu_p2", requires_user_interaction: true },
+  });
+  await added;
+  await s.answer("plan2", { kind: "plan", decision: "acceptEdits" });
+  const f = await wrapper.wait((x) => x.t === "to_cli" && (x.m as Msg).type === "control_response", "plan answer");
+  const r = ((f.m as Msg).response as Msg).response as Msg;
+  assert.deepEqual(r.updatedPermissions, [{ type: "setMode", mode: "acceptEdits", destination: "session" }]);
+  assert.ok(!wrapper.frames.some((x) => x.t === "to_cli" && (x.m as Msg).type === "control_request"), "no separate mode request");
+  assert.equal(s.permissionMode, "acceptEdits");
+});
+
+test("a plan approved to auto after VS Code already answered reports the loss", async () => {
+  const { s, wrapper, next } = await session();
+  wrapper.autoReply(() => {
+    wrapper.send({ t: "settled", id: "plan3", by: "host" });
+    return {};
+  });
+  const added = next("pending_add");
+  wrapper.out({
+    type: "control_request",
+    request_id: "plan3",
+    request: { subtype: "can_use_tool", tool_name: "ExitPlanMode", input: { plan: "x" }, tool_use_id: "toolu_p3", requires_user_interaction: true },
+  });
+  await added;
+  await assert.rejects(s.answer("plan3", { kind: "plan", decision: "auto" }), /no longer pending/);
+  assert.ok(!wrapper.frames.some((x) => x.t === "to_cli" && (x.m as Msg).type === "control_response"), "no answer sent");
+});
+
+test("a queued turn shows as running from its init until its result", async () => {
+  const { s, wrapper, next } = await session();
+  let st = next("state");
+  wrapper.out({ type: "result", subtype: "success", is_error: false, session_id: SID });
+  await st;
+  assert.equal(s.busy, false);
+  st = next("state");
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m" });
+  await st;
+  assert.equal(s.busy, true);
+});
