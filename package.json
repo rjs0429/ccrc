@@ -1,0 +1,17 @@
+{
+  "name": "ccrc",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "broker",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build -w web",
+    "test": "npm test -w broker",
+    "typecheck": "npm run typecheck -w broker && npm run typecheck -w web"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
