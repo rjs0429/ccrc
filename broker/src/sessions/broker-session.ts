@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import {
   query,
@@ -9,18 +8,10 @@ import {
   type Query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import {
-  PERMISSION_MODES,
-  type Answer,
-  type DisplayItem,
-  type EffortName,
-  type LiveState,
-  type PendingRequest,
-  type PermissionModeName,
-} from "../protocol.ts";
-import { ItemBuilder, clipInput, type RawMessage } from "./items.ts";
+import type { DisplayItem, EffortName, PermissionModeName } from "../protocol.ts";
+import { SessionCore, type Decision } from "./core.ts";
+import type { RawMessage } from "./items.ts";
 
-const STREAM_FLUSH_MS = 80;
 const CLOSE_WAIT_MS = 10_000;
 
 export interface StartOptions {
@@ -29,13 +20,6 @@ export interface StartOptions {
   mode?: PermissionModeName;
   effort?: EffortName;
   claudePath?: string;
-}
-
-interface PendingEntry {
-  request: PendingRequest;
-  input: Record<string, unknown>;
-  suggestions?: PermissionUpdate[];
-  resolve: (result: PermissionResult) => void;
 }
 
 class InputQueue {
@@ -63,46 +47,19 @@ class InputQueue {
   }
 }
 
-interface StreamEvent {
-  type: string;
-  content_block?: { type: string };
-  delta?: { type: string; text?: string; thinking?: string };
-}
-
 // One Claude Code process run by the broker through the Agent SDK.
-// Events: item, stream, pending_add, pending_remove, state, models, closed.
-export class BrokerSession extends EventEmitter {
-  readonly id: string;
-  readonly cwd: string;
-  title?: string;
-  readonly builder: ItemBuilder;
-  readonly pending = new Map<string, PendingEntry>();
-  busy = false;
-  model?: string;
-  permissionMode?: string;
-  effort?: string;
-  contextPercent?: number;
-  costUsd?: number;
-  lastActivity = Date.now();
-  closed = false;
-  closedReason?: string;
+export class BrokerSession extends SessionCore {
+  readonly kind = "owned";
+  readonly host = "ccrc";
 
   private input = new InputQueue();
   private q?: Query;
   private done: Promise<void> = Promise.resolve();
-  private ended = false;
   private modelsRequested = false;
-  private streamText = "";
-  private streamThinking = false;
-  private streamTimer?: NodeJS.Timeout;
+  private resolvers = new Map<string, (result: PermissionResult) => void>();
 
   constructor(id: string, cwd: string, history: DisplayItem[] = [], title?: string) {
-    super();
-    this.id = id;
-    this.cwd = cwd;
-    this.title = title;
-    this.builder = new ItemBuilder(cwd);
-    this.builder.seed(history);
+    super(id, cwd, history, title);
   }
 
   start(opts: StartOptions): void {
@@ -129,24 +86,8 @@ export class BrokerSession extends EventEmitter {
     this.done = this.consume(this.q);
   }
 
-  state(): LiveState {
-    return {
-      sessionId: this.id,
-      cwd: this.cwd,
-      title: this.title,
-      owned: !this.closed,
-      busy: this.busy,
-      model: this.model,
-      permissionMode: this.permissionMode,
-      effort: this.effort,
-      contextPercent: this.contextPercent,
-      costUsd: this.costUsd,
-      closedReason: this.closedReason,
-    };
-  }
-
   send(text: string): void {
-    if (this.closed) throw Error("session closed");
+    this.ensureOpen();
     const uuid = randomUUID();
     const message: SDKUserMessage = {
       type: "user",
@@ -162,43 +103,8 @@ export class BrokerSession extends EventEmitter {
     this.touch();
   }
 
-  async answer(requestId: string, answer: Answer): Promise<void> {
-    const entry = this.pending.get(requestId);
-    if (!entry) throw Error("request is no longer pending");
-    if (entry.request.kind !== answer.kind) throw Error("answer does not match the request");
-    let result: PermissionResult;
-    if (answer.kind === "permission") {
-      result =
-        answer.decision === "deny"
-          ? { behavior: "deny", message: answer.message?.trim() || "The user denied this request." }
-          : {
-              behavior: "allow",
-              updatedInput: entry.input,
-              ...(answer.decision === "allow_always" && entry.suggestions ? { updatedPermissions: entry.suggestions } : {}),
-            };
-    } else if (answer.kind === "question") {
-      result = { behavior: "allow", updatedInput: { ...entry.input, answers: answer.answers } };
-    } else if (answer.decision === "keep_planning") {
-      result = { behavior: "deny", message: answer.feedback?.trim() || "The user wants to keep planning." };
-    } else {
-      await this.applyPlanMode(answer.decision);
-      result = { behavior: "allow", updatedInput: entry.input };
-    }
-    if (!this.pending.delete(requestId)) return;
-    this.emit("pending_remove", requestId);
-    entry.resolve(result);
-    this.touch();
-  }
-
   async interrupt(): Promise<void> {
     await this.query().interrupt();
-  }
-
-  async setMode(mode: PermissionModeName): Promise<void> {
-    if (!PERMISSION_MODES.includes(mode)) throw Error(`mode ${mode} is not available remotely`);
-    await this.query().setPermissionMode(mode);
-    this.permissionMode = mode;
-    this.touch();
   }
 
   async setModel(model: string): Promise<void> {
@@ -213,19 +119,57 @@ export class BrokerSession extends EventEmitter {
     this.touch();
   }
 
+  // Resolves once the current turn is over and nothing waits for an answer, or after `ms`.
+  async idle(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (!this.closed && (this.busy || this.pending.size)) {
+      if (Date.now() >= until) return false;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return true;
+  }
+
   async close(reason: string): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     this.closedReason = reason;
-    for (const [id, entry] of this.pending) {
-      entry.resolve({ behavior: "deny", message: "The session was closed.", interrupt: true });
-      this.emit("pending_remove", id);
+    for (const id of [...this.pending.keys()]) {
+      this.unask(id);
+      this.settle(id, { behavior: "deny", message: "The session was closed.", interrupt: true });
     }
-    this.pending.clear();
     this.input.close();
     this.q?.close();
     await Promise.race([this.done, new Promise((r) => setTimeout(r, CLOSE_WAIT_MS))]);
     this.finish(reason);
+  }
+
+  protected async applyMode(mode: PermissionModeName): Promise<void> {
+    await this.query().setPermissionMode(mode);
+  }
+
+  protected settle(requestId: string, decision: Decision): void {
+    const resolve = this.resolvers.get(requestId);
+    this.resolvers.delete(requestId);
+    resolve?.(decision as PermissionResult);
+  }
+
+  protected refreshContext(): void {
+    this.q
+      ?.getContextUsage({ detail: "summary" })
+      .then((u) => {
+        this.contextPercent = Math.round(u.percentage);
+        this.emit("state");
+      })
+      .catch(() => {});
+  }
+
+  protected onInit(): void {
+    if (this.modelsRequested || !this.q) return;
+    this.modelsRequested = true;
+    this.q
+      .supportedModels()
+      .then((models: ModelInfo[]) => this.emit("models", models))
+      .catch(() => {});
   }
 
   private query(): Query {
@@ -233,46 +177,25 @@ export class BrokerSession extends EventEmitter {
     return this.q;
   }
 
-  private touch(): void {
-    this.lastActivity = Date.now();
-    this.emit("state");
-  }
-
-  // "auto" needs the classifier to be available; fall back the way the VS Code extension does.
-  private async applyPlanMode(mode: "auto" | "acceptEdits" | "default"): Promise<void> {
-    try {
-      await this.query().setPermissionMode(mode);
-      this.permissionMode = mode;
-    } catch (e) {
-      if (mode !== "auto") throw e;
-      await this.query().setPermissionMode("acceptEdits");
-      this.permissionMode = "acceptEdits";
-    }
-  }
-
   private canUseTool: CanUseTool = (toolName, input, opts) =>
     new Promise<PermissionResult>((resolve, reject) => {
-      const kind = toolName === "AskUserQuestion" ? "question" : toolName === "ExitPlanMode" ? "plan" : "permission";
-      const shown = kind === "plan" ? input : (clipInput(input) as Record<string, unknown>);
-      const request: PendingRequest = {
-        id: opts.requestId,
-        kind,
+      this.resolvers.set(opts.requestId, resolve);
+      this.ask({
+        requestId: opts.requestId,
         toolName,
+        input,
+        suggestions: opts.suggestions as PermissionUpdate[] | undefined,
         title: opts.title,
         description: opts.description,
         decisionReason: opts.decisionReason,
         blockedPath: opts.blockedPath,
-        input: shown,
-        suggestions: opts.suggestions,
-        allowAlways: Boolean(opts.suggestions?.length) && !opts.suppressAlwaysAllowRule,
-      };
-      this.pending.set(request.id, { request, input, suggestions: opts.suggestions, resolve });
-      this.emit("pending_add", request);
-      this.touch();
+        suppressAlwaysAllowRule: opts.suppressAlwaysAllowRule,
+      });
       opts.signal.addEventListener(
         "abort",
         () => {
-          if (this.pending.delete(request.id)) this.emit("pending_remove", request.id);
+          this.resolvers.delete(opts.requestId);
+          this.unask(opts.requestId);
           reject(Error("aborted"));
         },
         { once: true },
@@ -289,98 +212,5 @@ export class BrokerSession extends EventEmitter {
       }
     }
     this.finish(this.closedReason ?? "ended");
-  }
-
-  private finish(reason: string): void {
-    if (this.ended) return;
-    this.ended = true;
-    this.closed = true;
-    this.closedReason = reason;
-    this.busy = false;
-    this.endStream();
-    this.emit("closed", reason);
-  }
-
-  private onMessage(m: RawMessage & Record<string, unknown>): void {
-    this.lastActivity = Date.now();
-    if (m.type === "stream_event") {
-      if (!m.parent_tool_use_id) this.onStream(m.event as StreamEvent);
-      return;
-    }
-    if (m.type === "system" && m.subtype === "init") {
-      this.model = m.model as string;
-      this.permissionMode = m.permissionMode as string;
-      if (typeof m.effort === "string") this.effort = m.effort;
-      this.emit("state");
-      this.requestModels();
-      return;
-    }
-    if (m.type === "system" && m.subtype === "status") {
-      if (typeof m.permissionMode === "string") {
-        this.permissionMode = m.permissionMode;
-        this.emit("state");
-      }
-      return;
-    }
-    if (m.type === "assistant" && !m.parent_tool_use_id) this.endStream();
-    if (m.type === "result") {
-      this.busy = false;
-      if (typeof m.total_cost_usd === "number") this.costUsd = m.total_cost_usd;
-      this.endStream();
-      this.refreshContext();
-      this.emit("state");
-    }
-    for (const item of this.builder.add(m)) this.emit("item", item);
-  }
-
-  private onStream(ev: StreamEvent): void {
-    if (ev.type === "content_block_start") {
-      const t = ev.content_block?.type;
-      if (t !== "text" && t !== "thinking") return;
-      this.streamText = "";
-      this.streamThinking = t === "thinking";
-      this.scheduleStream();
-    } else if (ev.type === "content_block_delta") {
-      const d = ev.delta;
-      if (d?.type === "text_delta") this.streamText += d.text ?? "";
-      else if (d?.type === "thinking_delta") this.streamText += d.thinking ?? "";
-      else return;
-      this.scheduleStream();
-    }
-  }
-
-  private scheduleStream(): void {
-    if (this.streamTimer) return;
-    this.streamTimer = setTimeout(() => {
-      this.streamTimer = undefined;
-      this.emit("stream", this.streamText, this.streamThinking);
-    }, STREAM_FLUSH_MS);
-  }
-
-  private endStream(): void {
-    if (this.streamTimer) clearTimeout(this.streamTimer);
-    this.streamTimer = undefined;
-    if (this.streamText || this.streamThinking) this.emit("stream", "", false);
-    this.streamText = "";
-    this.streamThinking = false;
-  }
-
-  private requestModels(): void {
-    if (this.modelsRequested || !this.q) return;
-    this.modelsRequested = true;
-    this.q
-      .supportedModels()
-      .then((models: ModelInfo[]) => this.emit("models", models))
-      .catch(() => {});
-  }
-
-  private refreshContext(): void {
-    this.q
-      ?.getContextUsage()
-      .then((u) => {
-        this.contextPercent = Math.round(u.percentage);
-        this.emit("state");
-      })
-      .catch(() => {});
   }
 }

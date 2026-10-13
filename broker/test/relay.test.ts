@@ -1,0 +1,310 @@
+import assert from "node:assert/strict";
+import net from "node:net";
+import path from "node:path";
+import { PassThrough } from "node:stream";
+import { after, test } from "node:test";
+import { LineSplitter, parseLine } from "../src/link/lines.ts";
+import { Relay, launchSession } from "../src/wrapper/relay.ts";
+import { tempDir } from "./helpers.ts";
+
+const FAKE = new URL("./fixtures/fake-claude.mjs", import.meta.url).pathname;
+const STREAM_ARGS = ["--output-format", "stream-json", "--input-format", "stream-json"];
+
+type Msg = Record<string, unknown>;
+
+// Collects JSON lines and lets a test wait for one that matches.
+class Inbox {
+  items: Msg[] = [];
+  raw: Buffer[] = [];
+  private waiters: { pred: (m: Msg) => boolean; resolve: (m: Msg) => void }[] = [];
+
+  feed(line: Buffer): void {
+    this.raw.push(line);
+    const m = parseLine(line);
+    if (!m) return;
+    this.items.push(m);
+    for (const w of [...this.waiters]) {
+      if (w.pred(m)) {
+        this.waiters.splice(this.waiters.indexOf(w), 1);
+        w.resolve(m);
+      }
+    }
+  }
+
+  wait(pred: (m: Msg) => boolean, label: string, ms = 5000): Promise<Msg> {
+    const hit = this.items.find(pred);
+    if (hit) return Promise.resolve(hit);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(Error(`timed out waiting for ${label}`)), ms);
+      this.waiters.push({ pred, resolve: (m) => (clearTimeout(timer), resolve(m)) });
+    });
+  }
+
+  has(pred: (m: Msg) => boolean): boolean {
+    return this.items.some(pred);
+  }
+}
+
+class FakeBroker {
+  readonly socketPath: string;
+  server: net.Server;
+  conns: net.Socket[] = [];
+  frames = new Inbox();
+  answerClaims = true;
+
+  constructor(socketPath: string) {
+    this.socketPath = socketPath;
+    this.server = net.createServer((sock) => {
+      this.conns.push(sock);
+      const split = new LineSplitter((line) => {
+        const f = parseLine(line);
+        if (f?.t === "hello" && f.claim && this.answerClaims) this.send({ t: "claim_ok" });
+        this.frames.feed(line);
+      });
+      sock.on("data", (c: Buffer) => split.push(c));
+      sock.on("error", () => {});
+    });
+  }
+
+  listen(): Promise<void> {
+    return new Promise((resolve) => this.server.listen(this.socketPath, resolve));
+  }
+
+  send(frame: Msg): void {
+    this.conns.at(-1)?.write(JSON.stringify(frame) + "\n");
+  }
+
+  dropConnections(): void {
+    for (const c of this.conns) c.destroy();
+  }
+
+  close(): Promise<void> {
+    this.dropConnections();
+    return new Promise((resolve) => this.server.close(() => resolve()));
+  }
+}
+
+const cleanups: (() => unknown)[] = [];
+after(async () => {
+  for (const c of cleanups.reverse()) await c();
+});
+
+async function setup(opts: { broker?: boolean; args?: string[]; claimAckMs?: number } = {}) {
+  const dir = tempDir();
+  const socketPath = path.join(dir, "link.sock");
+  const broker = new FakeBroker(socketPath);
+  if (opts.broker !== false) await broker.listen();
+  const hostIn = new PassThrough();
+  const hostOut = new PassThrough();
+  const host = new Inbox();
+  const split = new LineSplitter((line) => host.feed(line));
+  hostOut.on("data", (c: Buffer) => split.push(c));
+  const relay = new Relay({
+    claudePath: process.execPath,
+    args: [FAKE, ...STREAM_ARGS, ...(opts.args ?? [])],
+    cwd: dir,
+    env: process.env,
+    socketPath,
+    hostIn,
+    hostOut,
+    log: () => {},
+    claimAckMs: opts.claimAckMs ?? 2000,
+    retryMs: [50],
+  });
+  const exited = new Promise<[number | null, string | null]>((resolve) => relay.on("exit", (code, signal) => resolve([code, signal])));
+  const started = relay.start();
+  const write = (m: Msg) => hostIn.write(JSON.stringify(m) + "\n");
+  const user = (text: string) => write({ type: "user", session_id: "", parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text }] } });
+  cleanups.push(async () => {
+    hostIn.end();
+    await exited;
+    await broker.close().catch(() => {});
+  });
+  return { broker, host, hostIn, relay, exited, started, write, user };
+}
+
+const frameOut = (pred: (m: Msg) => boolean) => (f: Msg) => f.t === "out" && pred(f.m as Msg);
+const response = (id: string, behavior: string) => ({
+  type: "control_response",
+  response: { subtype: "success", request_id: id, response: { behavior, toolUseID: "toolu_1" } },
+});
+
+test("launchSession reads resume, fork and explicit session arguments", () => {
+  assert.deepEqual(launchSession(["--resume=abc"]), { sessionId: "abc", claim: "abc" });
+  assert.deepEqual(launchSession(["--resume", "abc"]), { sessionId: "abc", claim: "abc" });
+  assert.deepEqual(launchSession(["--resume", "abc", "--fork-session"]), {});
+  assert.deepEqual(launchSession(["--session-id", "new"]), { sessionId: "new" });
+  assert.deepEqual(launchSession([]), {});
+});
+
+test("relays both ways unchanged and copies lines to the broker", async () => {
+  const t = await setup();
+  const hello = await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  assert.equal(hello.v, 1);
+  assert.ok((hello.args as string[]).includes("--input-format"));
+  t.user("hi");
+  const reply = await t.host.wait((m) => m.type === "assistant", "assistant");
+  assert.equal((reply.message as { content: { text: string }[] }).content[0].text, "echo: hi");
+  await t.broker.frames.wait(frameOut((m) => m.type === "assistant"), "copied assistant");
+  await t.broker.frames.wait(frameOut((m) => m.type === "user" && m.isReplay === true), "copied replay");
+  assert.ok(!t.broker.frames.has((f) => f.t === "in"), "user lines from VS Code are not copied");
+  t.write({ type: "control_request", request_id: "host-1", request: { subtype: "set_model", model: "sonnet" } });
+  await t.broker.frames.wait((f) => f.t === "in" && (f.m as Msg).request_id === "host-1", "copied host control request");
+});
+
+test("VS Code answers first: the late remote answer is dropped", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("ASK");
+  await t.host.wait((m) => m.type === "control_request", "prompt at VS Code");
+  await t.broker.frames.wait(frameOut((m) => m.type === "control_request"), "prompt at broker");
+  t.write(response("perm-1", "allow"));
+  await t.host.wait((m) => m.type === "answered" && m.behavior === "allow", "CLI got VS Code's answer");
+  await t.broker.frames.wait((f) => f.t === "settled" && f.id === "perm-1" && f.by === "host", "settled by host");
+  t.broker.send({ t: "to_cli", m: response("perm-1", "deny") });
+  await t.broker.frames.wait((f) => f.t === "dropped" && f.id === "perm-1" && f.from === "remote", "remote answer dropped");
+  assert.equal(t.host.items.filter((m) => m.type === "answered").length, 1);
+});
+
+test("remote answers first: VS Code's prompt is withdrawn and its late answer dropped", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("ASK");
+  await t.broker.frames.wait(frameOut((m) => m.type === "control_request"), "prompt at broker");
+  t.broker.send({ t: "to_cli", m: response("perm-1", "allow") });
+  await t.host.wait((m) => m.type === "answered" && m.behavior === "allow", "CLI got remote answer");
+  await t.host.wait((m) => m.type === "control_cancel_request" && m.request_id === "perm-1", "cancel sent to VS Code");
+  await t.broker.frames.wait((f) => f.t === "settled" && f.id === "perm-1" && f.by === "remote", "settled by remote");
+  t.write(response("perm-1", "deny"));
+  await t.broker.frames.wait((f) => f.t === "dropped" && f.id === "perm-1" && f.from === "host", "VS Code answer dropped");
+  t.user("after");
+  await t.host.wait((m) => m.type === "assistant", "relay still flows");
+  assert.equal(t.host.items.filter((m) => m.type === "answered").length, 1);
+});
+
+test("a prompt Claude Code withdraws is settled and cannot be answered", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("CANCEL");
+  await t.broker.frames.wait((f) => f.t === "settled" && f.id === "perm-1" && f.by === "cli", "settled by CLI");
+  t.broker.send({ t: "to_cli", m: response("perm-1", "allow") });
+  await t.broker.frames.wait((f) => f.t === "dropped" && f.id === "perm-1", "late answer dropped");
+});
+
+test("broker control requests are answered to the broker only", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-1", request: { subtype: "get_context_usage" } } });
+  const reply = await t.broker.frames.wait((f) => f.t === "reply", "reply");
+  assert.equal(((reply.m as Msg).response as Msg).request_id, "ccrc-1");
+  t.user("hi");
+  await t.host.wait((m) => m.type === "result", "turn done");
+  assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code never sees the broker's responses");
+});
+
+test("remote lines other than user messages, broker requests and open prompts are refused", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "x-1", request: { subtype: "interrupt" } } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "x-1", "unprefixed request refused");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-2", request: { subtype: "set_permission_mode", mode: "bypassPermissions" } } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-2", "bypass refused");
+  t.broker.send({ t: "to_cli", m: response("nope", "allow") });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "nope", "unknown prompt refused");
+  t.broker.send({ t: "to_cli", m: { type: "keep_alive" } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.reason === "unsupported", "unknown type refused");
+  t.broker.send({ t: "to_cli", m: { type: "user", uuid: "u-remote", session_id: "", parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text: "from phone" }] } } });
+  await t.host.wait((m) => m.type === "user" && m.uuid === "u-remote" && m.isReplay === true, "remote message shown in VS Code");
+  await t.host.wait((m) => m.type === "assistant" && JSON.stringify(m).includes("echo: from phone"), "remote message answered");
+});
+
+test("reconnects to a restarted broker and re-announces state and open prompts", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("ASK");
+  await t.broker.frames.wait(frameOut((m) => m.type === "control_request"), "prompt at broker");
+  t.write({ type: "control_request", request_id: "host-2", request: { subtype: "set_permission_mode", mode: "plan" } });
+  await t.broker.frames.wait((f) => f.t === "in", "host setting copied");
+  t.broker.frames = new Inbox();
+  t.broker.dropConnections();
+  const hello = await t.broker.frames.wait((f) => f.t === "hello", "hello again");
+  assert.ok(typeof hello.sessionId === "string" && hello.sessionId.length > 0, "hello names the session");
+  assert.equal(hello.claim, undefined);
+  await t.broker.frames.wait((f) => f.t === "spawned", "child pid re-sent");
+  await t.broker.frames.wait(frameOut((m) => m.type === "system" && m.subtype === "init"), "init re-sent");
+  await t.broker.frames.wait((f) => f.t === "in" && ((f.m as Msg).request as Msg).mode === "plan", "host setting re-sent");
+  await t.broker.frames.wait(frameOut((m) => m.type === "control_request" && m.request_id === "perm-1"), "open prompt re-sent");
+  t.broker.send({ t: "to_cli", m: response("perm-1", "allow") });
+  await t.host.wait((m) => m.type === "answered", "answer after reconnect reaches the CLI");
+});
+
+test("claim: waits for claim_ok before starting Claude Code", async () => {
+  const dir = tempDir();
+  const socketPath = path.join(dir, "link.sock");
+  const broker = new FakeBroker(socketPath);
+  broker.answerClaims = false;
+  await broker.listen();
+  const hostIn = new PassThrough();
+  const hostOut = new PassThrough();
+  const relay = new Relay({
+    claudePath: process.execPath,
+    args: [FAKE, ...STREAM_ARGS, "--resume", "aaaa"],
+    cwd: dir,
+    env: process.env,
+    socketPath,
+    hostIn,
+    hostOut,
+    log: () => {},
+    claimAckMs: 2000,
+    retryMs: [50],
+  });
+  const exited = new Promise((resolve) => relay.on("exit", resolve));
+  void relay.start();
+  await broker.frames.wait((f) => f.t === "hello" && f.claim === "aaaa", "hello with claim");
+  broker.send({ t: "claim_wait", ms: 4000 });
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.ok(!broker.frames.has((f) => f.t === "spawned"), "not started while the broker hands over");
+  broker.send({ t: "claim_ok" });
+  await broker.frames.wait((f) => f.t === "spawned", "started after claim_ok");
+  hostIn.end();
+  await exited;
+  await broker.close();
+});
+
+test("claim: starts anyway when the broker does not acknowledge in time", async () => {
+  const t = await setup({ args: ["--resume", "bbbb"], claimAckMs: 300 });
+  t.broker.answerClaims = false;
+  await t.started;
+  await t.broker.frames.wait((f) => f.t === "spawned", "started without claim_ok");
+});
+
+test("works without a broker and connects once one appears", async () => {
+  const t = await setup({ broker: false, args: ["--resume", "cccc"] });
+  await t.started;
+  t.user("hi");
+  await t.host.wait((m) => m.type === "assistant", "relay works with no broker");
+  await t.broker.listen();
+  const hello = await t.broker.frames.wait((f) => f.t === "hello", "late hello", 3000);
+  assert.equal(hello.claim, undefined, "no hand-over once Claude Code runs");
+  assert.equal(hello.sessionId, "cccc");
+});
+
+test("long lines pass intact to VS Code and the broker", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("BIG");
+  const m = await t.host.wait((x) => x.type === "assistant", "big line", 10_000);
+  assert.equal((m.message as { content: { text: string }[] }).content[0].text.length, 3_000_000);
+  const f = await t.broker.frames.wait(frameOut((x) => x.type === "assistant"), "big frame", 10_000);
+  assert.equal(((f.m as Msg).message as { content: { text: string }[] }).content[0].text.length, 3_000_000);
+});
+
+test("exits with Claude Code's status after VS Code closes its input", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.hostIn.end();
+  const [code, signal] = await t.exited;
+  assert.equal(code, 0);
+  assert.equal(signal, null);
+  await t.broker.frames.wait((f) => f.t === "exit" && f.code === 0, "exit reported");
+});

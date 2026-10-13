@@ -52,6 +52,11 @@ export class Hub {
       if (this.active && sessionId === this.viewing) send(this.active, msg);
     });
     manager.on("changed", () => this.changed());
+    for (const ev of ["attached", "detached"]) {
+      manager.on(ev, (sessionId: string) => {
+        if (this.active && sessionId === this.viewing) void this.setView(sessionId).catch(() => {});
+      });
+    }
     leases.on("revoked", (reason: string) => this.revokeAll(reason));
     this.pinger = setInterval(() => this.ping(), PING_MS);
     this.pinger.unref();
@@ -161,10 +166,10 @@ export class Hub {
       case "send": {
         const id = sid(msg.sessionId);
         const text = str(msg.text, MAX_TEXT);
-        const wasOwned = m.isOwned(id);
+        const wasControlled = m.isControlled(id);
         this.audit.log("send", { device, sessionId: id, chars: text.length });
         await m.send(id, text);
-        if (!wasOwned && this.viewing === id) await this.setView(id);
+        if (!wasControlled && this.viewing === id) await this.setView(id);
         this.changed();
         return;
       }
@@ -223,7 +228,7 @@ export class Hub {
     this.manager.setViewed(sessionId);
     if (!sessionId) return;
     await this.pushSnapshot(sessionId);
-    if (!this.manager.isOwned(sessionId) && this.viewing === sessionId) {
+    if (!this.manager.isControlled(sessionId) && this.viewing === sessionId) {
       this.unwatch = this.manager.watch(sessionId, () => void this.pushChanges(sessionId).catch(() => {}));
     }
   }

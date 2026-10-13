@@ -6,6 +6,8 @@ import { loadConfig, paths } from "./config.ts";
 import { DeviceGate } from "./devices.ts";
 import { Hub } from "./hub.ts";
 import { Leases } from "./lease.ts";
+import { linkSocketPath } from "./link/protocol.ts";
+import { LinkServer } from "./link/server.ts";
 import { buildServer } from "./server.ts";
 import { SessionManager } from "./sessions/manager.ts";
 import { Store } from "./store.ts";
@@ -21,8 +23,11 @@ async function serve(): Promise<void> {
   const store = new Store();
   const leases = new Leases(store, config.leaseIdleMinutes);
   const audit = new Audit();
-  const manager = new SessionManager(config);
+  const manager = new SessionManager(config, audit);
   const hub = new Hub(manager, leases, audit);
+  const links = new LinkServer(linkSocketPath());
+  links.on("link", (link) => manager.attachLink(link));
+  await links.listen();
   const gate = new DeviceGate(config.allowedDevices, config.allowLocal);
   leases.on("revoked", (reason: string) => audit.log("lease_revoked", { reason }));
 
@@ -41,6 +46,7 @@ async function serve(): Promise<void> {
     if (stopping) return;
     stopping = true;
     hub.close();
+    await links.close();
     await manager.closeAll();
     await app.close();
     process.exit(0);
@@ -99,6 +105,7 @@ function status(): void {
   const { user, lease, lockout } = new Store().state;
   console.log(`config:      ${paths.configFile}`);
   console.log(`listen:      http://${config.host}:${config.port}`);
+  console.log(`wrappers:    ${linkSocketPath()}${fs.existsSync(linkSocketPath()) ? "" : " (not listening)"}`);
   console.log(`devices:     ${config.allowedDevices.join(", ") || "(none; local access only)"}`);
   console.log(`login:       ${user ? `${user.id} (set ${user.changedAt})` : "not set; run: ccrc passwd"}`);
   console.log(`remote use:  ${lease ? `${lease.device}, last active ${new Date(lease.lastSeen).toLocaleString()}` : "none"}`);

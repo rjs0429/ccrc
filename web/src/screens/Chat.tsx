@@ -3,7 +3,7 @@ import { ItemView, StreamPreview } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { PendingCard } from "../components/Pending.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
-import { baseName, hostLabel, sessionTitle } from "../labels.ts";
+import { baseName, closedText, hostLabel, sessionTitle } from "../labels.ts";
 import { navigate, send, useApp } from "../state.ts";
 
 const NEAR_BOTTOM_PX = 160;
@@ -18,8 +18,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const stick = useRef(true);
 
   const st = chat?.state;
-  const owned = Boolean(st?.owned);
-  const liveHost = st?.liveHost ?? (summary?.state === "live" ? summary.liveHost : undefined);
+  const kind = st?.state ?? summary?.state ?? "inactive";
+  const controllable = kind === "owned" || kind === "attached";
+  const host = hostLabel(st?.host ?? summary?.host);
   const busy = Boolean(st?.busy);
   const cwd = st?.cwd ?? summary?.cwd ?? "";
   const title = sessionTitle({ title: st?.title || summary?.title || "" });
@@ -29,8 +30,19 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [chat?.items, chat?.stream?.text, chat?.pending.length, chat?.loaded]);
 
-  const status = owned ? (busy ? "작업 중" : "원격 실행 중") : liveHost ? `${hostLabel(liveHost)}에서 열림` : "꺼져 있음";
-  const disabledReason = !owned && liveHost ? `${hostLabel(liveHost)}에서 열려 있어 지금은 보기만 할 수 있습니다.` : undefined;
+  const status =
+    kind === "owned"
+      ? busy
+        ? "작업 중"
+        : "원격 실행 중"
+      : kind === "attached"
+        ? busy
+          ? `${host}에서 작업 중`
+          : `${host} 연결됨`
+        : kind === "live"
+          ? `${host}에서 열림`
+          : "꺼져 있음";
+  const disabledReason = kind === "live" ? `${host}에서 열려 있어 지금은 보기만 할 수 있습니다.` : undefined;
 
   return (
     <div className="flex h-dvh flex-col">
@@ -78,8 +90,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
           {chat?.pending.map((p) => (
             <PendingCard key={p.id} request={p} reply={(answer) => send({ t: "answer", sessionId, requestId: p.id, answer })} />
           ))}
-          {chat?.loaded && !owned && !liveHost && (
-            <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted">메시지를 보내면 이 세션을 원격에서 이어서 실행합니다.</div>
+          {chat?.loaded && kind === "inactive" && (
+            <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted">
+              {closedText(st?.closedReason)}메시지를 보내면 이 세션을 원격에서 이어서 실행합니다.
+            </div>
           )}
         </div>
       </div>
@@ -87,7 +101,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       <Composer
         state={st}
         models={models}
-        controllable={owned}
+        controllable={controllable}
         disabledReason={disabledReason}
         placeholder="Claude에게 메시지"
         onSend={(text) => {
@@ -104,7 +118,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         <Sheet title={title} onClose={() => setMenu(false)}>
           <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
           <Choice label="새로고침" onClick={() => (send({ t: "view", sessionId }), setMenu(false))} />
-          {owned && (
+          {kind === "owned" && (
             <Choice
               label="원격 실행 끝내기"
               hint="이 세션의 Claude Code 프로세스를 닫습니다. 대화 기록은 남습니다."

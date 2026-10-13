@@ -32,7 +32,25 @@ const DESTINATION_LABEL: Record<string, string> = {
 };
 
 export function hostLabel(host?: string): string {
-  return host === "Terminal" ? "터미널" : (host ?? "");
+  return host === "Terminal" ? "터미널" : host === "ccrc" ? "원격" : (host ?? "");
+}
+
+// Why a session no longer has a process the broker drives, as a sentence that ends with a space.
+export function closedText(reason?: string): string {
+  switch (reason) {
+    case "vscode_closed":
+      return "VS Code에서 닫혔습니다. ";
+    case "switched":
+      return "VS Code에서 다른 대화로 바뀌었습니다. ";
+    case "handed_off":
+      return "VS Code로 넘겼습니다. ";
+    case "idle":
+      return "한동안 쓰지 않아 원격 실행을 끝냈습니다. ";
+    case "released":
+      return "원격 실행을 끝냈습니다. ";
+    default:
+      return "";
+  }
 }
 
 export function noteText(code: NoteCode, text?: string): string {
@@ -56,6 +74,11 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^session is not running here$/, "원격에서 실행 중인 세션이 아닙니다. 메시지를 보내면 이어서 실행합니다"],
   [/^session closed$/, "세션 프로세스가 종료되었습니다"],
   [/^unknown session$/, "세션을 찾을 수 없습니다"],
+  [/^session runs in VS Code$/, "VS Code에서 실행 중인 세션입니다"],
+  [/^session is opening in VS Code$/, "VS Code에서 이 세션을 여는 중입니다"],
+  [/^this request can only be answered where the session is open$/, "이 요청은 VS Code에서만 응답할 수 있습니다"],
+  [/^Claude Code did not answer$/, "Claude Code가 응답하지 않았습니다"],
+  [/^rejected by the wrapper: (.+)$/, (m) => `VS Code 쪽에서 받지 않았습니다 (${m[1]})`],
 ];
 
 export function errorText(message: string): string {

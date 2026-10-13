@@ -4,7 +4,9 @@ export type PermissionModeName = "default" | "acceptEdits" | "plan" | "auto";
 export const PERMISSION_MODES: PermissionModeName[] = ["default", "acceptEdits", "plan", "auto"];
 export type EffortName = "low" | "medium" | "high" | "xhigh" | "max";
 
-export type SessionState = "owned" | "live" | "inactive";
+// owned: run by this broker. attached: running in VS Code and reached through the wrapper.
+// live: open in another process this broker cannot drive. inactive: no process.
+export type SessionState = "owned" | "attached" | "live" | "inactive";
 
 export interface SessionSummary {
   id: string;
@@ -14,8 +16,8 @@ export interface SessionSummary {
   lastModified: number;
   createdAt?: number;
   state: SessionState;
-  // Set when another process (VS Code, a terminal) has the session open.
-  liveHost?: string;
+  // Where the session's process runs ("ccrc", "VS Code", "Terminal", ...).
+  host?: string;
   liveStatus?: string;
   busy?: boolean;
   pendingCount?: number;
@@ -50,6 +52,8 @@ export interface PendingRequest {
   // Offered by Claude Code for "allow and don't ask again" (for example a session-wide mode switch).
   suggestions?: unknown[];
   allowAlways: boolean;
+  // Claude Code allows this answer only where the session is open.
+  localOnly?: boolean;
 }
 
 export type Answer =
@@ -69,14 +73,14 @@ export interface LiveState {
   sessionId: string;
   cwd: string;
   title?: string;
-  owned: boolean;
+  state: SessionState;
+  host?: string;
   busy: boolean;
   model?: string;
   permissionMode?: string;
   effort?: string;
   contextPercent?: number;
   costUsd?: number;
-  liveHost?: string;
   closedReason?: string;
 }
 

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Value for the VS Code setting claudeCode.claudeProcessWrapper; VS Code runs `ccrc-wrapper <claude> <args...>`.
+# Conversation processes go through the relay so the broker can show and drive them. Everything else
+# (config probes, `auth status`, worktree cleanup) and any launch without a usable Node runs claude directly.
+stream=
+prev=
+for a in "$@"; do
+  if [ "$a" = --input-format=stream-json ] || { [ "$prev" = --input-format ] && [ "$a" = stream-json ]; }; then
+    stream=1
+  fi
+  prev=$a
+done
+if [ -z "$stream" ] || [ "${CLAUDE_CODE_CONFIG_PROBE:-}" = 1 ] || [ "${CCRC_WRAPPER:-}" = off ]; then
+  exec "$@"
+fi
+
+NODE=${CCRC_NODE:-$HOME/.local/opt/node22/bin/node}
+if [ ! -x "$NODE" ]; then
+  NODE=$(command -v node || true)
+  if [ -z "$NODE" ] || ! "$NODE" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=18)?0:1)'; then
+    exec "$@"
+  fi
+fi
+exec "$NODE" --no-warnings "$(dirname "$(readlink -f "$0")")/../broker/src/wrapper/main.ts" "$@"

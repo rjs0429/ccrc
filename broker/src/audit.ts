@@ -17,7 +17,9 @@ export type AuditEvent =
   | "set_mode"
   | "set_model"
   | "set_effort"
-  | "release";
+  | "release"
+  | "attach"
+  | "handoff";
 
 // Records who did what; message text and tool input are not recorded.
 export class Audit {

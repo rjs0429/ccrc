@@ -136,6 +136,13 @@ export class ItemBuilder {
     this.pos = new Map(this.items.map((item, i) => [item.id, i]));
   }
 
+  // Puts earlier items in front of the ones built so far; an item built here wins over the same id from before.
+  merge(earlier: DisplayItem[]): void {
+    const later = this.items;
+    this.seed(earlier);
+    for (const item of later) this.put(item);
+  }
+
   note(code: NoteCode, text?: string, ts?: string, id?: string): DisplayItem | undefined {
     const last = this.items.at(-1);
     if (code === "interrupted" && last?.kind === "note" && last.code === "interrupted") return undefined;

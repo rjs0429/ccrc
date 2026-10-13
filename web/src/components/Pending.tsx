@@ -47,15 +47,19 @@ function PermissionCard({ request, reply }: { request: PendingRequest; reply: Re
       {request.title && <div className="text-sm">{request.title}</div>}
       {request.decisionReason && <div className="text-xs text-muted">{request.decisionReason}</div>}
       <ToolInput name={request.toolName} input={request.input} />
-      <div className="grid gap-2">
-        <Button kind="primary" onClick={() => reply({ kind: "permission", decision: "allow" })}>
-          허용
-        </Button>
-        {request.allowAlways && (
-          <Button onClick={() => reply({ kind: "permission", decision: "allow_always" })}>{allowAlwaysLabel(request.suggestions)}</Button>
-        )}
-        <DenyBox placeholder="대신 할 일 (선택)" label="거부" onSend={(message) => reply({ kind: "permission", decision: "deny", message })} />
-      </div>
+      {request.localOnly ? (
+        <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted">이 요청은 VS Code에서만 응답할 수 있습니다.</div>
+      ) : (
+        <div className="grid gap-2">
+          <Button kind="primary" onClick={() => reply({ kind: "permission", decision: "allow" })}>
+            허용
+          </Button>
+          {request.allowAlways && (
+            <Button onClick={() => reply({ kind: "permission", decision: "allow_always" })}>{allowAlwaysLabel(request.suggestions)}</Button>
+          )}
+          <DenyBox placeholder="대신 할 일 (선택)" label="거부" onSend={(message) => reply({ kind: "permission", decision: "deny", message })} />
+        </div>
+      )}
     </Card>
   );
 }

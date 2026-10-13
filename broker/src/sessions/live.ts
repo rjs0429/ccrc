@@ -34,8 +34,9 @@ function startTime(pid: number): string | undefined {
 
 // Claude Code processes that are running right now, from their registry files.
 // A file whose pid is gone or now belongs to another process is ignored.
-export function liveProcesses(dir = SESSIONS_DIR): LiveProcess[] {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.list;
+export function liveProcesses(opts: { dir?: string; fresh?: boolean } = {}): LiveProcess[] {
+  if (!opts.fresh && !opts.dir && cache && Date.now() - cache.at < CACHE_MS) return cache.list;
+  const dir = opts.dir ?? SESSIONS_DIR;
   const list: LiveProcess[] = [];
   let names: string[] = [];
   try {
@@ -55,6 +56,6 @@ export function liveProcesses(dir = SESSIONS_DIR): LiveProcess[] {
       });
     } catch {}
   }
-  cache = { at: Date.now(), list };
+  if (!opts.dir) cache = { at: Date.now(), list };
   return list;
 }

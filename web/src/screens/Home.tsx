@@ -9,14 +9,14 @@ const PAGE = 80;
 const REFRESH_MS = 10_000;
 
 function status(s: SessionSummary): { text: string; dot: string } {
-  if (s.state === "owned") {
-    if (s.pendingCount) return { text: "입력 필요", dot: "bg-warn" };
-    if (s.busy) return { text: "작업 중", dot: "bg-accent animate-pulse" };
-    return { text: "원격 실행 중", dot: "bg-ok" };
+  const host = hostLabel(s.host);
+  if (s.state === "owned" || s.state === "attached") {
+    if (s.pendingCount) return { text: s.state === "attached" ? `입력 필요 · ${host}` : "입력 필요", dot: "bg-warn" };
+    if (s.busy) return { text: s.state === "attached" ? `${host}에서 작업 중` : "작업 중", dot: "bg-accent animate-pulse" };
+    return { text: s.state === "attached" ? `${host} 연결됨` : "원격 실행 중", dot: "bg-ok" };
   }
   if (s.state === "live") {
-    const host = hostLabel(s.liveHost);
-    return s.busy ? { text: `${host}에서 작업 중`, dot: "bg-info animate-pulse" } : { text: `${host}에서 열림`, dot: "bg-info" };
+    return s.busy ? { text: `${host}에서 작업 중 · 보기만`, dot: "bg-info animate-pulse" } : { text: `${host}에서 열림 · 보기만`, dot: "bg-info" };
   }
   return { text: "", dot: "border border-line" };
 }
