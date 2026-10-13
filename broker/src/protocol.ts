@@ -59,6 +59,7 @@ export type Answer =
 
 export interface ModelOption {
   value: string;
+  resolved?: string;
   label: string;
   description?: string;
   efforts?: EffortName[];

@@ -1,0 +1,228 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f5f4ef;
+  --surface: #ffffff;
+  --surface-2: #ecebe4;
+  --text: #1f1e1c;
+  --muted: #6f6d66;
+  --line: #e2e0d8;
+  --accent: #c96442;
+  --accent-soft: #f3e3dc;
+  --danger: #b42318;
+  --ok: #2f7d4f;
+  --warn: #a35f00;
+  --info: #2b6cb0;
+  --code-bg: #f0efe9;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1f1e1c;
+    --surface: #292825;
+    --surface-2: #34332f;
+    --text: #ecebe6;
+    --muted: #a3a29b;
+    --line: #3b3a36;
+    --accent: #d97757;
+    --accent-soft: #3d2a22;
+    --danger: #f2777a;
+    --ok: #6cc08b;
+    --warn: #e0a647;
+    --info: #79a8e0;
+    --code-bg: #24231f;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-info: var(--info);
+  --color-code: var(--code-bg);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, "D2Coding", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+.md {
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.md > * + * {
+  margin-top: 0.7em;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  font-weight: 650;
+  line-height: 1.35;
+  margin-top: 1.1em;
+}
+.md h1 {
+  font-size: 1.25em;
+}
+.md h2 {
+  font-size: 1.15em;
+}
+.md h3,
+.md h4 {
+  font-size: 1.02em;
+}
+.md ul {
+  list-style: disc;
+  padding-left: 1.3em;
+}
+.md ol {
+  list-style: decimal;
+  padding-left: 1.4em;
+}
+.md li + li {
+  margin-top: 0.25em;
+}
+.md a {
+  color: var(--info);
+  text-decoration: underline;
+}
+.md blockquote {
+  border-left: 3px solid var(--line);
+  padding-left: 0.8em;
+  color: var(--muted);
+}
+.md code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+}
+.md pre {
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.7em 0.8em;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+.md pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+.md table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.md th,
+.md td {
+  border: 1px solid var(--line);
+  padding: 0.3em 0.6em;
+  text-align: left;
+}
+.md hr {
+  border-color: var(--line);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--muted);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-type {
+  color: #a2348c;
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: #2f7d4f;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: #b35c00;
+}
+.hljs-title,
+.hljs-section,
+.hljs-built_in,
+.hljs-attr,
+.hljs-attribute {
+  color: #2b6cb0;
+}
+.hljs-deletion {
+  color: var(--danger);
+}
+@media (prefers-color-scheme: dark) {
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-literal,
+  .hljs-type {
+    color: #d78bd0;
+  }
+  .hljs-string,
+  .hljs-regexp,
+  .hljs-addition {
+    color: #8fd19e;
+  }
+  .hljs-number,
+  .hljs-symbol,
+  .hljs-bullet {
+    color: #e8b06a;
+  }
+  .hljs-title,
+  .hljs-section,
+  .hljs-built_in,
+  .hljs-attr,
+  .hljs-attribute {
+    color: #8db8ef;
+  }
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+.caret::after {
+  content: "▍";
+  margin-left: 1px;
+  color: var(--accent);
+  animation: caret 1s steps(1) infinite;
+}

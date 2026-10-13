@@ -1,0 +1,93 @@
+import { memo, useState } from "react";
+import type { DisplayItem } from "../../../broker/src/protocol.ts";
+import { clock, noteText } from "../labels.ts";
+import { Markdown } from "./Markdown.tsx";
+import { ToolInput, ToolOutput } from "./ToolInput.tsx";
+import { Icon, Spinner } from "./ui.tsx";
+
+function UserItem({ text, ts, images }: { text: string; ts?: string; images?: number }) {
+  return (
+    <div className="flex flex-col items-end">
+      <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words">
+        {text}
+        {images ? <div className="mt-1 text-xs text-muted">이미지 {images}개</div> : null}
+      </div>
+      {ts && <div className="mt-1 text-[11px] text-muted">{clock(ts)}</div>}
+    </div>
+  );
+}
+
+function Thinking({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button onClick={() => setOpen(!open)} className="flex items-center gap-1 text-sm text-muted">
+        <span>생각</span>
+        <Icon.chevronDown className={`size-4 transition-transform ${open ? "" : "-rotate-90"}`} />
+      </button>
+      {open && <div className="mt-1.5 border-l-2 border-line pl-3 text-sm text-muted whitespace-pre-wrap">{text}</div>}
+    </div>
+  );
+}
+
+function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool" }>; running: boolean }) {
+  const [open, setOpen] = useState(false);
+  const status = item.result ? (
+    item.result.isError ? (
+      <Icon.x className="size-4 text-danger" />
+    ) : (
+      <Icon.check className="size-4 text-ok" />
+    )
+  ) : running ? (
+    <Spinner className="size-4 text-muted" />
+  ) : (
+    <span className="size-4" />
+  );
+  return (
+    <div className="rounded-xl border border-line bg-surface">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 px-3 py-2 text-left">
+        {status}
+        <span className="shrink-0 text-sm font-medium">{item.name || "도구"}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted">{item.summary}</span>
+        <Icon.chevronDown className={`size-4 shrink-0 text-muted transition-transform ${open ? "" : "-rotate-90"}`} />
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-line px-3 py-2.5">
+          {item.input != null && <ToolInput name={item.name} input={item.input} />}
+          {item.result && <ToolOutput text={item.result.text + (item.result.truncated ? "\n…" : "")} isError={item.result.isError} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export const ItemView = memo(function ItemView({ item, running }: { item: DisplayItem; running: boolean }) {
+  switch (item.kind) {
+    case "user":
+      return <UserItem text={item.text} ts={item.ts} images={item.images} />;
+    case "assistant":
+      return <Markdown text={item.text} className="text-[15px]" />;
+    case "thinking":
+      return <Thinking text={item.text} />;
+    case "tool":
+      return <ToolItem item={item} running={running} />;
+    case "note":
+      return (
+        <div className={`text-center text-xs whitespace-pre-wrap ${item.code === "error" ? "text-danger" : "text-muted"}`}>
+          {noteText(item.code, item.text)}
+        </div>
+      );
+  }
+});
+
+export function StreamPreview({ text, thinking }: { text: string; thinking: boolean }) {
+  if (thinking) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted">
+        <Spinner className="size-3.5" />
+        생각하는 중…
+      </div>
+    );
+  }
+  return <Markdown text={text} className="caret text-[15px]" />;
+}

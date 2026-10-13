@@ -15,7 +15,7 @@ import type {
   SessionSummary,
 } from "../protocol.ts";
 import { BrokerSession } from "./broker-session.ts";
-import { loadHistory, transcriptPath } from "./history.ts";
+import { loadHistory, projectDirName, transcriptPath } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 
 const CATALOG_MS = 3000;
@@ -172,7 +172,8 @@ export class SessionManager extends EventEmitter {
       if (!info?.cwd) throw Error("unknown session");
       const other = liveProcesses().find((l) => l.sessionId === sessionId);
       if (other) throw Error(`session is open in ${other.host}`);
-      const s = new BrokerSession(sessionId, info.cwd, await loadHistory(sessionId, info.cwd), titleOf(info));
+      const cwd = await this.resumeFolder(sessionId, info.cwd);
+      const s = new BrokerSession(sessionId, cwd, await loadHistory(sessionId, cwd), titleOf(info));
       this.adopt(s);
       s.start({ resume: true, claudePath: this.cfg.claudePath });
       return s;
@@ -183,6 +184,16 @@ export class SessionManager extends EventEmitter {
     } finally {
       this.starting.delete(sessionId);
     }
+  }
+
+  // Claude Code resumes a session from the project folder of its cwd. A transcript that was moved to
+  // another project folder resumes from the known folder whose name matches where the file now is.
+  private async resumeFolder(sessionId: string, cwd: string): Promise<string> {
+    const file = transcriptPath(sessionId, cwd);
+    const dir = file ? path.basename(path.dirname(file)) : undefined;
+    if (!dir || dir === projectDirName(cwd)) return cwd;
+    const known = (await this.infos()).map((i) => i.cwd).filter((c): c is string => Boolean(c));
+    return known.find((c) => projectDirName(c) === dir) ?? cwd;
   }
 
   async create(cwd: string, opts: { model?: string; mode?: PermissionModeName; effort?: EffortName }): Promise<BrokerSession> {
@@ -251,7 +262,13 @@ export class SessionManager extends EventEmitter {
     });
     s.on("state", () => send({ t: "state", sessionId: s.id, state: s.state() }));
     s.on("models", (models: ModelInfo[]) => {
-      this.models = models.map((m) => ({ value: m.value, label: m.displayName, description: m.description, efforts: m.supportedEffortLevels }));
+      this.models = models.map((m) => ({
+        value: m.value,
+        resolved: m.resolvedModel,
+        label: m.displayName,
+        description: m.description,
+        efforts: m.supportedEffortLevels,
+      }));
     });
     s.on("closed", () => {
       if (this.owned.get(s.id) === s) this.owned.delete(s.id);

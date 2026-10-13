@@ -22,7 +22,8 @@ export interface RawMessage {
 }
 
 // Text blocks that carry editor or harness context rather than something the user typed.
-const CONTEXT_TAGS = /^<(system-reminder|ide_opened_file|ide_selection|ide_diagnostics|local-command-caveat)>[\s\S]*<\/\1>$/;
+const CONTEXT_TAGS =
+  /^<(system-reminder|ide_opened_file|ide_selection|ide_diagnostics|local-command-caveat|task-notification|user-prompt-submit-hook)>[\s\S]*<\/\1>$/;
 const INTERRUPTED = /^\[Request interrupted by user[^\]]*\]$/;
 
 function clipText(text: string, limit: number): { text: string; truncated: boolean } {

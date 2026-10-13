@@ -51,6 +51,7 @@ test("editor context and harness wrappers are not shown as user text", () => {
   b.add({ type: "user", uuid: "u3", message: { content: "<command-name>/model</command-name>\n<command-args>sonnet</command-args>" } });
   b.add({ type: "user", uuid: "u4", message: { content: "<local-command-stdout>Set model to sonnet</local-command-stdout>" } });
   b.add({ type: "user", uuid: "u5", isSynthetic: true, message: { content: "summary of earlier turns" } });
+  b.add({ type: "user", uuid: "u6", message: { content: "<task-notification>\n<task-id>x</task-id>\n</task-notification>" } });
   assert.deepEqual(
     b.items.map((i) => (i.kind === "note" ? `${i.code}:${i.text}` : i.kind === "user" ? `user:${i.text}` : i.kind)),
     ["user:Explain this file", "command:/model sonnet", "command_output:Set model to sonnet"],

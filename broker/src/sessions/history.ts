@@ -7,10 +7,14 @@ import { ItemBuilder, type RawMessage } from "./items.ts";
 
 const PROJECTS = path.join(os.homedir(), ".claude", "projects");
 
+export function projectDirName(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
 export function transcriptPath(sessionId: string, cwd?: string): string | undefined {
   const name = `${sessionId}.jsonl`;
   if (cwd) {
-    const guess = path.join(PROJECTS, cwd.replace(/[^a-zA-Z0-9]/g, "-"), name);
+    const guess = path.join(PROJECTS, projectDirName(cwd), name);
     if (fs.existsSync(guess)) return guess;
   }
   try {
@@ -39,7 +43,7 @@ async function timestamps(file: string): Promise<Map<string, string>> {
 export async function loadHistory(sessionId: string, cwd: string): Promise<DisplayItem[]> {
   const file = transcriptPath(sessionId, cwd);
   const [messages, times] = await Promise.all([
-    getSessionMessages(sessionId, { dir: cwd, includeSystemMessages: true }),
+    getSessionMessages(sessionId, { includeSystemMessages: true }),
     file ? timestamps(file) : Promise.resolve(new Map<string, string>()),
   ]);
   const builder = new ItemBuilder(cwd);
