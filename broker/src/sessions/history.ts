@@ -78,7 +78,7 @@ function commandRow(e: FileRow): Row["command"] {
 
 // The SDK's session reader resolves the conversation chain but drops timestamps, structured tool
 // output and local command results; take them from the file. Only the outputs items are built from
-// (file patches, subagent totals) are kept.
+// (file patches, subagent totals, question answers, edited plans) are kept.
 async function rows(file: string): Promise<{ map: Map<string, Row>; after: Map<string, string> }> {
   const map = new Map<string, Row>();
   const after = new Map<string, string>();
@@ -88,7 +88,7 @@ async function rows(file: string): Promise<{ map: Map<string, Row>; after: Map<s
     try {
       const e = JSON.parse(line) as FileRow;
       const out = e.toolUseResult;
-      const used = out !== null && typeof out === "object" && ("structuredPatch" in out || "totalToolUseCount" in out);
+      const used = out !== null && typeof out === "object" && ["structuredPatch", "totalToolUseCount", "answers", "planWasEdited"].some((k) => k in out);
       const command = commandRow(e);
       if (!e.uuid) continue;
       map.set(e.uuid, { timestamp: e.timestamp, ...(used ? { toolUseResult: out } : {}), ...(command ? { command } : {}) });

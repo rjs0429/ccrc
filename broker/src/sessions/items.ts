@@ -1,4 +1,6 @@
 import type { DisplayItem, Hunk, NoteCode, SubagentActivity, ToolResult } from "../protocol.ts";
+import { workflowMeta } from "../tools.ts";
+import { PLAN_LIMIT, toolReply } from "./replies.ts";
 import { contextDetail, usageReport } from "./reports.ts";
 
 const RESULT_LIMIT = 4000;
@@ -72,6 +74,13 @@ export function clipInput(value: unknown, depth = 0): unknown {
   return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, clipInput(v, depth + 1)]));
 }
 
+// A plan is shown whole, so it gets more room than other input strings.
+function toolInput(name: string, input: unknown): unknown {
+  const i = record(input);
+  if (name !== "ExitPlanMode" || typeof i?.plan !== "string") return clipInput(input);
+  return { ...(clipInput(i) as Record<string, unknown>), plan: clipped(i.plan, PLAN_LIMIT) };
+}
+
 function relative(file: string, cwd: string): string {
   return file.startsWith(cwd + "/") ? file.slice(cwd.length + 1) : file;
 }
@@ -106,6 +115,10 @@ export function summarizeTool(name: string, input: unknown, cwd: string): string
       return firstLine(s("subject"));
     case "TaskUpdate":
       return `#${s("taskId")} ${s("status")}`.trim();
+    case "Workflow":
+      return firstLine(workflowMeta(s("script"), "name") || s("name") || s("scriptPath"));
+    case "SendUserFile":
+      return Array.isArray(i.files) ? firstLine(i.files.filter((f) => typeof f === "string").map((f) => f.split("/").pop()).join(", ")) : "";
     case "AskUserQuestion": {
       const q = Array.isArray(i.questions) ? (i.questions[0] as { question?: unknown } | undefined)?.question : undefined;
       return typeof q === "string" ? firstLine(q) : "";
@@ -329,7 +342,7 @@ export class ItemBuilder {
         const name = String(b.name);
         // What was learned from its result or subagent stays when the call is seen again.
         const prev = this.tool(toolId);
-        out.push(this.put({ ...prev, kind: "tool", id: toolId, ts, name, summary: summarizeTool(name, b.input, this.cwd), input: clipInput(b.input) }));
+        out.push(this.put({ ...prev, kind: "tool", id: toolId, ts, name, summary: summarizeTool(name, b.input, this.cwd), input: toolInput(name, b.input) }));
       }
     });
     return out;
@@ -343,12 +356,15 @@ export class ItemBuilder {
 
   private toolResult(b: Block, output: unknown): DisplayItem {
     const id = String(b.tool_use_id);
-    const text = clipText(resultText(b.content), RESULT_LIMIT);
+    const full = resultText(b.content);
+    const text = clipText(full, RESULT_LIMIT);
     const result: ToolResult = { text: text.text, isError: b.is_error === true, truncated: text.truncated };
     const prev: ToolItem = this.tool(id) ?? { kind: "tool", id, name: "", summary: "", input: null };
-    if (result.isError) return this.put({ ...prev, result });
+    const reply = toolReply(prev.name, prev.input, full, result.isError, output);
+    const known = { ...prev, result, ...(reply ? { reply } : {}) };
+    if (result.isError) return this.put(known);
     const sub = counted(prev.sub, record(output)?.totalToolUseCount);
-    return this.put({ ...prev, result, ...fileChange(output), ...(sub ? { sub } : {}) });
+    return this.put({ ...known, ...fileChange(output), ...(sub ? { sub } : {}) });
   }
 
   // Folds a subagent's messages into the call that started it: how many tools it used, the last few,
