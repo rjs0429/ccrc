@@ -1,13 +1,6 @@
-import { useEffect, useState } from "react";
 import type { ContextDetail } from "../../../../broker/src/protocol.ts";
-import { errorText, modelLabel } from "../../labels.ts";
-import { call, useApp } from "../../state.ts";
-import { Sheet } from "../ui.tsx";
-import { Failed, SmallButton, Waiting } from "./parts.tsx";
-import type { SheetProps } from "./types.ts";
-
-// The broker gives Claude Code up to a minute to count every category.
-const WAIT_MS = 75_000;
+import { modelLabel } from "../../labels.ts";
+import { useApp } from "../../state.ts";
 
 type Category = ContextDetail["categories"][number];
 
@@ -34,7 +27,7 @@ const DOT: Record<string, string> = {
   deferred: "border border-dashed border-muted",
 };
 
-function tokens(n: number): string {
+export function tokens(n: number): string {
   if (n < 1000) return String(n);
   if (n < 1_000_000) return `${+(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
   return `${+(n / 1_000_000).toFixed(1)}M`;
@@ -89,48 +82,20 @@ export function ContextView({ detail, full }: { detail: ContextDetail; full?: bo
         </div>
         {model && <div className="mt-2 text-xs text-muted">모델 {model}</div>}
       </div>
-      {full && (
-        <>
-          <Group title="사용 중" rows={byKind("used")} max={max} />
-          <Group title="남은 공간" hint="Autocompact buffer는 대화를 요약할 때 쓰려고 남겨 둔 자리입니다" rows={[...byKind("buffer"), ...byKind("free")]} max={max} />
-          <Group title="필요할 때만 불러옴" hint="쓸 때만 context에 올라오는 도구라 지금은 자리를 차지하지 않습니다" rows={byKind("deferred")} />
-        </>
-      )}
+      {full && <ContextGroups detail={detail} />}
     </>
   );
 }
 
-export function ContextSheet({ sessionId, onClose }: SheetProps) {
-  const [detail, setDetail] = useState<ContextDetail>();
-  const [error, setError] = useState<string>();
-  const [loading, setLoading] = useState(true);
-  const [round, setRound] = useState(0);
-
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    setError(undefined);
-    call(sessionId, "context", {}, WAIT_MS)
-      .then(
-        (d) => live && setDetail(d),
-        (e: Error) => live && setError(errorText(e.message)),
-      )
-      .finally(() => live && setLoading(false));
-    return () => {
-      live = false;
-    };
-  }, [sessionId, round]);
-
+// The categories of a context count in groups: in use, room left, loaded only when needed.
+export function ContextGroups({ detail }: { detail: ContextDetail }) {
+  const max = detail.maxTokens || 1;
+  const byKind = (kind: string) => detail.categories.filter((c) => c.kind === kind);
   return (
-    <Sheet title="Context 사용량" onClose={onClose}>
-      {detail && <ContextView detail={detail} full />}
-      {loading && <Waiting text="Context 사용량을 계산하는 중입니다. 1분까지 걸릴 수 있습니다" />}
-      {error && !loading && <Failed text={error} onRetry={() => setRound((r) => r + 1)} />}
-      {detail && !loading && (
-        <div className="mt-4 flex justify-end">
-          <SmallButton onClick={() => setRound((r) => r + 1)}>다시 계산</SmallButton>
-        </div>
-      )}
-    </Sheet>
+    <>
+      <Group title="사용 중" rows={byKind("used")} max={max} />
+      <Group title="남은 공간" hint="Autocompact buffer는 대화를 요약할 때 쓰려고 남겨 둔 자리입니다" rows={[...byKind("buffer"), ...byKind("free")]} max={max} />
+      <Group title="필요할 때만 불러옴" hint="쓸 때만 context에 올라오는 도구라 지금은 자리를 차지하지 않습니다" rows={byKind("deferred")} />
+    </>
   );
 }

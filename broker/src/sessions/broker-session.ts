@@ -24,6 +24,7 @@ import {
   type Decision,
   type ElicitAnswer,
 } from "./core.ts";
+import type { ContextWindow } from "./context-gauge.ts";
 import { fileContents, type FileContents } from "./file-read.ts";
 import type { RawMessage } from "./items.ts";
 import { contextDetail, usageAnswer } from "./reports.ts";
@@ -52,6 +53,8 @@ export interface StartOptions {
   mode?: PermissionModeName;
   effort?: EffortName;
   claudePath?: string;
+  // Applied once Claude Code has started, the way a running session changes them.
+  later?: { effort?: EffortName; ultracode?: boolean };
 }
 
 class InputQueue {
@@ -123,11 +126,23 @@ export class BrokerSession extends SessionCore {
     this.done = this.consume(this.q);
     this.q
       .initializationResult()
-      .then((r) => {
+      .then(async (r) => {
         this.adoptStyles(r.output_style, r.available_output_styles);
+        if (opts.later) await this.applyLater(opts.later).catch(() => {});
         this.refreshApplied();
+        this.refreshContext();
       })
       .catch(() => {});
+  }
+
+  // Ultracode goes on only where the model offers it.
+  private async applyLater({ effort, ultracode }: NonNullable<StartOptions["later"]>): Promise<void> {
+    if (ultracode) this.adoptSettings(await this.readApplied());
+    const on = ultracode === true && this.ultracodeAvailable !== false;
+    if (!effort && !on) return;
+    await this.query().applyFlagSettings({ ...(effort ? { effortLevel: effort } : {}), ...(on ? { ultracode: true } : {}) });
+    if (effort) this.effort = effort;
+    this.touch();
   }
 
   send(text: string, blocks: ContentBlock[] = []): void {
@@ -174,8 +189,8 @@ export class BrokerSession extends SessionCore {
     this.refreshApplied();
   }
 
-  async contextDetail(): Promise<ContextDetail> {
-    return this.counted(contextDetail(await timed(this.query().getContextUsage({ detail: "full" }), CONTEXT_MS)));
+  async contextDetail(summary = false): Promise<ContextDetail> {
+    return this.counted(contextDetail(await timed(this.query().getContextUsage({ detail: summary ? "summary" : "full" }), CONTEXT_MS)));
   }
 
   async usage(): Promise<UsageInfo> {
@@ -261,10 +276,7 @@ export class BrokerSession extends SessionCore {
   protected refreshContext(): void {
     this.q
       ?.getContextUsage({ detail: "summary" })
-      .then((u) => {
-        this.contextPercent = Math.round(u.percentage);
-        this.emit("state");
-      })
+      .then((u) => this.counted(contextDetail(u)))
       .catch(() => {});
   }
 
@@ -364,9 +376,9 @@ export class BrokerSession extends SessionCore {
   }
 }
 
-// The account's plan limits from a Claude Code process started for this question alone: it loads no
-// settings or MCP servers, writes no transcript and never starts a turn.
-export async function probeUsage(cwd: string, claudePath?: string): Promise<UsageInfo> {
+// Asks a Claude Code process started for this question alone: it loads no settings or MCP servers, writes no
+// transcript and never starts a turn.
+async function probe<T>(cwd: string, claudePath: string | undefined, model: string | undefined, ask: (q: Query) => Promise<T>): Promise<T> {
   let release = () => {};
   const held = new Promise<void>((r) => (release = r));
   async function* nothing(): AsyncGenerator<SDKUserMessage> {
@@ -374,7 +386,7 @@ export async function probeUsage(cwd: string, claudePath?: string): Promise<Usag
   }
   const q = query({
     prompt: nothing(),
-    options: { cwd, pathToClaudeCodeExecutable: claudePath, persistSession: false, settingSources: [], strictMcpConfig: true, stderr: () => {} },
+    options: { cwd, pathToClaudeCodeExecutable: claudePath, model, persistSession: false, settingSources: [], strictMcpConfig: true, stderr: () => {} },
   });
   void (async () => {
     try {
@@ -382,10 +394,26 @@ export async function probeUsage(cwd: string, claudePath?: string): Promise<Usag
     } catch {}
   })();
   try {
-    const r = await timed((q as unknown as Requester).request({ subtype: "get_usage", skip_behaviors: true }), PROBE_MS);
-    return { limits: usageAnswer(r.response).limits };
+    return await timed(ask(q), PROBE_MS);
   } finally {
     release();
     q.close();
   }
+}
+
+// The account's plan limits.
+export async function probeUsage(cwd: string, claudePath?: string): Promise<UsageInfo> {
+  const r = await probe(cwd, claudePath, undefined, (q) => (q as unknown as Requester).request({ subtype: "get_usage", skip_behaviors: true }));
+  return { limits: usageAnswer(r.response).limits };
+}
+
+// The context window of a model and where auto-compact starts, from the default settings.
+export async function probeWindow(cwd: string, model: string, claudePath?: string): Promise<ContextWindow | undefined> {
+  const d = contextDetail(await probe(cwd, claudePath, model, (q) => q.getContextUsage({ detail: "summary" })));
+  return d.maxTokens > 0 ? { max: d.maxTokens, ...(d.autoCompactAt ? { autoCompactAt: d.autoCompactAt } : {}) } : undefined;
+}
+
+// The models Claude Code offers.
+export function probeModels(cwd: string, claudePath?: string): Promise<ModelInfo[]> {
+  return probe(cwd, claudePath, undefined, (q) => q.supportedModels());
 }

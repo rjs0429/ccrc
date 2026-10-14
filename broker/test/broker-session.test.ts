@@ -39,7 +39,7 @@ test("owned sessions run the session controls through the SDK query", async () =
     model: "m",
     categories: [{ name: "Messages", tokens: 10, kind: "used" }],
   });
-  assert.equal(s.contextPercent, 10);
+  assert.deepEqual(s.context, { percent: 10, tokens: 10, max: 100 });
   assert.deepEqual(await s.mcpToggle("github", true), [{ name: "github", status: "disabled", scope: "user" }]);
   await s.mcpReconnect("github");
   assert.deepEqual(await s.rewind(MSG, true), { canRewind: true, filesChanged: ["/tmp/project/a.txt"], insertions: 3, deletions: 0 });

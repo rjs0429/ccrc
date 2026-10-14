@@ -21,14 +21,16 @@ const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
 // Claude Code's context count by category, as the web client shows it: the get_context_usage answer
-// (camelCase) or the data beside a /context result (snake_case).
+// (camelCase) or the data beside a /context result (snake_case), which has no auto-compact point.
 export function contextDetail(r: unknown): ContextDetail {
   const o = isObj(r) ? r : {};
   const model = clipped(o.model, NAME_MAX);
+  const autoCompactAt = o.isAutoCompactEnabled === false ? undefined : num(o.autoCompactThreshold);
   return {
     percentage: count(o.percentage),
     totalTokens: count(o.totalTokens ?? o.total_tokens),
     maxTokens: count(o.maxTokens ?? o.raw_max_tokens),
+    ...(autoCompactAt !== undefined && autoCompactAt > 0 ? { autoCompactAt } : {}),
     ...(model ? { model } : {}),
     categories: (Array.isArray(o.categories) ? o.categories.filter(isObj) : []).map((c) => ({
       name: clipped(c.name, NAME_MAX) ?? "",

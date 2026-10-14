@@ -23,6 +23,7 @@ const EVENT_LABEL: Record<string, string> = {
   set_model: "모델 바꿈",
   set_effort: "Effort 바꿈",
   set_ultracode: "Ultracode 바꿈",
+  start_settings: "시작 설정 적용",
   release: "원격 실행 끝냄",
   attach: "VS Code 세션 연결",
   handoff: "VS Code로 넘김",
@@ -79,16 +80,23 @@ function named(v: unknown, ...maps: Record<string, string>[]): string {
   return v;
 }
 
+// A change to a session without a process waits for the session to start here.
+function changed(value: string, e: AuditEntry): string {
+  return e.start ? `${value} · 시작할 때` : value;
+}
+
 function detail(e: AuditEntry): string {
   switch (e.event) {
     case "set_mode":
-      return named(e.mode, MODE_LABEL);
+      return changed(named(e.mode, MODE_LABEL), e);
     case "set_model":
-      return named(e.model);
+      return changed(named(e.model), e);
     case "set_effort":
-      return named(e.effort, EFFORT_LABEL);
+      return changed(named(e.effort, EFFORT_LABEL), e);
     case "set_ultracode":
-      return e.on ? "켬" : "끔";
+      return changed(e.on ? "켬" : "끔", e);
+    case "start_settings":
+      return [named(e.model), named(e.mode, MODE_LABEL), named(e.effort, EFFORT_LABEL), e.ultracode ? "Ultracode" : ""].filter(Boolean).join(" · ");
     case "answer":
       return e.kind === "elicitation"
         ? ["입력 요청", named(e.action, WORD), named(e.server)].filter(Boolean).join(" · ")

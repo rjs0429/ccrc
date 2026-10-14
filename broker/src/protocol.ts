@@ -86,12 +86,31 @@ export interface CommandInfo {
   argumentHint?: string;
 }
 
+// autoCompactAt: the token count at which Claude Code compacts on its own, absent while auto-compact is off.
 export interface ContextDetail {
   percentage: number;
   totalTokens: number;
   maxTokens: number;
+  autoCompactAt?: number;
   model?: string;
   categories: { name: string; tokens: number; kind: string }[];
+}
+
+// How full the session's context window is. last: read from the transcript of a session without a process.
+export interface ContextGauge {
+  percent: number;
+  tokens: number;
+  max: number;
+  autoCompactAt?: number;
+  last?: boolean;
+}
+
+// What a session without a process starts with when the broker next starts it.
+export interface StartSettings {
+  model?: string;
+  mode?: PermissionModeName;
+  effort?: EffortName;
+  ultracode?: boolean;
 }
 
 // One of the plan's usage limits. kind: "session", "weekly_all", "weekly_scoped", ...; scope names the model
@@ -134,7 +153,8 @@ export interface OutputStyleInfo {
 
 // Requests the web client makes about one session and their answers ("call" / "call_result").
 export interface CallMap {
-  context: { args: Record<string, never>; data: ContextDetail };
+  // summary: from the last response's usage, without counting each category.
+  context: { args: { summary?: boolean }; data: ContextDetail };
   usage: { args: Record<string, never>; data: UsageInfo };
   mcp_status: { args: Record<string, never>; data: McpServerInfo[] };
   mcp_toggle: { args: { server: string; enabled: boolean }; data: McpServerInfo[] };
@@ -259,7 +279,8 @@ export interface LiveState {
   outputStyle?: string;
   // The VS Code wrapper is too old to report the applied model, effort and ultracode state.
   appliedUnknown?: boolean;
-  contextPercent?: number;
+  context?: ContextGauge;
+  start?: StartSettings;
   costUsd?: number;
   closedReason?: string;
   tasks?: TaskInfo[];

@@ -6,6 +6,7 @@ import { usePrefs } from "../prefs.ts";
 import { toast, useApp } from "../state.ts";
 import { isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import { bareCommandSheet } from "./commandSheets.ts";
+import { ContextRing } from "./ContextRing.tsx";
 import { AttachmentChips } from "./composer/AttachmentChips.tsx";
 import { DOCUMENT_ACCEPT, IMAGE_ACCEPT, MAX_MESSAGE_BYTES, addFiles, clearAttachments, useAttachments } from "./composer/attachments.ts";
 import { Suggestions, type SuggestRow } from "./composer/Suggestions.tsx";
@@ -17,6 +18,7 @@ const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const MAX_INPUT_PX = 168;
 const MAX_COMMAND_ROWS = 50;
 const DRAFT_KEY = "ccrc.draft.";
+const START_HINT = "여기서 이 세션을 시작할 때 적용합니다. VS Code에서 열면 적용되지 않습니다.";
 
 // Each composerInsert request is applied once, by the composer that is mounted when it arrives.
 let appliedInsert = 0;
@@ -59,11 +61,16 @@ function AttachOption({ icon, label, onFiles, ...input }: { icon: React.ReactNod
   );
 }
 
-function Chip({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
+function StartHint() {
+  return <div className="mb-2 px-3 text-xs text-muted">{START_HINT}</div>;
+}
+
+function Chip({ name, children, onClick, disabled }: { name: string; children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      data-chip={name}
       className="flex shrink-0 items-center gap-0.5 rounded-lg px-2 py-1 text-[13px] text-muted hover:bg-surface-2 disabled:opacity-50"
     >
       {children}
@@ -77,6 +84,8 @@ interface Props {
   state?: LiveState;
   models: ModelOption[];
   controllable: boolean;
+  // A session without a process: the chips choose what it starts with here (state.start).
+  deferred?: boolean;
   disabledReason?: string;
   placeholder: string;
   // attachments: upload ids, in the order they were added. Returns whether the message went out.
@@ -90,9 +99,28 @@ interface Props {
   onCommand?: (name: string) => boolean;
   // Opens the model or effort sheet when `at` changes.
   openSheet?: { name: "model" | "effort"; at: number };
+  // The context ring next to the model chip; absent where there is no session.
+  onContext?: () => void;
 }
 
-export function Composer({ sessionId, state, models, controllable, disabledReason, placeholder, onSend, onStop, onMode, onModel, onEffort, onUltracode, onCommand, openSheet }: Props) {
+export function Composer({
+  sessionId,
+  state,
+  models,
+  controllable,
+  deferred = false,
+  disabledReason,
+  placeholder,
+  onSend,
+  onStop,
+  onMode,
+  onModel,
+  onEffort,
+  onUltracode,
+  onCommand,
+  openSheet,
+  onContext,
+}: Props) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
@@ -104,9 +132,16 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
   const insert = useApp((s) => s.insert);
   const attachments = useAttachments(sessionId);
   const busy = Boolean(state?.busy);
-  const current = findModel(models, state?.model);
+  const choosable = controllable || deferred;
+  const start = deferred ? state?.start : undefined;
+  const model = deferred ? start?.model : state?.model;
+  const mode = deferred ? start?.mode : state?.permissionMode;
+  const effort = deferred ? start?.effort : state?.effort;
+  const ultracode = deferred ? start?.ultracode === true : state?.ultracode === true;
+  const current = findModel(models, model);
   const efforts = current?.efforts?.length ? current.efforts : EFFORTS;
-  const hasEffort = !current || Boolean(current.efforts?.length) || Boolean(state?.effort);
+  const hasEffort = !current || Boolean(current.efforts?.length) || Boolean(effort);
+  const chosen = Boolean(start && (start.model || start.mode || start.effort || start.ultracode));
   const uploading = attachments.some((a) => !a.uploaded);
   const canSend = !uploading && (text.trim() !== "" || attachments.length > 0);
 
@@ -162,7 +197,7 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
   };
 
   useEffect(() => {
-    if (!openSheet || !controllable) return;
+    if (!openSheet || !choosable) return;
     ref.current?.blur();
     setSheet(openSheet.name);
   }, [openSheet?.at]);
@@ -243,6 +278,11 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
           onKeyDown={onKeyDown}
           className="block max-h-42 w-full resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-muted"
         />
+        {chosen && (
+          <div className="mt-1 text-[11px] text-muted" data-start-hint>
+            고른 값은 여기서 시작할 때 적용됩니다
+          </div>
+        )}
         <div className="mt-1 flex items-center gap-1">
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
             {sessionId && (
@@ -258,22 +298,22 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
                 <Icon.paperclip className="size-[18px]" />
               </button>
             )}
-            <Chip disabled={!controllable} onClick={() => setSheet("model")}>
-              {modelLabel(models, state?.model)}
+            <Chip name="model" disabled={!choosable} onClick={() => setSheet("model")}>
+              {modelLabel(models, model)}
               <Icon.chevronDown className="size-3.5" />
             </Chip>
-            <Chip disabled={!controllable} onClick={() => setSheet("mode")}>
-              {MODE_LABEL[state?.permissionMode ?? ""] ?? "권한 모드"}
+            {onContext && <ContextRing gauge={state?.context} onClick={onContext} />}
+            <Chip name="mode" disabled={!choosable} onClick={() => setSheet("mode")}>
+              {MODE_LABEL[mode ?? ""] ?? "권한 모드"}
               <Icon.chevronDown className="size-3.5" />
             </Chip>
             {hasEffort && (
-              <Chip disabled={!controllable} onClick={() => setSheet("effort")}>
-                {state?.effort || controllable ? `Effort ${effortLabel(state?.effort)}` : "Effort"}
-                {state?.ultracode && <span className="ml-1 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">Ultracode</span>}
+              <Chip name="effort" disabled={!choosable} onClick={() => setSheet("effort")}>
+                {effort || controllable ? `Effort ${effortLabel(effort)}` : "Effort"}
+                {ultracode && <span className="ml-1 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">Ultracode</span>}
                 <Icon.chevronDown className="size-3.5" />
               </Chip>
             )}
-            {state?.contextPercent !== undefined && <span className="shrink-0 px-1 text-[12px] text-muted">context {state.contextPercent}%</span>}
           </div>
           {busy && (
             <button onClick={onStop} aria-label="중지" className="flex size-9 items-center justify-center rounded-full bg-surface-2 text-fg">
@@ -312,13 +352,15 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
       )}
       {sheet === "mode" && (
         <Sheet title="권한 모드" onClose={() => setSheet(null)}>
+          {deferred && <StartHint />}
           {MODES.map((m) => (
-            <Choice key={m} label={MODE_LABEL[m]} hint={MODE_HINT[m]} selected={state?.permissionMode === m} onClick={() => (onMode(m), setSheet(null))} />
+            <Choice key={m} label={MODE_LABEL[m]} hint={MODE_HINT[m]} selected={mode === m} onClick={() => (onMode(m), setSheet(null))} />
           ))}
         </Sheet>
       )}
       {sheet === "model" && (
         <Sheet title="모델" onClose={() => setSheet(null)}>
+          {deferred && <StartHint />}
           {models.length === 0 && <div className="px-3 py-2 text-sm text-muted">모델 목록을 불러오는 중입니다</div>}
           {models.map((m) => (
             <Choice key={m.value} label={m.label} hint={m.description} selected={m === current} onClick={() => (onModel(m.value), setSheet(null))} />
@@ -327,24 +369,27 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
       )}
       {sheet === "effort" && (
         <Sheet title="Effort" onClose={() => setSheet(null)}>
+          {deferred && <StartHint />}
           {efforts.map((e) => (
-            <Choice key={e} label={effortLabel(e)} selected={state?.effort === e} onClick={() => (onEffort(e), setSheet(null))} />
+            <Choice key={e} label={effortLabel(e)} selected={effort === e} onClick={() => (onEffort(e), setSheet(null))} />
           ))}
-          {state?.ultracodeAvailable && (
+          {(deferred || state?.ultracodeAvailable) && (
             <button
               role="switch"
-              aria-checked={state.ultracode === true}
-              onClick={() => onUltracode(!state.ultracode)}
+              aria-checked={ultracode}
+              onClick={() => onUltracode(!ultracode)}
               className="mt-2 flex w-full items-center justify-between gap-3 rounded-xl border-t border-line px-3 py-2.5 text-left hover:bg-surface-2"
             >
               <span>
                 <span className="block text-[15px]">Ultracode</span>
-                <span className="block text-xs text-muted">모든 작업에 동적 워크플로를 씁니다 (이번 세션만)</span>
+                <span className="block text-xs text-muted">
+                  {deferred ? "모델이 지원하면 시작할 때 켭니다 (이번 세션만)" : "모든 작업에 동적 워크플로를 씁니다 (이번 세션만)"}
+                </span>
               </span>
-              <Switch on={state.ultracode === true} />
+              <Switch on={ultracode} />
             </button>
           )}
-          {state?.appliedUnknown && (
+          {!deferred && state?.appliedUnknown && (
             <div className="mt-2 border-t border-line px-3 pt-2.5 text-xs text-muted">VS Code가 Claude Code를 다시 시작하면 Ultracode와 지금 값이 보입니다.</div>
           )}
         </Sheet>

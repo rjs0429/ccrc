@@ -14,6 +14,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 class FakeManager extends EventEmitter {
   sessions: SessionSummary[] = [];
+  local = false;
+  lastTurnLocal(): boolean {
+    return this.local;
+  }
   async list(): Promise<SessionSummary[]> {
     return this.sessions;
   }
@@ -156,6 +160,22 @@ test("a turn end is not notified when the remote user did not send lately, turne
     assert.equal(s.sent.length, 0);
     s.notifier.close();
   }
+});
+
+test("the end of a local command sent from the phone (/compact, /model x) is not notified; the next model turn is", async () => {
+  const { manager, hub, sent, notifier } = setup();
+  hub.sentAt = Date.now();
+  manager.state({ busy: true });
+  manager.local = true;
+  manager.state({ busy: false });
+  await sleep(50);
+  assert.equal(sent.length, 0);
+  manager.state({ busy: true });
+  manager.local = false;
+  manager.state({ busy: false });
+  await sleep(50);
+  assert.equal(sent.length, 1);
+  notifier.close();
 });
 
 test("closing stops what is waiting", async () => {
