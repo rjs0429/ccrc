@@ -19,14 +19,33 @@ const AFTER_START: Record<string, string> = {
   outputStyle: "출력 스타일은 세션이 시작된 뒤 고를 수 있습니다.",
 };
 
-// The folder and start settings chosen here last a visit to the settings page; the message and attachments
-// are kept by the composer.
-let kept: { cwd: string | null; start: StartSettings } = { cwd: null, start: {} };
+// The folder and start settings chosen here last a visit to the settings page and a reload, like the message the
+// composer keeps.
+const KEPT_KEY = "ccrc.newSession";
+type Kept = { cwd: string | null; start: StartSettings };
+
+function loadKept(): Kept {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(KEPT_KEY) ?? "null") as Partial<Kept> | null;
+    if (v && typeof v === "object") return { cwd: typeof v.cwd === "string" ? v.cwd : null, start: v.start && typeof v.start === "object" ? v.start : {} };
+  } catch {}
+  return { cwd: null, start: {} };
+}
+
+function saveKept(k: Kept | null): void {
+  try {
+    if (k && (k.cwd || Object.keys(k.start).length)) sessionStorage.setItem(KEPT_KEY, JSON.stringify(k));
+    else sessionStorage.removeItem(KEPT_KEY);
+  } catch {}
+}
+
+let kept = loadKept();
 
 onDraftStarted((sessionId, text) => {
   rememberSent(sessionId, text, takeAttachments(NEW_SESSION_SCOPE));
   saveDraft(NEW_SESSION_SCOPE, "");
   kept = { cwd: null, start: {} };
+  saveKept(null);
 });
 
 function modelNamed(models: ModelOption[], name: string): ModelOption | undefined {
@@ -55,10 +74,16 @@ export function NewSession() {
     const q = query.trim().toLowerCase();
     return all.filter((f) => !q || f.toLowerCase().includes(q));
   }, [all, query]);
-  const cwd = chosen ?? all[0] ?? null;
+  // The most recent folder is the default once the sessions are known, and stays it while the screen is open.
+  const [fallback, setFallback] = useState<string | null>(null);
+  useEffect(() => {
+    if (!fallback && sessions && all[0]) setFallback(all[0]);
+  }, [fallback, sessions, all]);
+  const cwd = chosen ?? fallback ?? all[0] ?? null;
 
   useEffect(() => {
     kept = { cwd: chosen, start };
+    saveKept(kept);
   }, [chosen, start]);
 
   const change = (p: StartSettings) => setStart((s) => ({ ...s, ...p }));
@@ -190,7 +215,7 @@ export function NewSession() {
       </main>
 
       <Composer
-        draft={cwd ? { cwd, start } : undefined}
+        draft={{ cwd: cwd ?? undefined, start }}
         models={models}
         controllable={false}
         starting={starting}

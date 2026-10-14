@@ -77,7 +77,7 @@ interface Props {
   sessionId?: string;
   // The new-session screen: the folder the session starts in and what it starts with, chosen through the chips.
   // The message stays here until the session has started.
-  draft?: { cwd: string; start: StartSettings };
+  draft?: { cwd?: string; start: StartSettings };
   state?: LiveState;
   models: ModelOption[];
   controllable: boolean;
@@ -191,9 +191,9 @@ export function Composer({
   // An "@" path typed for one folder may not be there in another.
   const shownCwd = useRef(draftCwd);
   useEffect(() => {
-    if (shownCwd.current === draftCwd) return;
+    const was = shownCwd.current;
     shownCwd.current = draftCwd;
-    if (/(^|\s)@\S/.test(text)) toast("입력한 @ 파일은 새 폴더 기준으로 다시 확인하세요");
+    if (was && was !== draftCwd && /(^|\s)@\S/.test(text)) toast("입력한 @ 파일은 새 폴더 기준으로 다시 확인하세요");
   }, [draftCwd]);
 
   useEffect(() => setActive(0), [mention?.query, command, rows.length]);
