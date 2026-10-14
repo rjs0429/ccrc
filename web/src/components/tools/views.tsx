@@ -19,7 +19,7 @@ function WebLink({ url }: { url: string }) {
 }
 
 function Title({ children }: { children: ReactNode }) {
-  return <div className="text-[15px] font-medium break-words">{children}</div>;
+  return <div className="text-[15px] font-medium">{children}</div>;
 }
 
 function Chips({ items }: { items: (string | false | undefined)[] }) {
@@ -182,7 +182,7 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
       return (
         <Fields>
           {title && <Title>{title}</Title>}
-          {description && <div className="text-sm break-words text-muted">{description}</div>}
+          {description && <div className="text-sm text-muted">{description}</div>}
           {str(i.scriptPath) && (
             <Field label="스크립트 파일">
               <FileLink path={str(i.scriptPath)} />
@@ -209,7 +209,7 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
           {files.map((f, n) => (
             <FileCard key={n} path={f} />
           ))}
-          {str(i.caption) && <div className="text-[14px] break-words whitespace-pre-wrap">{str(i.caption)}</div>}
+          {str(i.caption) && <div className="text-[14px] whitespace-pre-wrap">{str(i.caption)}</div>}
           <Rest input={i} skip={["files", "file_path", "path", "caption", "status"]} />
         </Fields>
       );
@@ -219,7 +219,7 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
       return (
         <Fields>
           <Title>{i.stop === true ? "반복 멈춤" : delay !== undefined ? `${duration(delay * 1000)} 뒤 다시 실행` : "다시 실행"}</Title>
-          {str(i.reason) && <div className="text-sm break-words text-muted">{str(i.reason)}</div>}
+          {str(i.reason) && <div className="text-sm text-muted">{str(i.reason)}</div>}
           {str(i.prompt) && (
             <Field label="실행할 입력">
               <Code text={str(i.prompt)} />
@@ -286,7 +286,7 @@ function PlanOutcome({ reply }: { reply: ToolReply }) {
     return (
       <div className="rounded-lg bg-surface-2 px-2.5 py-1.5 text-sm" data-status>
         <div className="text-muted">계속 계획하기</div>
-        {reply.feedback && <div className="mt-0.5 break-words whitespace-pre-wrap">고칠 점: {reply.feedback}</div>}
+        {reply.feedback && <div className="mt-0.5 whitespace-pre-wrap">고칠 점: {reply.feedback}</div>}
       </div>
     );
   }
@@ -318,7 +318,7 @@ export function PlanView({ i, reply }: { i: Input; reply?: ToolReply }) {
         <Field label="허용을 청한 명령">
           <ul className="space-y-0.5">
             {prompts.map((p, n) => (
-              <li key={n} className="font-mono text-[12.5px] break-words">
+              <li key={n} className="font-mono text-[12.5px]">
                 {p}
               </li>
             ))}

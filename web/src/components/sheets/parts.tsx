@@ -13,7 +13,7 @@ export function Waiting({ text }: { text: string }) {
 export function Failed({ text, onRetry }: { text: string; onRetry?: () => void }) {
   return (
     <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
-      <div className="break-words text-danger">{text}</div>
+      <div className="text-danger">{text}</div>
       {onRetry && (
         <button onClick={onRetry} className="mt-1.5 font-medium text-accent">
           다시 시도

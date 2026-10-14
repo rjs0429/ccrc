@@ -105,7 +105,7 @@ export function HealthSection() {
               <li key={c.name} className="flex items-start gap-2">
                 {c.ok ? <Icon.check className="mt-0.5 size-4 shrink-0 text-ok" /> : <Icon.x className="mt-0.5 size-4 shrink-0 text-danger" />}
                 <span className="shrink-0">{CHECK_LABEL[c.name] ?? c.name}</span>
-                {c.detail && <span className="min-w-0 flex-1 text-right break-words text-muted">{detailText(c)}</span>}
+                {c.detail && <span className="min-w-0 flex-1 text-right text-muted">{detailText(c)}</span>}
               </li>
             ))}
           </ul>

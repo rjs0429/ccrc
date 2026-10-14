@@ -28,7 +28,7 @@ export function TodoPanel({ items }: { items: DisplayItem[] }) {
             {todos.map((t, n) => (
               <li key={n} className={`flex gap-1.5 ${t.status === "completed" ? "text-muted" : t.status === "in_progress" ? "font-medium" : ""}`}>
                 <span className={`w-3 shrink-0 text-center ${t.status === "in_progress" ? "text-accent" : ""}`}>{MARK[t.status]}</span>
-                <span className={`min-w-0 break-words ${t.status === "completed" ? "line-through" : ""}`}>{t.text}</span>
+                <span className={`min-w-0 ${t.status === "completed" ? "line-through" : ""}`}>{t.text}</span>
               </li>
             ))}
           </ul>
