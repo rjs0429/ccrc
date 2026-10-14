@@ -68,10 +68,16 @@ test("dialog command results and the lines that ran them stay out of the convers
     { kind: "user", id: "u3", text: "/status", images: 1 },
     result("c4", "cost"),
     { kind: "command", id: "c5", text: "no name" },
+    note("n5", "/model opus"),
+    { kind: "command", id: "c6", text: "Set model to Opus" },
+    note("n6", "/context"),
+    { kind: "command", id: "c7", text: "## Context Usage" },
+    note("n7", "/compact"),
+    { kind: "command", id: "c8", text: "Compacted" },
   ];
   assert.deepEqual(
     hideDialogCommands(items).map((i) => i.id),
-    ["u1", "n2", "c2", "n4", "a1", "u3", "c5"],
+    ["u1", "n2", "c2", "n4", "a1", "u3", "c5", "n7", "c8"],
   );
 });
 

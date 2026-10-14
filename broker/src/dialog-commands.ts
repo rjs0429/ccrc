@@ -63,19 +63,28 @@ export function parseCommand(text: string): { name: string; args: string } | und
   return m ? { name: m[1], args: (m[2] ?? "").trim() } : undefined;
 }
 
-const dialogResult = (item: DisplayItem | undefined): string | undefined =>
-  item?.kind === "command" && isDialogCommand(item.name) ? commandName(item.name!) : undefined;
+const lineOf = (item: DisplayItem | undefined): string | undefined =>
+  item?.kind === "note" && item.code === "command" ? item.text : item?.kind === "user" && !item.images && !item.files ? item.text : undefined;
+
+// The dialog command a result belongs to. Older transcripts keep no name with a result; the "/name" line
+// just before it names it then.
+function dialogResult(items: DisplayItem[], i: number): string | undefined {
+  const item = items[i];
+  if (item?.kind !== "command") return undefined;
+  const name = item.name ?? parseCommand(lineOf(items[i - 1]) ?? "")?.name;
+  return isDialogCommand(name) ? commandName(name!) : undefined;
+}
 
 // The items without dialog commands: their results, the bare "/name" lines that ran them, and a "/name args"
 // line next to its hidden result.
 export function hideDialogCommands(items: DisplayItem[]): DisplayItem[] {
   return items.filter((item, i) => {
-    if (item.kind === "command") return !isDialogCommand(item.name);
-    const line = item.kind === "note" && item.code === "command" ? item.text : item.kind === "user" && !item.images && !item.files ? item.text : undefined;
+    if (item.kind === "command") return !dialogResult(items, i);
+    const line = lineOf(item);
     const c = line === undefined ? undefined : parseCommand(line);
     if (!c || !isDialogCommand(c.name)) return true;
     if (!c.args) return false;
     const name = commandName(c.name);
-    return dialogResult(items[i - 1]) !== name && dialogResult(items[i + 1]) !== name;
+    return dialogResult(items, i - 1) !== name && dialogResult(items, i + 1) !== name;
   });
 }
