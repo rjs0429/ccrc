@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { EffortName, LiveState, ModelOption, PermissionModeName } from "../../../broker/src/protocol.ts";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { EffortName, LiveState, ModelOption, PermissionModeName, StartSettings } from "../../../broker/src/protocol.ts";
 import { MODE_HINT, MODE_LABEL, baseName, effortLabel, effortLevels, findModel, modelLabel } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
 import { usePrefs } from "../prefs.ts";
@@ -9,10 +9,10 @@ import { isDialogCommand, parseCommand } from "../../../broker/src/dialog-comman
 import { bareCommandSheet } from "./commandSheets.ts";
 import { ContextRing } from "./ContextRing.tsx";
 import { AttachmentChips } from "./composer/AttachmentChips.tsx";
-import { ATTACH_ACCEPT, MAX_MESSAGE_BYTES, addFiles, takeAttachments, useAttachments } from "./composer/attachments.ts";
+import { ATTACH_ACCEPT, MAX_MESSAGE_BYTES, NEW_SESSION_SCOPE, addFiles, takeAttachments, useAttachments } from "./composer/attachments.ts";
 import { afterKeyboard } from "./composer/picker.ts";
 import { Suggestions, type SuggestRow } from "./composer/Suggestions.tsx";
-import { commandQuery, mentionAt, mentionText, rankCommands, useCommands, useFileSuggestions } from "./composer/suggest.ts";
+import { commandQuery, mentionAt, mentionText, rankCommands, useCommands, useFileSuggestions, type SuggestTarget } from "./composer/suggest.ts";
 import { Choice, Icon, Sheet } from "./ui.tsx";
 
 const MODES: PermissionModeName[] = ["default", "acceptEdits", "plan", "auto"];
@@ -20,29 +20,32 @@ const MAX_INPUT_PX = 168;
 const MAX_COMMAND_ROWS = 50;
 const DRAFT_KEY = "ccrc.draft.";
 const START_HINT = "여기서 이 세션을 시작할 때 적용합니다. VS Code에서 열면 적용되지 않습니다.";
+const DRAFT_HINT = "새 세션을 시작할 때 적용합니다.";
+// Commands that mean nothing before a session exists.
+const DRAFT_HIDDEN = new Set(["clear", "compact", "rename", "recap", "heapdump"]);
 
 // Each composerInsert request is applied once, by the composer that is mounted when it arrives.
 let appliedInsert = 0;
 
-function loadDraft(sessionId?: string): string {
-  if (!sessionId) return "";
+function loadDraft(scope?: string): string {
+  if (!scope) return "";
   try {
-    return sessionStorage.getItem(DRAFT_KEY + sessionId) ?? "";
+    return sessionStorage.getItem(DRAFT_KEY + scope) ?? "";
   } catch {
     return "";
   }
 }
 
-function saveDraft(sessionId: string | undefined, text: string): void {
-  if (!sessionId) return;
+export function saveDraft(scope: string | undefined, text: string): void {
+  if (!scope) return;
   try {
-    if (text) sessionStorage.setItem(DRAFT_KEY + sessionId, text);
-    else sessionStorage.removeItem(DRAFT_KEY + sessionId);
+    if (text) sessionStorage.setItem(DRAFT_KEY + scope, text);
+    else sessionStorage.removeItem(DRAFT_KEY + scope);
   } catch {}
 }
 
-function StartHint() {
-  return <div className="mb-2 px-3 text-xs text-muted">{START_HINT}</div>;
+function StartHint({ draft }: { draft: boolean }) {
+  return <div className="mb-2 px-3 text-xs text-muted">{draft ? DRAFT_HINT : START_HINT}</div>;
 }
 
 function Chip({
@@ -71,8 +74,10 @@ function Chip({
 }
 
 interface Props {
-  // Absent on the new-session screen, which has no attachments, "@" files or "/" commands.
   sessionId?: string;
+  // The new-session screen: the folder the session starts in and what it starts with, chosen through the chips.
+  // The message stays here until the session has started.
+  draft?: { cwd: string; start: StartSettings };
   state?: LiveState;
   models: ModelOption[];
   controllable: boolean;
@@ -89,8 +94,11 @@ interface Props {
   onModel: (model: string) => void;
   onEffort: (effort: EffortName) => void;
   onUltracode: (on: boolean) => void;
-  // A bare "/" command, picked from the list or sent, that opens a screen here instead; true when it did.
-  onCommand?: (name: string) => boolean;
+  // Back to what Claude Code starts with when nothing is chosen; offered in a draft's sheets.
+  onReset?: (key: "model" | "mode" | "effort") => void;
+  // A bare "/" command, picked from the list or sent, that opens a screen here instead; true when it did. A draft
+  // also passes a command with its arguments; "kept" leaves the message as it is, unsent.
+  onCommand?: (name: string, args?: string) => boolean | "kept";
   // Opens the model or effort sheet when `at` changes.
   openSheet?: { name: "model" | "effort"; at: number };
   // The context ring next to the model chip; absent where there is no session.
@@ -99,6 +107,7 @@ interface Props {
 
 export function Composer({
   sessionId,
+  draft,
   state,
   models,
   controllable,
@@ -112,11 +121,13 @@ export function Composer({
   onModel,
   onEffort,
   onUltracode,
+  onReset,
   onCommand,
   openSheet,
   onContext,
 }: Props) {
-  const [text, setText] = useState(() => loadDraft(sessionId));
+  const scope = sessionId ?? (draft ? NEW_SESSION_SCOPE : undefined);
+  const [text, setText] = useState(() => loadDraft(scope));
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
@@ -127,24 +138,33 @@ export function Composer({
   const nextCaret = useRef<number | null>(null);
   const { enterToSend } = usePrefs();
   const insert = useApp((s) => s.insert);
-  const attachments = useAttachments(sessionId);
+  const attachments = useAttachments(scope);
   const busy = Boolean(state?.busy);
-  const choosable = (controllable || deferred) && !starting;
-  const start = deferred ? state?.start : undefined;
-  const model = deferred ? start?.model : state?.model;
-  const mode = deferred ? start?.mode : state?.permissionMode;
-  const effort = deferred ? start?.effort : state?.effort;
-  const ultracode = deferred ? start?.ultracode === true : state?.ultracode === true;
+  const choosing = deferred || Boolean(draft);
+  const choosable = (controllable || choosing) && !starting;
+  const start = draft ? draft.start : deferred ? state?.start : undefined;
+  const model = choosing ? start?.model : state?.model;
+  const mode = choosing ? start?.mode : state?.permissionMode;
+  const effort = choosing ? start?.effort : state?.effort;
+  const ultracode = choosing ? start?.ultracode === true : state?.ultracode === true;
   const current = findModel(models, model);
-  const efforts = effortLevels(models, model, effort);
-  const chosen = Boolean(start && (start.model || start.mode || start.effort || start.ultracode));
+  // A draft without a model starts with the default one.
+  const starts = model ?? (draft ? "default" : undefined);
+  const efforts = effortLevels(models, starts, effort);
+  const chosen = !draft && Boolean(start && (start.model || start.mode || start.effort || start.ultracode));
+  // Whether the model offered Ultracode in an earlier session.
+  const offered = findModel(models, starts)?.ultracode;
+  const ultracodeShown = draft ? offered === true || ultracode : deferred ? offered !== false || ultracode : state?.ultracodeAvailable === true;
   const uploading = attachments.some((a) => !a.uploaded);
-  const canSend = !uploading && (text.trim() !== "" || attachments.length > 0);
+  const canSend = !uploading && !(draft && starting) && (text.trim() !== "" || attachments.length > 0);
 
-  const mention = sessionId && !dismissed ? mentionAt(text, caret) : undefined;
-  const command = sessionId && !dismissed && !mention ? commandQuery(text) : undefined;
-  const files = useFileSuggestions(sessionId, mention?.query);
-  const commands = useCommands(sessionId, command !== undefined);
+  const draftCwd = draft?.cwd;
+  const target = useMemo<SuggestTarget | undefined>(() => (sessionId ? { sessionId } : draftCwd ? { cwd: draftCwd } : undefined), [sessionId, draftCwd]);
+  const mention = target && !dismissed ? mentionAt(text, caret) : undefined;
+  const command = target && !dismissed && !mention ? commandQuery(text) : undefined;
+  const files = useFileSuggestions(target, mention?.query);
+  const listed = useCommands(target, command !== undefined);
+  const commands = draft ? listed?.filter((c) => !DRAFT_HIDDEN.has(c.name)) : listed;
   const rows: SuggestRow[] =
     mention && files
       ? files.map((f) => ({ key: f, label: baseName(f), hint: f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : undefined }))
@@ -166,7 +186,15 @@ export function Composer({
     }
   }, [text]);
 
-  useEffect(() => saveDraft(sessionId, text), [sessionId, text]);
+  useEffect(() => saveDraft(scope, text), [scope, text]);
+
+  // An "@" path typed for one folder may not be there in another.
+  const shownCwd = useRef(draftCwd);
+  useEffect(() => {
+    if (shownCwd.current === draftCwd) return;
+    shownCwd.current = draftCwd;
+    if (/(^|\s)@\S/.test(text)) toast("입력한 @ 파일은 새 폴더 기준으로 다시 확인하세요");
+  }, [draftCwd]);
 
   useEffect(() => setActive(0), [mention?.query, command, rows.length]);
 
@@ -219,7 +247,7 @@ export function Composer({
     if (mention) {
       const added = `${mentionText(row.key)} `;
       edit(text.slice(0, mention.start) + added + text.slice(mention.end), mention.start + added.length);
-    } else if (onCommand?.(row.key)) {
+    } else if (onCommand?.(row.key) === true) {
       opened();
     } else {
       edit(`/${row.key} `, row.key.length + 2);
@@ -228,11 +256,15 @@ export function Composer({
 
   const submit = () => {
     if (!canSend || disabledReason) return;
+    const c = attachments.length ? undefined : parseCommand(text);
     const bare = attachments.length ? undefined : bareCommandSheet(text);
-    if (bare && onCommand?.(bare)) return opened();
+    const taken = draft && c ? onCommand?.(c.name, c.args || undefined) : bare ? onCommand?.(bare) : false;
+    if (taken === "kept") return;
+    if (taken) return opened();
     const total = attachments.reduce((n, a) => n + (a.uploaded?.size ?? 0), 0);
     if (total > MAX_MESSAGE_BYTES) return toast("attachments too large");
     if (!onSend(text.trim(), attachments.map((a) => a.uploaded!.id))) return toast("not connected");
+    if (draft) return ref.current?.blur();
     if (!attachments.length && isDialogCommand(parseCommand(text)?.name)) ref.current?.blur();
     setText("");
     setDismissed(false);
@@ -274,7 +306,7 @@ export function Composer({
       <div className="relative mx-auto max-w-3xl">
         {shown && <Suggestions rows={rows} active={active} onPick={pick} />}
         <div className="rounded-2xl border border-line bg-surface px-3 pt-2.5 pb-1.5 focus-within:border-accent short:pt-1.5 short:pb-1">
-          {sessionId && <AttachmentChips sessionId={sessionId} items={attachments} />}
+          {scope && <AttachmentChips scope={scope} items={attachments} />}
           <textarea
             ref={ref}
             value={text}
@@ -297,7 +329,7 @@ export function Composer({
           )}
           <div className="mt-1 flex flex-wrap items-center gap-x-1 gap-y-0.5 short:mt-0.5 sm:flex-nowrap" data-chip-rows>
             <div className="flex min-w-0 basis-full items-center sm:flex-1 sm:basis-auto" data-chip-group="left">
-              {sessionId && (
+              {scope && (
                 <span className="relative shrink-0">
                   <button
                     aria-label="파일 첨부"
@@ -316,7 +348,7 @@ export function Composer({
                     onChange={(e) => {
                       const picked = [...(e.target.files ?? [])];
                       e.target.value = "";
-                      if (picked.length) addFiles(sessionId, picked);
+                      if (picked.length) addFiles(scope, picked);
                     }}
                     className="pointer-events-none absolute inset-0 size-full opacity-0"
                   />
@@ -348,7 +380,7 @@ export function Composer({
               <button
                 onClick={submit}
                 disabled={!canSend}
-                aria-label="보내기"
+                aria-label={draft ? "시작" : "보내기"}
                 className="flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30"
               >
                 <Icon.send className="size-5" />
@@ -360,7 +392,8 @@ export function Composer({
 
       {sheet === "mode" && (
         <Sheet title="권한 모드" onClose={() => setSheet(null)}>
-          {deferred && <StartHint />}
+          {choosing && <StartHint draft={Boolean(draft)} />}
+          {onReset && <Choice label="기본값" hint="Claude Code 설정을 따릅니다" selected={!mode} onClick={() => (onReset("mode"), setSheet(null))} />}
           {MODES.map((m) => (
             <Choice key={m} label={MODE_LABEL[m]} hint={MODE_HINT[m]} selected={mode === m} onClick={() => (onMode(m), setSheet(null))} />
           ))}
@@ -368,8 +401,9 @@ export function Composer({
       )}
       {sheet === "model" && (
         <Sheet title="모델" onClose={() => setSheet(null)}>
-          {deferred && <StartHint />}
+          {choosing && <StartHint draft={Boolean(draft)} />}
           {models.length === 0 && <div className="px-3 py-2 text-sm text-muted">모델 목록을 불러오는 중입니다</div>}
+          {onReset && <Choice label="기본값" hint="Claude Code 설정을 따릅니다" selected={!model} onClick={() => (onReset("model"), setSheet(null))} />}
           {models.map((m) => (
             <Choice key={m.value} label={m.label} hint={m.description} selected={m === current} onClick={() => (onModel(m.value), setSheet(null))} />
           ))}
@@ -377,12 +411,13 @@ export function Composer({
       )}
       {sheet === "effort" && (
         <Sheet title="Effort" onClose={() => setSheet(null)}>
-          {deferred && <StartHint />}
+          {choosing && <StartHint draft={Boolean(draft)} />}
           {!efforts && <div className="px-3 py-2 text-sm text-muted">이 모델은 Effort를 고를 수 없습니다</div>}
+          {onReset && efforts && <Choice label="Auto" hint="모델 기본값" selected={!effort} onClick={() => (onReset("effort"), setSheet(null))} />}
           {(efforts ?? []).map((e) => (
             <Choice key={e} label={effortLabel(e)} selected={effort === e} onClick={() => (onEffort(e), setSheet(null))} />
           ))}
-          {(deferred || state?.ultracodeAvailable) && (
+          {ultracodeShown && (
             <button
               role="switch"
               aria-checked={ultracode}
@@ -392,11 +427,16 @@ export function Composer({
               <span>
                 <span className="block text-[15px]">Ultracode</span>
                 <span className="block text-xs text-muted">
-                  {deferred ? "모델이 지원하면 시작할 때 켭니다 (이번 세션만)" : "모든 작업에 동적 워크플로를 씁니다 (이번 세션만)"}
+                  {deferred && offered === undefined ? "모델이 지원하면 시작할 때 켭니다 (이번 세션만)" : "모든 작업에 동적 워크플로를 씁니다 (이번 세션만)"}
                 </span>
               </span>
               <Switch on={ultracode} />
             </button>
+          )}
+          {choosing && !ultracodeShown && (
+            <div className="mt-2 border-t border-line px-3 pt-2.5 text-xs text-muted" data-ultracode-note>
+              {offered === false ? "이 모델에서는 Ultracode를 쓸 수 없습니다." : "이 모델이 Ultracode를 지원하는지는 세션을 시작한 뒤에 알 수 있습니다."}
+            </div>
           )}
           {!deferred && state?.appliedUnknown && (
             <div className="mt-2 border-t border-line px-3 pt-2.5 text-xs text-muted">VS Code가 Claude Code를 다시 시작하면 Ultracode와 지금 값이 보입니다.</div>

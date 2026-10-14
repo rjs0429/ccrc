@@ -1,8 +1,24 @@
 import { useEffect, useState } from "react";
 import type { CommandInfo } from "../../../../broker/src/protocol.ts";
-import { call } from "../../state.ts";
+import { call, callFolder } from "../../state.ts";
 
 const FILES_DEBOUNCE_MS = 150;
+
+// Where "@" files and "/" commands come from: a session, or on the new-session screen the folder it starts in.
+export type SuggestTarget = { sessionId: string } | { cwd: string };
+
+function targetKey(target: SuggestTarget | undefined): string | undefined {
+  if (!target) return undefined;
+  return "sessionId" in target ? `s:${target.sessionId}` : `d:${target.cwd}`;
+}
+
+function files(target: SuggestTarget, query: string): Promise<string[]> {
+  return "sessionId" in target ? call(target.sessionId, "files", { query }) : callFolder(target.cwd, "files", { query });
+}
+
+function commands(target: SuggestTarget): Promise<CommandInfo[]> {
+  return "sessionId" in target ? call(target.sessionId, "commands") : callFolder(target.cwd, "commands");
+}
 
 // The "@" mention the caret is in: its range and what follows "@" up to the caret. Claude Code reads
 // a mention at the start of the text or after a space or 。、？！.
@@ -61,40 +77,42 @@ function containsInOrder(path: string, query: string): boolean {
   return true;
 }
 
-// Files of the session's folder matching the query. While the answer for a longer query is on its way,
-// the files of the previous answer that still match stay; no other file is ever offered.
-export function useFileSuggestions(sessionId: string | undefined, query: string | undefined): string[] | undefined {
-  const [found, setFound] = useState<{ query: string; files: string[] }>();
+// Files of the folder matching the query. While the answer for a longer query is on its way, the files of the
+// previous answer that still match stay; no other file is ever offered.
+export function useFileSuggestions(target: SuggestTarget | undefined, query: string | undefined): string[] | undefined {
+  const key = targetKey(target);
+  const [found, setFound] = useState<{ key: string; query: string; files: string[] }>();
   useEffect(() => {
-    if (!sessionId || query === undefined) return;
+    if (!target || !key || query === undefined) return;
     let live = true;
     const timer = setTimeout(() => {
-      call(sessionId, "files", { query }).then(
-        (files) => live && setFound({ query, files }),
-        () => live && setFound({ query, files: [] }),
+      files(target, query).then(
+        (list) => live && setFound({ key, query, files: list }),
+        () => live && setFound({ key, query, files: [] }),
       );
     }, FILES_DEBOUNCE_MS);
     return () => {
       live = false;
       clearTimeout(timer);
     };
-  }, [sessionId, query]);
-  if (query === undefined || !found) return undefined;
+  }, [key, query]);
+  if (query === undefined || !found || found.key !== key) return undefined;
   if (found.query === query) return found.files;
   return query.startsWith(found.query) ? found.files.filter((f) => containsInOrder(f, query)) : undefined;
 }
 
 const commandLists = new Map<string, CommandInfo[]>();
 
-// The session's "/" commands, asked once per session while the app is open.
-export function useCommands(sessionId: string | undefined, wanted: boolean): CommandInfo[] | undefined {
+// The "/" commands, asked once per session or folder while the app is open.
+export function useCommands(target: SuggestTarget | undefined, wanted: boolean): CommandInfo[] | undefined {
+  const key = targetKey(target);
   const [, setLoaded] = useState(0);
   useEffect(() => {
-    if (!sessionId || !wanted || commandLists.has(sessionId)) return;
+    if (!target || !key || !wanted || commandLists.has(key)) return;
     let live = true;
-    call(sessionId, "commands").then(
+    commands(target).then(
       (list) => {
-        if (list.length) commandLists.set(sessionId, list);
+        if (list.length) commandLists.set(key, list);
         if (live) setLoaded((n) => n + 1);
       },
       () => {},
@@ -102,6 +120,6 @@ export function useCommands(sessionId: string | undefined, wanted: boolean): Com
     return () => {
       live = false;
     };
-  }, [sessionId, wanted]);
-  return sessionId ? commandLists.get(sessionId) : undefined;
+  }, [key, wanted]);
+  return key ? commandLists.get(key) : undefined;
 }

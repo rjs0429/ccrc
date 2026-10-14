@@ -113,6 +113,8 @@ export function noteText(code: NoteCode, text?: string, attachments?: number): s
       return "중단됨";
     case "compacted":
       return "이전 대화를 요약했습니다";
+    case "ultracode":
+      return "Ultracode를 켜지 못했습니다. 이 모델이나 지금 설정에서는 쓸 수 없습니다";
     case "error":
       return `오류: ${errorText(text ?? "")}`;
     default:
@@ -127,6 +129,7 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^session is open in (.+)$/, (m) => `${hostLabel(m[1])}에서 열려 있어 원격으로 실행할 수 없습니다`],
   [/^folder is not allowed for new sessions$/, "이 폴더에서는 새 세션을 시작할 수 없습니다"],
   [/^folder does not exist$/, "폴더가 없습니다"],
+  [/^not a folder$/, "폴더가 아닙니다"],
   [/^working folder is missing: (.+)$/, (m) => `작업 폴더가 없어 세션을 시작할 수 없습니다: ${shortPath(m[1])}`],
   [/^Claude Code (?:native binary|executable) at [\s\S]+ exists but failed to launch/, "Claude Code를 실행하지 못했습니다. 작업 폴더가 그대로 있는지, 실행 파일이 이 컴퓨터에 맞는지 확인하세요"],
   [/^Claude Code (?:native binary|executable) not found at ([\s\S]+?)\.(?:\s|$)/, (m) => `Claude Code 실행 파일을 찾을 수 없습니다: ${m[1]}`],

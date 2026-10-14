@@ -30,6 +30,8 @@ const EVENT_LABEL: Record<string, string> = {
   upload: "파일 첨부",
   file_read: "파일 열람",
   call: "세션 작업",
+  folder_index: "폴더 파일 목록 만듦",
+  folder_denied: "폴더 요청 거부됨",
   claude_settings: "Claude Code 설정 바꿈",
   push_subscribe: "알림 켬",
   push_unsubscribe: "알림 끔",
@@ -108,6 +110,12 @@ function detail(e: AuditEntry): string {
     case "file_read":
       return [typeof e.path === "string" ? baseName(e.path) : "", e.ticket && e.outcome === "ok" ? "임시 링크" : "", named(e.outcome, READ_OUTCOME)].filter(Boolean).join(" · ");
     case "new_session":
+      return [typeof e.cwd === "string" ? baseName(e.cwd) : "", e.ultracode ? "Ultracode" : "", typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : ""]
+        .filter(Boolean)
+        .join(" · ");
+    case "folder_index":
+      return [typeof e.cwd === "string" ? baseName(e.cwd) : "", typeof e.files === "number" ? `파일 ${e.files}개` : ""].filter(Boolean).join(" · ");
+    case "folder_denied":
       return typeof e.cwd === "string" ? baseName(e.cwd) : "";
     case "login_failed":
     case "lease_revoked":

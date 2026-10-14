@@ -1,39 +1,143 @@
-import { useMemo, useState } from "react";
-import type { EffortName, PermissionModeName } from "../../../broker/src/protocol.ts";
-import { Button, Choice, Icon, Row, Sheet } from "../components/ui.tsx";
-import { EFFORT_LABEL, MODE_HINT, MODE_LABEL, baseName, shortPath } from "../labels.ts";
-import { navigate, send, toast, useApp } from "../state.ts";
+import { useEffect, useMemo, useState } from "react";
+import { commandName } from "../../../broker/src/dialog-commands.ts";
+import type { EffortName, ModelOption, StartSettings } from "../../../broker/src/protocol.ts";
+import { Composer, saveDraft } from "../components/Composer.tsx";
+import { commandSheet } from "../components/commandSheets.ts";
+import { NEW_SESSION_SCOPE, takeAttachments } from "../components/composer/attachments.ts";
+import { UsageSheet } from "../components/sheets/Usage.tsx";
+import { Icon, Sheet, Spinner } from "../components/ui.tsx";
+import { baseName, shortPath } from "../labels.ts";
+import { rememberSent } from "../sentPreviews.ts";
+import { navigate, onDraftStarted, openSettingsFrom, startNewSession, toast, useApp } from "../state.ts";
 
-const MODES: PermissionModeName[] = ["default", "acceptEdits", "plan", "auto"];
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
+const NO_MODELS: ModelOption[] = [];
+// Commands whose screen needs a running session, and what to say about them before it starts.
+const AFTER_START: Record<string, string> = {
+  context: "Context는 세션이 시작되면 보입니다.",
+  mcp: "MCP 서버는 세션이 시작된 뒤 보고 켜고 끌 수 있습니다.",
+  outputStyle: "출력 스타일은 세션이 시작된 뒤 고를 수 있습니다.",
+};
+
+// The folder and start settings chosen here last a visit to the settings page; the message and attachments
+// are kept by the composer.
+let kept: { cwd: string | null; start: StartSettings } = { cwd: null, start: {} };
+
+onDraftStarted((sessionId, text) => {
+  rememberSent(sessionId, text, takeAttachments(NEW_SESSION_SCOPE));
+  saveDraft(NEW_SESSION_SCOPE, "");
+  kept = { cwd: null, start: {} };
+});
+
+function modelNamed(models: ModelOption[], name: string): ModelOption | undefined {
+  const n = name.toLowerCase();
+  return models.find((m) => [m.value, m.resolved, m.label].some((v) => v?.toLowerCase() === n));
+}
 
 export function NewSession() {
   const options = useApp((s) => s.options);
   const sessions = useApp((s) => s.sessions);
-  const [cwd, setCwd] = useState<string | null>(null);
+  const starting = useApp((s) => Boolean(s.starting));
+  const models = options?.models ?? NO_MODELS;
+  const [chosen, setChosen] = useState<string | null>(kept.cwd);
   const [query, setQuery] = useState("");
-  const [model, setModel] = useState<string | undefined>();
-  const [mode, setMode] = useState<PermissionModeName | undefined>();
-  const [effort, setEffort] = useState<EffortName | undefined>();
-  const [text, setText] = useState("");
-  const [sheet, setSheet] = useState<"model" | "mode" | "effort" | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [start, setStart] = useState<StartSettings>(kept.start);
+  const [composerSheet, setComposerSheet] = useState<{ name: "model" | "effort"; at: number }>();
+  const [usage, setUsage] = useState(false);
+  const [later, setLater] = useState<{ title: string; text: string } | null>(null);
 
-  const folders = useMemo(() => {
+  const all = useMemo(() => {
     const last = new Map<string, number>();
     for (const s of sessions ?? []) last.set(s.cwd, Math.max(last.get(s.cwd) ?? 0, s.lastModified));
-    const all = [...new Set([...(options?.folders ?? []), ...last.keys()])].filter(Boolean);
+    return [...new Set([...(options?.folders ?? []), ...last.keys()])].filter(Boolean).sort((a, b) => (last.get(b) ?? 0) - (last.get(a) ?? 0));
+  }, [options, sessions]);
+  const folders = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return all.filter((f) => !q || f.toLowerCase().includes(q)).sort((a, b) => (last.get(b) ?? 0) - (last.get(a) ?? 0));
-  }, [options, sessions, query]);
+    return all.filter((f) => !q || f.toLowerCase().includes(q));
+  }, [all, query]);
+  const cwd = chosen ?? all[0] ?? null;
 
-  const models = options?.models ?? [];
-  const start = () => {
-    if (!cwd || !text.trim()) return;
-    if (!send({ t: "new_session", cwd, text: text.trim(), model, mode, effort })) return toast("연결되어 있지 않습니다. 다시 연결된 뒤 시작하세요");
-    setStarting(true);
-    setTimeout(() => setStarting(false), 15000);
+  useEffect(() => {
+    kept = { cwd: chosen, start };
+  }, [chosen, start]);
+
+  const change = (p: StartSettings) => setStart((s) => ({ ...s, ...p }));
+  const reset = (key: keyof StartSettings) =>
+    setStart((s) => {
+      const next = { ...s };
+      delete next[key];
+      return next;
+    });
+
+  // "/model x" and "/effort x" become start settings; another command with a screen of its own opens it or says it
+  // waits for the session. Any other command goes as the first message.
+  const openCommand = (name: string, args?: string): boolean | "kept" => {
+    const n = commandName(name);
+    const target = commandSheet(name);
+    if (args) {
+      const v = args.trim();
+      if (n === "model") {
+        const m = v.toLowerCase() === "default" ? undefined : modelNamed(models, v);
+        if (!m && v.toLowerCase() !== "default") {
+          toast("목록에 없는 모델입니다");
+          return "kept";
+        }
+        if (m) change({ model: m.value });
+        else reset("model");
+      } else if (n === "effort") {
+        const e = v.toLowerCase();
+        if (e === "ultracode") change({ ultracode: true });
+        else if (e === "auto") reset("effort");
+        else if (EFFORTS.includes(e as EffortName)) change({ effort: e as EffortName });
+        else {
+          toast("알 수 없는 Effort입니다");
+          return "kept";
+        }
+      } else if (target) {
+        toast("이 명령은 세션이 시작된 뒤 보내세요");
+        return "kept";
+      } else return false;
+      toast("시작 설정을 바꿨습니다");
+      return true;
+    }
+    if (!target) return false;
+    switch (target.sheet) {
+      case "model":
+      case "effort":
+        setComposerSheet({ name: target.sheet, at: Date.now() });
+        return true;
+      case "usage":
+        setUsage(true);
+        return true;
+      case "config":
+        openSettingsFrom("claude");
+        return true;
+      case "permissions":
+        openSettingsFrom("claude", "permissions");
+        return true;
+      case "context":
+      case "mcp":
+      case "outputStyle":
+        setLater({ title: target.title, text: AFTER_START[target.sheet] });
+        return true;
+      default:
+        toast("세션이 시작된 뒤 쓸 수 있습니다");
+        return "kept";
+    }
   };
+
+  const send = (text: string, attachments: string[]) =>
+    Boolean(cwd) &&
+    startNewSession({
+      t: "new_session",
+      cwd: cwd!,
+      text,
+      model: start.model,
+      mode: start.mode,
+      effort: start.effort,
+      ...(start.ultracode ? { ultracode: true } : {}),
+      ...(attachments.length ? { attachments } : {}),
+    });
 
   return (
     <div className="flex h-dvh flex-col">
@@ -42,82 +146,73 @@ export function NewSession() {
           <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="-m-1 rounded-lg p-3">
             <Icon.back />
           </button>
-          <div className="flex-1 text-[15px] font-semibold">새 세션</div>
+          <div className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
+            <div className="text-[15px] font-semibold">새 세션</div>
+            <div className="truncate text-xs text-muted" data-new-folder>
+              {cwd ? `${baseName(cwd)} · ${shortPath(cwd)}` : "폴더를 고르세요"}
+            </div>
+          </div>
         </div>
       </header>
 
-      <main className="pb-safe flex-1 overflow-y-auto px-safe-0">
-        <div className="mx-auto max-w-2xl space-y-5 px-4 py-4">
-          <section>
-            <div className="mb-2 text-sm font-semibold text-muted">폴더</div>
-            <div className="mb-2 flex items-center gap-2 rounded-xl border border-line bg-surface px-3">
-              <Icon.search className="size-4 text-muted" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="폴더 찾기" className="w-full bg-transparent py-2.5 text-[16px] outline-none" />
+      <main className="flex-1 overflow-y-auto overscroll-contain px-safe-0">
+        <div className="mx-auto max-w-2xl px-4 py-4 short:py-2">
+          <div className="mb-2 text-sm font-semibold text-muted">폴더</div>
+          <div className="mb-2 flex items-center gap-2 rounded-xl border border-line bg-surface px-3">
+            <Icon.search className="size-4 text-muted" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="폴더 찾기" className="w-full bg-transparent py-2.5 text-[16px] outline-none" />
+          </div>
+          <div className="rounded-xl border border-line bg-surface">
+            {folders.map((f) => (
+              <button
+                key={f}
+                onClick={() => setChosen(f)}
+                disabled={starting}
+                data-folder={f}
+                className={`flex w-full items-center gap-3 border-b border-line px-3 py-2.5 text-left last:border-0 ${cwd === f ? "bg-accent-soft" : ""}`}
+              >
+                <Icon.folder className="size-4 shrink-0 text-muted" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[15px]">{baseName(f)}</span>
+                  <span className="block truncate text-xs text-muted">{shortPath(f)}</span>
+                </span>
+                {cwd === f && <Icon.check className="size-4 text-accent" />}
+              </button>
+            ))}
+            {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">폴더가 없습니다</div>}
+          </div>
+          {starting && (
+            <div className="mt-4 flex items-center justify-center gap-2 text-sm text-muted" data-starting>
+              <Spinner className="size-3.5" /> 시작하는 중…
             </div>
-            <div className="max-h-64 overflow-y-auto rounded-xl border border-line bg-surface">
-              {folders.map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setCwd(f)}
-                  className={`flex w-full items-center gap-3 border-b border-line px-3 py-2.5 text-left last:border-0 ${cwd === f ? "bg-accent-soft" : ""}`}
-                >
-                  <Icon.folder className="size-4 shrink-0 text-muted" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[15px]">{baseName(f)}</span>
-                    <span className="block truncate text-xs text-muted">{shortPath(f)}</span>
-                  </span>
-                  {cwd === f && <Icon.check className="size-4 text-accent" />}
-                </button>
-              ))}
-              {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">폴더가 없습니다</div>}
-            </div>
-          </section>
-
-          <section>
-            <Row label="모델" value={models.find((m) => m.value === model)?.label ?? "기본값"} onClick={() => setSheet("model")} />
-            <Row label="권한 모드" value={mode ? MODE_LABEL[mode] : "기본값"} onClick={() => setSheet("mode")} />
-            <Row label="Effort" value={effort ? EFFORT_LABEL[effort] : "Auto (모델 기본값)"} onClick={() => setSheet("effort")} />
-          </section>
-
-          <section>
-            <div className="mb-2 text-sm font-semibold text-muted">첫 메시지</div>
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              rows={4}
-              placeholder="무엇을 할까요?"
-              className="w-full rounded-xl border border-line bg-surface p-3 text-[16px] leading-relaxed outline-none focus:border-accent"
-            />
-          </section>
-
-          <Button kind="primary" className="w-full" disabled={!cwd || !text.trim() || starting} onClick={start}>
-            {starting ? "시작하는 중…" : "시작"}
-          </Button>
+          )}
         </div>
       </main>
 
-      {sheet === "model" && (
-        <Sheet title="모델" onClose={() => setSheet(null)}>
-          <Choice label="기본값" hint="Claude Code 설정을 따릅니다" selected={!model} onClick={() => (setModel(undefined), setSheet(null))} />
-          {models.map((m) => (
-            <Choice key={m.value} label={m.label} hint={m.description} selected={model === m.value} onClick={() => (setModel(m.value), setSheet(null))} />
-          ))}
-        </Sheet>
-      )}
-      {sheet === "mode" && (
-        <Sheet title="권한 모드" onClose={() => setSheet(null)}>
-          <Choice label="기본값" hint="Claude Code 설정을 따릅니다" selected={!mode} onClick={() => (setMode(undefined), setSheet(null))} />
-          {MODES.map((m) => (
-            <Choice key={m} label={MODE_LABEL[m]} hint={MODE_HINT[m]} selected={mode === m} onClick={() => (setMode(m), setSheet(null))} />
-          ))}
-        </Sheet>
-      )}
-      {sheet === "effort" && (
-        <Sheet title="Effort" onClose={() => setSheet(null)}>
-          <Choice label="Auto" hint="모델 기본값" selected={!effort} onClick={() => (setEffort(undefined), setSheet(null))} />
-          {EFFORTS.map((e) => (
-            <Choice key={e} label={EFFORT_LABEL[e]} selected={effort === e} onClick={() => (setEffort(e), setSheet(null))} />
-          ))}
+      <Composer
+        draft={cwd ? { cwd, start } : undefined}
+        models={models}
+        controllable={false}
+        starting={starting}
+        disabledReason={cwd ? undefined : "폴더를 고르세요"}
+        placeholder="무엇을 할까요?"
+        onSend={send}
+        onStop={() => {}}
+        onMode={(mode) => change({ mode })}
+        onModel={(model) => change({ model })}
+        onEffort={(effort) => change({ effort })}
+        onUltracode={(on) => (on ? change({ ultracode: true }) : reset("ultracode"))}
+        onReset={reset}
+        onCommand={openCommand}
+        openSheet={composerSheet}
+      />
+
+      {usage && cwd && <UsageSheet cwd={cwd} onClose={() => setUsage(false)} />}
+      {later && (
+        <Sheet title={later.title} onClose={() => setLater(null)}>
+          <p className="px-1 text-sm text-muted" data-after-start>
+            {later.text}
+          </p>
         </Sheet>
       )}
     </div>

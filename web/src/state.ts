@@ -3,6 +3,7 @@ import type {
   CallMap,
   CallOp,
   ClientMsg,
+  FolderOp,
   DisplayItem,
   LiveState,
   PendingRequest,
@@ -47,6 +48,8 @@ export interface AppState {
   toast?: { text: string; at: number };
   // Text another part of the app asks the composer to add (for example a comment on a changed line).
   insert?: { text: string; at: number };
+  // A new session asked for from here and not yet started or refused.
+  starting?: string;
 }
 
 type Listener = () => void;
@@ -213,6 +216,15 @@ const calls = new Map<number, { resolve: (data: unknown) => void; reject: (e: Er
 
 // Asks the broker something about a session; rejects with the broker's error message.
 export function call<K extends CallOp>(sessionId: string, op: K, args?: CallMap[K]["args"], ms = CALL_TIMEOUT_MS): Promise<CallMap[K]["data"]> {
+  return ask((id) => ({ t: "call", id, sessionId, op, args: args ?? {} }), ms) as Promise<CallMap[K]["data"]>;
+}
+
+// Asks about a folder no session runs in yet, for the new-session screen.
+export function callFolder<K extends FolderOp>(cwd: string, op: K, args?: CallMap[K]["args"], ms = CALL_TIMEOUT_MS): Promise<CallMap[K]["data"]> {
+  return ask((id) => ({ t: "call", id, cwd, op, args: args ?? {} }), ms) as Promise<CallMap[K]["data"]>;
+}
+
+function ask(msg: (id: number) => ClientMsg, ms: number): Promise<unknown> {
   if (socket?.readyState !== WebSocket.OPEN || state.conn !== "ready") return Promise.reject(Error("not connected"));
   const id = ++callSeq;
   return new Promise((resolve, reject) => {
@@ -220,9 +232,36 @@ export function call<K extends CallOp>(sessionId: string, op: K, args?: CallMap[
       calls.delete(id);
       reject(Error("no answer"));
     }, ms);
-    calls.set(id, { resolve: resolve as (data: unknown) => void, reject, timer });
-    socket!.send(JSON.stringify({ t: "call", id, sessionId, op, args: args ?? {} } satisfies ClientMsg));
+    calls.set(id, { resolve, reject, timer });
+    socket!.send(JSON.stringify(msg(id)));
   });
+}
+
+const START_WAIT_MS = 60_000;
+// The new session being started from here, by the draftId the broker answers with, and its first message.
+let startingSent: { id: string; text: string; timer: number } | undefined;
+let draftStarted: ((sessionId: string, text: string) => void) | undefined;
+
+// Called when the new session asked for from here has started, before the chat opens.
+export function onDraftStarted(fn: (sessionId: string, text: string) => void): void {
+  draftStarted = fn;
+}
+
+function startDone(): void {
+  if (startingSent) clearTimeout(startingSent.timer);
+  startingSent = undefined;
+  setState({ starting: undefined });
+}
+
+// Starts a new session; false when it could not be asked for. session_started or an error with the same
+// draftId ends the wait.
+export function startNewSession(msg: Omit<Extract<ClientMsg, { t: "new_session" }>, "draftId">): boolean {
+  if (state.starting) return false;
+  const id = `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  if (!send({ ...msg, draftId: id })) return false;
+  startingSent = { id, text: msg.text, timer: window.setTimeout(startDone, START_WAIT_MS) };
+  setState({ starting: id });
+  return true;
 }
 
 function settleCalls(): void {
@@ -251,6 +290,7 @@ export function connect(): void {
   ws.onclose = (e) => {
     if (ws !== socket) return;
     settleCalls();
+    if (startingSent) startDone();
     if (e.code === 4001) return loggedOut(state.loggedOutReason ?? "expired");
     if (e.code === 4000) return setState({ conn: "taken" });
     setState({ conn: "offline" });
@@ -319,6 +359,10 @@ function onServer(msg: ServerMsg): void {
       if (!state.options?.models.length) void refreshOptions();
       return;
     case "session_started":
+      if (msg.draftId && msg.draftId === startingSent?.id) {
+        draftStarted?.(msg.sessionId, startingSent.text);
+        startDone();
+      }
       setState({ chat: { sessionId: msg.sessionId, loaded: false, items: [], pending: [], hasMore: false } });
       navigate({ name: "chat", sessionId: msg.sessionId });
       return;
@@ -326,6 +370,7 @@ function onServer(msg: ServerMsg): void {
       void refreshSessions();
       return;
     case "error":
+      if (msg.draftId && msg.draftId === startingSent?.id) startDone();
       toast(msg.message);
       return;
     case "call_result": {

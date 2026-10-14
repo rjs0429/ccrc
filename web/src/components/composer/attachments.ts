@@ -35,6 +35,9 @@ const TEXT_EXT = (
 // One list for images and documents, so iOS offers its library, camera and files in a single menu.
 export const ATTACH_ACCEPT = ["image/*", "application/pdf", ".pdf", "text/*", ...TEXT_EXT.map((e) => `.${e}`)].join(",");
 
+// Attachments are kept per session, and for the new-session screen under this name whatever folder it starts in.
+export const NEW_SESSION_SCOPE = "new";
+
 const lists = new Map<string, Attachment[]>();
 const aborts = new Map<number, AbortController>();
 const listeners = new Set<() => void>();
