@@ -19,7 +19,13 @@ export type AuditEvent =
   | "set_effort"
   | "release"
   | "attach"
-  | "handoff";
+  | "handoff"
+  | "upload"
+  | "call"
+  | "claude_settings"
+  | "push_subscribe"
+  | "push_unsubscribe"
+  | "doctor";
 
 // Records who did what; message text and tool input are not recorded.
 export class Audit {

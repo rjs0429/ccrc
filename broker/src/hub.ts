@@ -1,13 +1,17 @@
 import type { WebSocket } from "ws";
 import type { Audit } from "./audit.ts";
 import type { Leases } from "./lease.ts";
-import { PERMISSION_MODES, type Answer, type ClientMsg, type EffortName, type ServerMsg } from "./protocol.ts";
+import { CALL_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg } from "./protocol.ts";
 import type { SessionManager } from "./sessions/manager.ts";
+import type { Uploads } from "./uploads.ts";
 
 const MAX_TEXT = 100_000;
 const PING_MS = 30_000;
 const CHANGED_DEBOUNCE_MS = 300;
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
+const MAX_ATTACHMENTS = 10;
+// Calls that change something are recorded in the audit log.
+const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task"]);
 
 function send(ws: WebSocket, msg: ServerMsg): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -32,6 +36,9 @@ export class Hub {
   private manager: SessionManager;
   private leases: Leases;
   private audit: Audit;
+  private uploads: Uploads;
+  private visible = true;
+  private remoteSends = new Map<string, number>();
   private active?: WebSocket;
   private device = "";
   private standby = new Map<WebSocket, string>();
@@ -45,10 +52,11 @@ export class Hub {
   private pinger: NodeJS.Timeout;
   private alive = new WeakSet<WebSocket>();
 
-  constructor(manager: SessionManager, leases: Leases, audit: Audit) {
+  constructor(manager: SessionManager, leases: Leases, audit: Audit, uploads: Uploads) {
     this.manager = manager;
     this.leases = leases;
     this.audit = audit;
+    this.uploads = uploads;
     manager.on("event", (sessionId: string, msg: ServerMsg) => {
       if (this.active && sessionId === this.viewing) send(this.active, msg);
     });
@@ -82,6 +90,16 @@ export class Hub {
     }
   }
 
+  // Whether the remote user has this session in front of them right now.
+  isWatching(sessionId: string): boolean {
+    return Boolean(this.active) && this.visible && this.viewing === sessionId;
+  }
+
+  // When the remote user last sent a message to the session.
+  remoteSent(sessionId: string): number | undefined {
+    return this.remoteSends.get(sessionId);
+  }
+
   close(): void {
     clearInterval(this.pinger);
     for (const ws of [this.active, ...this.standby.keys()]) ws?.close(1001, "shutdown");
@@ -90,6 +108,7 @@ export class Hub {
   private activate(ws: WebSocket, device: string): void {
     this.active = ws;
     this.device = device;
+    this.visible = true;
     send(ws, { t: "ready" });
   }
 
@@ -164,12 +183,22 @@ export class Hub {
       case "view":
         await this.setView(msg.sessionId === null ? null : sid(msg.sessionId));
         return;
+      case "visibility":
+        this.visible = msg.visible === true;
+        return;
+      case "call":
+        await this.call(msg);
+        return;
       case "send": {
         const id = sid(msg.sessionId);
         const text = str(msg.text, MAX_TEXT);
+        const ids = msg.attachments === undefined ? [] : msg.attachments;
+        if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENTS) throw Error("invalid request");
+        const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
         const wasControlled = m.isControlled(id);
-        this.audit.log("send", { device, sessionId: id, chars: text.length });
-        await m.send(id, text);
+        this.audit.log("send", { device, sessionId: id, chars: text.length, ...(ids.length ? { attachments: ids.length } : {}) });
+        this.remoteSends.set(id, Date.now());
+        await m.send(id, text, blocks);
         if (!wasControlled && this.viewing === id) await this.setView(id);
         this.changed();
         return;
@@ -219,6 +248,26 @@ export class Hub {
         return;
       default:
         throw Error("unknown request");
+    }
+  }
+
+  // A call answers with call_result whether it succeeds or not.
+  private async call(msg: Extract<ClientMsg, { t: "call" }>): Promise<void> {
+    const id = msg.id;
+    if (typeof id !== "number") throw Error("invalid request");
+    const reply = (r: { ok: boolean; data?: unknown; error?: string }) => {
+      if (this.active) send(this.active, { t: "call_result", id, ...r });
+    };
+    try {
+      const sessionId = sid(msg.sessionId);
+      if (!CALL_OPS.includes(msg.op)) throw Error("unknown request");
+      const args = msg.args && typeof msg.args === "object" && !Array.isArray(msg.args) ? msg.args : {};
+      if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
+        this.audit.log("call", { device: this.device, sessionId, op: msg.op, ...(typeof args.server === "string" ? { server: args.server } : {}) });
+      }
+      reply({ ok: true, data: await this.manager.call(sessionId, msg.op, args) });
+    } catch (e) {
+      reply({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }
   }
 

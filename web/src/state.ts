@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type {
+  CallMap,
+  CallOp,
   ClientMsg,
   DisplayItem,
   LiveState,
@@ -31,6 +33,8 @@ export interface AppState {
   loggedOutReason?: string;
   chat?: Chat;
   toast?: { text: string; at: number };
+  // Text another part of the app asks the composer to add (for example a comment on a changed line).
+  insert?: { text: string; at: number };
 }
 
 type Listener = () => void;
@@ -57,6 +61,10 @@ export function useApp<T>(select: (s: AppState) => T): T {
 
 export function toast(text: string): void {
   setState({ toast: { text, at: Date.now() } });
+}
+
+export function composerInsert(text: string): void {
+  setState({ insert: { text, at: Date.now() } });
 }
 
 function parseRoute(): Route {
@@ -138,6 +146,32 @@ export function send(msg: ClientMsg): void {
   if (socket?.readyState === WebSocket.OPEN && state.conn === "ready") socket.send(JSON.stringify(msg));
 }
 
+const CALL_TIMEOUT_MS = 30_000;
+let callSeq = 0;
+const calls = new Map<number, { resolve: (data: unknown) => void; reject: (e: Error) => void; timer: number }>();
+
+// Asks the broker something about a session; rejects with the broker's error message.
+export function call<K extends CallOp>(sessionId: string, op: K, args?: CallMap[K]["args"]): Promise<CallMap[K]["data"]> {
+  if (socket?.readyState !== WebSocket.OPEN || state.conn !== "ready") return Promise.reject(Error("not connected"));
+  const id = ++callSeq;
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      calls.delete(id);
+      reject(Error("no answer"));
+    }, CALL_TIMEOUT_MS);
+    calls.set(id, { resolve: resolve as (data: unknown) => void, reject, timer });
+    socket!.send(JSON.stringify({ t: "call", id, sessionId, op, args: args ?? {} } satisfies ClientMsg));
+  });
+}
+
+function settleCalls(): void {
+  for (const c of calls.values()) {
+    clearTimeout(c.timer);
+    c.reject(Error("not connected"));
+  }
+  calls.clear();
+}
+
 export function takeWindow(): void {
   if (state.conn === "conflict") socket?.send(JSON.stringify({ t: "take_window" } satisfies ClientMsg));
   else if (state.conn === "taken" || state.conn === "offline") connect();
@@ -155,6 +189,7 @@ export function connect(): void {
   };
   ws.onclose = (e) => {
     if (ws !== socket) return;
+    settleCalls();
     if (e.code === 4001) return loggedOut(state.loggedOutReason ?? "expired");
     if (e.code === 4000) return setState({ conn: "taken" });
     setState({ conn: "offline" });
@@ -164,6 +199,7 @@ export function connect(): void {
 
 // iOS suspends pages in the background; reconnect as soon as the page is visible again.
 document.addEventListener("visibilitychange", () => {
+  send({ t: "visibility", visible: document.visibilityState === "visible" });
   if (document.visibilityState === "visible" && state.conn === "offline") {
     retry = 0;
     connect();
@@ -187,6 +223,7 @@ function onServer(msg: ServerMsg): void {
     case "ready":
       retry = 0;
       setState({ conn: "ready" });
+      send({ t: "visibility", visible: document.visibilityState === "visible" });
       send({ t: "view", sessionId: state.route.name === "chat" ? state.route.sessionId : null });
       return;
     case "window_conflict":
@@ -227,6 +264,15 @@ function onServer(msg: ServerMsg): void {
     case "error":
       toast(msg.message);
       return;
+    case "call_result": {
+      const c = calls.get(msg.id);
+      if (!c) return;
+      calls.delete(msg.id);
+      clearTimeout(c.timer);
+      if (msg.ok) c.resolve(msg.data);
+      else c.reject(Error(msg.error ?? "failed"));
+      return;
+    }
     case "pong":
       return;
   }

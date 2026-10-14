@@ -5,8 +5,11 @@ import { Audit } from "../src/audit.ts";
 import { setCredentials } from "../src/auth.ts";
 import { DeviceGate } from "../src/devices.ts";
 import type { Hub } from "../src/hub.ts";
+import { Doctor } from "../src/doctor.ts";
 import { Leases } from "../src/lease.ts";
+import { Push } from "../src/push/index.ts";
 import { buildServer } from "../src/server.ts";
+import { Uploads } from "../src/uploads.ts";
 import type { SessionManager } from "../src/sessions/manager.ts";
 import { tempDir, tempStore } from "./helpers.ts";
 
@@ -25,6 +28,9 @@ async function setup() {
     audit: new Audit(path.join(tempDir(), "audit.jsonl")),
     manager,
     hub,
+    uploads: new Uploads(tempDir()),
+    push: new Push(tempDir()),
+    doctor: new Doctor(),
     webDir: tempDir(),
     logLevel: "silent",
   });

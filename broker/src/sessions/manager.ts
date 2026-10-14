@@ -8,6 +8,7 @@ import type { Config } from "../config.ts";
 import type { Hello } from "../link/protocol.ts";
 import type { Link } from "../link/server.ts";
 import type {
+  CallOp,
   DisplayItem,
   EffortName,
   LiveState,
@@ -18,7 +19,9 @@ import type {
   SessionSummary,
 } from "../protocol.ts";
 import { BrokerSession } from "./broker-session.ts";
-import type { SessionCore } from "./core.ts";
+import { lastCommands, rememberCommands } from "./commands.ts";
+import type { ContentBlock, SessionCore } from "./core.ts";
+import { searchFiles } from "./files.ts";
 import { loadHistory, projectDirName, transcriptPath } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 import { WrappedSession } from "./wrapped.ts";
@@ -266,9 +269,42 @@ export class SessionManager extends EventEmitter {
     return s;
   }
 
-  async send(sessionId: string, text: string): Promise<void> {
+  async send(sessionId: string, text: string, blocks?: ContentBlock[]): Promise<void> {
     const s = this.controlled(sessionId) ?? (await this.activate(sessionId));
-    s.send(text);
+    s.send(text, blocks);
+  }
+
+  // The web client's requests about one session (CallMap in protocol.ts).
+  async call(sessionId: string, op: CallOp, args: Record<string, unknown>): Promise<unknown> {
+    switch (op) {
+      case "files":
+        return searchFiles(await this.cwdOf(sessionId), typeof args.query === "string" ? args.query : "");
+      case "commands": {
+        const s = this.controlled(sessionId);
+        const cwd = await this.cwdOf(sessionId);
+        if (s?.commands) rememberCommands(cwd, s.commands);
+        return s?.commands ?? lastCommands(cwd);
+      }
+      case "context":
+        return this.get(sessionId).contextDetail();
+      case "mcp_status":
+        return this.get(sessionId).mcpStatus();
+      case "mcp_toggle":
+        return this.get(sessionId).mcpToggle(String(args.server), args.enabled === true);
+      case "mcp_reconnect":
+        return this.get(sessionId).mcpReconnect(String(args.server));
+      case "rewind":
+        return this.get(sessionId).rewind(String(args.userMessageId), args.dryRun !== false);
+      case "stop_task":
+        await this.get(sessionId).stopTask(String(args.taskId));
+        return {};
+    }
+  }
+
+  private async cwdOf(sessionId: string): Promise<string> {
+    const cwd = this.controlled(sessionId)?.cwd ?? (await this.info(sessionId))?.cwd;
+    if (!cwd) throw Error("unknown session");
+    return cwd;
   }
 
   answer(sessionId: string, requestId: string, answer: Parameters<SessionCore["answer"]>[1]): Promise<void> {

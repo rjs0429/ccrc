@@ -6,6 +6,8 @@ import { Hub } from "../src/hub.ts";
 import type { Leases } from "../src/lease.ts";
 import type { ServerMsg } from "../src/protocol.ts";
 import type { SessionManager, Snapshot } from "../src/sessions/manager.ts";
+import { Uploads } from "../src/uploads.ts";
+import { tempDir } from "./helpers.ts";
 
 const A = "11111111-2222-4333-8444-555555555555";
 
@@ -47,7 +49,7 @@ function setup() {
   const manager = new FakeManager();
   const leases = Object.assign(new EventEmitter(), { validate: () => true }) as unknown as Leases;
   const audit = { log: () => {} } as unknown as Audit;
-  const hub = new Hub(manager as unknown as SessionManager, leases, audit);
+  const hub = new Hub(manager as unknown as SessionManager, leases, audit, new Uploads(tempDir()));
   const ws = new FakeSocket();
   hub.attach(ws as never, "test", "token");
   const view = (sessionId: string | null) => ws.emit("message", JSON.stringify({ t: "view", sessionId }));

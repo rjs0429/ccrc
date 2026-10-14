@@ -27,6 +27,8 @@ function Chip({ children, onClick, disabled }: { children: React.ReactNode; onCl
 }
 
 interface Props {
+  // Absent on the new-session screen.
+  sessionId?: string;
   state?: LiveState;
   models: ModelOption[];
   controllable: boolean;

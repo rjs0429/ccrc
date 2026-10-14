@@ -2,12 +2,17 @@ import { EventEmitter } from "node:events";
 import {
   PERMISSION_MODES,
   type Answer,
+  type CommandInfo,
+  type ContextDetail,
   type DisplayItem,
   type EffortName,
   type LiveState,
+  type McpServerInfo,
   type PendingKind,
   type PendingRequest,
   type PermissionModeName,
+  type RewindResult,
+  type TaskInfo,
 } from "../protocol.ts";
 import { ItemBuilder, clipInput, type RawMessage } from "./items.ts";
 
@@ -33,6 +38,21 @@ export interface Ask {
   localOnly?: boolean;
 }
 
+// A Claude Code message content block (image, document, ...), sent in front of the text of a user message.
+export type ContentBlock = Record<string, unknown>;
+
+// The command list from Claude Code's initialize answer.
+export function commandInfo(list: unknown): CommandInfo[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((c): c is Record<string, unknown> => c !== null && typeof c === "object" && typeof (c as Record<string, unknown>).name === "string")
+    .map((c) => ({
+      name: c.name as string,
+      description: typeof c.description === "string" ? c.description : "",
+      ...(typeof c.argumentHint === "string" && c.argumentHint ? { argumentHint: c.argumentHint } : {}),
+    }));
+}
+
 export interface PendingEntry {
   request: PendingRequest;
   input: Record<string, unknown>;
@@ -56,6 +76,8 @@ export abstract class SessionCore extends EventEmitter {
   title?: string;
   readonly builder: ItemBuilder;
   readonly pending = new Map<string, PendingEntry>();
+  readonly tasks = new Map<string, TaskInfo>();
+  commands?: CommandInfo[];
   busy = false;
   model?: string;
   permissionMode?: string;
@@ -80,7 +102,7 @@ export abstract class SessionCore extends EventEmitter {
     this.builder.seed(history);
   }
 
-  abstract send(text: string): void;
+  abstract send(text: string, blocks?: ContentBlock[]): void;
   abstract interrupt(): Promise<void>;
   abstract setModel(model: string): Promise<void>;
   abstract setEffort(effort: EffortName): Promise<void>;
@@ -102,7 +124,40 @@ export abstract class SessionCore extends EventEmitter {
       contextPercent: this.contextPercent,
       costUsd: this.costUsd,
       closedReason: this.closedReason,
+      ...(this.tasks.size ? { tasks: [...this.tasks.values()] } : {}),
     };
+  }
+
+  // Session operations behind the web client's calls; a process type overrides the ones it supports.
+  contextDetail(): Promise<ContextDetail> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  mcpStatus(): Promise<McpServerInfo[]> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  mcpToggle(_server: string, _enabled: boolean): Promise<McpServerInfo[]> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  mcpReconnect(_server: string): Promise<McpServerInfo[]> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  rewind(_userMessageId: string, _dryRun: boolean): Promise<RewindResult> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  stopTask(_taskId: string): Promise<void> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  // The item for a message sent from here, before Claude Code echoes it.
+  protected sentItem(uuid: string, text: string, blocks: ContentBlock[] = []): DisplayItem {
+    const images = blocks.filter((b) => b.type === "image").length;
+    const files = blocks.filter((b) => b.type === "document").map((b) => String(b.title ?? ""));
+    return this.builder.userText(uuid, text, new Date().toISOString(), images, files.length ? files : undefined);
   }
 
   async setMode(mode: PermissionModeName): Promise<void> {

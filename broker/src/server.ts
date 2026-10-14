@@ -7,11 +7,19 @@ import fastifyStatic from "@fastify/static";
 import type { Audit } from "./audit.ts";
 import { checkCredentials, setCredentials } from "./auth.ts";
 import type { DeviceGate } from "./devices.ts";
+import type { Doctor } from "./doctor.ts";
 import type { Hub } from "./hub.ts";
 import type { Leases } from "./lease.ts";
 import { PERMISSION_MODES } from "./protocol.ts";
+import type { Push } from "./push/index.ts";
+import { registerAudit } from "./routes/audit.ts";
+import { registerClaudeSettings } from "./routes/claude-settings.ts";
+import { registerHealth } from "./routes/health.ts";
+import { registerPush } from "./routes/push.ts";
+import { registerUploads } from "./routes/upload.ts";
 import type { SessionManager } from "./sessions/manager.ts";
 import type { Store } from "./store.ts";
+import type { Uploads } from "./uploads.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -25,7 +33,7 @@ const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
+  "img-src 'self' data: blob:",
   "connect-src 'self' wss:",
   "frame-ancestors 'none'",
   "base-uri 'none'",
@@ -39,6 +47,9 @@ export interface ServerDeps {
   audit: Audit;
   manager: SessionManager;
   hub: Hub;
+  uploads: Uploads;
+  push: Push;
+  doctor: Doctor;
   webDir: string;
   logLevel?: string;
 }
@@ -147,6 +158,13 @@ export async function buildServer(d: ServerDeps) {
     modes: PERMISSION_MODES,
     folders: await d.manager.folders(),
   }));
+
+  const routes = { ...d, requireAuth };
+  await registerUploads(app, routes);
+  await registerPush(app, routes);
+  await registerClaudeSettings(app, routes);
+  await registerAudit(app, routes);
+  await registerHealth(app, routes);
 
   app.get("/ws", { websocket: true }, (socket, req) => {
     const t = token(req);

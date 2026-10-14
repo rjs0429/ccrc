@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Link } from "../link/server.ts";
 import type { DisplayItem, EffortName, PermissionModeName } from "../protocol.ts";
-import { SessionCore, type Decision } from "./core.ts";
+import { SessionCore, commandInfo, type ContentBlock, type Decision } from "./core.ts";
 import type { RawMessage } from "./items.ts";
 
 type Obj = Record<string, unknown>;
@@ -72,7 +72,7 @@ export class WrappedSession extends SessionCore {
     this.finish(reason);
   }
 
-  send(text: string): void {
+  send(text: string, blocks: ContentBlock[] = []): void {
     this.ensureOpen();
     const uuid = randomUUID();
     this.link.send({
@@ -83,10 +83,10 @@ export class WrappedSession extends SessionCore {
         session_id: "",
         parent_tool_use_id: null,
         origin: { kind: "human" },
-        message: { role: "user", content: [{ type: "text", text }] },
+        message: { role: "user", content: [...blocks, { type: "text", text }] },
       },
     });
-    this.emit("item", this.builder.userText(uuid, text, new Date().toISOString()));
+    this.emit("item", this.sentItem(uuid, text, blocks));
     this.busy = true;
     this.touch();
   }
@@ -168,9 +168,10 @@ export class WrappedSession extends SessionCore {
     });
   }
 
-  // The answer to VS Code's initialize carries the model list and the current mode.
+  // The answer to VS Code's initialize carries the model and command lists and the current mode.
   private onResponse(r: Obj): void {
     if (Array.isArray(r.models)) this.emit("models", r.models);
+    if (Array.isArray(r.commands)) this.commands = commandInfo(r.commands);
     if (typeof r.current_permission_mode === "string" && r.current_permission_mode !== this.permissionMode) {
       this.permissionMode = r.current_permission_mode;
       this.emit("state");

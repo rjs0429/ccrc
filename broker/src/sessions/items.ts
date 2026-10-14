@@ -149,8 +149,8 @@ export class ItemBuilder {
     return this.put({ kind: "note", id: id ?? `note-${++this.noteCount}`, ts, code, ...(text ? { text } : {}) });
   }
 
-  userText(id: string, text: string, ts?: string, images?: number): DisplayItem {
-    return this.put({ kind: "user", id, ts, text, ...(images ? { images } : {}) });
+  userText(id: string, text: string, ts?: string, images?: number, files?: string[]): DisplayItem {
+    return this.put({ kind: "user", id, ts, text, ...(images ? { images } : {}), ...(files?.length ? { files } : {}) });
   }
 
   add(m: RawMessage, fallbackTs?: string): DisplayItem[] {

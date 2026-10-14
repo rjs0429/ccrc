@@ -31,12 +31,102 @@ export interface ToolResult {
 
 export type NoteCode = "interrupted" | "compacted" | "command" | "command_output" | "error";
 
+// One hunk of a file change as Claude Code reports it; each line starts with " ", "-" or "+".
+export interface Hunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+}
+
+// What a subagent started by an Agent/Task tool call has done so far.
+export interface SubagentActivity {
+  tools: number;
+  recent: { name: string; summary: string }[];
+  text?: string;
+}
+
 export type DisplayItem =
-  | { kind: "user"; id: string; ts?: string; text: string; images?: number }
+  // files: names of attached documents.
+  | { kind: "user"; id: string; ts?: string; text: string; images?: number; files?: string[] }
   | { kind: "assistant"; id: string; ts?: string; text: string }
   | { kind: "thinking"; id: string; ts?: string; text: string }
-  | { kind: "tool"; id: string; ts?: string; name: string; summary: string; input: unknown; result?: ToolResult }
+  // file and patch: the file a tool changed and how, when Claude Code reports it.
+  | {
+      kind: "tool";
+      id: string;
+      ts?: string;
+      name: string;
+      summary: string;
+      input: unknown;
+      result?: ToolResult;
+      file?: string;
+      patch?: Hunk[];
+      sub?: SubagentActivity;
+    }
   | { kind: "note"; id: string; ts?: string; code: NoteCode; text?: string };
+
+// A background task of a session (subagent, shell, workflow) as Claude Code reports it.
+export interface TaskInfo {
+  id: string;
+  description: string;
+  type?: string;
+  status: "running" | "completed" | "failed" | "stopped";
+  toolUseId?: string;
+}
+
+export interface CommandInfo {
+  name: string;
+  description: string;
+  argumentHint?: string;
+}
+
+export interface ContextDetail {
+  percentage: number;
+  totalTokens: number;
+  maxTokens: number;
+  model?: string;
+  categories: { name: string; tokens: number; kind: string }[];
+}
+
+export interface McpServerInfo {
+  name: string;
+  status: string;
+  error?: string;
+  scope?: string;
+  tools?: number;
+}
+
+export interface RewindResult {
+  canRewind: boolean;
+  error?: string;
+  filesChanged?: string[];
+  insertions?: number;
+  deletions?: number;
+}
+
+// Requests the web client makes about one session and their answers ("call" / "call_result").
+export interface CallMap {
+  context: { args: Record<string, never>; data: ContextDetail };
+  mcp_status: { args: Record<string, never>; data: McpServerInfo[] };
+  mcp_toggle: { args: { server: string; enabled: boolean }; data: McpServerInfo[] };
+  mcp_reconnect: { args: { server: string }; data: McpServerInfo[] };
+  rewind: { args: { userMessageId: string; dryRun: boolean }; data: RewindResult };
+  stop_task: { args: { taskId: string }; data: Record<string, never> };
+  commands: { args: Record<string, never>; data: CommandInfo[] };
+  files: { args: { query: string }; data: string[] };
+}
+export type CallOp = keyof CallMap;
+export const CALL_OPS: CallOp[] = ["context", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files"];
+
+// A file uploaded for the next message (POST /api/upload).
+export interface UploadInfo {
+  id: string;
+  name: string;
+  kind: "image" | "pdf" | "text";
+  size: number;
+}
 
 // dialog: a confirmation Claude Code asks for outside a tool call; it can only be answered where the session is open.
 export type PendingKind = "permission" | "question" | "plan" | "dialog";
@@ -83,12 +173,14 @@ export interface LiveState {
   contextPercent?: number;
   costUsd?: number;
   closedReason?: string;
+  tasks?: TaskInfo[];
 }
 
 export type ClientMsg =
   | { t: "take_window" }
   | { t: "view"; sessionId: string | null }
-  | { t: "send"; sessionId: string; text: string }
+  // attachments: ids from POST /api/upload, sent before the text as Claude Code content blocks.
+  | { t: "send"; sessionId: string; text: string; attachments?: string[] }
   | { t: "new_session"; cwd: string; text: string; model?: string; mode?: PermissionModeName; effort?: EffortName }
   | { t: "answer"; sessionId: string; requestId: string; answer: Answer }
   | { t: "interrupt"; sessionId: string }
@@ -96,6 +188,9 @@ export type ClientMsg =
   | { t: "set_model"; sessionId: string; model: string }
   | { t: "set_effort"; sessionId: string; effort: EffortName }
   | { t: "release"; sessionId: string }
+  | { t: "call"; id: number; sessionId: string; op: CallOp; args?: Record<string, unknown> }
+  // Whether the page is in front, so the broker knows when to notify instead.
+  | { t: "visibility"; visible: boolean }
   | { t: "ping" };
 
 export type ServerMsg =
@@ -112,4 +207,5 @@ export type ServerMsg =
   | { t: "session_started"; sessionId: string }
   | { t: "sessions_changed" }
   | { t: "error"; message: string; sessionId?: string }
+  | { t: "call_result"; id: number; ok: boolean; data?: unknown; error?: string }
   | { t: "pong" };

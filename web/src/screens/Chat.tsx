@@ -2,11 +2,18 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { ItemView, StreamPreview } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { PendingCard } from "../components/Pending.tsx";
+import { TodoPanel } from "../components/TodoPanel.tsx";
+import { ChangesSheet } from "../components/sheets/Changes.tsx";
+import { ContextSheet } from "../components/sheets/Context.tsx";
+import { McpSheet } from "../components/sheets/Mcp.tsx";
+import { RewindSheet } from "../components/sheets/Rewind.tsx";
+import { TasksSheet } from "../components/sheets/Tasks.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { baseName, closedText, hostLabel, sessionTitle } from "../labels.ts";
 import { navigate, send, useApp } from "../state.ts";
 
 const NEAR_BOTTOM_PX = 160;
+type SheetName = "changes" | "context" | "mcp" | "rewind" | "tasks";
 
 export function Chat({ sessionId }: { sessionId: string }) {
   const chat = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat : undefined));
@@ -14,6 +21,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const models = useApp((s) => s.options?.models ?? []);
   const othersWaiting = useApp((s) => (s.sessions ?? []).some((x) => x.id !== sessionId && x.pendingCount));
   const [menu, setMenu] = useState(false);
+  const [sheet, setSheet] = useState<SheetName | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -98,7 +106,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
         </div>
       </div>
 
+      {chat?.loaded && <TodoPanel items={chat.items} />}
+
       <Composer
+        sessionId={sessionId}
         state={st}
         models={models}
         controllable={controllable}
@@ -118,6 +129,15 @@ export function Chat({ sessionId }: { sessionId: string }) {
         <Sheet title={title} onClose={() => setMenu(false)}>
           <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
           <Choice label="새로고침" onClick={() => (send({ t: "view", sessionId }), setMenu(false))} />
+          <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
+          {controllable && (
+            <>
+              <Choice label="실행 중 작업" hint="서브에이전트·백그라운드 명령" onClick={() => (setSheet("tasks"), setMenu(false))} />
+              <Choice label="문맥 사용량" onClick={() => (setSheet("context"), setMenu(false))} />
+              <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
+              <Choice label="파일 되돌리기" hint="보낸 메시지 시점으로 파일을 되돌립니다" onClick={() => (setSheet("rewind"), setMenu(false))} />
+            </>
+          )}
           {kind === "owned" && (
             <Choice
               label="원격 실행 끝내기"
@@ -127,6 +147,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
           )}
         </Sheet>
       )}
+      {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "tasks" && <TasksSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "context" && <ContextSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "mcp" && <McpSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "rewind" && <RewindSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
     </div>
   );
 }

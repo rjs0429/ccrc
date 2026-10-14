@@ -1,16 +1,20 @@
 import fs from "node:fs";
+import path from "node:path";
 import readline from "node:readline/promises";
 import { Audit } from "./audit.ts";
 import { setCredentials } from "./auth.ts";
 import { loadConfig, paths } from "./config.ts";
 import { DeviceGate } from "./devices.ts";
+import { Doctor } from "./doctor.ts";
 import { Hub } from "./hub.ts";
 import { Leases } from "./lease.ts";
 import { linkSocketPath } from "./link/protocol.ts";
 import { LinkServer } from "./link/server.ts";
+import { Push } from "./push/index.ts";
 import { buildServer } from "./server.ts";
 import { SessionManager } from "./sessions/manager.ts";
 import { Store } from "./store.ts";
+import { Uploads } from "./uploads.ts";
 
 const USAGE = `usage: ccrc <command>
   serve    run the broker
@@ -24,7 +28,12 @@ async function serve(): Promise<void> {
   const leases = new Leases(store, config.leaseIdleMinutes);
   const audit = new Audit();
   const manager = new SessionManager(config, audit);
-  const hub = new Hub(manager, leases, audit);
+  const uploads = new Uploads(path.join(paths.stateDir, "uploads"));
+  const hub = new Hub(manager, leases, audit, uploads);
+  const push = new Push(paths.configDir);
+  push.watch(manager, hub);
+  const doctor = new Doctor();
+  doctor.start();
   const links = new LinkServer(linkSocketPath());
   links.on("link", (link) => manager.attachLink(link));
   await links.listen();
@@ -38,7 +47,7 @@ async function serve(): Promise<void> {
     if (hadLease && !store.state.lease) leases.emit("revoked", "logout");
   });
 
-  const app = await buildServer({ store, leases, gate, audit, manager, hub, webDir: paths.webDir, logLevel: process.env.CCRC_LOG_LEVEL });
+  const app = await buildServer({ store, leases, gate, audit, manager, hub, uploads, push, doctor, webDir: paths.webDir, logLevel: process.env.CCRC_LOG_LEVEL });
   await app.listen({ host: config.host, port: config.port });
 
   let stopping = false;
@@ -46,6 +55,8 @@ async function serve(): Promise<void> {
     if (stopping) return;
     stopping = true;
     hub.close();
+    push.close();
+    doctor.close();
     await links.close();
     await manager.closeAll();
     await app.close();

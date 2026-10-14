@@ -2,6 +2,11 @@ import { useState } from "react";
 import { api, ApiError } from "../api.ts";
 import { Button, Icon } from "../components/ui.tsx";
 import { loggedOut, navigate, toast, useApp } from "../state.ts";
+import { AuditSection } from "./settings/Audit.tsx";
+import { ClaudeSettingsSection } from "./settings/ClaudeSettings.tsx";
+import { HealthSection } from "./settings/Health.tsx";
+import { NotificationsSection } from "./settings/Notifications.tsx";
+import { PrefsSection } from "./settings/Prefs.tsx";
 
 export function Settings() {
   const me = useApp((s) => s.me);
@@ -66,6 +71,11 @@ export function Settings() {
               바꾸기
             </Button>
           </section>
+          <NotificationsSection />
+          <PrefsSection />
+          <ClaudeSettingsSection />
+          <HealthSection />
+          <AuditSection />
         </div>
       </main>
     </div>

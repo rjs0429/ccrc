@@ -9,7 +9,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { DisplayItem, EffortName, PermissionModeName } from "../protocol.ts";
-import { SessionCore, type Decision } from "./core.ts";
+import { SessionCore, commandInfo, type ContentBlock, type Decision } from "./core.ts";
 import type { RawMessage } from "./items.ts";
 
 const CLOSE_WAIT_MS = 10_000;
@@ -78,6 +78,7 @@ export class BrokerSession extends SessionCore {
         systemPrompt: { type: "preset", preset: "claude_code" },
         includePartialMessages: true,
         allowDangerouslySkipPermissions: false,
+        enableFileCheckpointing: true,
         extraArgs: { "replay-user-messages": null },
         canUseTool: this.canUseTool,
         stderr: () => {},
@@ -86,18 +87,18 @@ export class BrokerSession extends SessionCore {
     this.done = this.consume(this.q);
   }
 
-  send(text: string): void {
+  send(text: string, blocks: ContentBlock[] = []): void {
     this.ensureOpen();
     const uuid = randomUUID();
     const message: SDKUserMessage = {
       type: "user",
-      message: { role: "user", content: [{ type: "text", text }] },
+      message: { role: "user", content: [...blocks, { type: "text", text }] as unknown as SDKUserMessage["message"]["content"] },
       parent_tool_use_id: null,
       session_id: this.id,
       uuid,
       origin: { kind: "human" },
     };
-    this.emit("item", this.builder.userText(uuid, text, new Date().toISOString()));
+    this.emit("item", this.sentItem(uuid, text, blocks));
     this.input.push(message);
     this.busy = true;
     this.touch();
@@ -169,6 +170,10 @@ export class BrokerSession extends SessionCore {
     this.q
       .supportedModels()
       .then((models: ModelInfo[]) => this.emit("models", models))
+      .catch(() => {});
+    this.q
+      .initializationResult()
+      .then((r) => (this.commands = commandInfo(r.commands)))
       .catch(() => {});
   }
 
