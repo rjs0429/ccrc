@@ -119,12 +119,11 @@ function Folded({ text, mono }: { text: string; mono?: boolean }) {
 function CommandCard({ item }: { item: CommandResult }) {
   const [more, setMore] = useState(false);
   const head = item.name ? `/${item.name}${item.args ? ` ${item.args}` : ""}` : "명령 출력";
-  const data = item.usage || item.context;
   return (
     <div className="rounded-xl border border-line bg-surface" data-command={item.name ?? ""}>
       <div className="flex items-center gap-2 px-3 pt-2 pb-1">
         <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted">{head}</span>
-        {data && item.text && (
+        {(item.context || (item.usage && item.text)) && (
           <button onClick={() => setMore(!more)} className="shrink-0 text-xs font-medium text-accent">
             {more ? "접기" : item.context ? "자세히" : "원문"}
           </button>

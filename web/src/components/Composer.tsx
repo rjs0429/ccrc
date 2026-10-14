@@ -129,6 +129,12 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
     edit(next, next.length);
   }, [insert]);
 
+  // A sheet opened from the list takes the screen, so the keyboard goes down with the text.
+  const opened = () => {
+    setText("");
+    ref.current?.blur();
+  };
+
   const pick = (i: number) => {
     const row = rows[i];
     if (!row) return;
@@ -136,10 +142,10 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
       const added = `${mentionText(row.key)} `;
       edit(text.slice(0, mention.start) + added + text.slice(mention.end), mention.start + added.length);
     } else if (controllable && row.key === "model") {
-      setText("");
+      opened();
       setSheet("model");
     } else if (onCommand?.(row.key)) {
-      setText("");
+      opened();
     } else {
       edit(`/${row.key} `, row.key.length + 2);
     }

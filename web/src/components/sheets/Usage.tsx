@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { UsageInfo, UsageLimit } from "../../../../broker/src/protocol.ts";
 import { usageLimitLabel, usageResetText } from "../../labels.ts";
-import { call } from "../../state.ts";
+import { call, toast } from "../../state.ts";
 import { Sheet } from "../ui.tsx";
 import { SmallButton, Waiting } from "./parts.tsx";
 import type { SheetProps } from "./types.ts";
@@ -62,7 +62,7 @@ export function UsageView({ usage }: { usage: UsageInfo }) {
   );
 }
 
-// Fills from get_usage; when the session cannot answer, `onFail` takes over (the command goes as text).
+// Fills from get_usage; when the session cannot answer the first time, `onFail` takes over (the command goes as text).
 export function UsageSheet({ sessionId, onClose, onFail }: SheetProps & { onFail: () => void }) {
   const [usage, setUsage] = useState<UsageInfo>();
   const [loading, setLoading] = useState(true);
@@ -74,7 +74,7 @@ export function UsageSheet({ sessionId, onClose, onFail }: SheetProps & { onFail
     call(sessionId, "usage", {}, WAIT_MS)
       .then(
         (u) => live && setUsage(u),
-        () => live && onFail(),
+        () => live && (usage ? toast("사용량을 새로 불러오지 못했습니다") : onFail()),
       )
       .finally(() => live && setLoading(false));
     return () => {
