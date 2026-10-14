@@ -159,7 +159,7 @@ const PROBLEM: Record<FieldProblem, string> = {
 
 const FORMAT_HINT = { email: "이메일 주소", uri: "URL", date: "날짜", "date-time": "날짜와 시각" };
 
-const INPUT = "w-full rounded-xl border border-line bg-bg px-3 py-2 text-[15px] outline-none focus:border-accent";
+const INPUT = "w-full rounded-xl border border-line bg-bg px-3 py-2 text-[16px] outline-none focus:border-accent";
 
 // Form inputs hold text; numbers and date-times become what the schema asks for when the form is sent.
 type Draft = Record<string, string | boolean | string[]>;
@@ -243,9 +243,10 @@ function FieldInput({ field: f, value, onChange }: { field: ElicitField; value: 
   const text = typeof value === "string" ? value : "";
   if (f.type === "number" || f.type === "integer") {
     return (
+      // iOS number pads have no minus key, so a field that allows negatives keeps the full keyboard.
       <input
         type="number"
-        inputMode={f.type === "integer" && (f.minimum ?? 0) >= 0 ? "numeric" : "decimal"}
+        inputMode={(f.minimum ?? -1) < 0 ? undefined : f.type === "integer" ? "numeric" : "decimal"}
         step={f.type === "integer" ? 1 : "any"}
         min={f.minimum}
         max={f.maximum}
@@ -294,7 +295,7 @@ function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
     const content: Record<string, ElicitValue> = {};
     const found: Record<string, FieldProblem> = {};
     for (const f of fields) {
-      const v = valueOf(f, draft[f.key]);
+      const v = valueOf(f, Object.hasOwn(draft, f.key) ? draft[f.key] : undefined);
       const problem = fieldProblem(f, v);
       if (problem) found[f.key] = problem;
       else if (v !== undefined) content[f.key] = v;
@@ -345,14 +346,14 @@ function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
                     </div>
                     <FieldInput
                       field={f}
-                      value={draft[f.key]}
+                      value={Object.hasOwn(draft, f.key) ? draft[f.key] : undefined}
                       onChange={(v) => {
                         setDraft((d) => ({ ...d, [f.key]: v }));
                         setErrors(({ [f.key]: _, ...rest }) => rest);
                       }}
                     />
                   </div>
-                  {errors[f.key] && <div className="text-xs text-danger">{PROBLEM[errors[f.key]]}</div>}
+                  {Object.hasOwn(errors, f.key) && <div className="text-xs text-danger">{PROBLEM[errors[f.key]]}</div>}
                 </div>
               );
             })

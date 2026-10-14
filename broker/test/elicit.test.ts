@@ -124,6 +124,9 @@ test("an answer goes back only with the form's own fields, each valid", () => {
   assert.throws(() => elicitContent(info, { name: "abc", age: 3 }), /size required/);
   assert.throws(() => elicitContent(info, { name: "abc", age: 3, size: "s", extra: 1 }), /unknown field extra/);
   assert.throws(() => elicitContent(info, [1]), /invalid answer/);
+  const named = elicitInfo({ serverName: "s", message: "m", requestedSchema: { type: "object", properties: { constructor: { type: "string" } } } });
+  assert.deepEqual(elicitContent(named, {}), {});
+  assert.deepEqual(elicitContent(named, { constructor: "x" }), { constructor: "x" });
   assert.deepEqual(elicitResult(info, "decline", { name: "ignored" }), { action: "decline" });
   assert.deepEqual(elicitResult(info, "cancel", undefined), { action: "cancel" });
   assert.throws(() => elicitResult(info, "allow", {}), /invalid answer/);

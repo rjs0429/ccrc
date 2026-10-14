@@ -200,14 +200,14 @@ export function elicitContent(info: ElicitInfo, content: unknown): Record<string
   if (!isObj(content)) throw Error("invalid answer");
   const fields = info.fields;
   for (const k of Object.keys(content)) if (!fields.some((f) => f.key === k)) throw Error(`invalid answer: unknown field ${k}`);
-  const out: Record<string, ElicitValue> = {};
+  const out: [string, ElicitValue][] = [];
   for (const f of fields) {
-    const v = content[f.key];
+    const v = Object.hasOwn(content, f.key) ? content[f.key] : undefined;
     const problem = fieldProblem(f, v);
     if (problem) throw Error(`invalid answer: ${f.key} ${problem}`);
-    if (v !== undefined && v !== "") out[f.key] = Array.isArray(v) ? [...v] : (v as ElicitValue);
+    if (v !== undefined && v !== "") out.push([f.key, Array.isArray(v) ? [...v] : (v as ElicitValue)]);
   }
-  return out;
+  return Object.fromEntries(out);
 }
 
 // The result for Claude Code: content only with a filled form's accept; a page is accepted once the user is done.
