@@ -192,6 +192,8 @@ test("tool summaries name the target", () => {
   assert.equal(summarizeTool("Grep", { pattern: "TODO", path: "/work/project/src" }, cwd), "TODO · src");
   assert.equal(summarizeTool("AskUserQuestion", { questions: [{ question: "Which one?" }] }, cwd), "Which one?");
   assert.equal(summarizeTool("mcp__x__y", { q: "first\nsecond" }, cwd), "first");
+  assert.equal(summarizeTool("Workflow", { script: "export const meta = {\n  name: 'nightly-review',\n  description: 'x',\n}\nreturn 1" }, cwd), "nightly-review");
+  assert.equal(summarizeTool("SendUserFile", { files: ["/work/project/out/a.md", "b.png"], caption: "Here" }, cwd), "a.md, b.png");
 });
 
 // An Edit call and its result as Claude Code 2.1.296 reports them.

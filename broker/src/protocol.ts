@@ -47,6 +47,25 @@ export interface SubagentActivity {
   text?: string;
 }
 
+// What the user did with a question or plan call (AskUserQuestion, ExitPlanMode). answers, notes and
+// previews are keyed by question text; an answer with several choices joins them with ", ". plan: the
+// plan as the user edited it before approving.
+export type ToolReply =
+  | {
+      kind: "answered";
+      answers: Record<string, string>;
+      notes?: Record<string, string>;
+      previews?: Record<string, string>;
+      response?: string;
+      followUp?: boolean;
+      timedOut?: boolean;
+    }
+  | { kind: "unanswered" }
+  | { kind: "declined"; reason?: string }
+  | { kind: "interrupted" }
+  | { kind: "approved"; plan?: string }
+  | { kind: "kept_planning"; feedback?: string };
+
 export type DisplayItem =
   // files: names of attached documents.
   | { kind: "user"; id: string; ts?: string; text: string; images?: number; files?: string[] }
@@ -66,6 +85,7 @@ export type DisplayItem =
       patch?: Hunk[];
       patchCut?: number;
       sub?: SubagentActivity;
+      reply?: ToolReply;
     }
   | { kind: "note"; id: string; ts?: string; code: NoteCode; text?: string }
   // The result of a local command (/usage, /context, ...): its text, and for some the data to draw it from.

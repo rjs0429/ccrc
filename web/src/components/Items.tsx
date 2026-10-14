@@ -8,6 +8,7 @@ import { Markdown } from "./Markdown.tsx";
 import { ContextView } from "./sheets/Context.tsx";
 import { UsageView } from "./sheets/Usage.tsx";
 import { ToolInput, ToolOutput } from "./ToolInput.tsx";
+import { Folded } from "./tools/parts.tsx";
 import { Icon, Spinner } from "./ui.tsx";
 
 function UserItem({ text, ts, images, files }: { text: string; ts?: string; images?: number; files?: string[] }) {
@@ -83,9 +84,9 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
           {item.patch ? (
             <DiffView hunks={item.patch} cut={item.patchCut} />
           ) : (
-            item.input != null && <ToolInput name={item.name} input={item.input} />
+            item.input != null && <ToolInput name={item.name} input={item.input} reply={item.reply} />
           )}
-          {item.result && (!item.patch || item.result.isError) && (
+          {item.result && (!item.patch || item.result.isError) && !item.reply && (
             <ToolOutput text={item.result.text + (item.result.truncated ? "\n…" : "")} isError={item.result.isError} />
           )}
         </div>
@@ -95,26 +96,6 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
 }
 
 type CommandResult = Extract<DisplayItem, { kind: "command" }>;
-
-const FOLD_CHARS = 600;
-const FOLD_LINES = 12;
-
-function Folded({ text, mono }: { text: string; mono?: boolean }) {
-  const long = text.length > FOLD_CHARS || text.split("\n").length > FOLD_LINES;
-  const [open, setOpen] = useState(!long);
-  return (
-    <div>
-      <div className={open ? "" : "max-h-48 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]"}>
-        {mono ? <pre className="font-mono text-[12.5px] break-words whitespace-pre-wrap">{text}</pre> : <Markdown text={text} className="text-[14px]" />}
-      </div>
-      {long && (
-        <button onClick={() => setOpen(!open)} className="mt-1 text-sm font-medium text-accent">
-          {open ? "접기" : "더 보기"}
-        </button>
-      )}
-    </div>
-  );
-}
 
 // Command output is written line by line; Markdown would join adjacent lines, so they become hard breaks
 // outside code fences and tables.
