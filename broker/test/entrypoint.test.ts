@@ -12,6 +12,7 @@ process.env.CCRC_STATE_DIR = path.join(home, "state");
 const requests = path.join(home, "requests.jsonl");
 process.env.FAKE_REQUESTS = requests;
 delete process.env.CLAUDE_CODE_ENTRYPOINT;
+delete process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
 delete process.env.CLAUDE_CODE_ARTIFACT;
 delete process.env.CLAUDE_CODE_SEND_FEEDBACK;
 fs.mkdirSync(path.join(home, ".claude", "sessions"), { recursive: true });
@@ -109,7 +110,7 @@ test("every broker start path runs Claude Code with the broker's entrypoint; a p
   const manager = new SessionManager(config);
   manager.windowProbe = async () => undefined;
   try {
-    const own = { CLAUDE_CODE_ENTRYPOINT: ENTRYPOINT, CLAUDE_CODE_ARTIFACT: "0", CLAUDE_CODE_SEND_FEEDBACK: "0" };
+    const own = { CLAUDE_CODE_ENTRYPOINT: ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP: ENTRYPOINT, CLAUDE_CODE_ARTIFACT: "0", CLAUDE_CODE_SEND_FEEDBACK: "0" };
     const created = await manager.create(cwd, {});
     assert.deepEqual(await startedEnv("--session-id", created.id), own, "new session");
     await manager.send(S, "hello");
@@ -125,11 +126,12 @@ test("every broker start path runs Claude Code with the broker's entrypoint; a p
   assert.ok(models.length > 0);
   const probe = recorded().find((r) => r.args)?.env as Record<string, unknown>;
   assert.equal(probe.CLAUDE_CODE_ENTRYPOINT, "sdk-ts", "a probe writes no transcript");
+  assert.equal(probe.CLAUDE_AGENT_SDK_CLIENT_APP, undefined);
 });
 
 test("the session environment replaces an inherited entrypoint and keeps an explicit artifact or feedback choice", () => {
   const env = sessionEnv({ PATH: "/bin", CLAUDE_CODE_ENTRYPOINT: "claude-vscode", CLAUDE_CODE_ARTIFACT: "1" });
-  assert.deepEqual(env, { PATH: "/bin", CLAUDE_CODE_ENTRYPOINT: ENTRYPOINT, CLAUDE_CODE_ARTIFACT: "1", CLAUDE_CODE_SEND_FEEDBACK: "0" });
+  assert.deepEqual(env, { PATH: "/bin", CLAUDE_CODE_ENTRYPOINT: ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP: ENTRYPOINT, CLAUDE_CODE_ARTIFACT: "1", CLAUDE_CODE_SEND_FEEDBACK: "0" });
 });
 
 test("a row's own entrypoint is retagged, not one inside its content", () => {

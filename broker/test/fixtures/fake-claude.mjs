@@ -29,8 +29,8 @@ const value = (name) => {
 const sid = value("--session-id") || (args.includes("--fork-session") ? undefined : value("--resume")) || randomUUID();
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const record = (m) => process.env.FAKE_REQUESTS && fs.appendFileSync(process.env.FAKE_REQUESTS, JSON.stringify(m) + "\n");
-const { CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_ARTIFACT, CLAUDE_CODE_SEND_FEEDBACK } = process.env;
-record({ args, env: { CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_ARTIFACT, CLAUDE_CODE_SEND_FEEDBACK } });
+const { CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP, CLAUDE_CODE_ARTIFACT, CLAUDE_CODE_SEND_FEEDBACK } = process.env;
+record({ args, env: { CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP, CLAUDE_CODE_ARTIFACT, CLAUDE_CODE_SEND_FEEDBACK } });
 let asks = 0;
 const STYLES = ["default", "Proactive", "Concise", "Explanatory", "Learning"];
 const LOCAL_SETTINGS = ".claude/settings.local.json";

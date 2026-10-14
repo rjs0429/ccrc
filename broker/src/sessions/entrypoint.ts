@@ -13,11 +13,12 @@ const OWN_FIELD = `"entrypoint":"${ENTRYPOINT}"`;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 // The environment of a broker session's Claude Code. Artifacts and drafted feedback stay off unless the
-// environment asks for them, as they are under an SDK entrypoint.
+// environment asks for them, as they are under an SDK entrypoint; the user agent names ccrc as the SDK's client app.
 export function sessionEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string | undefined> {
   return {
     ...base,
     CLAUDE_CODE_ENTRYPOINT: ENTRYPOINT,
+    CLAUDE_AGENT_SDK_CLIENT_APP: ENTRYPOINT,
     CLAUDE_CODE_ARTIFACT: base.CLAUDE_CODE_ARTIFACT ?? "0",
     CLAUDE_CODE_SEND_FEEDBACK: base.CLAUDE_CODE_SEND_FEEDBACK ?? "0",
   };
