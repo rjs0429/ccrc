@@ -16,6 +16,8 @@ export interface SearchSnippet {
   // Whether text was left out before or after the snippet.
   cutStart: boolean;
   cutEnd: boolean;
+  // Said before the session's last compaction, which the chat view no longer shows.
+  earlier?: boolean;
 }
 
 export interface SearchResult {

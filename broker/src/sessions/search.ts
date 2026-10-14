@@ -34,7 +34,14 @@ interface Message {
   role: Role;
   at?: number;
   text: string;
+  earlier?: boolean;
 }
+
+// Where a compaction cut the conversation, with the rows it kept; the chat view starts after the last one.
+interface Boundary {
+  kept: Set<string>;
+}
+type Parsed = Message | Boundary;
 
 // The searchable text of one transcript: its messages joined by SEP, with where each starts.
 interface Entry {
@@ -49,10 +56,12 @@ interface Entry {
   ids: string[];
   roles: Role[];
   ats: (number | undefined)[];
+  earlier: boolean[];
 }
 
 interface Row {
   type?: string;
+  subtype?: string;
   uuid?: string;
   timestamp?: string;
   isMeta?: boolean;
@@ -60,9 +69,25 @@ interface Row {
   isCompactSummary?: boolean;
   isApiErrorMessage?: boolean;
   message?: { content?: unknown };
+  attachment?: { type?: string; prompt?: unknown; source_uuid?: unknown; isMeta?: boolean; forwardedIntent?: unknown };
+  compactMetadata?: { preservedMessages?: { allUuids?: unknown } };
+}
+
+function boundaryOf(e: Row): Boundary {
+  const kept = e.compactMetadata?.preservedMessages?.allUuids;
+  return { kept: new Set(Array.isArray(kept) ? kept.filter((u): u is string => typeof u === "string") : []) };
 }
 
 const sanitize = (s: string) => s.normalize("NFC").replace(/[\u0000-\u001f\u007f]/g, " ");
+
+function userMessage(id: string, content: unknown, at: number | undefined, messageChars: number): Message[] {
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? (content as Record<string, unknown>[]) : [];
+  const texts = blocks
+    .filter((b) => b?.type === "text" && typeof b.text === "string")
+    .map((b) => (b.text as string).trim())
+    .filter((t) => t && typedText(t));
+  return texts.length ? [{ id, role: "user", at, text: clip(sanitize(texts.join("\n\n")), messageChars) }] : [];
+}
 
 function clip(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -74,17 +99,15 @@ function clip(text: string, max: number): string {
 export function rowMessages(e: Row, messageChars: number): Message[] {
   if (e.isSidechain || e.isMeta || !e.uuid) return [];
   const at = e.timestamp ? Date.parse(e.timestamp) || undefined : undefined;
-  const content = e.message?.content;
-  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? (content as Record<string, unknown>[]) : [];
-  if (e.type === "user") {
-    if (e.isCompactSummary) return [];
-    const texts = blocks
-      .filter((b) => b?.type === "text" && typeof b.text === "string")
-      .map((b) => (b.text as string).trim())
-      .filter((t) => t && typedText(t));
-    return texts.length ? [{ id: e.uuid, role: "user", at, text: clip(sanitize(texts.join("\n\n")), messageChars) }] : [];
+  if (e.type === "user") return e.isCompactSummary ? [] : userMessage(e.uuid, e.message?.content, at, messageChars);
+  // A message sent while Claude was working; the chat view shows it under its source uuid.
+  const q = e.attachment;
+  if (e.type === "attachment" && q?.type === "queued_command" && !q.isMeta && q.forwardedIntent === undefined) {
+    return userMessage(typeof q.source_uuid === "string" && q.source_uuid ? q.source_uuid : e.uuid, q.prompt, at, messageChars);
   }
   if (e.type !== "assistant" || e.isApiErrorMessage) return [];
+  const content = e.message?.content;
+  const blocks = Array.isArray(content) ? (content as Record<string, unknown>[]) : [];
   const out: Message[] = [];
   blocks.forEach((b, i) => {
     if (b?.type === "text" && typeof b.text === "string" && b.text.trim()) {
@@ -94,12 +117,15 @@ export function rowMessages(e: Row, messageChars: number): Message[] {
   return out;
 }
 
-function parseLines(text: string, messageChars: number, out: Message[]): void {
+function parseLines(text: string, messageChars: number, out: Parsed[]): void {
   for (const line of text.split("\n")) {
-    if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')) continue;
+    const boundary = line.includes('"subtype":"compact_boundary"');
+    if (!boundary && !line.includes('"type":"user"') && !line.includes('"type":"assistant"') && !line.includes('"type":"queued_command"')) continue;
     if (line.includes('"toolUseResult":')) continue;
     try {
-      out.push(...rowMessages(JSON.parse(line) as Row, messageChars));
+      const e = JSON.parse(line) as Row;
+      if (e.type === "system" && e.subtype === "compact_boundary") out.push(boundaryOf(e));
+      else out.push(...rowMessages(e, messageChars));
     } catch {}
   }
 }
@@ -155,7 +181,8 @@ function snippetOf(e: Entry, i: number, res: RegExp[]): SearchSnippet {
   let to = Math.min(msg.length, from + SNIPPET_CHARS);
   if (to < msg.length && /[\ud800-\udbff]/.test(msg[to - 1])) to--;
   const text = msg.slice(from, to).replace(/\s/g, " ");
-  return { itemId: e.ids[i], role: e.roles[i], at: e.ats[i], text, marks: marksIn(text, res), cutStart: from > 0, cutEnd: to < msg.length };
+  const earlier = e.earlier[i] ? { earlier: true } : {};
+  return { itemId: e.ids[i], role: e.roles[i], at: e.ats[i], text, marks: marksIn(text, res), cutStart: from > 0, cutEnd: to < msg.length, ...earlier };
 }
 
 function messageAt(starts: number[], offset: number): number {
@@ -285,8 +312,8 @@ export class SessionSearch {
       this.queue.add(file);
       return { entry: have, fresh: false };
     }
-    const entry = await this.read(file);
-    return { entry, fresh: Boolean(entry) };
+    // A file that cannot be read counts as read, so it does not hold the search pending.
+    return { entry: await this.read(file), fresh: true };
   }
 
   private read(file: string): Promise<Entry | undefined> {
@@ -324,7 +351,7 @@ export class SessionSearch {
       const prev = this.entries.get(file);
       const append = prev && st.size >= prev.size && head.startsWith(prev.head);
       const start = append ? prev.offset : 0;
-      const messages: Message[] = [];
+      const messages: Parsed[] = [];
       let consumed = start;
       let carry: Buffer[] = [];
       const buf = Buffer.alloc(CHUNK_BYTES);
@@ -353,7 +380,17 @@ export class SessionSearch {
     }
   }
 
-  private build(messages: Message[]): Entry {
+  // A message written again keeps its last place; those before the last compaction are marked.
+  private build(parsed: Parsed[]): Entry {
+    const last = parsed.findLastIndex((m) => "kept" in m);
+    const preserved = last >= 0 ? (parsed[last] as Boundary).kept : undefined;
+    const byId = new Map<string, Message>();
+    parsed.forEach((m, i) => {
+      if ("kept" in m) return;
+      byId.delete(m.id);
+      byId.set(m.id, i < last && !preserved?.has(m.id.split(":")[0]) ? { ...m, earlier: true } : m);
+    });
+    const messages = [...byId.values()];
     let keep = messages.length;
     let chars = 0;
     while (keep > 0 && chars + messages[keep - 1].text.length + SEP.length <= this.limits.transcriptChars) chars += messages[--keep].text.length + SEP.length;
@@ -374,16 +411,18 @@ export class SessionSearch {
       ids: kept.map((m) => m.id),
       roles: kept.map((m) => m.role),
       ats: kept.map((m) => m.at),
+      earlier: kept.map((m) => Boolean(m.earlier)),
     };
   }
 
-  private extend(prev: Entry, added: Message[]): Entry {
+  private extend(prev: Entry, added: Parsed[]): Entry {
     if (!added.length) return { ...prev };
     const old: Message[] = prev.ids.map((id, i) => ({
       id,
       role: prev.roles[i],
       at: prev.ats[i],
       text: prev.text.slice(prev.starts[i], i + 1 < prev.starts.length ? prev.starts[i + 1] - SEP.length : prev.text.length),
+      earlier: prev.earlier[i],
     }));
     return this.build([...old, ...added]);
   }

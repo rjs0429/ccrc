@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSummary } from "../../../broker/src/protocol.ts";
-import type { Mark, SearchResponse, SearchResult } from "../../../broker/src/search-protocol.ts";
+import type { Mark, SearchResponse, SearchResult, SearchSnippet } from "../../../broker/src/search-protocol.ts";
 import { ApiError, api } from "../api.ts";
 import { Icon, Spinner } from "../components/ui.tsx";
 import { UpdateBanner } from "../components/UpdateBanner.tsx";
 import { baseName, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
-import { loggedOut, navigate, openAt, refreshSessions, useApp } from "../state.ts";
+import { loggedOut, navigate, openAt, refreshSessions, toast, useApp } from "../state.ts";
 
 type Filter = "all" | "running" | "waiting";
 const PAGE = 80;
@@ -34,19 +34,25 @@ function Marked({ text, marks }: { text: string; marks: Mark[] }) {
   return <>{parts}</>;
 }
 
+function openSnippet(sessionId: string, sn: SearchSnippet): void {
+  if (sn.earlier) toast("대화를 압축하기 전의 메시지라 대화 화면에는 없습니다");
+  openAt(sessionId, sn.earlier ? undefined : sn.itemId);
+}
+
 function SearchRow({ r }: { r: SearchResult }) {
   const meta = [baseName(r.cwd), relTime(r.lastModified), r.hits ? `메시지 ${r.hits}건` : ""].filter(Boolean).join(" · ");
   return (
     <div className="border-b border-line">
-      <button onClick={() => openAt(r.id, r.snippets[0]?.itemId)} className="block w-full px-4 pt-3 pb-1 text-left active:bg-surface-2">
+      <button onClick={() => openAt(r.id, r.snippets.find((sn) => !sn.earlier)?.itemId)} className="block w-full px-4 pt-3 pb-1 text-left active:bg-surface-2">
         <span className="block truncate text-[15px] font-medium">{r.title.trim() ? <Marked text={r.title} marks={r.titleMarks} /> : sessionTitle(r)}</span>
         <span className="mt-0.5 block truncate text-xs text-muted">{meta}</span>
       </button>
       <div className="pb-2">
         {r.snippets.map((sn) => (
-          <button key={sn.itemId} onClick={() => openAt(r.id, sn.itemId)} className="block w-full px-4 py-1 text-left active:bg-surface-2">
+          <button key={sn.itemId} onClick={() => openSnippet(r.id, sn)} className="block w-full px-4 py-1 text-left active:bg-surface-2">
             <span className="line-clamp-2 text-[13px] leading-snug text-muted">
               <span className="mr-1 font-medium text-fg">{sn.role === "user" ? "나" : "Claude"}</span>
+              {sn.earlier && <span className="mr-1 text-[11px]">(압축 전)</span>}
               {sn.cutStart && "…"}
               <Marked text={sn.text} marks={sn.marks} />
               {sn.cutEnd && "…"}

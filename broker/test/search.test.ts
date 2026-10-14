@@ -72,6 +72,57 @@ test("snippet item ids are the ids the chat view gives those messages", async ()
   assert.deepEqual(ids, items.filter((i) => i.kind === "user" || i.kind === "assistant").map((i) => i.id).sort());
 });
 
+test("a message sent mid-turn is found under the chat view's id, and a row written again counts once", async () => {
+  const id = sid();
+  const u = row(id, "user", "alpha 질문");
+  const a = row(id, "assistant", [{ type: "text", text: "alpha 대답" }], { parentUuid: JSON.parse(u).uuid });
+  const q = JSON.stringify({
+    parentUuid: JSON.parse(a).uuid,
+    isSidechain: false,
+    type: "attachment",
+    uuid: "queued-row",
+    timestamp: "2026-10-14T01:00:00Z",
+    sessionId: id,
+    cwd,
+    attachment: { type: "queued_command", prompt: [{ type: "text", text: "alpha 중간에 보낸 말" }], source_uuid: "queued-src", commandMode: "prompt", origin: { kind: "human" } },
+  });
+  const b = row(id, "assistant", [{ type: "text", text: "끝" }], { parentUuid: "queued-row" });
+  write(id, [u, a, q, b, u, a]);
+  const items = await loadHistory(id, cwd);
+  const r = await new SessionSearch().search("alpha", [summary(id, "", 1)]);
+  assert.equal(r.results[0].hits, 3);
+  const ids = r.results[0].snippets.map((x) => x.itemId);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(ids.includes("queued-src"));
+  for (const itemId of ids) assert.ok(items.some((i) => i.id === itemId), itemId);
+});
+
+test("messages before the last compaction are flagged, except those it kept", async () => {
+  const id = sid();
+  const u1 = row(id, "user", "beta old question");
+  const a1 = row(id, "assistant", [{ type: "text", text: "beta old answer" }]);
+  const a2 = row(id, "assistant", [{ type: "text", text: "beta kept answer" }]);
+  const kept = JSON.parse(a2).uuid;
+  const boundary = JSON.stringify({ parentUuid: null, logicalParentUuid: kept, type: "system", subtype: "compact_boundary", uuid: "cb-1", timestamp: "2026-10-14T01:00:00Z", compactMetadata: { preservedMessages: { allUuids: [kept] } } });
+  const u2 = row(id, "user", "beta new question");
+  const file = write(id, [u1, a1, a2]);
+  const s = new SessionSearch();
+  const list = [summary(id, "", 1)];
+  const flags = async () => Object.fromEntries((await s.search("beta", list)).results[0].snippets.map((x) => [x.text, Boolean(x.earlier)]));
+  assert.deepEqual(await flags(), { "beta old question": false, "beta old answer": false, "beta kept answer": false });
+  fs.appendFileSync(file, [boundary, row(id, "user", "summary beta", { isCompactSummary: true }), u2].map((l) => l + "\n").join(""));
+  assert.deepEqual(await flags(), { "beta new question": false, "beta kept answer": false, "beta old answer": true });
+  assert.deepEqual(await new SessionSearch().search("beta", list).then((r) => r.results[0].snippets.map((x) => Boolean(x.earlier))), [false, false, true]);
+});
+
+test("a transcript that cannot be read does not keep the search pending", async () => {
+  const id = sid();
+  fs.mkdirSync(path.join(PROJECTS, projectDirName(cwd), `${id}.jsonl`), { recursive: true });
+  const r = await new SessionSearch().search("gamma", [summary(id, "gamma title", 1)]);
+  assert.equal(r.pending, 0);
+  assert.equal(r.total, 1);
+});
+
 test("title matches come first, then content matches by recency", async () => {
   const [a, b, c, d] = [sid(), sid(), sid(), sid()];
   write(a, [row(a, "user", "kiwi in an old message")]);
