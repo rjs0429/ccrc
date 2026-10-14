@@ -234,7 +234,7 @@ export function UserAttachments({ messageId, list, waiting }: { messageId: strin
     });
   const docs = list.filter((a) => a.kind === "document");
   return (
-    <div className="flex max-w-[88%] flex-col items-end gap-1.5" data-attachments>
+    <div className={`flex flex-col items-end gap-1.5 ${waiting ? "" : "max-w-[88%]"}`} data-attachments>
       {images.length > 0 && (
         <div className="flex flex-wrap justify-end gap-1.5">
           {images.map((shown, n) => (

@@ -26,7 +26,7 @@ function UserItem({ item }: { item: Extract<DisplayItem, { kind: "user" }> }) {
 export function QueuedItem({ message, host, onTakeBack, taking }: { message: QueuedMessage; host: string; onTakeBack?: () => void; taking?: boolean }) {
   return (
     <div className="flex flex-col items-end" data-queued={message.id}>
-      <div className="flex max-w-[88%] items-center gap-1">
+      <div className="flex max-w-[88%] items-end gap-1">
         {onTakeBack && (
           <button onClick={onTakeBack} disabled={taking} aria-label="보내지 않기" className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted disabled:opacity-40">
             <Icon.x className="size-4" />
