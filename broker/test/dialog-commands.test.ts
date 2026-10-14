@@ -45,7 +45,7 @@ test("dialog commands are known by name and alias", () => {
   assert.equal(commandName("/cost"), "usage");
   assert.equal(commandName("allowed-tools"), "permissions");
   assert.equal(commandName("Undo"), "rewind");
-  for (const name of ["context", "usage", "stats", "mcp", "status", "settings", "bashes", "effort", "model"]) assert.ok(isDialogCommand(name), name);
+  for (const name of ["context", "usage", "stats", "mcp", "status", "settings", "bashes", "effort", "model", "output-style"]) assert.ok(isDialogCommand(name), name);
   for (const name of ["compact", "clear", "init", undefined]) assert.ok(!isDialogCommand(name), String(name));
   assert.deepEqual(parseCommand(" /model  sonnet "), { name: "model", args: "sonnet" });
   assert.deepEqual(parseCommand("/usage"), { name: "usage", args: "" });

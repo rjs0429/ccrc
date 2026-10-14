@@ -40,6 +40,7 @@ const CALL_LABEL: Record<string, string> = {
   mcp_reconnect: "MCP 다시 연결",
   rewind: "파일 되돌리기",
   stop_task: "작업 중지",
+  resume: "이어서 실행",
   set_output_style: "출력 스타일 바꿈",
 };
 
@@ -66,6 +67,9 @@ const WORD: Record<string, string> = {
   idle: "오래 쓰지 않음",
   logout: "로그아웃",
   expired: "만료",
+  accept: "보냄",
+  decline: "거절",
+  cancel: "취소",
 };
 
 // The value as a label from the first map that has it, else as it is.
@@ -86,7 +90,9 @@ function detail(e: AuditEntry): string {
     case "set_ultracode":
       return e.on ? "켬" : "끔";
     case "answer":
-      return named(e.decision, WORD, MODE_LABEL);
+      return e.kind === "elicitation"
+        ? ["입력 요청", named(e.action, WORD), named(e.server)].filter(Boolean).join(" · ")
+        : named(e.decision, WORD, MODE_LABEL);
     case "call":
       return [named(e.op, CALL_LABEL), named(e.server), named(e.style)].filter(Boolean).join(" · ");
     case "claude_settings":

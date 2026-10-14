@@ -30,6 +30,7 @@ const DIALOG = new Set([
   "export",
   "plan",
   "bug",
+  "output-style",
 ]);
 
 const ALIASES: Record<string, string> = {

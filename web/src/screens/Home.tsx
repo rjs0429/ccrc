@@ -35,7 +35,7 @@ function Marked({ text, marks }: { text: string; marks: Mark[] }) {
 }
 
 function openSnippet(sessionId: string, sn: SearchSnippet): void {
-  if (sn.earlier) toast("대화를 압축하기 전의 메시지라 대화 화면에는 없습니다");
+  if (sn.earlier) toast("이전 대화를 요약하기 전의 메시지라 대화 화면에는 없습니다");
   openAt(sessionId, sn.earlier ? undefined : sn.itemId);
 }
 
@@ -52,7 +52,7 @@ function SearchRow({ r }: { r: SearchResult }) {
           <button key={sn.itemId} onClick={() => openSnippet(r.id, sn)} className="block w-full px-4 py-1 text-left active:bg-surface-2">
             <span className="line-clamp-2 text-[13px] leading-snug text-muted">
               <span className="mr-1 font-medium text-fg">{sn.role === "user" ? "나" : "Claude"}</span>
-              {sn.earlier && <span className="mr-1 text-[11px]">(압축 전)</span>}
+              {sn.earlier && <span className="mr-1 text-[11px]">(요약 전)</span>}
               {sn.cutStart && "…"}
               <Marked text={sn.text} marks={sn.marks} />
               {sn.cutEnd && "…"}
