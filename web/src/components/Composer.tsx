@@ -303,6 +303,9 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
               <Switch on={state.ultracode === true} />
             </button>
           )}
+          {state?.appliedUnknown && (
+            <div className="mt-2 border-t border-line px-3 pt-2.5 text-xs text-muted">VS Code가 Claude Code를 다시 시작하면 Ultracode와 지금 값이 보입니다.</div>
+          )}
         </Sheet>
       )}
     </div>

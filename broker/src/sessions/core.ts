@@ -160,6 +160,7 @@ export abstract class SessionCore extends EventEmitter {
   private ended = false;
   private appliedSeen = false;
   private appliedOff = false;
+  private appliedRefused = false;
   private taskTimers = new Map<string, NodeJS.Timeout>();
   private streamText = "";
   private streamThinking = false;
@@ -195,6 +196,7 @@ export abstract class SessionCore extends EventEmitter {
       permissionMode: this.permissionMode,
       effort: this.effort,
       ...(this.ultracodeAvailable !== undefined ? { ultracode: this.ultracode === true, ultracodeAvailable: this.ultracodeAvailable } : {}),
+      ...(this.appliedRefused && this.ultracodeAvailable === undefined ? { appliedUnknown: true } : {}),
       contextPercent: this.contextPercent,
       costUsd: this.costUsd,
       closedReason: this.closedReason,
@@ -437,7 +439,12 @@ export abstract class SessionCore extends EventEmitter {
     this.readApplied()
       .then((r) => this.adoptApplied(r.applied))
       .catch((e: unknown) => {
-        if (/not allowed|not available/.test(e instanceof Error ? e.message : "")) this.appliedOff = true;
+        const message = e instanceof Error ? e.message : "";
+        if (/not allowed|not available/.test(message)) this.appliedOff = true;
+        if (/request not allowed/.test(message) && !this.appliedRefused) {
+          this.appliedRefused = true;
+          this.emit("state");
+        }
       });
   }
 

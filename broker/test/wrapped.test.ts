@@ -291,6 +291,27 @@ test("model, effort and ultracode follow the applied settings, and effort change
   await assert.rejects(s.setUltracode(true), /not available/);
 });
 
+test("a wrapper too old for get_settings marks the applied state unknown until VS Code's answer passes", async () => {
+  const { s, wrapper } = await session();
+  wrapper.sock.on("data", () => {
+    for (const f of wrapper.frames) {
+      const m = f.m as Msg | undefined;
+      if (f.t === "to_cli" && m?.type === "control_request" && !f.answered) {
+        f.answered = true;
+        wrapper.send({ t: "rejected", id: m.request_id, reason: "request not allowed" });
+      }
+    }
+  });
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "init", response: { models: [{ value: "default" }] } } });
+  for (let i = 0; i < 50 && !s.state().appliedUnknown; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(s.state().appliedUnknown, true);
+  assert.equal(s.state().ultracodeAvailable, undefined);
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "vs-1", response: { applied: { effort: "high", ultracode: false, ultracodeAvailable: true } } } });
+  for (let i = 0; i < 50 && s.state().appliedUnknown; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(s.state().appliedUnknown, undefined);
+  assert.equal(s.state().ultracodeAvailable, true);
+});
+
 test("turn state follows session_state_changed and result", async () => {
   const { s, wrapper, next } = await session();
   wrapper.autoReply((r) => (r.subtype === "get_context_usage" ? { percentage: 41.6 } : {}));

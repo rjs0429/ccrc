@@ -57,7 +57,7 @@ function PermissionCard({ request, reply }: { request: PendingRequest; reply: Re
           {request.allowAlways && (
             <Button onClick={() => reply({ kind: "permission", decision: "allow_always" })}>{allowAlwaysLabel(request.suggestions)}</Button>
           )}
-          <DenyBox placeholder="대신 할 일 (선택)" label="거부" onSend={(message) => reply({ kind: "permission", decision: "deny", message })} />
+          <DenyBox placeholder="Claude에게 대신 할 일 (선택)" label="거부" onSend={(message) => reply({ kind: "permission", decision: "deny", message })} />
         </div>
       )}
     </Card>

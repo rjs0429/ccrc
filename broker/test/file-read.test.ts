@@ -167,20 +167,27 @@ test("additional directories come from the user's and the project's settings", (
 
 async function server(session: { start: string; latest?: string; core?: Partial<SessionCore> }) {
   const app = Fastify({ logger: false });
+  app.decorateRequest("device", "");
+  app.addHook("onRequest", async (req) => {
+    req.device = String(req.headers["x-device"] ?? "phone");
+  });
+  const lease = { current: { tokenHash: "lease-1" } as { tokenHash: string } | undefined };
   const events: Record<string, unknown>[] = [];
+  const named: [string, Record<string, unknown>][] = [];
   const requireAuth = async (req: FastifyRequest, reply: FastifyReply) => {
     if (req.headers.authorization !== "ok") return reply.code(401).send({ error: "unauthorized" });
   };
-  const audit = { log: (_e: string, detail: Record<string, unknown>) => events.push(detail) } as unknown as Audit;
+  const audit = { log: (e: string, detail: Record<string, unknown>) => (events.push(detail), named.push([e, detail])) } as unknown as Audit;
   const manager = {
     fileAccess: async (id: string) => {
       if (id !== "s1") throw Error("unknown session");
       return { start: session.start, latest: session.latest, session: session.core };
     },
   };
-  await registerFiles(app, { audit, requireAuth, manager, claudeSettings: { file: "/nonexistent/settings.json" } } as unknown as RouteDeps);
+  const leases = { current: () => lease.current };
+  await registerFiles(app, { audit, requireAuth, manager, leases, claudeSettings: { file: "/nonexistent/settings.json" } } as unknown as RouteDeps);
   const get = (url: string) => app.inject({ method: "GET", url, headers: { authorization: "ok" } });
-  return { app, events, get };
+  return { app, events, named, get, lease };
 }
 
 test("the file route resolves, reads and serves without rendering active content", async () => {
@@ -273,4 +280,49 @@ test("a wrapper that predates read_file leaves the reading to the broker", async
   const { get } = await server({ start: proj, core: core as unknown as SessionCore });
   const a = await get(`/api/sessions/s1/file?href=a.md`);
   assert.deepEqual([a.json().text, a.json().via], ["local", "broker"]);
+});
+
+test("a ticket opens one file without the cookie, only from the same device and login and only for a minute", async (t) => {
+  const proj = tree({ "doc.pdf": "%PDF-1.7", "a.md": "x", ".env": "TOKEN=1" });
+  const { app, named, lease } = await server({ start: proj });
+  const mint = (p: unknown, id = "s1", auth = "ok") =>
+    app.inject({ method: "POST", url: `/api/sessions/${id}/file/ticket`, headers: { authorization: auth, "content-type": "application/json" }, payload: { path: p } });
+  const fetch = (url: string, device = "phone") => app.inject({ method: "GET", url, headers: { "x-device": device } });
+
+  assert.equal((await mint(path.join(proj, "doc.pdf"), "s1", "no")).statusCode, 401);
+  assert.equal((await mint("doc.pdf")).statusCode, 400);
+  assert.equal((await mint(path.join(proj, "doc.pdf"), "zz")).statusCode, 404);
+  const m = await mint(path.join(proj, "doc.pdf"));
+  assert.equal(m.statusCode, 200);
+  const { url } = m.json() as { url: string };
+  assert.match(url, /^\/api\/file-ticket\/[A-Za-z0-9_-]{43}$/);
+  assert.ok(!url.includes("doc.pdf"), "the URL names no file");
+
+  const first = await fetch(url);
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.headers["content-type"], "application/pdf");
+  assert.match(String(first.headers["content-disposition"]), /^inline/);
+  assert.equal(first.headers["cache-control"], "no-store");
+  assert.equal((await fetch(url)).statusCode, 200, "a viewer may fetch again");
+  const dl = await fetch(`${url}?download=1`);
+  assert.match(String(dl.headers["content-disposition"]), /^attachment/);
+  assert.ok(named.some(([e, x]) => e === "file_read" && x.ticket === true && x.raw === true && x.outcome === "ok" && x.device === "phone"));
+
+  assert.equal((await fetch(url, "laptop")).statusCode, 401, "another device cannot use it");
+  assert.equal((await fetch("/api/file-ticket/nope")).statusCode, 401);
+  lease.current = { tokenHash: "lease-2" };
+  assert.equal((await fetch(url)).statusCode, 401, "a new login ends it");
+  lease.current = { tokenHash: "lease-1" };
+  assert.equal((await fetch(url)).statusCode, 200);
+  assert.ok(named.some(([e, x]) => e === "file_read" && x.outcome === "ticket_invalid" && x.device === "laptop" && x.path === path.join(proj, "doc.pdf")));
+
+  const secret = (await mint(path.join(proj, ".env"))).json() as { url: string };
+  assert.equal((await fetch(secret.url)).statusCode, 403, "secret files stay refused");
+  const outside = (await mint("/etc/hostname")).json() as { url: string };
+  assert.equal((await fetch(outside.url)).statusCode, 403, "the working-folder scope still applies");
+
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() + 61_000 });
+  assert.equal((await fetch(url)).statusCode, 401, "expired");
+  assert.equal(named.at(-1)?.[1].outcome, "ticket_expired");
+  t.mock.timers.reset();
 });

@@ -8,7 +8,7 @@ import type { SheetProps } from "./types.ts";
 
 const TYPE_LABEL: Record<string, string> = {
   local_agent: "서브에이전트",
-  local_bash: "명령",
+  local_bash: "셸 (Bash)",
   local_workflow: "워크플로",
   remote_agent: "원격 에이전트",
   monitor_mcp: "모니터",

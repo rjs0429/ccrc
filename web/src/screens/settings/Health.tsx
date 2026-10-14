@@ -9,7 +9,7 @@ const RECHECK_MS = 3000;
 const CHECK_LABEL: Record<string, string> = {
   extension: "VS Code 확장",
   cli: "Claude Code 실행 파일",
-  initialize: "초기화 응답",
+  initialize: "initialize 응답",
   context: "context 조회",
   exit: "정상 종료",
 };

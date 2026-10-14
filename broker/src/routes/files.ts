@@ -1,6 +1,7 @@
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { claudeSettingsFile } from "../claude-settings.ts";
 import type { FileView } from "../protocol.ts";
 import type { SessionCore } from "../sessions/core.ts";
@@ -30,6 +31,19 @@ const PDF_CSP = "default-src 'none'; object-src 'self'; img-src 'self' data: blo
 const STATUS: Record<ReadErrorCode, number> = { invalid: 400, not_found: 404, denied: 403, too_large: 413, failed: 502 };
 const LOGGED_PATH_MAX = 1024;
 const OLD_WRAPPER = "rejected by the wrapper: request not allowed";
+const TICKET_MS = 60_000;
+const TICKETS_MAX = 64;
+
+// Lets a page outside the app, which has no cookie (a new window from the home-screen app), fetch one
+// file: bound to the device and login that asked for it, reusable until it expires since PDF viewers
+// may fetch more than once.
+interface Ticket {
+  sessionId: string;
+  path: string;
+  device: string;
+  lease: string;
+  expires: number;
+}
 
 interface Access {
   // Working directories the broker enforces when it reads a file itself.
@@ -150,45 +164,90 @@ export async function registerFiles(app: FastifyInstance, d: RouteDeps): Promise
     },
   );
 
+  const absolute = (v: unknown): string | undefined =>
+    typeof v === "string" && path.isAbsolute(v) && !v.includes("\0") ? path.normalize(v) : undefined;
+
+  const serveRaw = async (req: FastifyRequest, reply: FastifyReply, sessionId: string, p: string, download: boolean, extra: Record<string, unknown> = {}) => {
+    reply.header("Cache-Control", "no-store");
+    const a = await access(sessionId);
+    if (!a) return reply.code(404).send({ error: "unknown_session" });
+    const log = (outcome: string, via?: string) =>
+      d.audit.log("file_read", {
+        device: req.device,
+        sessionId,
+        path: p.slice(0, LOGGED_PATH_MAX),
+        outcome,
+        raw: true,
+        ...extra,
+        ...(via ? { via } : {}),
+      });
+    try {
+      const size = await sizeOf(p);
+      if (size === undefined) throw new ReadError(a.roots.some((r) => inside(p, r)) ? "not_found" : "denied");
+      if (size > MAX_BINARY_BYTES) throw await tooLarge(a, p);
+      const r = await readFile(a, p, MAX_BINARY_BYTES, true);
+      log("ok", r.via);
+      const type = servedType(p);
+      const name = path.basename(p);
+      const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+      const disposition = download || type === "application/octet-stream" ? "attachment" : "inline";
+      return reply
+        .header("Content-Security-Policy", type === "application/pdf" ? PDF_CSP : RAW_CSP)
+        .header("Content-Disposition", `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`)
+        .type(type)
+        .send(r.data);
+    } catch (e) {
+      log(readFailure(e).code, a.session ? "claude" : "broker");
+      return fail(reply, e);
+    }
+  };
+
   // The bytes of a file the viewer opened, for images, PDF and downloads.
   app.get<{ Params: { id: string }; Querystring: { path?: unknown; download?: unknown } }>(
     "/api/sessions/:id/file/raw",
     { preHandler: d.requireAuth },
     async (req, reply) => {
-      reply.header("Cache-Control", "no-store");
-      const p =
-        typeof req.query.path === "string" && path.isAbsolute(req.query.path) && !req.query.path.includes("\0") ? path.normalize(req.query.path) : undefined;
-      if (!p) return reply.code(400).send({ error: "invalid" });
-      const a = await access(req.params.id);
-      if (!a) return reply.code(404).send({ error: "unknown_session" });
-      const log = (outcome: string, via?: string) =>
-        d.audit.log("file_read", {
-          device: req.device,
-          sessionId: req.params.id,
-          path: p.slice(0, LOGGED_PATH_MAX),
-          outcome,
-          raw: true,
-          ...(via ? { via } : {}),
-        });
-      try {
-        const size = await sizeOf(p);
-        if (size === undefined) throw new ReadError(a.roots.some((r) => inside(p, r)) ? "not_found" : "denied");
-        if (size > MAX_BINARY_BYTES) throw await tooLarge(a, p);
-        const r = await readFile(a, p, MAX_BINARY_BYTES, true);
-        log("ok", r.via);
-        const type = servedType(p);
-        const name = path.basename(p);
-        const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
-        const disposition = req.query.download === "1" || type === "application/octet-stream" ? "attachment" : "inline";
-        return reply
-          .header("Content-Security-Policy", type === "application/pdf" ? PDF_CSP : RAW_CSP)
-          .header("Content-Disposition", `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`)
-          .type(type)
-          .send(r.data);
-      } catch (e) {
-        log(readFailure(e).code, a.session ? "claude" : "broker");
-        return fail(reply, e);
-      }
+      const p = absolute(req.query.path);
+      if (!p) return reply.code(400).header("Cache-Control", "no-store").send({ error: "invalid" });
+      return serveRaw(req, reply, req.params.id, p, req.query.download === "1");
     },
   );
+
+  const tickets = new Map<string, Ticket>();
+  const prune = (now: number) => {
+    for (const [k, t] of tickets) if (t.expires <= now) tickets.delete(k);
+    while (tickets.size >= TICKETS_MAX) tickets.delete(tickets.keys().next().value!);
+  };
+
+  app.post<{ Params: { id: string }; Body: { path?: unknown } }>("/api/sessions/:id/file/ticket", { preHandler: d.requireAuth }, async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const p = absolute(req.body?.path);
+    if (!p) return reply.code(400).send({ error: "invalid" });
+    if (!(await access(req.params.id))) return reply.code(404).send({ error: "unknown_session" });
+    const lease = d.leases.current();
+    if (!lease) return reply.code(401).send({ error: "unauthorized" });
+    const now = Date.now();
+    prune(now);
+    const id = randomBytes(32).toString("base64url");
+    tickets.set(id, { sessionId: req.params.id, path: p, device: req.device, lease: lease.tokenHash, expires: now + TICKET_MS });
+    return { url: `/api/file-ticket/${id}`, expiresInMs: TICKET_MS };
+  });
+
+  // The broker's device check has already run; the ticket stands in for the login cookie.
+  app.get<{ Params: { ticket: string }; Querystring: { download?: unknown } }>("/api/file-ticket/:ticket", async (req, reply) => {
+    const t = tickets.get(req.params.ticket);
+    const now = Date.now();
+    if (!t || t.expires <= now || t.device !== req.device || d.leases.current()?.tokenHash !== t.lease) {
+      if (t && t.expires <= now) tickets.delete(req.params.ticket);
+      d.audit.log("file_read", {
+        device: req.device,
+        ...(t ? { sessionId: t.sessionId, path: t.path.slice(0, LOGGED_PATH_MAX) } : {}),
+        outcome: t && t.expires <= now ? "ticket_expired" : "ticket_invalid",
+        raw: true,
+        ticket: true,
+      });
+      return reply.code(401).header("Cache-Control", "no-store").send({ error: "unauthorized" });
+    }
+    return serveRaw(req, reply, t.sessionId, t.path, req.query.download === "1", { ticket: true });
+  });
 }

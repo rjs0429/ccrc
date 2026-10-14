@@ -13,8 +13,8 @@ type Category = ContextDetail["categories"][number];
 
 const CATEGORY_LABEL: Record<string, string> = {
   "System prompt": "시스템 프롬프트",
-  "System tools": "기본 도구",
-  "System tools (deferred)": "기본 도구",
+  "System tools": "시스템 도구",
+  "System tools (deferred)": "시스템 도구",
   "MCP tools": "MCP 도구",
   "MCP tools (deferred)": "MCP 도구",
   "MCP server instructions": "MCP 서버 안내",

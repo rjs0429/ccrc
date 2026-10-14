@@ -687,3 +687,50 @@ test("a turn note that cannot be cleared does not cut off what Claude Code write
     await t.host.wait((m) => m.type === "assistant" && JSON.stringify(m).includes("echo: two"), "the second turn");
   });
 });
+
+const isSnapshot = (m: Msg) => m.type === "system" && m.subtype === "status" && m.connectSnapshot === true;
+
+test("a model or effort change from the broker makes VS Code read the applied settings again", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
+  const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
+  request("ccrc-early", { subtype: "apply_flag_settings", settings: { effortLevel: "high" } });
+  await t.broker.frames.wait(replied("ccrc-early"), "early reply");
+  assert.ok(!t.host.has(isSnapshot), "nothing before VS Code has connected");
+
+  t.write({ type: "control_request", request_id: "init-1", request: { subtype: "initialize" } });
+  await t.host.wait((m) => m.type === "control_response" && (m.response as Msg).request_id === "init-1", "initialize answer");
+  request("ccrc-effort", { subtype: "apply_flag_settings", settings: { effortLevel: "low", ultracode: true } });
+  const first = await t.host.wait(isSnapshot, "status line after the effort change");
+  const init = t.host.items.find((m) => m.type === "system" && m.subtype === "init") as Msg;
+  assert.deepEqual({ ...first, uuid: typeof first.uuid }, { type: "system", subtype: "status", status: null, connectSnapshot: true, uuid: "string", session_id: init.session_id });
+  assert.ok(!("permissionMode" in first), "the permission mode stays as VS Code has it");
+
+  t.user("COMPACTING");
+  await t.host.wait((m) => m.type === "system" && m.status === "compacting", "compacting");
+  request("ccrc-model", { subtype: "set_model", model: "opus" });
+  await t.broker.frames.wait(replied("ccrc-model"), "model reply");
+  const second = await t.host.wait((m) => isSnapshot(m) && m !== first, "status line after the model change");
+  assert.equal(second.status, "compacting", "Claude Code's current status goes along");
+
+  const count = () => t.host.items.filter(isSnapshot).length;
+  request("ccrc-mode", { subtype: "set_permission_mode", mode: "plan" });
+  request("ccrc-gs", { subtype: "get_settings" });
+  request("ccrc-ctx", { subtype: "get_context_usage" });
+  for (const id of ["ccrc-mode", "ccrc-gs", "ccrc-ctx"]) await t.broker.frames.wait(replied(id), id);
+  assert.equal(count(), 2, "other requests do not");
+  assert.ok(!t.broker.frames.has(frameOut(isSnapshot)), "the line is for VS Code only");
+});
+
+test("a refused change does not touch VS Code", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.write({ type: "control_request", request_id: "init-1", request: { subtype: "initialize" } });
+  await t.host.wait((m) => m.type === "control_response", "initialize answer");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-bad", request: { subtype: "apply_flag_settings", settings: { model: "opus" } } } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-bad", "refused");
+  t.user("hi");
+  await t.host.wait((m) => m.type === "result", "turn");
+  assert.ok(!t.host.has(isSnapshot));
+});

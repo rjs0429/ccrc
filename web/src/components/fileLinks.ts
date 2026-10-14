@@ -4,6 +4,9 @@ import { defaultUrlTransform } from "react-markdown";
 // Opens a link to a file of the session in the viewer; where it is absent, links just navigate.
 export const FileLinks = createContext<((href: string) => void) | null>(null);
 
+// Turns an image source in Markdown into the URL to load it from; where it is absent, sources load as they are.
+export const FileImages = createContext<((src: string) => string) | null>(null);
+
 export const isWebLink = (href: string): boolean => /^(https?:|mailto:|tel:)/i.test(href);
 
 // Markdown keeps file:// links and "name.ext:42" links, which its URL check would take for unknown schemes;

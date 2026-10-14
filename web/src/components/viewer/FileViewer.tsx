@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FileView } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
 import { sizeText } from "../../labels.ts";
-import { FileLinks } from "../fileLinks.ts";
+import { FileImages, FileLinks } from "../fileLinks.ts";
 import { Markdown } from "../Markdown.tsx";
 import { Icon, Spinner } from "../ui.tsx";
 import { htmlLines, languageOf, parseTable, slug } from "./text.ts";
@@ -31,6 +31,75 @@ const FALLBACK_TEXT: Record<string, string> = {
 function dirName(p: string): string {
   const i = p.lastIndexOf("/");
   return i > 0 ? p.slice(0, i) : "/";
+}
+
+// A Markdown image source as an absolute path from the file's folder; a web or data URL is not a file.
+function imagePath(src: string, dir: string): string | undefined {
+  let p = src;
+  if (/^file:/i.test(p)) {
+    try {
+      const u = new URL(p);
+      if (u.host && u.host !== "localhost") return undefined;
+      p = u.pathname;
+    } catch {
+      return undefined;
+    }
+  } else if (/^[a-z][a-z0-9+.-]*:/i.test(p) || p.startsWith("//")) return undefined;
+  else p = p.split(/[?#]/)[0];
+  try {
+    p = decodeURIComponent(p);
+  } catch {}
+  if (!p || p.includes("\0")) return undefined;
+  const out: string[] = [];
+  for (const s of [...(p.startsWith("/") ? [] : dir.split("/")), ...p.split("/")]) {
+    if (s === "..") out.pop();
+    else if (s && s !== ".") out.push(s);
+  }
+  return `/${out.join("/")}`;
+}
+
+interface Ticket {
+  url: string;
+  until: number;
+}
+
+// A cookie-free URL for the file, for pages the app opens outside itself (PDF, downloads): the
+// home-screen app does not share its login with the browser it opens them in. Renewed before it expires.
+function useTicket(sessionId: string, path: string | undefined): [Ticket | undefined, () => void] {
+  const [ticket, setTicket] = useState<Ticket>();
+  const renew = useRef<() => void>(() => {});
+  useEffect(() => {
+    setTicket(undefined);
+    if (!path) return;
+    let live = true;
+    let timer: number | undefined;
+    const mint = () => {
+      window.clearTimeout(timer);
+      request<{ url: string; expiresInMs: number }>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/file/ticket`, { path })
+        .then((t) => {
+          if (!live) return;
+          setTicket({ url: t.url, until: Date.now() + t.expiresInMs });
+          timer = window.setTimeout(mint, Math.max(5000, t.expiresInMs - 20_000));
+        })
+        .catch(() => {
+          if (!live) return;
+          setTicket(undefined);
+          timer = window.setTimeout(mint, 15_000);
+        });
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") mint();
+    };
+    renew.current = mint;
+    mint();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [sessionId, path]);
+  return [ticket, () => renew.current()];
 }
 
 function shown(p: string, cwd: string): string {
@@ -104,7 +173,18 @@ function prettyJson(text: string): string | undefined {
   }
 }
 
-function Body({ view, raw, url, onLink }: { view: FileView; raw: boolean; url: string; onLink: (href: string) => void }) {
+interface BodyProps {
+  view: FileView;
+  raw: boolean;
+  url: string;
+  // Where "열기" points: a ticket URL when there is one.
+  openUrl: string;
+  onOpen: (e: React.MouseEvent) => void;
+  onLink: (href: string) => void;
+  image: (src: string) => string;
+}
+
+function Body({ view, raw, url, openUrl, onOpen, onLink, image }: BodyProps) {
   const text = view.text ?? "";
   if (view.kind === "image") {
     return (
@@ -118,7 +198,7 @@ function Body({ view, raw, url, onLink }: { view: FileView; raw: boolean; url: s
       <div className="flex flex-col items-center gap-3 px-4 py-10 text-center">
         <Icon.file className="size-10 text-muted" />
         <div className="text-sm text-muted">PDF 문서 · {sizeText(view.size)}</div>
-        <a href={url} target="_blank" rel="noopener" className="rounded-xl bg-accent px-5 py-2.5 font-medium text-white">
+        <a href={openUrl} onClick={onOpen} target="_blank" rel="noopener" className="rounded-xl bg-accent px-5 py-2.5 font-medium text-white">
           열기
         </a>
       </div>
@@ -136,9 +216,11 @@ function Body({ view, raw, url, onLink }: { view: FileView; raw: boolean; url: s
   if (view.kind === "markdown" && !raw) {
     return (
       <FileLinks.Provider value={onLink}>
-        <div className="px-4 py-3">
-          <Markdown text={text} className="text-[15px]" />
-        </div>
+        <FileImages.Provider value={image}>
+          <div className="px-4 py-3">
+            <Markdown text={text} className="text-[15px]" />
+          </div>
+        </FileImages.Provider>
       </FileLinks.Provider>
     );
   }
@@ -203,7 +285,20 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
     if (view) setStack((s) => [...s, { href, base: dirName(view.path) }]);
   };
 
-  const url = view ? `/api/sessions/${encodeURIComponent(sessionId)}/file/raw?path=${encodeURIComponent(view.path)}` : "";
+  const rawUrl = (p: string) => `/api/sessions/${encodeURIComponent(sessionId)}/file/raw?path=${encodeURIComponent(p)}`;
+  const url = view ? rawUrl(view.path) : "";
+  const [ticket, renewTicket] = useTicket(sessionId, view?.path);
+  const outside = ticket?.url ?? url;
+  // A ticket that ran out while the app slept is renewed first; the next tap opens it.
+  const onOutside = (e: React.MouseEvent) => {
+    if (!ticket || Date.now() < ticket.until - 3000) return;
+    e.preventDefault();
+    renewTicket();
+  };
+  const image = (src: string) => {
+    const p = view && imagePath(src, dirName(view.path));
+    return p ? rawUrl(p) : src;
+  };
   const toggles = view && view.text !== undefined && (view.kind === "markdown" || view.kind === "json" || view.kind === "csv" || view.kind === "tsv");
   const title = view?.name ?? current.href.split(/[?#]/)[0].split("/").pop() ?? current.href;
 
@@ -241,7 +336,7 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
                 </button>
               </span>
             )}
-            <a href={`${url}&download=1`} download={view.name} className="ml-auto font-medium text-accent">
+            <a href={ticket ? `${ticket.url}?download=1` : `${url}&download=1`} onClick={onOutside} download={view.name} className="ml-auto font-medium text-accent">
               내려받기
             </a>
           </div>
@@ -263,7 +358,7 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
             <div className="mt-1 font-mono text-xs break-all text-muted">{loaded.path ? shown(loaded.path, cwd) : current.href}</div>
           </div>
         )}
-        {view && <Body view={view} raw={raw} url={url} onLink={onLink} />}
+        {view && <Body view={view} raw={raw} url={url} openUrl={outside} onOpen={onOutside} onLink={onLink} image={image} />}
       </div>
     </div>
   );
