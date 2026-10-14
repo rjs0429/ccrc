@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { commandName, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
+import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, ModelOption } from "../../../broker/src/protocol.ts";
 import { ItemView, StreamPreview, shownItems } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
@@ -83,12 +83,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
       .finally(() => setStarting(false));
   };
 
-  const result = useMemo(
-    () =>
-      awaited &&
-      (chat?.items ?? []).find((i): i is CommandItem => i.kind === "command" && !awaited.before.has(i.id) && commandName(i.name ?? "") === awaited.name),
-    [awaited, chat?.items],
-  );
+  const result = useMemo(() => {
+    const all = chat?.items ?? [];
+    return awaited && all.find((i, n): i is CommandItem => i.kind === "command" && !awaited.before.has(i.id) && dialogResult(all, n) === awaited.name);
+  }, [awaited, chat?.items]);
 
   useEffect(() => {
     if (!awaited || result || awaited.late) return;

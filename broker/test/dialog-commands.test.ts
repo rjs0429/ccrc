@@ -14,7 +14,8 @@ process.env.CLAUDE_CONFIG_DIR = path.join(home, ".claude");
 fs.mkdirSync(path.join(home, ".claude", "sessions"), { recursive: true });
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 
-const { commandName, hideDialogCommands, isDialogCommand, parseCommand } = await import("../src/dialog-commands.ts");
+const { commandName, dialogResult, hideDialogCommands, isDialogCommand, parseCommand } = await import("../src/dialog-commands.ts");
+const { ItemBuilder } = await import("../src/sessions/items.ts");
 const { SessionManager } = await import("../src/sessions/manager.ts");
 const { probeUsage } = await import("../src/sessions/broker-session.ts");
 const { projectDirName } = await import("../src/sessions/history.ts");
@@ -79,6 +80,24 @@ test("dialog command results and the lines that ran them stay out of the convers
     hideDialogCommands(items).map((i) => i.id),
     ["u1", "n2", "c2", "n4", "a1", "u3", "c5", "n7", "c8"],
   );
+});
+
+test("a dialog command headless Claude Code cannot open is named by the line that ran it", () => {
+  const b = new ItemBuilder(cwd);
+  b.add({ type: "user", uuid: "u1", message: { content: "/help" } });
+  const shown = "/help isn't available in this environment.";
+  const twin = {
+    type: "assistant",
+    uuid: "a1",
+    message: { content: [{ type: "text" as const, text: shown }] },
+    local_command_source: `<local-command-stdout>${shown}</local-command-stdout>`,
+    local_command_outcome: { kind: "unavailable_headless" },
+  };
+  b.add(twin);
+  const i = b.items.findIndex((x) => x.kind === "command");
+  assert.ok(i > 0 && !(b.items[i] as { name?: string }).name, JSON.stringify(b.items));
+  assert.equal(dialogResult(b.items, i), "help");
+  assert.deepEqual(hideDialogCommands(b.items), []);
 });
 
 test("a session without a process gets plan limits without being resumed, briefly kept", async () => {

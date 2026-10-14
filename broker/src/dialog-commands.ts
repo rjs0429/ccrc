@@ -67,9 +67,9 @@ export function parseCommand(text: string): { name: string; args: string } | und
 const lineOf = (item: DisplayItem | undefined): string | undefined =>
   item?.kind === "note" && item.code === "command" ? item.text : item?.kind === "user" && !item.images && !item.files ? item.text : undefined;
 
-// The dialog command a result belongs to. Older transcripts keep no name with a result; the "/name" line
-// just before it names it then.
-function dialogResult(items: DisplayItem[], i: number): string | undefined {
+// The dialog command a result belongs to. Older transcripts and a command headless Claude Code cannot open
+// keep no name with a result; the "/name" line just before it names it then.
+export function dialogResult(items: DisplayItem[], i: number): string | undefined {
   const item = items[i];
   if (item?.kind !== "command") return undefined;
   const name = item.name ?? parseCommand(lineOf(items[i - 1]) ?? "")?.name;

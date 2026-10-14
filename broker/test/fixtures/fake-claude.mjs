@@ -7,7 +7,7 @@
 // FAKE_LINGER_MS keeps it running that long after its input ends.
 // The answer to initialize lists models and commands; FAKE_NO_INIT=1 leaves initialize unanswered.
 // "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data, and
-// "/status" the same way with text only; get_usage fails while the working folder holds a file named .fake-no-usage.
+// "/status" the same way with text only; "/help" as a command headless Claude Code cannot open, with no name; get_usage fails while the working folder holds a file named .fake-no-usage.
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
 // FAKE_REQUESTS=<file> gets a line with its arguments and then one per control request or user message it receives.
 // --version prints a version and exits.
@@ -76,6 +76,21 @@ function handle(m) {
       const replay = "<command-name>/status</command-name>\n<command-message>status</command-message>\n<command-args></command-args>";
       out({ type: "user", session_id: sid, uuid: m.uuid ?? randomUUID(), isReplay: true, message: { role: "user", content: replay } });
       out({ type: "result", subtype: "success", session_id: sid, is_error: false, result: shown, num_turns: 0, local_command: "status", total_cost_usd: 0 });
+      return;
+    }
+    if (text === "/help") {
+      const shown = "/help isn't available in this environment.";
+      out({ type: "user", session_id: sid, uuid: m.uuid ?? randomUUID(), isReplay: true, message: { role: "user", content: "/help" } });
+      out({
+        type: "assistant",
+        session_id: sid,
+        uuid: randomUUID(),
+        parent_tool_use_id: null,
+        message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: shown }] },
+        local_command_source: `<local-command-stdout>${shown}</local-command-stdout>`,
+        local_command_outcome: { kind: "unavailable_headless" },
+      });
+      out({ type: "result", subtype: "success", session_id: sid, is_error: false, result: shown, num_turns: 0, total_cost_usd: 0 });
       return;
     }
     if (text === "/usage") {
