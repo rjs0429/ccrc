@@ -25,6 +25,9 @@
   --warn: #a35f00;
   --info: #2b6cb0;
   --code-bg: #f0efe9;
+  /* Inline code: a tint of the text colour, so the chip shows on the page, cards and bubbles alike. */
+  --code-chip: rgb(31 30 28 / 0.08);
+  --code-chip-line: rgb(31 30 28 / 0.12);
   --sat: env(safe-area-inset-top, 0px);
   --sar: env(safe-area-inset-right, 0px);
   --sab: env(safe-area-inset-bottom, 0px);
@@ -47,6 +50,8 @@
     --warn: #e0a647;
     --info: #79a8e0;
     --code-bg: #24231f;
+    --code-chip: rgb(236 235 230 / 0.11);
+    --code-chip-line: rgb(236 235 230 / 0.14);
     color-scheme: dark;
   }
 }
@@ -173,9 +178,10 @@ body {
 .md code {
   font-family: var(--font-mono);
   font-size: 0.88em;
-  background: var(--code-bg);
-  border-radius: 4px;
-  padding: 0.1em 0.3em;
+  background: var(--code-chip);
+  border: 1px solid var(--code-chip-line);
+  border-radius: 5px;
+  padding: 0.08em 0.35em;
 }
 .md pre {
   background: var(--code-bg);
@@ -188,6 +194,8 @@ body {
 }
 .md pre code {
   background: none;
+  border: 0;
+  border-radius: 0;
   padding: 0;
   font-size: inherit;
 }

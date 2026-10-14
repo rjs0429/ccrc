@@ -1061,3 +1061,55 @@ test("Claude Code dropping a message clears it, and a message still held stays q
   assert.equal(s.state().queued, undefined);
   assert.deepEqual(noted, [`unsent-${three}`], "a message left queued at the end is noted");
 });
+
+test("messages Claude Code passes on never queue or show as the user's, and leave a queued message waiting", async () => {
+  const { s, wrapper } = await session();
+  const handBack = '<agent-message from="ac5f0af9a81a32d8e">\n[Subagent hand-back] The report follows:\n  Done.\n</agent-message>';
+  wrapper.out({ type: "system", subtype: "init", session_id: SID });
+  wrapper.out(toolUse("a1", "t1"));
+  await until(() => s.builder.items.length === 1, "the tool call shows");
+  s.send("also check the tests");
+  const id = s.state().queued![0].id;
+  wrapper.out(lifecycle(id, "queued"));
+  wrapper.send({ m: { type: "user", uuid: "vs-agent", message: { role: "user", content: [{ type: "text", text: handBack }] } }, t: "in" });
+  wrapper.out(toolResult("u2", "t1"));
+  wrapper.out({
+    type: "user",
+    uuid: "src-1",
+    session_id: SID,
+    parent_tool_use_id: null,
+    isReplay: true,
+    isSynthetic: true,
+    timestamp: "2026-10-14T13:42:02.418Z",
+    origin: { kind: "peer", from: "ac5f0af9a81a32d8e", senderTaskId: "ac5f0af9a81a32d8e", name: "general-purpose", body: "...", handback: true },
+    message: { role: "user", content: handBack },
+  });
+  wrapper.out({
+    type: "user",
+    uuid: "src-2",
+    session_id: SID,
+    parent_tool_use_id: null,
+    isReplay: true,
+    origin: { kind: "task-notification" },
+    message: { role: "user", content: "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command \"ls\" completed (exit code 0)</summary>\n</task-notification>" },
+  });
+  await until(() => s.builder.items.length === 3, "both show");
+  assert.deepEqual(
+    s.state().queued?.map((q) => q.id),
+    [id],
+    "only the user's message waits",
+  );
+  assert.equal(s.busy, true, "the turn runs on");
+  wrapper.out(replay(id, "also check the tests", "2026-10-14T13:42:03.000Z"));
+  wrapper.out(lifecycle(id, "started"));
+  await until(() => !s.state().queued, "the user's message is taken in");
+  assert.deepEqual(
+    s.builder.items.map((i) => [i.kind, i.id]),
+    [
+      ["tool", "t1"],
+      ["message", "src-1"],
+      ["task", "src-2"],
+      ["user", id],
+    ],
+  );
+});

@@ -170,6 +170,110 @@ function CommandCard({ item }: { item: CommandResult }) {
   );
 }
 
+const SENDER_LABEL: Record<Extract<DisplayItem, { kind: "message" }>["from"], string> = {
+  agent: "에이전트 보고",
+  session: "다른 세션 메시지",
+  channel: "채널 메시지",
+};
+
+// The first line of a Markdown text as plain words, for a folded card.
+function leadLine(text: string): string {
+  const line = text.split("\n").find((l) => l.trim() && !/^\s*(```|~~~|---+\s*$|\|)/.test(l)) ?? "";
+  return line
+    .replace(/^\s*(#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|`)/g, "")
+    .trim();
+}
+
+// A message Claude Code passed on from a subagent, another session or a channel: folded to its first line.
+function MessageCard({ item }: { item: Extract<DisplayItem, { kind: "message" }> }) {
+  const [open, setOpen] = useState(false);
+  const lead = leadLine(item.text);
+  return (
+    <div className="rounded-xl border border-line bg-surface/60" data-message={item.from}>
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex min-h-11 w-full items-start gap-2 px-3 py-2 text-left">
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-medium text-muted">
+            {SENDER_LABEL[item.from]}
+            {item.name && ` · @${item.name}`}
+          </span>
+          {!open && lead && <span className="mt-0.5 block truncate text-[13px] text-muted">{lead}</span>}
+        </span>
+        <Icon.chevronDown className={`mt-0.5 size-4 shrink-0 text-muted transition-transform ${open ? "" : "-rotate-90"}`} />
+      </button>
+      {open && (
+        <div className="border-t border-line px-3 py-2.5">
+          <Markdown text={item.text} className="text-[14px]" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TASK_STATUS: Record<NonNullable<Extract<DisplayItem, { kind: "task" }>["status"]>, string> = {
+  completed: "완료",
+  failed: "실패",
+  stopped: "중지됨",
+};
+
+// Claude Code's notice about a background task as one line; the result or event it carried opens below, and so
+// does a summary longer than the narrowest line holds.
+function TaskNote({ item }: { item: Extract<DisplayItem, { kind: "task" }> }) {
+  const [open, setOpen] = useState(false);
+  const more = Boolean(item.text) || [...item.summary].length > 20 || item.summary.includes("\n");
+  const icon =
+    item.status === "completed" ? (
+      <Icon.check className="size-3.5 shrink-0 text-ok" />
+    ) : item.status === "failed" ? (
+      <Icon.x className="size-3.5 shrink-0 text-danger" />
+    ) : item.status === "stopped" ? (
+      <Icon.stop className="size-3.5 shrink-0 text-muted" />
+    ) : (
+      <span className="mx-[5px] size-1.5 shrink-0 rounded-full bg-current" />
+    );
+  const line = (
+    <>
+      {icon}
+      <span className={`min-w-0 flex-1 ${open ? "whitespace-pre-wrap" : "truncate"}`}>
+        {item.status ? TASK_STATUS[item.status] : "알림"}
+        {item.summary && ` · ${item.summary}`}
+      </span>
+    </>
+  );
+  return (
+    <div data-task={item.status ?? "event"}>
+      {more ? (
+        <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex min-h-8 w-full items-center gap-1.5 text-left text-xs text-muted">
+          {line}
+          <Icon.chevronDown className={`size-3.5 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
+        </button>
+      ) : (
+        <div className="flex min-h-8 items-center gap-1.5 text-xs text-muted">{line}</div>
+      )}
+      {open && item.text && (
+        <div className="mt-1 ml-5 border-l-2 border-line pl-3 text-muted">
+          <Markdown text={item.text} className="text-[13px]" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A command run with "!" in the terminal and its output.
+function ShellCard({ item }: { item: Extract<DisplayItem, { kind: "shell" }> }) {
+  return (
+    <div className="rounded-xl border border-line bg-surface" data-shell>
+      <div className="px-3 py-2 font-mono text-[12.5px] break-all whitespace-pre-wrap text-muted">{item.command ? `! ${item.command}` : "명령 출력"}</div>
+      {item.output && (
+        <div className="px-3 pb-3">
+          <Folded text={item.output} mono />
+        </div>
+      )}
+    </div>
+  );
+}
+
 const USAGE_NAMES = new Set(["usage", "cost", "stats"]);
 const commandOf = (item?: DisplayItem) => (item?.kind === "command" && item.name ? (USAGE_NAMES.has(item.name) ? "usage" : item.name) : undefined);
 
@@ -197,6 +301,12 @@ export const ItemView = memo(function ItemView({ item, running }: { item: Displa
       return <ToolItem item={item} running={running} />;
     case "command":
       return <CommandCard item={item} />;
+    case "message":
+      return <MessageCard item={item} />;
+    case "task":
+      return <TaskNote item={item} />;
+    case "shell":
+      return <ShellCard item={item} />;
     case "note":
       return (
         <div className={`text-center text-xs whitespace-pre-wrap ${item.code === "error" ? "text-danger" : "text-muted"}`}>

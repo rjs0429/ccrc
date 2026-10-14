@@ -15,6 +15,9 @@ const SUB_TEXT_LIMIT = 200;
 const NOTICE_OWNERS = new Set(["Agent", "Task", "Workflow"]);
 const COMMAND_TEXT_LIMIT = 8000;
 const COMMAND_NAME_LIMIT = 100;
+const MESSAGE_LIMIT = 20000;
+const NOTICE_SUMMARY_LIMIT = 1000;
+const SENDER_LIMIT = 60;
 const ENDED = new Map<string, NonNullable<SubagentActivity["ended"]>["status"]>([
   ["completed", "completed"],
   ["failed", "failed"],
@@ -33,7 +36,11 @@ export interface RawMessage {
   uuid?: string;
   timestamp?: string;
   parent_tool_use_id?: string | null;
+  // A message Claude Code wrote rather than the user: isSynthetic live, is_meta from the transcript reader.
+  // origin: who it came from (human, peer, channel, task-notification, ...).
   isSynthetic?: boolean;
+  is_meta?: boolean;
+  origin?: unknown;
   message?: { content?: string | Block[] };
   content?: string;
   is_error?: boolean;
@@ -55,8 +62,18 @@ export interface RawMessage {
 
 // Text blocks that carry editor or harness context rather than something the user typed.
 const CONTEXT_TAGS =
-  /^<(system-reminder|ide_opened_file|ide_selection|ide_diagnostics|local-command-caveat|task-notification|user-prompt-submit-hook)>[\s\S]*<\/\1>$/;
+  /^<(system-reminder|ide_opened_file|ide_selection|ide_diagnostics|local-command-caveat|task-notification|user-prompt-submit-hook|tick)(?:\s[^>]*)?>[\s\S]*<\/\1(?:\s[^>]*)?>$/;
 const INTERRUPTED = /^\[Request interrupted by user[^\]]*\]$/;
+// A message Claude Code passes on from someone other than the user: maybe a line saying where it came from, the
+// opening tag on a line of its own, the body, and the closing tag on a line of its own.
+const SENT = /^(?:[^<\n][^\n]*\n)?<(agent-message|cross-session-message|channel)((?:[ \t][^>\n]*)?)>\n/;
+const SENDERS: Record<string, "agent" | "session" | "channel"> = { "agent-message": "agent", "cross-session-message": "session", channel: "channel" };
+// Claude Code hands a subagent's report back under this notice line, every report line indented by two spaces;
+// notes of its own, indented the same way, may come before the notice.
+const HANDBACK = "[Subagent hand-back]";
+const SHELL_INPUT = /^<bash-input>([\s\S]*)<\/bash-input>$/;
+const ENTITIES: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'" };
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
 function clipText(text: string, limit: number): { text: string; truncated: boolean } {
   return text.length > limit ? { text: text.slice(0, limit), truncated: true } : { text, truncated: false };
@@ -211,9 +228,62 @@ function commandOutput(text: string): string | undefined {
   return /^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>$/.exec(text.trim())?.[2].trim();
 }
 
+const unescaped = (text: string) => text.replace(/&(?:amp|lt|gt|quot|apos);/g, (e) => ENTITIES[e]);
+
+// The text inside the first <name> tag, trimmed.
+function tagText(text: string, name: string): string {
+  return new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1].trim() ?? "";
+}
+
+function senderName(value: string | undefined): string | undefined {
+  const name = value?.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ").replace(/\s+/g, " ").trim();
+  return name ? clipped(name, SENDER_LIMIT) : undefined;
+}
+
+// A subagent's report without Claude Code's notice and indent; its notes, if any, follow the report.
+function handedBack(body: string): string {
+  const lines = body.split("\n");
+  const at = lines.findIndex((l) => l.startsWith(HANDBACK));
+  if (at < 0) return body.trim();
+  const unindent = (part: string[]) => part.map((l) => (l.startsWith("  ") ? l.slice(2) : l)).join("\n").trim();
+  return [unindent(lines.slice(at + 1)), unindent(lines.slice(0, at))].filter(Boolean).join("\n\n");
+}
+
+type Sent = Pick<Extract<DisplayItem, { kind: "message" }>, "from" | "name" | "text">;
+
+// Who sent a message Claude Code passed on, and its body. A sender is named as Claude Code names it, or by the
+// start of its id when a long id is all there is.
+function sentMessage(text: string, origin?: Record<string, unknown>): Sent | undefined {
+  const open = SENT.exec(text);
+  const close = open ? text.lastIndexOf(`\n</${open[1]}>`) : -1;
+  if (!open || close < open[0].length - 1) return undefined;
+  const from = SENDERS[open[1]];
+  const attr = (key: string) => {
+    const v = new RegExp(`[ \\t]${key}="([^"]*)"`).exec(open[2])?.[1];
+    return v === undefined ? undefined : unescaped(v);
+  };
+  const named = typeof origin?.name === "string" ? origin.name : undefined;
+  const id = attr("from");
+  const name = senderName(from === "channel" ? attr("source") || named : named || attr("from-name") || (id && id.length > 12 ? id.slice(0, 8) : id));
+  const body = text.slice(open[0].length, close);
+  return { from, ...(name ? { name } : {}), text: clipped(from === "agent" ? handedBack(body) : body.trim(), MESSAGE_LIMIT) };
+}
+
+// The output Claude Code records for a "!" command, stdout then stderr.
+function shellOutput(text: string): string | undefined {
+  if (!/^<bash-std(?:out|err)>/.test(text)) return undefined;
+  const part = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1].replace(/^\n+|\s+$/g, "") ?? "";
+  return clipped([part("bash-stdout"), part("bash-stderr")].filter(Boolean).join("\n").replace(ANSI, ""), COMMAND_TEXT_LIMIT);
+}
+
+// A text block Claude Code wrote on someone else's behalf: a task notice or a passed-on message.
+function fromElsewhere(text: string): boolean {
+  return text.startsWith("<task-notification>") || sentMessage(text) !== undefined;
+}
+
 // Whether a user text block is something the user typed, not context or a command and its output.
 export function typedText(text: string): boolean {
-  return !CONTEXT_TAGS.test(text) && commandOutput(text) === undefined && !commandNote(text);
+  return !CONTEXT_TAGS.test(text) && !fromElsewhere(text) && commandOutput(text) === undefined && !commandNote(text);
 }
 
 // What the user typed and attached in a message's content, without the editor and harness context.
@@ -224,7 +294,7 @@ export function typedContent(content: unknown): { text: string; attachments: Use
     const b = record(v);
     if (b?.type !== "text") continue;
     const text = String(b.text ?? "").trim();
-    if (text && !CONTEXT_TAGS.test(text)) texts.push(text);
+    if (text && !CONTEXT_TAGS.test(text) && !fromElsewhere(text)) texts.push(text);
   }
   return { text: texts.join("\n\n"), attachments: attachmentsOf(blocks as Record<string, unknown>[]) };
 }
@@ -323,16 +393,19 @@ export class ItemBuilder {
     const attachments = attachmentsOf(blocks);
     const results = blocks.filter((b) => b.type === "tool_result").length;
     const output = results === 1 ? (m.tool_use_result ?? m.toolUseResult) : undefined;
-    for (const b of blocks) {
+    blocks.forEach((b, i) => {
       if (b.type === "tool_result") out.push(this.toolResult(b, output));
       else if (b.type === "text") {
         const text = String(b.text ?? "").trim();
-        const ended = text.startsWith("<task-notification>") ? this.taskEnded(text) : undefined;
-        if (ended) out.push(ended);
+        // A block of a longer message is told apart by its place in it.
+        const id = m.uuid ? (blocks.length === 1 ? m.uuid : `${m.uuid}:${i}`) : `user-${this.items.length}`;
+        const shown = this.passedOn(text, id, ts, m.origin);
+        if (shown) out.push(...shown);
         else if (text && !CONTEXT_TAGS.test(text)) texts.push(text);
       }
-    }
-    if (m.isSynthetic || (!texts.length && !attachments.length)) return out;
+    });
+    // Anything else Claude Code wrote itself is not shown.
+    if (m.isSynthetic || m.is_meta || (!texts.length && !attachments.length)) return out;
     const text = texts.join("\n\n");
     const id = m.uuid ?? `user-${this.items.length}`;
     const printed = commandOutput(text);
@@ -344,6 +417,23 @@ export class ItemBuilder {
     const item = special ? this.note(special.code, special.text, ts, id) : this.userText(id, text, ts, attachments);
     if (item) out.push(item);
     return out;
+  }
+
+  // The items that show a text block Claude Code wrote on someone else's behalf, none for a notice that tells
+  // nothing; undefined for any other block.
+  private passedOn(text: string, id: string, ts: string | undefined, origin: unknown): DisplayItem[] | undefined {
+    const sender = record(origin);
+    const typed = sender?.kind === "human";
+    if (!typed && text.startsWith("<task-notification>")) return [this.taskEnded(text), this.taskNotice(text, id, ts)].filter((i) => i !== undefined);
+    const sent = typed ? undefined : sentMessage(text, sender);
+    if (sent) return [this.put({ kind: "message", id, ts, ...sent })];
+    const command = SHELL_INPUT.exec(text)?.[1];
+    if (command !== undefined) return [this.put({ kind: "shell", id, ts, command: clipped(command.trim(), COMMAND_TEXT_LIMIT) })];
+    const printed = shellOutput(text);
+    if (printed === undefined) return undefined;
+    // The output follows its command, which shows it once it is in.
+    const last = this.items.at(-1);
+    return [this.put(last?.kind === "shell" && last.output === undefined ? { ...last, output: printed } : { kind: "shell", id, ts, command: "", output: printed })];
   }
 
   private assistant(m: RawMessage, ts?: string): DisplayItem[] {
@@ -433,7 +523,7 @@ export class ItemBuilder {
   // A transcript keeps no task events; a background subagent's or workflow's end shows there only in the notice
   // Claude Code gives the model, with its status, usage and answer.
   private taskEnded(text: string): DisplayItem | undefined {
-    const tag = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1].trim() ?? "";
+    const tag = (name: string) => tagText(text, name);
     const count = (name: string) => (/^\d+$/.test(tag(name)) ? Number(tag(name)) : undefined);
     const owner = this.tool(tag("tool-use-id"));
     const status = ENDED.get(tag("status"));
@@ -459,6 +549,15 @@ export class ItemBuilder {
       ...(ended ? { ended } : {}),
     };
     return JSON.stringify(sub) === JSON.stringify(owner.sub) ? undefined : this.put({ ...owner, sub });
+  }
+
+  // A task notice as one line: how the task ended, its summary, and the result or event it carried.
+  private taskNotice(text: string, id: string, ts?: string): DisplayItem | undefined {
+    const status = ENDED.get(tagText(text, "status"));
+    const summary = clipped(unescaped(tagText(text, "summary")), NOTICE_SUMMARY_LIMIT);
+    if (!summary && !status) return undefined;
+    const detail = unescaped(tagText(text, "result") || tagText(text, "event") || tagText(text, "note"));
+    return this.put({ kind: "task", id, ts, ...(status ? { status } : {}), summary, ...(detail ? { text: clipped(detail, COMMAND_TEXT_LIMIT) } : {}) });
   }
 
   private result(m: RawMessage, ts?: string): DisplayItem[] {

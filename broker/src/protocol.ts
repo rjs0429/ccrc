@@ -103,7 +103,16 @@ export type DisplayItem =
   // "unsent": a message sent from here that Claude Code never took in; its text, and how many files it carried.
   | { kind: "note"; id: string; ts?: string; code: NoteCode; text?: string; attachments?: number }
   // The result of a local command (/usage, /context, ...): its text, and for some the data to draw it from.
-  | { kind: "command"; id: string; ts?: string; name?: string; args?: string; text: string; usage?: UsageInfo; context?: ContextDetail };
+  | { kind: "command"; id: string; ts?: string; name?: string; args?: string; text: string; usage?: UsageInfo; context?: ContextDetail }
+  // A message Claude Code passed to the model from someone other than the user: a subagent's report ("agent"),
+  // another Claude session ("session") or a channel ("channel"). text: Markdown, without the frame Claude Code
+  // puts around a report.
+  | { kind: "message"; id: string; ts?: string; from: "agent" | "session" | "channel"; name?: string; text: string }
+  // Claude Code's notice to the model about a background task: how it ended, its summary, and the result or
+  // event it carried.
+  | { kind: "task"; id: string; ts?: string; status?: "completed" | "failed" | "stopped"; summary: string; text?: string }
+  // A shell command run with "!" in the terminal, and its output once it is in.
+  | { kind: "shell"; id: string; ts?: string; command: string; output?: string };
 
 // A task of a session as Claude Code reports it: a subagent, a workflow, a shell, a monitor, ...
 // description: as the task started; activity: what it does now. kind: Claude Code's task_type (local_agent,

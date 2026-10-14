@@ -233,3 +233,154 @@ test("a message queued during a turn loads where Claude Code took it in, as the 
   assert.deepEqual(shown.kind === "user" && shown.attachments, [{ kind: "image", mediaType: "image/png", size: 8 }]);
   assert.equal(shown.ts, "2026-10-14T12:24:09.793Z", "it keeps the time it was sent");
 });
+
+test("messages Claude Code passed on load as the live view showed them, never as the user's", async () => {
+  const { ItemBuilder } = await import("../src/sessions/items.ts");
+  const sid = "4e8a1c27-9b3d-4f60-8a15-7c2e9d0b6f43";
+  const base = { isSidechain: false, userType: "external", entrypoint: "sdk-ts", cwd, sessionId: sid, version: "2.1.296", gitBranch: "HEAD" };
+  const agent = "ac5f0af9a81a32d8e";
+  const src = "80be5f87-e313-4b59-bcc5-346bc007fde8";
+  const notice = "[Subagent hand-back] The text below is the final report of a subagent this session delegated to. The report follows:";
+  const prompt = `<agent-message from="${agent}">\n${notice}\n  Saved the report.\n  \n  - two files\n</agent-message>`;
+  const origin = { kind: "peer", from: agent, senderTaskId: agent, name: "general-purpose", body: `${notice}\n  Saved the report.\n  \n  - two files`, handback: true };
+  const peerText =
+    'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/peer.sock" from-name="리뷰 세션" from-mode="prompting">\n검토를 마쳤습니다.\n</cross-session-message>\n\nThis came from another Claude session — not typed by your user.';
+  const peerOrigin = { kind: "peer", from: "uds:/tmp/peer.sock", verifiedPeerPid: 4242, msg_id: "m1", name: "리뷰 세션", fromMode: "prompting", body: "검토를 마쳤습니다." };
+  const taskText =
+    '<task-notification>\n<task-id>b7</task-id>\n<tool-use-id>toolu_bg</tool-use-id>\n<output-file>/tmp/b7.output</output-file>\n<status>completed</status>\n<summary>Background command "npm test" completed (exit code 0)</summary>\n</task-notification>';
+  const taskOrigin = { kind: "task-notification", producer: "session-task" };
+  const say = (uuid: string, parentUuid: string, timestamp: string, text: string) => ({
+    ...base,
+    parentUuid,
+    type: "assistant",
+    uuid,
+    timestamp,
+    message: { role: "assistant", content: [{ type: "text", text }] },
+  });
+  const agentResult = "  This agent's report was delivered to you as a message from \"ac5f0af9a81a32d8e\" (its SubagentHandback call). Read it there; it is not repeated here.";
+  const resultMessage = { role: "user", content: [{ tool_use_id: "toolu_ag", type: "tool_result", content: [{ type: "text", text: agentResult }] }] };
+  const resultOutput = { status: "completed", agentId: agent, agentType: "general-purpose", handback: "send", totalToolUseCount: 30, content: [{ type: "text", text: agentResult }] };
+  // Rows as Claude Code 2.1.296 writes them when a subagent's report arrives during a turn, another session
+  // writes while the session waits, and a background shell ends.
+  const rows = [
+    { ...base, parentUuid: null, type: "user", uuid: "p1", timestamp: "2026-10-14T13:00:00.000Z", origin: { kind: "human" }, promptId: "pr1", message: { role: "user", content: "Research it" } },
+    {
+      ...base,
+      parentUuid: "p1",
+      type: "assistant",
+      uuid: "p2",
+      timestamp: "2026-10-14T13:00:01.000Z",
+      message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_ag", name: "Agent", input: { description: "Research", subagent_type: "general-purpose", prompt: "go", run_in_background: false } }] },
+    },
+    { type: "queue-operation", operation: "enqueue", timestamp: "2026-10-14T13:42:02.418Z", sessionId: sid, content: prompt },
+    {
+      ...base,
+      parentUuid: "p2",
+      type: "user",
+      uuid: "p3",
+      timestamp: "2026-10-14T13:42:02.439Z",
+      promptId: "pr1",
+      message: resultMessage,
+      toolUseResult: resultOutput,
+      sourceToolAssistantUUID: "p2",
+    },
+    {
+      ...base,
+      parentUuid: "p3",
+      type: "attachment",
+      uuid: "p4",
+      timestamp: "2026-10-14T13:42:02.418Z",
+      attachment: { type: "queued_command", prompt, source_uuid: src, delivery_id: "d0185b25-5327-471d-a674-6c0481d40c58", commandMode: "prompt", origin, timestamp: "2026-10-14T13:42:02.418Z", isMeta: true, reminderId: "d5213b46e88459b1" },
+      rendered: [{ content: `<system-reminder id="d5213b46e88459b1">\nAnother Claude session sent a message while you were working:\n${prompt}\n</system-reminder id="d5213b46e88459b1">` }],
+      renderedRole: "system",
+    },
+    {
+      ...base,
+      parentUuid: "p4",
+      type: "attachment",
+      uuid: "p5",
+      timestamp: "2026-10-14T13:42:02.467Z",
+      attachment: { type: "hook_additional_context", content: ["context"], hookName: "UserPromptSubmit", toolUseID: "hook-1", hookEvent: "UserPromptSubmit" },
+      rendered: [{ content: "context" }],
+      renderedRole: "system",
+    },
+    { type: "queue-operation", operation: "remove", timestamp: "2026-10-14T13:42:02.473Z", sessionId: sid, content: prompt, reason: "absorbed_mid_turn", commandUuid: src, deliveryId: "d0185b25-5327-471d-a674-6c0481d40c58" },
+    say("p6", "p5", "2026-10-14T13:42:05.000Z", "Got the report."),
+    { ...base, parentUuid: "p6", type: "user", uuid: "p7", timestamp: "2026-10-14T13:50:00.000Z", isMeta: true, origin: peerOrigin, promptId: "pr2", message: { role: "user", content: peerText } },
+    say("p8", "p7", "2026-10-14T13:50:02.000Z", "Noted."),
+    { ...base, parentUuid: "p8", type: "user", uuid: "p9", timestamp: "2026-10-14T14:00:00.000Z", origin: taskOrigin, promptId: "pr3", message: { role: "user", content: taskText } },
+    say("p10", "p9", "2026-10-14T14:00:02.000Z", "Tests pass."),
+  ];
+  const dir = path.join(home, ".claude", "projects", projectDirName(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const loaded = await loadHistory(sid, cwd);
+
+  // The same conversation as Claude Code streams it with --replay-user-messages.
+  const live = new ItemBuilder(cwd);
+  for (const m of [
+    { type: "user", uuid: "p1", isReplay: true, timestamp: "2026-10-14T13:00:00.000Z", origin: { kind: "human" }, message: { role: "user", content: "Research it" } },
+    { ...rows[1], session_id: sid },
+    { type: "user", uuid: "p3", timestamp: "2026-10-14T13:42:02.439Z", message: resultMessage, tool_use_result: resultOutput },
+    { type: "user", uuid: src, isReplay: true, isSynthetic: true, timestamp: "2026-10-14T13:42:02.418Z", origin, message: { role: "user", content: prompt } },
+    rows[7],
+    { type: "user", uuid: "p7", isSynthetic: true, timestamp: "2026-10-14T13:50:00.000Z", origin: peerOrigin, message: { role: "user", content: peerText } },
+    rows[9],
+    { type: "user", uuid: "p9", timestamp: "2026-10-14T14:00:00.000Z", origin: taskOrigin, message: { role: "user", content: taskText } },
+    rows[11],
+  ]) {
+    live.add(m as Parameters<typeof live.add>[0]);
+  }
+
+  assert.deepEqual(
+    loaded.map((i) => [i.kind, i.id]),
+    [
+      ["user", "p1"],
+      ["tool", "toolu_ag"],
+      ["message", src],
+      ["assistant", "p6:0"],
+      ["message", "p7"],
+      ["assistant", "p8:0"],
+      ["task", "p9"],
+      ["assistant", "p10:0"],
+    ],
+  );
+  assert.deepEqual(loaded, live.items, "a reload shows what the live view showed");
+  assert.deepEqual(loaded[2], { kind: "message", id: src, ts: "2026-10-14T13:42:02.418Z", from: "agent", name: "general-purpose", text: "Saved the report.\n\n- two files" });
+  assert.deepEqual(loaded[4], { kind: "message", id: "p7", ts: "2026-10-14T13:50:00.000Z", from: "session", name: "리뷰 세션", text: "검토를 마쳤습니다." });
+  assert.deepEqual(loaded[6], { kind: "task", id: "p9", ts: "2026-10-14T14:00:00.000Z", status: "completed", summary: 'Background command "npm test" completed (exit code 0)' });
+});
+
+test("a compacted conversation's summary is not shown as the user's message", async () => {
+  const sid = "9c3b7e15-2a4d-4e88-b1f0-5d6a8c2e7f19";
+  const base = { isSidechain: false, userType: "external", cwd, sessionId: sid, version: "2.1.296", gitBranch: "HEAD" };
+  const rows = [
+    { ...base, parentUuid: null, logicalParentUuid: "old", type: "system", subtype: "compact_boundary", uuid: "k1", timestamp: "2026-10-14T15:00:00.000Z", content: "Conversation compacted", isMeta: false, level: "info", compactMetadata: { trigger: "manual", preTokens: 1000 } },
+    {
+      ...base,
+      parentUuid: "k1",
+      type: "user",
+      uuid: "k2",
+      timestamp: "2026-10-14T15:00:00.100Z",
+      isCompactSummary: true,
+      isVisibleInTranscriptOnly: true,
+      message: { role: "user", content: "This session is being continued from a previous conversation that ran out of context." },
+    },
+    { ...base, parentUuid: "k2", type: "user", uuid: "k3", timestamp: "2026-10-14T15:01:00.000Z", origin: { kind: "human" }, message: { role: "user", content: "Go on" } },
+    { ...base, parentUuid: "k3", type: "assistant", uuid: "k4", timestamp: "2026-10-14T15:01:01.000Z", message: { role: "assistant", content: [{ type: "text", text: "On it." }] } },
+  ];
+  const dir = path.join(home, ".claude", "projects", projectDirName(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const { getSessionMessages } = await import("@anthropic-ai/claude-agent-sdk");
+  const read = await getSessionMessages(sid, { includeSystemMessages: true });
+  assert.ok(read.some((m) => m.uuid === "k2"), "the reader returns the summary, marked as Claude Code's own");
+  const items = await loadHistory(sid, cwd);
+  assert.deepEqual(
+    items.map((i) => [i.kind, i.id]),
+    [
+      ["user", "k3"],
+      ["assistant", "k4:0"],
+    ],
+  );
+});
