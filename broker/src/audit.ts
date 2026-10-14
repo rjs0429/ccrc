@@ -25,6 +25,8 @@ export type AuditEvent =
   | "upload"
   | "file_read"
   | "call"
+  | "folder_index"
+  | "folder_denied"
   | "claude_settings"
   | "push_subscribe"
   | "push_unsubscribe"

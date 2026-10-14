@@ -148,7 +148,7 @@ interface StreamEvent {
 
 // A session whose Claude Code process the broker can drive: one it runs itself ("owned") or one
 // that runs in VS Code and is reached through the wrapper ("attached").
-// Events: item, stream, pending_add, pending_remove, state, models, window, closed.
+// Events: item, stream, pending_add, pending_remove, state, models, window, applied (model, ultracodeAvailable), closed.
 export abstract class SessionCore extends EventEmitter {
   abstract readonly kind: "owned" | "attached";
   abstract readonly host: string;
@@ -625,6 +625,7 @@ export abstract class SessionCore extends EventEmitter {
     if ("effort" in a) this.effort = typeof a.effort === "string" ? a.effort : undefined;
     if (typeof a.ultracode === "boolean") this.ultracode = a.ultracode;
     if (typeof a.ultracodeAvailable === "boolean") this.ultracodeAvailable = a.ultracodeAvailable;
+    if (typeof a.model === "string" && typeof a.ultracodeAvailable === "boolean") this.emit("applied", a.model, a.ultracodeAvailable);
     if ([this.model, this.effort, this.ultracode, this.ultracodeAvailable].join("|") !== before) this.emit("state");
   }
 

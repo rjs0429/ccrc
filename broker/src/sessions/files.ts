@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { isSecretPath } from "./secret-paths.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -11,25 +12,29 @@ const LIST_MS = 30_000;
 const GIT_TIMEOUT_MS = 5000;
 const RESULTS = 30;
 const MAX_QUERY = 256;
+const MAX_LISTINGS = 8;
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".venv", "__pycache__", "target"]);
 const SEPARATORS = "/-_. ";
 
 interface Listing {
   at: number;
   files: Promise<string[]>;
+  offered?: Promise<string[]>;
   recent?: Promise<string[]>;
 }
 
 const listings = new Map<string, Listing>();
 
-// File search for "@" mentions in a session's folder: paths relative to it, best match first, or the
-// most recently modified files for an empty query.
-export async function searchFiles(cwd: string, query: string): Promise<string[]> {
+// File search for "@" mentions in a folder: paths relative to it, best match first, or the most recently
+// modified files for an empty query. Names of files that hold keys or tokens are never offered; typed by
+// hand they still go to Claude Code. `indexed` hears the size of a listing made for this search.
+export async function searchFiles(cwd: string, query: string, indexed?: (files: number) => void): Promise<string[]> {
   if (query.length > MAX_QUERY) throw Error("invalid request");
-  const l = listing(cwd);
+  const l = listing(cwd, indexed);
+  l.offered ??= l.files.then((files) => files.filter((f) => !isSecretPath(path.join(cwd, f))));
   const q = query.trim().replace(/^\.\//, "");
-  if (!q) return (l.recent ??= l.files.then((files) => recentFiles(cwd, files)));
-  return rankFiles(await l.files, q).slice(0, RESULTS);
+  if (!q) return (l.recent ??= l.offered.then((files) => recentFiles(cwd, files)));
+  return rankFiles(await l.offered, q).slice(0, RESULTS);
 }
 
 // The same cached listing, for finding a linked file by the end of its path.
@@ -37,15 +42,22 @@ export function indexedFiles(cwd: string): Promise<string[]> {
   return listing(cwd).files;
 }
 
-function listing(cwd: string): Listing {
+// At most MAX_LISTINGS folders are held at once; the oldest goes first.
+function listing(cwd: string, made?: (files: number) => void): Listing {
   const now = Date.now();
   for (const [dir, l] of listings) if (now - l.at > LIST_MS) listings.delete(dir);
   let l = listings.get(cwd);
   if (!l) {
     l = { at: now, files: listFiles(cwd) };
     listings.set(cwd, l);
+    for (const old of [...listings.keys()].slice(0, -MAX_LISTINGS)) listings.delete(old);
+    if (made) l.files.then((files) => made(files.length), () => {});
   }
   return l;
+}
+
+export function heldListings(): number {
+  return listings.size;
 }
 
 // The files git knows in the folder (tracked and not ignored), or a bounded walk outside git. A repository

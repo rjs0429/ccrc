@@ -12,6 +12,7 @@ import type { Link } from "../link/server.ts";
 import {
   PERMISSION_MODES,
   type CallOp,
+  type FolderOp,
   type ContextGauge,
   type DisplayItem,
   type EffortName,
@@ -33,6 +34,7 @@ import { searchFiles } from "./files.ts";
 import { lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
+import { UltracodeModels } from "./ultracode-models.ts";
 import { WrappedSession } from "./wrapped.ts";
 
 const CATALOG_MS = 3000;
@@ -139,6 +141,7 @@ export class SessionManager extends EventEmitter {
   // What sessions without a process start with when the broker next starts them.
   private starts = new StartStore(path.join(paths.stateDir, "start-settings.json"));
   private windows = new ContextWindows(path.join(paths.stateDir, "context-windows.json"));
+  private ultracodeModels = new UltracodeModels(path.join(paths.stateDir, "ultracode-models.json"));
   private probing = new Map<string, Promise<ContextWindow | undefined>>();
   private exact = new Map<string, { size: number; model: string }>();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
@@ -269,7 +272,10 @@ export class SessionManager extends EventEmitter {
         );
       await this.modelsAsked;
     }
-    return this.models;
+    return this.models.map((m) => {
+      const ultracode = this.ultracodeModels.get(m.resolved ?? m.value);
+      return ultracode === undefined ? m : { ...m, ultracode };
+    });
   }
 
   // Kept as Claude Code reported it, for the next broker run.
@@ -438,7 +444,7 @@ export class SessionManager extends EventEmitter {
     return moved ? resumeIn(cwd, moved, await this.infos()) : cwd;
   }
 
-  async create(cwd: string, opts: { model?: string; mode?: PermissionModeName; effort?: EffortName }): Promise<BrokerSession> {
+  async create(cwd: string, opts: { model?: string; mode?: PermissionModeName; effort?: EffortName; ultracode?: boolean }): Promise<BrokerSession> {
     const dir = await this.resolveFolder(cwd);
     const s = new BrokerSession(randomUUID(), dir);
     this.adopt(s);
@@ -490,6 +496,18 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  // The new-session screen's calls about a folder resolveFolder allowed. `indexed` hears of a file listing made for it.
+  async folderCall(dir: string, op: FolderOp, args: Record<string, unknown>, indexed?: (files: number) => void): Promise<unknown> {
+    switch (op) {
+      case "files":
+        return searchFiles(dir, typeof args.query === "string" ? args.query : "", indexed);
+      case "commands":
+        return lastCommands(dir);
+      case "usage":
+        return this.accountUsageFor(dir);
+    }
+  }
+
   // Plan limits belong to the account, so a session without a process gets them without being resumed.
   private async usage(sessionId: string): Promise<UsageInfo> {
     const s = this.controlled(sessionId);
@@ -498,10 +516,13 @@ export class SessionManager extends EventEmitter {
         return await s.usage();
       } catch {}
     }
-    const cwd = await this.cwdOf(sessionId);
+    return this.accountUsageFor(await this.cwdOf(sessionId), s);
+  }
+
+  private accountUsageFor(cwd: string, skip?: SessionCore): Promise<UsageInfo> {
     const kept = this.accountUsage;
     if (kept && Date.now() - kept.at < USAGE_KEEP_MS) return kept.value;
-    const value = this.freshAccountUsage(cwd, s);
+    const value = this.freshAccountUsage(cwd, skip);
     const entry = { at: Date.now(), value };
     this.accountUsage = entry;
     // An answer without limits may come from a process that could not sign in, so it is not kept.
@@ -735,6 +756,7 @@ export class SessionManager extends EventEmitter {
     s.on("state", () => send({ t: "state", sessionId: s.id, state: s.state() }));
     s.on("window", (model: string | undefined, w: ContextWindow) => this.windows.learn(model, w, s.id));
     s.on("models", (models: ModelInfo[]) => this.setModels(models));
+    s.on("applied", (model: string, ultracode: boolean) => this.ultracodeModels.learn(model, ultracode));
     s.on("closed", (reason: string) => {
       if (!this.current(s)) return;
       if (this.owned.get(s.id) === s) this.owned.delete(s.id);
