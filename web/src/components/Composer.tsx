@@ -8,6 +8,8 @@ import { toast, useApp } from "../state.ts";
 import { isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import { bareCommandSheet } from "./commandSheets.ts";
 import { ContextRing } from "./ContextRing.tsx";
+import { AgentChip } from "./agents/AgentChip.tsx";
+import type { AgentMap } from "./agents/tree.ts";
 import { AttachmentChips } from "./composer/AttachmentChips.tsx";
 import { ATTACH_ACCEPT, MAX_MESSAGE_BYTES, NEW_SESSION_SCOPE, addFiles, takeAttachments, useAttachments } from "./composer/attachments.ts";
 import { afterKeyboard } from "./composer/picker.ts";
@@ -103,6 +105,9 @@ interface Props {
   openSheet?: { name: "model" | "effort"; at: number };
   // The context ring next to the model chip; absent where there is no session.
   onContext?: () => void;
+  // The agent chip between the chip groups, while subagents or workflows are listed.
+  agents?: AgentMap["chip"];
+  onAgents?: () => void;
 }
 
 export function Composer({
@@ -125,6 +130,8 @@ export function Composer({
   onCommand,
   openSheet,
   onContext,
+  agents,
+  onAgents,
 }: Props) {
   const scope = sessionId ?? (draft ? NEW_SESSION_SCOPE : undefined);
   const [text, setText] = useState(() => loadDraft(scope));
@@ -239,6 +246,14 @@ export function Composer({
       picking.current = false;
       input.click();
     });
+  };
+
+  const openAgents = () => {
+    if (!onAgents) return;
+    const keyboard = document.documentElement.hasAttribute("data-keyboard");
+    ref.current?.blur();
+    if (keyboard) afterKeyboard(onAgents);
+    else onAgents();
   };
 
   const pick = (i: number) => {
@@ -366,6 +381,7 @@ export function Composer({
                 </Chip>
               )}
             </div>
+            {agents && onAgents && <AgentChip chip={agents} onClick={openAgents} />}
             <div className="ml-auto flex shrink-0 items-center gap-0.5" data-chip-group="right">
               <Chip name="mode" disabled={!choosable} onClick={() => setSheet("mode")}>
                 {MODE_LABEL[mode ?? ""] ?? "권한 모드"}

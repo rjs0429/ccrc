@@ -457,14 +457,49 @@ test("a background subagent's end notice in the transcript gives its tool count 
       "<tool-use-id>toolu_agent</tool-use-id>\n<status>completed</status>\n<result>Three files:\na.ts</result>\n<usage><subagent_tokens>17723</subagent_tokens><tool_uses>2</tool_uses><duration_ms>7813</duration_ms></usage>",
     ),
   );
-  assert.deepEqual(item.kind === "tool" && item.sub, { tools: 2, recent: [], text: "Three files:\na.ts" });
+  assert.deepEqual(item.kind === "tool" && item.sub, {
+    tools: 2,
+    recent: [],
+    text: "Three files:\na.ts",
+    ended: { status: "completed", tokens: 17723, ms: 7813 },
+  });
   assert.deepEqual(
     b.items.map((i) => i.kind),
     ["user", "tool"],
   );
-  assert.equal(b.add(notice("<tool-use-id>toolu_agent</tool-use-id>\n<status>killed</status>")).length, 0, "a notice without usage changes nothing");
+  b.add(notice("<tool-use-id>toolu_agent</tool-use-id>\n<status>killed</status>"));
+  assert.deepEqual(toolItem(b, "toolu_agent").sub?.ended, { status: "stopped" }, "a later run's end replaces the earlier one");
+  assert.equal(b.add(notice("<tool-use-id>toolu_agent</tool-use-id>\n<note>no status</note>")).length, 0, "a notice without status or usage changes nothing");
   assert.equal(b.add(notice("<tool-use-id>toolu_other</tool-use-id>\n<usage><tool_uses>5</tool_uses></usage>")).length, 0);
   assert.equal(toolItem(b, "toolu_agent").sub?.tools, 2);
+});
+
+test("a workflow's end notice gives its agent counts", () => {
+  const b = new ItemBuilder(cwd);
+  b.add({ type: "assistant", uuid: "a1", message: { content: [{ type: "tool_use", id: "toolu_wf", name: "Workflow", input: { script: "export const meta = { name: 'review' }" } }] } });
+  b.add({
+    type: "user",
+    uuid: "u1",
+    message: {
+      content:
+        "<task-notification>\n<task-id>wq1</task-id>\n<tool-use-id>toolu_wf</tool-use-id>\n<status>completed</status>\n<summary>done</summary>\n" +
+        "<usage><agent_count>4</agent_count><agents_done>3</agents_done><agents_error>1</agents_error><agents_skipped>0</agents_skipped><subagent_tokens>430202</subagent_tokens><tool_uses>73</tool_uses><duration_ms>775590</duration_ms></usage>\n</task-notification>",
+    },
+  });
+  assert.deepEqual(toolItem(b, "toolu_wf").sub, {
+    tools: 73,
+    recent: [],
+    ended: { status: "completed", tokens: 430202, ms: 775590, agents: 4, agentsFailed: 1 },
+  });
+});
+
+test("a background shell's end notice leaves its Bash call as it was", () => {
+  const b = new ItemBuilder(cwd);
+  b.add({ type: "assistant", uuid: "a1", message: { content: [{ type: "tool_use", id: "toolu_sh", name: "Bash", input: { command: "npm run dev", run_in_background: true } }] } });
+  b.add({ type: "user", uuid: "u1", message: { content: [{ type: "tool_result", tool_use_id: "toolu_sh", content: "Command running in background with ID: b1" }] } });
+  const notice = "<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>toolu_sh</tool-use-id>\n<output-file>/tmp/b1.output</output-file>\n<status>completed</status>\n<summary>Background command done</summary>\n</task-notification>";
+  assert.equal(b.add({ type: "user", uuid: "u2", message: { content: notice } }).length, 0);
+  assert.equal(toolItem(b, "toolu_sh").sub, undefined);
 });
 
 test("task tool summaries name the task", () => {

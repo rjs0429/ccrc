@@ -283,6 +283,19 @@ test("reconnects to a restarted broker and re-announces state and open prompts",
   await t.host.wait((m) => m.type === "answered", "answer after reconnect reaches the CLI");
 });
 
+test("a reconnecting broker gets the latest list of background tasks again", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("BGTASKS");
+  const listed = (m: Msg) => m.subtype === "background_tasks_changed" && (m.tasks as unknown[]).length === 2;
+  await t.broker.frames.wait(frameOut(listed), "list shared");
+  t.broker.frames = new Inbox();
+  t.broker.dropConnections();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello again");
+  await t.broker.frames.wait(frameOut(listed), "latest list re-sent");
+  assert.equal(t.broker.frames.items.filter((f) => f.t === "out" && (f.m as Msg).subtype === "background_tasks_changed").length, 1);
+});
+
 test("claim: waits for claim_ok before starting Claude Code", async () => {
   const dir = tempDir();
   const socketPath = path.join(dir, "link.sock");

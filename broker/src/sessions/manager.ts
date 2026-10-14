@@ -731,7 +731,7 @@ export class SessionManager extends EventEmitter {
   private async sweep(): Promise<void> {
     const limit = this.cfg.sessionIdleMinutes * 60_000;
     for (const s of this.owned.values()) {
-      if (s.id === this.viewed || s.busy || s.pending.size || [...s.tasks.values()].some((t) => t.status === "running")) continue;
+      if (s.id === this.viewed || s.busy || s.pending.size || s.tasks.running()) continue;
       if (Date.now() - s.lastActivity > limit) await s.close("idle");
     }
     for (const [id, e] of this.ended) if (Date.now() - e.at > ENDED_KEEP_MS) this.ended.delete(id);

@@ -15,6 +15,7 @@ const INIT = Buffer.from('"subtype":"init"');
 const STATUS = Buffer.from('"subtype":"status"');
 const MODE = Buffer.from('"permissionMode"');
 const STATE = Buffer.from('"subtype":"session_state_changed"');
+const TASKS = Buffer.from('"subtype":"background_tasks_changed"');
 const MODELS = Buffer.from('"models":');
 const RESULT = Buffer.from('"type":"result"');
 const USER = Buffer.from('"type":"user"');
@@ -609,6 +610,7 @@ export class Relay extends EventEmitter {
     let key: string | undefined;
     if (line.includes(INIT)) key = "init";
     else if (line.includes(STATE)) key = "state";
+    else if (line.includes(TASKS)) key = "tasks";
     else if (line.includes(STATUS) && line.includes(MODE)) key = "status";
     else if (parsed?.type === "control_response" && line.includes(MODELS)) key = "models";
     if (!key) return;

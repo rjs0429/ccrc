@@ -58,6 +58,14 @@ export const Icon = {
     </>,
   ),
   folder: svg(<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />),
+  agents: svg(
+    <>
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="6" cy="19" r="2" />
+      <circle cx="18" cy="12" r="2" />
+      <path d="M6 7v10M6 9c0 3 3 3 6 3h4" />
+    </>,
+  ),
   search: svg(
     <>
       <circle cx="11" cy="11" r="7" />
@@ -75,11 +83,12 @@ export function Spinner({ className = "size-4" }: IconProps) {
   );
 }
 
-export function Sheet({ title, onClose, children }: { title?: string; onClose: () => void; children: ReactNode }) {
+// wide: room for two columns on a landscape screen.
+export function Sheet({ title, onClose, children, wide }: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   return (
     <div className="overlay fixed z-40 flex items-end justify-center bg-black/40 sm:items-center" onClick={onClose}>
       <div
-        className="pb-safe max-h-[85%] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 shadow-xl sm:max-h-full sm:rounded-2xl"
+        className={`pb-safe max-h-[85%] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 shadow-xl sm:max-h-full sm:rounded-2xl ${wide ? "sm:max-w-3xl" : ""}`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
       >

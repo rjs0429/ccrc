@@ -17,13 +17,13 @@ import {
   type PermissionModeName,
   type QueuedMessage,
   type RewindResult,
-  type TaskInfo,
   type UsageInfo,
 } from "../protocol.ts";
 import { elicitResult } from "../elicit.ts";
 import { gaugeOf } from "./context-gauge.ts";
 import type { FileContents } from "./file-read.ts";
 import { ItemBuilder, clipInput, typedContent, type RawMessage } from "./items.ts";
+import { TaskBook } from "./tasks.ts";
 
 const STREAM_FLUSH_MS = 80;
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -32,17 +32,6 @@ const NAME_MAX = 200;
 const TEXT_MAX = 1000;
 const FILES_MAX = 500;
 const STYLES_MAX = 100;
-const TASK_KEEP_MS = 5 * 60_000;
-const TASK_EVENTS = new Set(["task_started", "task_progress", "task_updated", "task_notification"]);
-const TASK_STATUS = new Map<unknown, TaskInfo["status"]>([
-  ["pending", "running"],
-  ["running", "running"],
-  ["paused", "running"],
-  ["completed", "completed"],
-  ["failed", "failed"],
-  ["killed", "stopped"],
-  ["stopped", "stopped"],
-]);
 const QUEUE_MAX = 100;
 // Command lifecycle states that end a queued message without Claude Code taking it in.
 const UNQUEUED = new Set<unknown>(["cancelled", "discarded", "refused"]);
@@ -64,7 +53,6 @@ type Obj = Record<string, unknown>;
 
 const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v);
 const clipped = (v: unknown, max = TEXT_MAX): string | undefined => (typeof v === "string" && v ? v.slice(0, max) : undefined);
-const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 export type Decision =
   | { behavior: "allow"; updatedInput: Record<string, unknown>; updatedPermissions?: unknown[] }
@@ -86,6 +74,7 @@ export interface Ask {
   suppressAlwaysAllowRule?: boolean;
   localOnly?: boolean;
   elicitation?: ElicitInfo;
+  agentId?: unknown;
 }
 
 // A Claude Code message content block (image, document, ...), sent in front of the text of a user message.
@@ -157,15 +146,11 @@ export abstract class SessionCore extends EventEmitter {
   title?: string;
   readonly builder: ItemBuilder;
   readonly pending = new Map<string, PendingEntry>();
-  readonly tasks = new Map<string, TaskInfo>();
+  readonly tasks = new TaskBook(() => this.emit("state"));
   // Messages Claude Code holds until it takes them in, and the ones it has said it holds.
   readonly queue = new Map<string, QueuedMessage>();
   private held = new Set<string>();
   private takingBack = new Set<string>();
-  // Claude Code's own watchers, which run for the whole session and are not the user's work.
-  private ambientTasks = new Set<string>();
-  // How long a task that has ended stays listed.
-  taskKeepMs = TASK_KEEP_MS;
   commands?: CommandInfo[];
   busy = false;
   model?: string;
@@ -189,7 +174,6 @@ export abstract class SessionCore extends EventEmitter {
   private settingsStyle?: string;
   private initStyle?: string;
   private appliedRefused = false;
-  private taskTimers = new Map<string, NodeJS.Timeout>();
   private streamText = "";
   private streamThinking = false;
   private streamTimer?: NodeJS.Timeout;
@@ -229,7 +213,7 @@ export abstract class SessionCore extends EventEmitter {
       ...(this.context ? { context: this.context } : {}),
       costUsd: this.costUsd,
       closedReason: this.closedReason,
-      ...(this.tasks.size ? { tasks: [...this.tasks.values()] } : {}),
+      ...(this.tasks.size ? { tasks: this.tasks.values() } : {}),
       ...(this.queue.size ? { queued: [...this.queue.values()] } : {}),
     };
   }
@@ -493,6 +477,7 @@ export abstract class SessionCore extends EventEmitter {
       allowAlways: Boolean(a.suggestions?.length) && !a.suppressAlwaysAllowRule,
       ...(a.localOnly && (kind === "permission" || kind === "dialog") ? { localOnly: true } : {}),
       ...(kind === "elicitation" && a.elicitation ? { elicitation: a.elicitation } : {}),
+      ...(typeof a.agentId === "string" && a.agentId && a.agentId.length <= NAME_MAX ? { agentId: a.agentId } : {}),
     };
     this.pending.set(request.id, { request, input: a.input, suggestions: a.suggestions });
     this.emit("pending_add", request);
@@ -514,8 +499,6 @@ export abstract class SessionCore extends EventEmitter {
     this.closedReason = reason;
     this.busy = false;
     for (const id of [...this.pending.keys()]) this.unask(id);
-    for (const timer of this.taskTimers.values()) clearTimeout(timer);
-    this.taskTimers.clear();
     this.tasks.clear();
     this.queue.clear();
     this.held.clear();
@@ -560,7 +543,7 @@ export abstract class SessionCore extends EventEmitter {
         }
         return;
       }
-      if (TASK_EVENTS.has(m.subtype ?? "")) this.onTask(m);
+      if (TaskBook.handles(m.subtype)) this.tasks.on(m);
     }
     if (m.type === "assistant" && !m.parent_tool_use_id) this.endStream();
     if (m.type === "result") {
@@ -636,43 +619,6 @@ export abstract class SessionCore extends EventEmitter {
 
   protected checkUltracode(on: boolean): void {
     if (on && this.ultracodeAvailable === false) throw Error("ultracode is not available for this session");
-  }
-
-  // Subagents, shells and workflows as Claude Code reports them. A task_updated carries its changes in
-  // `patch`; a task first seen through its progress counts as running. An ended task stays listed a while.
-  private onTask(m: Obj): void {
-    const id = m.task_id;
-    if (typeof id !== "string" || !id || id.length > NAME_MAX || this.ambientTasks.has(id)) return;
-    if (m.subtype === "task_started" && m.ambient === true) {
-      this.ambientTasks.add(id);
-      return;
-    }
-    const prev = this.tasks.get(id);
-    const started = m.subtype === "task_started";
-    if (!prev && !started && m.subtype !== "task_progress") return;
-    const change = isObj(m.patch) ? m.patch : m;
-    const type = clipped(m.subagent_type, NAME_MAX) ?? clipped(m.task_type, NAME_MAX) ?? prev?.type;
-    const toolUseId = clipped(m.tool_use_id, NAME_MAX) ?? prev?.toolUseId;
-    const next: TaskInfo = {
-      id,
-      description: clipped(change.description) ?? prev?.description ?? "",
-      ...(type ? { type } : {}),
-      status: started ? "running" : (TASK_STATUS.get(change.status) ?? prev?.status ?? "running"),
-      ...(toolUseId ? { toolUseId } : {}),
-    };
-    if (JSON.stringify(next) === JSON.stringify(prev)) return;
-    this.tasks.set(id, next);
-    clearTimeout(this.taskTimers.get(id));
-    this.taskTimers.delete(id);
-    if (next.status !== "running") {
-      const timer = setTimeout(() => {
-        this.taskTimers.delete(id);
-        if (this.tasks.delete(id)) this.emit("state");
-      }, this.taskKeepMs);
-      timer.unref();
-      this.taskTimers.set(id, timer);
-    }
-    this.emit("state");
   }
 
   private onStream(ev: StreamEvent): void {

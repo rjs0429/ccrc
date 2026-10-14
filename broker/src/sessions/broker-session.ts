@@ -145,6 +145,8 @@ export class BrokerSession extends SessionCore {
         systemPrompt: { type: "preset", preset: "claude_code" },
         includePartialMessages: true,
         forwardSubagentText: true,
+        // The stop button ends only the turn; background agents and workflows are stopped one by one.
+        perTaskStopAffordance: true,
         allowDangerouslySkipPermissions: false,
         enableFileCheckpointing: true,
         extraArgs: { "replay-user-messages": null },
@@ -386,6 +388,7 @@ export class BrokerSession extends SessionCore {
         decisionReason: opts.decisionReason,
         blockedPath: opts.blockedPath,
         suppressAlwaysAllowRule: opts.suppressAlwaysAllowRule,
+        agentId: opts.agentID,
       });
       opts.signal.addEventListener(
         "abort",
