@@ -799,6 +799,33 @@ test("a taken MCP input request is cancelled when it waits too long, and dropped
   assert.equal(sent(wrapper, (x) => elicitAnswerFrame("e6")(x) || elicitAnswerFrame("e7")(x)).length, 0, "nothing is sent for them");
 });
 
+test("a taken MCP input request waits the short window unless the app is open on a phone", async () => {
+  const { s, wrapper, next } = await session();
+  let watched = false;
+  s.reachable = () => true;
+  s.watched = () => watched;
+  s.elicitMs = 600;
+  s.unwatchedMs = 100;
+  let added = next("pending_add");
+  wrapper.out(elicit("e11"));
+  wrapper.send({ t: "held", id: "e11" });
+  await added;
+  const started = Date.now();
+  await wrapper.wait(elicitAnswerFrame("e11"), "cancel after the short window");
+  assert.ok(Date.now() - started < 500, "nobody opened the app");
+
+  added = next("pending_add");
+  wrapper.out(elicit("e12"));
+  wrapper.send({ t: "held", id: "e12" });
+  await added;
+  watched = true;
+  await new Promise((r) => setTimeout(r, 250));
+  assert.ok(s.pending.has("e12"), "the app opened, so the full wait holds");
+  assert.equal(sent(wrapper, elicitAnswerFrame("e12")).length, 0);
+  const f = await wrapper.wait(elicitAnswerFrame("e12"), "cancel after the full wait");
+  assert.deepEqual(((f.m as Msg).response as Msg).response, { action: "cancel" });
+});
+
 test("the session's end cancels nothing on the user's behalf and clears its timers", async () => {
   const { s, wrapper, next } = await session();
   s.reachable = () => true;

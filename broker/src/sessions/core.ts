@@ -55,6 +55,8 @@ export const CONTEXT_MS = 60_000;
 export const MCP_CHANGE_MS = 45_000;
 // An MCP server's input request left unanswered this long is cancelled.
 export const ELICIT_MS = 15 * 60_000;
+// A VS Code session's request taken while the app is not open on a phone gets this long for the app to open.
+export const ELICIT_UNWATCHED_MS = 2 * 60_000;
 // A file of up to 10MB travels base64-encoded in one line.
 export const READ_MS = 30_000;
 

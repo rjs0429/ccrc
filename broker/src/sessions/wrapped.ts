@@ -6,6 +6,7 @@ import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
   ELICIT_MS,
+  ELICIT_UNWATCHED_MS,
   MCP_CHANGE_MS,
   READ_MS,
   SessionCore,
@@ -44,7 +45,9 @@ export class WrappedSession extends SessionCore {
   private elicitSeen = new Map<string, ElicitInfo>();
   private elicitTimers = new Map<string, NodeJS.Timeout>();
   reachable: () => boolean = () => false;
+  watched: () => boolean = () => false;
   elicitMs = ELICIT_MS;
+  unwatchedMs = ELICIT_UNWATCHED_MS;
 
   constructor(link: Link, id: string, cwd: string, title?: string) {
     super(id, cwd, [], title);
@@ -111,9 +114,7 @@ export class WrappedSession extends SessionCore {
       return;
     }
     this.link.send({ t: "take", id: requestId });
-    const timer = setTimeout(() => this.expire(requestId), this.elicitMs);
-    timer.unref();
-    this.elicitTimers.set(requestId, timer);
+    this.arm(requestId, Date.now());
     this.ask({ requestId, kind: "elicitation", toolName: info.server, input: {}, elicitation: info });
   }
 
@@ -270,8 +271,17 @@ export class WrappedSession extends SessionCore {
     this.link.send({ t: "to_cli", m: { type: "control_response", response: { subtype: "success", request_id: requestId, response: answer } } });
   }
 
-  private expire(requestId: string): void {
+  // The full wait holds only while the app is open on a phone; a request nobody has opened is cancelled sooner.
+  private arm(requestId: string, since: number): void {
+    const left = since + this.elicitMs - Date.now();
+    const timer = setTimeout(() => this.expire(requestId, since), this.watched() ? left : Math.min(left, this.unwatchedMs));
+    timer.unref();
+    this.elicitTimers.set(requestId, timer);
+  }
+
+  private expire(requestId: string, since: number): void {
     if (!this.pending.has(requestId)) return;
+    if (this.watched() && Date.now() - since < this.elicitMs) return this.arm(requestId, since);
     this.settleElicitation(requestId, { action: "cancel" });
     this.unask(requestId);
   }

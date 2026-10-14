@@ -35,7 +35,8 @@ async function serve(): Promise<void> {
   const hub = new Hub(manager, leases, audit, uploads);
   const push = new Push(paths.configDir);
   push.watch(manager, hub);
-  manager.remoteReachable = () => hub.connected || push.subscribed;
+  manager.remoteReachable = () => hub.connected || push.reaches(leases.current()?.device);
+  manager.remoteWatching = () => hub.connected;
   const doctor = new Doctor();
   doctor.start();
   const links = new LinkServer(linkSocketPath());

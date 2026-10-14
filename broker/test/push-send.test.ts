@@ -157,6 +157,20 @@ test("an unreachable push service counts as a failed send", async () => {
   assert.equal(push.status(endpoint).lastError?.status, 0);
 });
 
+test("a device counts as reachable by notification only through its own subscription whose last send worked", async () => {
+  const service = await pushService([503]);
+  const { push } = setup();
+  const endpoint = `${service.origin}/push/phone`;
+  push.subscribe({ endpoint, keys: newBrowser().keys }, undefined, { device: "phone" });
+  assert.equal(push.reaches(undefined), false, "no signed-in device");
+  assert.equal(push.reaches("old-laptop"), false, "another device's subscription");
+  assert.equal(push.reaches("phone"), true);
+  await assert.rejects(push.test(endpoint));
+  assert.equal(push.reaches("phone"), false, "the last send failed");
+  await push.test(endpoint);
+  assert.equal(push.reaches("phone"), true, "a send worked again");
+});
+
 test("the key pair is made when first needed and kept with the subscriptions in a private file", async () => {
   const dir = tempDir();
   const file = path.join(dir, "push.json");

@@ -142,9 +142,11 @@ export class SessionManager extends EventEmitter {
   private exact = new Map<string, { size: number; model: string }>();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string) => Promise<UsageInfo> = probeUsage;
-  // Whether a phone can be reached now (connected or subscribed to notifications), so a VS Code session's MCP
-  // input request is better answered there than declined by VS Code.
+  // Whether a phone can be reached now (connected, or the signed-in device gets notifications), so a VS Code
+  // session's MCP input request is better answered there than declined by VS Code.
   remoteReachable: () => boolean = () => false;
+  // Whether the app is open on a phone now; otherwise a taken input request waits only a short while.
+  remoteWatching: () => boolean = () => false;
   // Where the model list comes from before any session reported one: (cwd, Claude Code path).
   modelProbe: (cwd: string, claudePath?: string) => Promise<ModelInfo[]> = probeModels;
   // Where a model's context window comes from when no session reported it: (cwd, model, Claude Code path).
@@ -621,6 +623,7 @@ export class SessionManager extends EventEmitter {
       const cwd = link.hello?.cwd ?? "";
       const s = new WrappedSession(link, id, cwd);
       s.reachable = () => this.remoteReachable();
+      s.watched = () => this.remoteWatching();
       session = s;
       const prev = this.wrapped.get(id);
       this.wrapped.set(id, s);

@@ -51,8 +51,10 @@ export class Push {
     this.log = opts.log ?? ((line) => console.error(line));
   }
 
-  get subscribed(): boolean {
-    return this.store.list().length > 0;
+  // Whether a notification can reach the device: one of its subscriptions whose last send did not fail.
+  reaches(device: string | undefined): boolean {
+    if (!device) return false;
+    return this.store.list().some((sub) => sub.device === device && !this.health.get(sub.endpoint)?.lastError);
   }
 
   publicKey(): string {
