@@ -356,7 +356,8 @@ export class Relay extends EventEmitter {
       return;
     }
     if (m.type === "control_response") {
-      const id = (m.response as Record<string, unknown> | undefined)?.request_id;
+      const response = m.response as Record<string, unknown> | undefined;
+      const id = response?.request_id;
       if (typeof id !== "string") return reject("invalid response");
       const by = this.settled.get(id);
       if (by) {
@@ -364,6 +365,10 @@ export class Relay extends EventEmitter {
         return;
       }
       if (this.open.get(id)?.subtype !== "can_use_tool") return reject("not answerable", id);
+      const updates = (response?.response as Record<string, unknown> | undefined)?.updatedPermissions;
+      if (Array.isArray(updates) && updates.some((u) => (u as Record<string, unknown> | null)?.mode === "bypassPermissions")) {
+        return reject("mode not allowed", id);
+      }
       this.open.delete(id);
       this.toChild(Buffer.from(JSON.stringify(m)));
       this.toHost(Buffer.from(JSON.stringify({ type: "control_cancel_request", request_id: id })));

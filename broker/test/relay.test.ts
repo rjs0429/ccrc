@@ -235,6 +235,23 @@ test("remote lines other than user messages, broker requests and open prompts ar
   await t.host.wait((m) => m.type === "assistant" && JSON.stringify(m).includes("echo: from phone"), "remote message answered");
 });
 
+test("a remote answer that switches the session to bypassPermissions is refused", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("ASK");
+  await t.broker.frames.wait(frameOut((m) => m.type === "control_request"), "prompt at broker");
+  const answer = response("perm-1", "allow");
+  const updatedPermissions = [{ type: "setMode", mode: "bypassPermissions", destination: "session" }];
+  t.broker.send({ t: "to_cli", m: { ...answer, response: { ...answer.response, response: { ...answer.response.response, updatedPermissions } } } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "perm-1" && f.reason === "mode not allowed", "bypass answer refused");
+  t.write(response("perm-1", "deny"));
+  await t.host.wait((m) => m.type === "answered", "VS Code still answers the prompt");
+  assert.deepEqual(
+    t.host.items.filter((m) => m.type === "answered").map((m) => m.behavior),
+    ["deny"],
+  );
+});
+
 test("reconnects to a restarted broker and re-announces state and open prompts", async () => {
   const t = await setup();
   await t.broker.frames.wait((f) => f.t === "hello", "hello");

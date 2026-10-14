@@ -34,6 +34,8 @@ const TASK_STATUS = new Map<unknown, TaskInfo["status"]>([
   ["stopped", "stopped"],
 ]);
 const CONTEXT_KINDS = new Set<unknown>(["used", "free", "buffer", "deferred"]);
+// An approved plan continues in the chosen mode, so only modes offered remotely may be named.
+const PLAN_DECISIONS = new Set<unknown>(["auto", "acceptEdits", "default", "keep_planning"]);
 
 // How long Claude Code may take to answer: counting the context by category calls the token-count API,
 // and turning on or reconnecting an MCP server waits for the server to connect.
@@ -278,6 +280,7 @@ export abstract class SessionCore extends EventEmitter {
     if (!entry) throw Error("request is no longer pending");
     if (entry.request.localOnly) throw Error("this request can only be answered where the session is open");
     if (entry.request.kind !== answer.kind) throw Error("answer does not match the request");
+    if (answer.kind === "plan" && !PLAN_DECISIONS.has(answer.decision)) throw Error("invalid answer");
     let decision: Decision;
     if (answer.kind === "permission") {
       decision =

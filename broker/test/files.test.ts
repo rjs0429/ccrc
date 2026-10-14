@@ -24,6 +24,14 @@ test("a git folder lists tracked and untracked files but not ignored ones", asyn
   assert.deepEqual((await listFiles(path.join(dir, "src"))).sort(), ["main.ts"], "paths are relative to the session folder");
 });
 
+test("a repository whose work tree lies elsewhere does not list that tree", async () => {
+  const elsewhere = tree(["secret/keys.txt"]);
+  const dir = tree(["readme.md"]);
+  execFileSync("git", ["init", "-q"], { cwd: dir });
+  execFileSync("git", ["config", "core.worktree", elsewhere], { cwd: dir });
+  assert.deepEqual(await listFiles(dir), ["readme.md"]);
+});
+
 test("outside git the walk skips build and dependency folders and stops at depth 8", async () => {
   const deep = `${"d/".repeat(8)}too-deep.txt`;
   const dir = tree(["a.txt", "lib/b.ts", "node_modules/x/index.js", "dist/c.js", ".venv/bin/python", "__pycache__/m.pyc", `${"d/".repeat(7)}deep.txt`, deep]);
