@@ -9,6 +9,7 @@
 // "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data, and
 // "/status" the same way with text only; get_usage fails while the working folder holds a file named .fake-no-usage.
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
+// FAKE_REQUESTS=<file> gets a line with its arguments and then one per control request or user message it receives.
 // --version prints a version and exits.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -27,6 +28,8 @@ const value = (name) => {
 };
 const sid = value("--session-id") || (args.includes("--fork-session") ? undefined : value("--resume")) || randomUUID();
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
+const record = (m) => process.env.FAKE_REQUESTS && fs.appendFileSync(process.env.FAKE_REQUESTS, JSON.stringify(m) + "\n");
+record({ args });
 let asks = 0;
 const STYLES = ["default", "Proactive", "Concise", "Explanatory", "Learning"];
 const LOCAL_SETTINGS = ".claude/settings.local.json";
@@ -35,7 +38,7 @@ try {
   style = JSON.parse(fs.readFileSync(LOCAL_SETTINGS, "utf8")).outputStyle;
 } catch {}
 
-out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: "default", output_style: style ?? "default", args, continueTurn: process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN ?? null });
+out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: value("--permission-mode") || "default", output_style: style ?? "default", args, continueTurn: process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN ?? null });
 if (process.env.FAKE_BURST) {
   out({ type: "user", session_id: sid, message: { content: [{ type: "tool_result", content: "y".repeat(3_000_000) }] } });
   process.stdout.write(JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, session_id: sid }) + "\n", () => process.exit(1));
@@ -58,6 +61,7 @@ function handle(m) {
   if (m.type === "user") {
     const content = m.message.content;
     const text = typeof content === "string" ? content : content.map((c) => c.text).join("");
+    record({ user: text });
     if (text === "/status") {
       const shown = "Version: 2.1.296 (fake)\nModel: fake-model";
       out({
@@ -121,6 +125,7 @@ function handle(m) {
     return;
   }
   if (m.type === "control_request") {
+    record({ request: m.request });
     const init = m.request.subtype === "initialize";
     if (init && process.env.FAKE_NO_INIT) return;
     if (m.request.subtype === "read_file") {

@@ -314,7 +314,9 @@ test("a wrapper too old for get_settings marks the applied state unknown until V
 
 test("turn state follows session_state_changed and result", async () => {
   const { s, wrapper, next } = await session();
-  wrapper.autoReply((r) => (r.subtype === "get_context_usage" ? { percentage: 41.6 } : {}));
+  wrapper.autoReply((r) =>
+    r.subtype === "get_context_usage" ? { percentage: 41.6, totalTokens: 416, maxTokens: 1000, autoCompactThreshold: 967, isAutoCompactEnabled: true } : {},
+  );
   let st = next("state");
   wrapper.out({ type: "system", subtype: "session_state_changed", state: "running", session_id: SID });
   await st;
@@ -323,7 +325,7 @@ test("turn state follows session_state_changed and result", async () => {
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(s.busy, false);
   assert.equal(s.costUsd, 0.25);
-  assert.equal(s.contextPercent, 42);
+  assert.deepEqual(s.context, { percent: 42, tokens: 416, max: 1000, autoCompactAt: 967 });
   st = next("state");
   wrapper.out({ type: "system", subtype: "session_state_changed", state: "requires_action", session_id: SID });
   await st;
@@ -490,7 +492,18 @@ test("context details ask for the full count and map Claude Code's answer", asyn
       { name: "Old CLI row", tokens: 5, kind: "deferred" },
     ],
   });
-  assert.equal(s.state().contextPercent, 3);
+  assert.equal(s.state().context?.percent, 3);
+});
+
+test("a local command's result marks the turn as local until a model turn ends", async () => {
+  const { s, wrapper } = await session();
+  wrapper.autoReply(() => ({}));
+  wrapper.out({ type: "result", subtype: "success", is_error: false, num_turns: 0, local_command: "compact", session_id: SID });
+  for (let i = 0; i < 50 && !s.localTurn; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(s.localTurn, true);
+  wrapper.out({ type: "result", subtype: "success", is_error: false, session_id: SID });
+  for (let i = 0; i < 50 && s.localTurn; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(s.localTurn, false);
 });
 
 test("MCP servers are listed without VS Code's own and changed only by a name Claude Code reported", async () => {

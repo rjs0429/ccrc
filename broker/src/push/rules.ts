@@ -48,7 +48,8 @@ export interface NotifierDeps {
 }
 
 // Turns session events into notifications for the subscribed devices: a request that needs an answer
-// on a session the user is not looking at, and the end of a turn the remote user started.
+// on a session the user is not looking at, and the end of a model turn the remote user started (a local
+// command such as /compact is not one).
 export class Notifier {
   private manager: SessionManager;
   private hub: Hub;
@@ -124,7 +125,7 @@ export class Notifier {
         for (const sub of this.d.subscriptions()) {
           if (!sub.prefs.turnDone) continue;
           this.arm(key, this.d.timing.doneMs, () => {
-            if (this.states.get(sessionId)?.busy || this.hub.isWatching(sessionId)) return;
+            if (this.states.get(sessionId)?.busy || this.hub.isWatching(sessionId) || this.manager.lastTurnLocal(sessionId)) return;
             const now = this.d.subscriptions().find((s) => s.endpoint === sub.endpoint);
             if (now?.prefs.turnDone) this.d.deliver(now, this.payload(sessionId, "done", title), "normal");
           });

@@ -8,7 +8,7 @@ import { PendingCard } from "../components/Pending.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
 import { ChangesSheet } from "../components/sheets/Changes.tsx";
 import { CommandResultSheet, StoppedSheet } from "../components/sheets/Command.tsx";
-import { ContextSheet } from "../components/sheets/Context.tsx";
+import { ContextUsageSheet } from "../components/sheets/ContextUsage.tsx";
 import { McpSheet } from "../components/sheets/Mcp.tsx";
 import { OutputStyleSheet, outputStyleLabel } from "../components/sheets/OutputStyle.tsx";
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
@@ -17,8 +17,8 @@ import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { FileLinks } from "../components/fileLinks.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
-import { baseName, closedText, hostLabel, sessionTitle } from "../labels.ts";
-import { focusDone, navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
+import { baseName, closedText, errorText, hostLabel, sessionTitle } from "../labels.ts";
+import { call, focusDone, navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
 
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
@@ -27,6 +27,7 @@ const FLASH_MS = 2500;
 const NO_MODELS: ModelOption[] = [];
 // How long a command sent from here may take before its sheet says it gave no result, once the session is idle.
 const RESULT_LATE_MS = 15_000;
+const RESUME_WAIT_MS = 60_000;
 type SheetName = "changes" | "context" | "mcp" | "outputStyle" | "rewind" | "tasks" | "usage";
 type CommandItem = Extract<DisplayItem, { kind: "command" }>;
 // A dialog command sent from here: its result shows in a sheet once a new result of that command arrives.
@@ -50,12 +51,14 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [awaited, setAwaited] = useState<Awaited>();
   const [file, setFile] = useState<FileTarget | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
   const st = chat?.state;
   const kind = st?.state ?? summary?.state ?? "inactive";
   const controllable = kind === "owned" || kind === "attached";
+  const deferred = kind === "inactive";
   const host = hostLabel(st?.host ?? summary?.host);
   const busy = Boolean(st?.busy);
   const cwd = st?.cwd ?? summary?.cwd ?? "";
@@ -69,6 +72,15 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const ok = send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
     if (ok && c && isDialogCommand(c.name)) setAwaited({ title: text.trim(), name: commandName(c.name), before, late: false });
     return ok;
+  };
+
+  // Starts the session's Claude Code process here without sending anything.
+  const startNow = () => {
+    if (starting) return;
+    setStarting(true);
+    call(sessionId, "resume", {}, RESUME_WAIT_MS)
+      .catch((e: Error) => toast(errorText(e.message)))
+      .finally(() => setStarting(false));
   };
 
   const result = useMemo(
@@ -216,8 +228,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
               />
             ))}
             {chat?.loaded && kind === "inactive" && (
-              <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted">
-                {closedText(st?.closedReason)}메시지를 보내면 이 세션을 원격에서 이어서 실행합니다.
+              <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted" data-stopped-note>
+                {closedText(st?.closedReason)}메시지를 보내면 이 세션을 원격에서 이어서 실행합니다. 아래 칩에서 고른 모델·권한 모드·Effort는 여기서 시작할 때
+                적용됩니다.
+                <button onClick={startNow} disabled={starting} className="mx-auto mt-2 block rounded-lg bg-surface px-3 py-1.5 font-medium text-accent disabled:opacity-50">
+                  {starting ? "시작하는 중…" : "지금 시작"}
+                </button>
               </div>
             )}
           </div>
@@ -231,6 +247,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         state={st}
         models={models}
         controllable={controllable}
+        deferred={deferred}
         disabledReason={disabledReason}
         placeholder="Claude에게 메시지"
         onSend={sendText}
@@ -241,6 +258,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onModel={(model) => send({ t: "set_model", sessionId, model })}
         onEffort={(effort) => send({ t: "set_effort", sessionId, effort })}
         onUltracode={(on) => send({ t: "set_ultracode", sessionId, on })}
+        onContext={() => setSheet("context")}
       />
 
       {menu && (
@@ -248,10 +266,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
           <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
           <Choice label="새로고침" onClick={() => (send({ t: "view", sessionId }), setMenu(false))} />
           <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
+          <Choice label="Context와 사용량" hint="Context, 요금제 사용량, Compact" onClick={() => (setSheet("context"), setMenu(false))} />
           {controllable && (
             <>
               <Choice label="백그라운드 작업" hint="서브에이전트·백그라운드 명령" onClick={() => (setSheet("tasks"), setMenu(false))} />
-              <Choice label="Context 사용량" onClick={() => (setSheet("context"), setMenu(false))} />
               <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
               <Choice
                 label="출력 스타일"
@@ -283,7 +301,21 @@ export function Chat({ sessionId }: { sessionId: string }) {
       )}
       {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "tasks" && <TasksSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
-      {sheet === "context" && <ContextSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "context" && (
+        <ContextUsageSheet
+          sessionId={sessionId}
+          state={st}
+          kind={kind}
+          starting={starting}
+          onClose={() => setSheet(null)}
+          onStart={startNow}
+          onCompact={(text) => {
+            if (sendText(text)) return true;
+            toast("not connected");
+            return false;
+          }}
+        />
+      )}
       {sheet === "usage" && (
         <UsageSheet
           sessionId={sessionId}

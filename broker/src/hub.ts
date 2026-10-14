@@ -23,6 +23,10 @@ function str(v: unknown, max = 200): string {
   return v;
 }
 
+function startFlag(m: SessionManager, sessionId: string): { start?: true } {
+  return m.isControlled(sessionId) ? {} : { start: true };
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function sid(v: unknown): string {
@@ -239,25 +243,35 @@ export class Hub {
         this.audit.log("interrupt", { device, sessionId: msg.sessionId });
         await m.interrupt(sid(msg.sessionId));
         return;
-      case "set_mode":
+      // A session without a process keeps these for its next start here ("start" in the record).
+      case "set_mode": {
         if (!PERMISSION_MODES.includes(msg.mode)) throw Error("invalid mode");
-        this.audit.log("set_mode", { device, sessionId: msg.sessionId, mode: msg.mode });
-        await m.setMode(sid(msg.sessionId), msg.mode);
+        const id = sid(msg.sessionId);
+        this.audit.log("set_mode", { device, sessionId: id, mode: msg.mode, ...startFlag(m, id) });
+        await m.setMode(id, msg.mode);
         return;
-      case "set_model":
-        this.audit.log("set_model", { device, sessionId: msg.sessionId, model: msg.model });
-        await m.setModel(sid(msg.sessionId), str(msg.model));
+      }
+      case "set_model": {
+        const id = sid(msg.sessionId);
+        const model = str(msg.model);
+        this.audit.log("set_model", { device, sessionId: id, model, ...startFlag(m, id) });
+        await m.setModel(id, model);
         return;
-      case "set_effort":
+      }
+      case "set_effort": {
         if (!EFFORTS.includes(msg.effort)) throw Error("invalid effort");
-        this.audit.log("set_effort", { device, sessionId: msg.sessionId, effort: msg.effort });
-        await m.setEffort(sid(msg.sessionId), msg.effort);
+        const id = sid(msg.sessionId);
+        this.audit.log("set_effort", { device, sessionId: id, effort: msg.effort, ...startFlag(m, id) });
+        await m.setEffort(id, msg.effort);
         return;
-      case "set_ultracode":
+      }
+      case "set_ultracode": {
         if (typeof msg.on !== "boolean") throw Error("invalid ultracode");
-        this.audit.log("set_ultracode", { device, sessionId: msg.sessionId, on: msg.on });
-        await m.setUltracode(sid(msg.sessionId), msg.on);
+        const id = sid(msg.sessionId);
+        this.audit.log("set_ultracode", { device, sessionId: id, on: msg.on, ...startFlag(m, id) });
+        await m.setUltracode(id, msg.on);
         return;
+      }
       case "release":
         this.audit.log("release", { device, sessionId: msg.sessionId });
         await m.release(sid(msg.sessionId));

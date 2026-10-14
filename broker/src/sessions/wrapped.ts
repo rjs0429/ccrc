@@ -137,9 +137,9 @@ export class WrappedSession extends SessionCore {
     this.refreshApplied();
   }
 
-  async contextDetail(): Promise<ContextDetail> {
+  async contextDetail(summary = false): Promise<ContextDetail> {
     this.ensureOpen();
-    return this.counted(contextDetail(await this.link.request({ subtype: "get_context_usage", detail: "full" }, CONTEXT_MS)));
+    return this.counted(contextDetail(await this.link.request({ subtype: "get_context_usage", detail: summary ? "summary" : "full" }, CONTEXT_MS)));
   }
 
   readFile(path: string, maxBytes: number, encoding: "utf-8" | "base64"): Promise<FileContents> | undefined {
@@ -200,9 +200,7 @@ export class WrappedSession extends SessionCore {
     this.link
       .request({ subtype: "get_context_usage", detail: "summary" })
       .then((r) => {
-        if (typeof r.percentage !== "number") return;
-        this.contextPercent = Math.round(r.percentage);
-        this.emit("state");
+        if (typeof r.percentage === "number") this.counted(contextDetail(r));
       })
       .catch(() => {});
   }

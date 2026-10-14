@@ -1,26 +1,31 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { listSessions, type ModelInfo, type SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import type { Audit } from "../audit.ts";
-import type { Config } from "../config.ts";
+import { paths, writeFileAtomic, type Config } from "../config.ts";
 import type { Hello } from "../link/protocol.ts";
 import type { Link } from "../link/server.ts";
-import type {
-  CallOp,
-  DisplayItem,
-  EffortName,
-  LiveState,
-  ModelOption,
-  PendingRequest,
-  PermissionModeName,
-  ServerMsg,
-  SessionSummary,
-  UsageInfo,
+import {
+  PERMISSION_MODES,
+  type CallOp,
+  type ContextGauge,
+  type DisplayItem,
+  type EffortName,
+  type LiveState,
+  type ModelOption,
+  type PendingRequest,
+  type PermissionModeName,
+  type ServerMsg,
+  type SessionSummary,
+  type StartSettings,
+  type UsageInfo,
 } from "../protocol.ts";
-import { BrokerSession, probeUsage } from "./broker-session.ts";
+import { BrokerSession, probeModels, probeUsage, probeWindow, type StartOptions } from "./broker-session.ts";
 import { lastCommands, rememberCommands } from "./commands.ts";
+import { ContextWindows, gauge, lastUsage, type ContextWindow } from "./context-gauge.ts";
 import type { ContentBlock, SessionCore } from "./core.ts";
 import { searchFiles } from "./files.ts";
 import { lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
@@ -40,6 +45,7 @@ const HANDOFF_OTHER_MS = 9_000;
 const EARLY_LINES_MAX = 500;
 const ENDED_KEEP_MS = 10 * 60_000;
 const USAGE_KEEP_MS = 30_000;
+const MODEL_NAME = /^[A-Za-z0-9][\w.:[\]\/@-]{0,99}$/;
 
 export interface ManagerTiming {
   handoffTurnMs: number;
@@ -76,7 +82,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Emits "event" (sessionId, ServerMsg) for one session, "changed" when the session list changed, and
 // "attached" / "detached" (sessionId) when a session gains or loses a process the broker can drive.
 export class SessionManager extends EventEmitter {
-  models: ModelOption[] = [];
+  models: ModelOption[] = loadModels();
+  private modelsAsked?: Promise<void>;
   private cfg: Config;
   private audit?: Audit;
   private owned = new Map<string, BrokerSession>();
@@ -89,8 +96,16 @@ export class SessionManager extends EventEmitter {
   private sweeper: NodeJS.Timeout;
   private timing: ManagerTiming;
   private accountUsage?: { at: number; value: Promise<UsageInfo> };
+  // What sessions without a process start with when the broker next starts them.
+  private starts = new Map<string, StartSettings>();
+  private windows = new ContextWindows(path.join(paths.stateDir, "context-windows.json"));
+  private probing = new Map<string, Promise<ContextWindow | undefined>>();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string) => Promise<UsageInfo> = probeUsage;
+  // Where the model list comes from before any session reported one: (cwd, Claude Code path).
+  modelProbe: (cwd: string, claudePath?: string) => Promise<ModelInfo[]> = probeModels;
+  // Where a model's context window comes from when no session reported it: (cwd, model, Claude Code path).
+  windowProbe: (cwd: string, model: string, claudePath?: string) => Promise<ContextWindow | undefined> = probeWindow;
 
   constructor(cfg: Config, audit?: Audit, timing: Partial<ManagerTiming> = {}) {
     super();
@@ -188,6 +203,33 @@ export class SessionManager extends EventEmitter {
     throw Error("folder is not allowed for new sessions");
   }
 
+  // The models Claude Code last offered; before any session reported them, asked once of a short-lived process.
+  async modelList(): Promise<ModelOption[]> {
+    if (!this.models.length) {
+      this.modelsAsked ??= this.folders()
+        .then((dirs) => this.modelProbe(dirs[0] ?? os.homedir(), this.cfg.claudePath))
+        .then(
+          (list) => {
+            if (!this.models.length) this.setModels(list);
+          },
+          () => {},
+        );
+      await this.modelsAsked;
+    }
+    return this.models;
+  }
+
+  // Kept as Claude Code reported it, for the next broker run.
+  private setModels(list: ModelInfo[]): void {
+    const models = modelOptions(list);
+    if (!models.length || JSON.stringify(models) === JSON.stringify(this.models)) return;
+    this.models = models;
+    const saved = models.map((m) => ({ value: m.value, resolvedModel: m.resolved, displayName: m.label, description: m.description, supportedEffortLevels: m.efforts }));
+    try {
+      writeFileAtomic(modelsFile(), JSON.stringify(saved) + "\n");
+    } catch {}
+  }
+
   async folders(): Promise<string[]> {
     const known = (await this.infos()).map((i) => i.cwd).filter((c): c is string => Boolean(c));
     return [...new Set([...this.cfg.roots, ...known])].sort();
@@ -198,22 +240,71 @@ export class SessionManager extends EventEmitter {
     if (s) return { ...tail(s.builder.items, focus), pending: [...s.pending.values()].map((e) => e.request), state: s.state() };
     const info = await this.info(sessionId);
     if (!info?.cwd) throw Error("unknown session");
-    const items = await loadHistory(sessionId, info.cwd);
+    const [items, state] = await Promise.all([loadHistory(sessionId, info.cwd), this.idleState(sessionId, info.cwd, titleOf(info))]);
+    return { ...tail(items, focus), pending: [], state };
+  }
+
+  // A session without a process this broker drives: whether one runs elsewhere, the transcript's last context
+  // gauge and, while nothing runs it, the choices it starts with here.
+  private async idleState(sessionId: string, cwd: string, title: string): Promise<LiveState> {
     const l = liveProcesses({ fresh: true }).find((p) => p.sessionId === sessionId);
     const ended = this.ended.get(sessionId);
+    const context = await this.lastGauge(sessionId, cwd, () => void this.restate(sessionId));
+    const start = l ? undefined : this.starts.get(sessionId);
     return {
-      ...tail(items, focus),
-      pending: [],
-      state: {
-        sessionId,
-        cwd: info.cwd,
-        title: titleOf(info),
-        state: l ? "live" : "inactive",
-        host: l?.host,
-        busy: l?.status === "busy",
-        ...(ended ? { closedReason: ended.reason } : {}),
-      },
+      sessionId,
+      cwd,
+      title,
+      state: l ? "live" : "inactive",
+      host: l?.host,
+      busy: l?.status === "busy",
+      ...(ended ? { closedReason: ended.reason } : {}),
+      ...(context ? { context } : {}),
+      ...(start ? { start } : {}),
     };
+  }
+
+  private async restate(sessionId: string): Promise<void> {
+    if (this.controlled(sessionId)) return;
+    const info = await this.info(sessionId).catch(() => undefined);
+    if (!info?.cwd || this.controlled(sessionId)) return;
+    this.emit("event", sessionId, { t: "state", sessionId, state: await this.idleState(sessionId, info.cwd, titleOf(info)) });
+  }
+
+  // The context the transcript last reports against the window its model runs with: the window this session
+  // or model last reported, or else one asked of Claude Code once per model, with `found` called when it comes.
+  private async lastGauge(sessionId: string, cwd: string, found: () => void): Promise<ContextGauge | undefined> {
+    const file = transcriptPath(sessionId, cwd);
+    const used = file ? await lastUsage(file).catch(() => undefined) : undefined;
+    if (!used) return undefined;
+    const w = this.windows.get(sessionId, used.model);
+    if (w) return gauge(used.tokens, w, true);
+    const model = used.model;
+    if (!model) return undefined;
+    let asked = this.probing.get(model);
+    if (!asked) {
+      asked = this.windowProbe(cwd, model, this.cfg.claudePath).then(
+        (w) => {
+          if (w) this.windows.learn(model, w);
+          return w;
+        },
+        () => undefined,
+      );
+      this.probing.set(model, asked);
+    }
+    void asked.then((w) => w && found());
+    return undefined;
+  }
+
+  // A session started or reached here shows the transcript's last gauge until Claude Code counts.
+  private seedGauge(s: SessionCore): void {
+    const fill = (): void =>
+      void this.lastGauge(s.id, s.cwd, fill).then((g) => {
+        if (!g || s.context || !this.current(s)) return;
+        s.context = g;
+        s.emit("state");
+      });
+    fill();
   }
 
   // Calls back whenever the transcript of a session without a process this broker drives changes.
@@ -248,9 +339,13 @@ export class SessionManager extends EventEmitter {
       if (this.claiming.has(sessionId)) throw Error("session is opening in VS Code");
       const other = liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId);
       if (other) throw Error(`session is open in ${other.host}`);
+      const start = this.starts.get(sessionId);
       const s = new BrokerSession(sessionId, cwd, history, titleOf(info));
       this.adopt(s);
-      s.start({ resume: true, claudePath: this.cfg.claudePath });
+      s.start({ resume: true, claudePath: this.cfg.claudePath, ...startOptions(start) });
+      this.starts.delete(sessionId);
+      if (start) this.audit?.log("start_settings", { sessionId, ...start });
+      this.seedGauge(s);
       return s;
     })();
     this.starting.set(sessionId, p);
@@ -296,7 +391,7 @@ export class SessionManager extends EventEmitter {
         return s?.commands ?? lastCommands(cwd);
       }
       case "context":
-        return this.get(sessionId).contextDetail();
+        return this.get(sessionId).contextDetail(args.summary === true);
       case "usage":
         return this.usage(sessionId);
       case "resume":
@@ -378,20 +473,50 @@ export class SessionManager extends EventEmitter {
     return this.get(sessionId).interrupt();
   }
 
-  setMode(sessionId: string, mode: PermissionModeName): Promise<void> {
-    return this.get(sessionId).setMode(mode);
+  // Whether the session's last turn was a local command rather than a model turn.
+  lastTurnLocal(sessionId: string): boolean {
+    return this.controlled(sessionId)?.localTurn === true;
   }
 
-  setModel(sessionId: string, model: string): Promise<void> {
-    return this.get(sessionId).setModel(model);
+  // Model, mode, effort and ultracode change a running session at once; a session without a process keeps
+  // them for when the broker next starts it.
+  async setMode(sessionId: string, mode: PermissionModeName): Promise<void> {
+    const s = this.controlled(sessionId);
+    if (s) return s.setMode(mode);
+    if (!PERMISSION_MODES.includes(mode)) throw Error(`mode ${mode} is not available remotely`);
+    return this.setStart(sessionId, { mode });
+  }
+
+  async setModel(sessionId: string, model: string): Promise<void> {
+    const s = this.controlled(sessionId);
+    if (s) return s.setModel(model);
+    if (!MODEL_NAME.test(model) || (this.models.length && !this.models.some((m) => m.value === model))) throw Error("unknown model");
+    return this.setStart(sessionId, { model });
   }
 
   setEffort(sessionId: string, effort: EffortName): Promise<void> {
-    return this.get(sessionId).setEffort(effort);
+    return this.controlled(sessionId)?.setEffort(effort) ?? this.setStart(sessionId, { effort });
   }
 
   setUltracode(sessionId: string, on: boolean): Promise<void> {
-    return this.get(sessionId).setUltracode(on);
+    return this.controlled(sessionId)?.setUltracode(on) ?? this.setStart(sessionId, { ultracode: on });
+  }
+
+  private async setStart(sessionId: string, change: StartSettings): Promise<void> {
+    if (this.starting.has(sessionId)) throw Error("session is starting");
+    const info = await this.info(sessionId);
+    if (!info?.cwd) throw Error("unknown session");
+    const other = liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId);
+    if (other) throw Error(`session is open in ${other.host}`);
+    if (this.controlled(sessionId)) throw Error("session started meanwhile");
+    const next: StartSettings = { ...this.starts.get(sessionId), ...change };
+    if (!next.ultracode) delete next.ultracode;
+    this.starts.set(sessionId, next);
+    await this.restate(sessionId);
+  }
+
+  startSettings(sessionId: string): StartSettings | undefined {
+    return this.starts.get(sessionId);
   }
 
   async release(sessionId: string): Promise<void> {
@@ -432,6 +557,7 @@ export class SessionManager extends EventEmitter {
         .catch(() => [])
         .then((history) => {
           s.seed(history);
+          this.seedGauge(s);
           if (this.current(s)) this.emit("attached", id);
         });
     };
@@ -520,15 +646,8 @@ export class SessionManager extends EventEmitter {
       this.emit("changed");
     });
     s.on("state", () => send({ t: "state", sessionId: s.id, state: s.state() }));
-    s.on("models", (models: ModelInfo[]) => {
-      this.models = models.map((m) => ({
-        value: m.value,
-        resolved: m.resolvedModel,
-        label: m.displayName,
-        description: m.description,
-        efforts: m.supportedEffortLevels,
-      }));
-    });
+    s.on("window", (model: string | undefined, w: ContextWindow) => this.windows.learn(model, w, s.id));
+    s.on("models", (models: ModelInfo[]) => this.setModels(models));
     s.on("closed", (reason: string) => {
       if (!this.current(s)) return;
       if (this.owned.get(s.id) === s) this.owned.delete(s.id);
@@ -541,5 +660,35 @@ export class SessionManager extends EventEmitter {
     });
     this.catalog = undefined;
     this.emit("changed");
+  }
+}
+
+function startOptions(start?: StartSettings): Partial<StartOptions> {
+  if (!start) return {};
+  const later = start.effort || start.ultracode ? { effort: start.effort, ultracode: start.ultracode } : undefined;
+  return { model: start.model, mode: start.mode, ...(later ? { later } : {}) };
+}
+
+const modelsFile = () => path.join(paths.stateDir, "models.json");
+
+function modelOptions(list: unknown): ModelOption[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((m): m is ModelInfo => m !== null && typeof m === "object" && typeof m.value === "string" && m.value !== "")
+    .map((m) => ({
+      value: m.value,
+      resolved: typeof m.resolvedModel === "string" ? m.resolvedModel : undefined,
+      label: typeof m.displayName === "string" && m.displayName ? m.displayName : m.value,
+      description: typeof m.description === "string" ? m.description : undefined,
+      efforts: Array.isArray(m.supportedEffortLevels) ? m.supportedEffortLevels : undefined,
+    }));
+}
+
+// The model list kept from the last broker run.
+function loadModels(): ModelOption[] {
+  try {
+    return modelOptions(JSON.parse(fs.readFileSync(modelsFile(), "utf8")));
+  } catch {
+    return [];
   }
 }

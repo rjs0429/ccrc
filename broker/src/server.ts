@@ -159,7 +159,7 @@ export async function buildServer(d: ServerDeps) {
   app.get("/api/sessions", { preHandler: requireAuth }, async () => d.manager.list());
 
   app.get("/api/options", { preHandler: requireAuth }, async () => ({
-    models: d.manager.models,
+    models: await d.manager.modelList(),
     modes: PERMISSION_MODES,
     folders: await d.manager.folders(),
   }));

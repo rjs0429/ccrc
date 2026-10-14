@@ -4,6 +4,7 @@ import {
   type Answer,
   type CommandInfo,
   type ContextDetail,
+  type ContextGauge,
   type DisplayItem,
   type EffortName,
   type ElicitInfo,
@@ -19,6 +20,7 @@ import {
   type UsageInfo,
 } from "../protocol.ts";
 import { elicitResult } from "../elicit.ts";
+import { gaugeOf } from "./context-gauge.ts";
 import type { FileContents } from "./file-read.ts";
 import { ItemBuilder, clipInput, type RawMessage } from "./items.ts";
 
@@ -138,7 +140,7 @@ interface StreamEvent {
 
 // A session whose Claude Code process the broker can drive: one it runs itself ("owned") or one
 // that runs in VS Code and is reached through the wrapper ("attached").
-// Events: item, stream, pending_add, pending_remove, state, models, closed.
+// Events: item, stream, pending_add, pending_remove, state, models, window, closed.
 export abstract class SessionCore extends EventEmitter {
   abstract readonly kind: "owned" | "attached";
   abstract readonly host: string;
@@ -160,7 +162,9 @@ export abstract class SessionCore extends EventEmitter {
   ultracode?: boolean;
   ultracodeAvailable?: boolean;
   outputStyles?: string[];
-  contextPercent?: number;
+  context?: ContextGauge;
+  // The last turn was a local command ("/compact", "/model x", ...), which runs no model turn of its own.
+  localTurn = false;
   costUsd?: number;
   lastActivity = Date.now();
   closed = false;
@@ -210,7 +214,7 @@ export abstract class SessionCore extends EventEmitter {
       ...(this.ultracodeAvailable !== undefined ? { ultracode: this.ultracode === true, ultracodeAvailable: this.ultracodeAvailable } : {}),
       ...(this.outputStyle !== undefined ? { outputStyle: this.outputStyle } : {}),
       ...(this.appliedRefused && this.ultracodeAvailable === undefined ? { appliedUnknown: true } : {}),
-      contextPercent: this.contextPercent,
+      ...(this.context ? { context: this.context } : {}),
       costUsd: this.costUsd,
       closedReason: this.closedReason,
       ...(this.tasks.size ? { tasks: [...this.tasks.values()] } : {}),
@@ -218,7 +222,7 @@ export abstract class SessionCore extends EventEmitter {
   }
 
   // Session operations behind the web client's calls; a process type overrides the ones it supports.
-  contextDetail(): Promise<ContextDetail> {
+  contextDetail(_summary?: boolean): Promise<ContextDetail> {
     return Promise.reject(Error("not available for this session"));
   }
 
@@ -297,9 +301,14 @@ export abstract class SessionCore extends EventEmitter {
     return taskId;
   }
 
-  // A full count is also the current context percentage.
+  // Any count is also the session's gauge and tells the window its model runs with ("window": model, window).
+  // The applied model names it: a count taken before the first turn can name another.
   protected counted(detail: ContextDetail): ContextDetail {
-    this.contextPercent = Math.round(detail.percentage);
+    const g = gaugeOf(detail);
+    if (g) {
+      this.context = g;
+      this.emit("window", this.model ?? detail.model, { max: g.max, autoCompactAt: g.autoCompactAt });
+    }
     this.emit("state");
     return detail;
   }
@@ -468,6 +477,7 @@ export abstract class SessionCore extends EventEmitter {
     if (m.type === "assistant" && !m.parent_tool_use_id) this.endStream();
     if (m.type === "result") {
       this.busy = false;
+      this.localTurn = typeof m.local_command === "string";
       if (typeof m.total_cost_usd === "number") this.costUsd = m.total_cost_usd;
       this.endStream();
       this.refreshContext();
