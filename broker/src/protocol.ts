@@ -21,6 +21,8 @@ export interface SessionSummary {
   liveStatus?: string;
   busy?: boolean;
   pendingCount?: number;
+  // A session without a process whose working folder is gone: Claude Code cannot start in it.
+  folderMissing?: boolean;
 }
 
 export interface ToolResult {
@@ -114,6 +116,8 @@ export interface ContextDetail {
   autoCompactAt?: number;
   model?: string;
   categories: { name: string; tokens: number; kind: string }[];
+  memoryFiles?: { path: string; tokens: number }[];
+  agents?: { name: string; tokens: number }[];
 }
 
 // How full the session's context window is. last: read from the transcript of a session without a process.
@@ -304,6 +308,7 @@ export interface LiveState {
   costUsd?: number;
   closedReason?: string;
   tasks?: TaskInfo[];
+  folderMissing?: boolean;
 }
 
 export type ClientMsg =

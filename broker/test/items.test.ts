@@ -114,6 +114,7 @@ const CONTEXT_ITEM = {
       { name: "System tools (deferred)", tokens: 11198, kind: "deferred" },
       { name: "Free space", tokens: 939377, kind: "free" },
     ],
+    memoryFiles: [{ path: "/home/u/.claude/CLAUDE.md", tokens: 2237 }],
   },
 };
 

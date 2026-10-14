@@ -83,3 +83,26 @@ test("context windows are kept per session and per model across restarts", () =>
   again.learn(undefined, { max: 0 }, "s3");
   assert.equal(again.get("s3"), undefined);
 });
+
+test("a context count keeps its memory files and agents, largest first, from either spelling", () => {
+  const answer = contextDetail({
+    totalTokens: 10,
+    maxTokens: 100,
+    memoryFiles: [
+      { path: "/home/u/CLAUDE.md", type: "Project", tokens: 600 },
+      { path: "/home/u/.claude/CLAUDE.md", type: "User", tokens: 2200 },
+      { type: "User", tokens: 5 },
+    ],
+    agents: [{ agentType: "reviewer", source: "user", tokens: 120 }],
+  });
+  assert.deepEqual(answer.memoryFiles, [
+    { path: "/home/u/.claude/CLAUDE.md", tokens: 2200 },
+    { path: "/home/u/CLAUDE.md", tokens: 600 },
+  ]);
+  assert.deepEqual(answer.agents, [{ name: "reviewer", tokens: 120 }]);
+  const result = contextDetail({ total_tokens: 10, raw_max_tokens: 100, memory_files: [{ path: "/w/CLAUDE.md", type: "Project", tokens: 7 }], agents: [{ agent_type: "a", tokens: 3 }] });
+  assert.deepEqual(result.memoryFiles, [{ path: "/w/CLAUDE.md", tokens: 7 }]);
+  assert.deepEqual(result.agents, [{ name: "a", tokens: 3 }]);
+  const none = contextDetail({ totalTokens: 1, maxTokens: 10, memoryFiles: [], agents: [] });
+  assert.equal("memoryFiles" in none || "agents" in none, false);
+});

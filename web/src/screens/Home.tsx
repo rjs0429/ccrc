@@ -118,7 +118,7 @@ function status(s: SessionSummary): { text: string; dot: string } {
   if (s.state === "live") {
     return s.busy ? { text: `${host}에서 작업 중 · 보기만`, dot: "bg-info animate-pulse" } : { text: `${host}에서 열림 · 보기만`, dot: "bg-info" };
   }
-  return { text: "", dot: "border border-line" };
+  return { text: s.folderMissing ? "폴더 없음" : "", dot: "border border-line" };
 }
 
 function SessionRow({ s }: { s: SessionSummary }) {

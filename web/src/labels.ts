@@ -112,7 +112,7 @@ export function noteText(code: NoteCode, text?: string): string {
     case "compacted":
       return "이전 대화를 요약했습니다";
     case "error":
-      return `오류: ${text ?? ""}`;
+      return `오류: ${errorText(text ?? "")}`;
     default:
       return text ?? "";
   }
@@ -125,6 +125,13 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^session is open in (.+)$/, (m) => `${hostLabel(m[1])}에서 열려 있어 원격으로 실행할 수 없습니다`],
   [/^folder is not allowed for new sessions$/, "이 폴더에서는 새 세션을 시작할 수 없습니다"],
   [/^folder does not exist$/, "폴더가 없습니다"],
+  [/^working folder is missing: (.+)$/, (m) => `작업 폴더가 없어 세션을 시작할 수 없습니다: ${shortPath(m[1])}`],
+  [/^Claude Code (?:native binary|executable) at [\s\S]+ exists but failed to launch/, "Claude Code를 실행하지 못했습니다. 작업 폴더가 그대로 있는지, 실행 파일이 이 컴퓨터에 맞는지 확인하세요"],
+  [/^Claude Code (?:native binary|executable) not found at ([\s\S]+?)\.(?:\s|$)/, (m) => `Claude Code 실행 파일을 찾을 수 없습니다: ${m[1]}`],
+  [/^Failed to spawn Claude Code process: ([\s\S]+)$/, (m) => `Claude Code를 실행하지 못했습니다 (${m[1]})`],
+  [/^Claude Code process exited with code \d+[\s\S]*No conversation found/, "대화 기록을 찾지 못해 이 세션을 이어서 실행할 수 없습니다"],
+  [/^Claude Code process exited with code (\d+)(?:\. stderr: ([\s\S]+))?$/, (m) => `Claude Code가 종료되었습니다 (코드 ${m[1]})${m[2] ? `: ${m[2]}` : ""}`],
+  [/^Claude Code process terminated by signal (\w+)/, (m) => `Claude Code가 강제로 종료되었습니다 (${m[1]})`],
   [/^request is no longer pending$/, "이미 처리된 요청입니다"],
   [/^session is not running here$/, "원격에서 실행 중인 세션이 아닙니다. 메시지를 보내면 이어서 실행합니다"],
   [/^session closed$/, "세션 프로세스가 종료되었습니다"],

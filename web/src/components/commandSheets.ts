@@ -5,7 +5,7 @@ export type CommandSheet = "context" | "usage" | "mcp" | "tasks" | "rewind" | "m
 // Bare "/" commands the phone answers with a sheet or page of its own instead of sending them, the way VS Code
 // opens a dialog. live: the sheet needs the session's Claude Code process. Aliases resolve through commandName.
 export const COMMAND_SHEETS: Record<string, { sheet: CommandSheet; title: string; live?: boolean }> = {
-  context: { sheet: "context", title: "Context와 사용량" },
+  context: { sheet: "context", title: "Context" },
   usage: { sheet: "usage", title: "사용량" },
   mcp: { sheet: "mcp", title: "MCP 서버", live: true },
   model: { sheet: "model", title: "모델" },

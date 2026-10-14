@@ -1,7 +1,9 @@
 import type { ContextDetail, UsageInfo, UsageLimit } from "../protocol.ts";
 
 const NAME_MAX = 200;
+const PATH_MAX = 4096;
 const WORD_MAX = 40;
+const LIST_MAX = 50;
 const CONTEXT_KINDS = new Set<unknown>(["used", "free", "buffer", "deferred"]);
 // get_usage's windows, as the kinds and scopes /usage reports its limits with.
 const WINDOWS: [key: string, kind: string, scope?: string][] = [
@@ -20,12 +22,25 @@ const clipped = (v: unknown, max: number): string | undefined => (typeof v === "
 const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
+// Named token counts, largest first.
+function counts(v: unknown, name: (o: Obj) => unknown, max: number): { name: string; tokens: number }[] {
+  return (Array.isArray(v) ? v.filter(isObj) : [])
+    .flatMap((o) => {
+      const n = clipped(name(o), max);
+      return n ? [{ name: n, tokens: count(o.tokens) }] : [];
+    })
+    .sort((a, b) => b.tokens - a.tokens)
+    .slice(0, LIST_MAX);
+}
+
 // Claude Code's context count by category, as the web client shows it: the get_context_usage answer
 // (camelCase) or the data beside a /context result (snake_case), which has no auto-compact point.
 export function contextDetail(r: unknown): ContextDetail {
   const o = isObj(r) ? r : {};
   const model = clipped(o.model, NAME_MAX);
   const autoCompactAt = o.isAutoCompactEnabled === false ? undefined : num(o.autoCompactThreshold);
+  const memoryFiles = counts(o.memoryFiles ?? o.memory_files, (f) => f.path, PATH_MAX).map((f) => ({ path: f.name, tokens: f.tokens }));
+  const agents = counts(o.agents, (a) => a.agentType ?? a.agent_type, NAME_MAX);
   return {
     percentage: count(o.percentage),
     totalTokens: count(o.totalTokens ?? o.total_tokens),
@@ -37,6 +52,8 @@ export function contextDetail(r: unknown): ContextDetail {
       tokens: count(c.tokens),
       kind: CONTEXT_KINDS.has(c.kind) ? (c.kind as string) : c.isDeferred === true ? "deferred" : "used",
     })),
+    ...(memoryFiles.length ? { memoryFiles } : {}),
+    ...(agents.length ? { agents } : {}),
   };
 }
 

@@ -2,15 +2,13 @@ import { useEffect, useState } from "react";
 import type { ContextDetail, LiveState, SessionState, UsageInfo } from "../../../../broker/src/protocol.ts";
 import { errorText, hostLabel } from "../../labels.ts";
 import { call } from "../../state.ts";
-import { Ring, compactLeft } from "../ContextRing.tsx";
+import { Ring } from "../ContextRing.tsx";
 import { Button, Icon, Sheet } from "../ui.tsx";
-import { ContextGroups, tokens } from "./Context.tsx";
+import { ContextGroups, DETAIL_WAIT_MS, compactLeftText, tokens } from "./Context.tsx";
 import { Failed, SmallButton, Waiting } from "./parts.tsx";
 import { UsageView } from "./Usage.tsx";
 
-// The broker gives Claude Code up to a minute to count every category, and starts a short-lived process
-// for the plan limits when no session can say.
-const DETAIL_WAIT_MS = 75_000;
+// The broker starts a short-lived process for the plan limits when no session can say.
 const USAGE_WAIT_MS = 60_000;
 
 interface Props {
@@ -18,6 +16,8 @@ interface Props {
   state?: LiveState;
   kind: SessionState;
   starting: boolean;
+  // Why the session cannot start here, when it cannot.
+  cannotStart?: string;
   onClose: () => void;
   onStart: () => void;
   // Sends the message; false when it could not go out.
@@ -35,7 +35,7 @@ function Section({ name, title, children }: { name: string; title: string; child
 
 // Context, plan limits and Compact in one sheet, the way the ring next to the model chip opens it. The gauge
 // comes with the session's state; the categories are counted when asked for.
-export function ContextUsageSheet({ sessionId, state, kind, starting, onClose, onStart, onCompact }: Props) {
+export function ContextUsageSheet({ sessionId, state, kind, starting, cannotStart, onClose, onStart, onCompact }: Props) {
   const controllable = kind === "owned" || kind === "attached";
   const g = state?.context;
   const [open, setOpen] = useState(false);
@@ -75,11 +75,11 @@ export function ContextUsageSheet({ sessionId, state, kind, starting, onClose, o
     };
   }, [sessionId, usageRound]);
 
-  const left = g ? compactLeft(g) : undefined;
-  const leftText = left !== undefined ? `Auto-compact까지 ${left}% 남음` : g && !g.last ? "Auto-compact 꺼짐" : undefined;
+  const leftText = compactLeftText(g);
   const busy = Boolean(state?.busy);
   const stopped = kind === "inactive";
-  const blocked = kind === "live" ? `${hostLabel(state?.host)}에서 열려 있어 여기서는 할 수 없습니다` : busy ? "작업이 끝난 뒤에 할 수 있습니다" : undefined;
+  const blocked =
+    kind === "live" ? `${hostLabel(state?.host)}에서 열려 있어 여기서는 할 수 없습니다` : busy ? "작업이 끝난 뒤에 할 수 있습니다" : stopped ? cannotStart : undefined;
   const compact = () => {
     if (blocked) return;
     const text = keep.trim().replace(/\s+/g, " ");
@@ -123,7 +123,7 @@ export function ContextUsageSheet({ sessionId, state, kind, starting, onClose, o
             )}
           </div>
         )}
-        {stopped && (
+        {stopped && !cannotStart && (
           <div className="mt-3 px-1">
             <SmallButton
               tall
