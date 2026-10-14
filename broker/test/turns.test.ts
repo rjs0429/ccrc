@@ -61,3 +61,16 @@ test("notes older than a day are removed when a new one is written", () => {
   s.cut("new", 1);
   assert.deepEqual(fs.readdirSync(dir).sort(), ["new.json"]);
 });
+
+test("a note folder that cannot be written continues nothing and stops nothing", async () => {
+  const dir = tempDir();
+  const s = store(new Set([2]), undefined, dir);
+  s.cut("f", 1);
+  fs.chmodSync(dir, 0o500);
+  try {
+    assert.equal(await s.continueEnv("f", 2), undefined);
+    assert.doesNotThrow(() => s.completed("f"));
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+});

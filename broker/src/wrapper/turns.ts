@@ -51,18 +51,25 @@ export class TurnStore {
   // A turn ended with VS Code still there.
   completed(sessionId: string): void {
     const file = this.file(sessionId);
-    if (file) fs.rmSync(file, { force: true });
+    try {
+      if (file) fs.rmSync(file, { force: true });
+    } catch {}
   }
 
   // The environment that makes Claude Code continue the session's cut-off turn when it is opened by a VS Code
-  // process (hostPid) other than the one that went away. Waits briefly for that one to finish exiting.
+  // process (hostPid) other than the one that went away. Waits briefly for that one to finish exiting. A
+  // continuation that cannot be counted in the note is not made.
   async continueEnv(sessionId: string, hostPid: number): Promise<Record<string, string> | undefined> {
     const e = this.read(sessionId);
     if (!e?.cutAt || !e.host) return undefined;
     const reruns = e.reruns ?? 0;
     if (this.o.now() - e.cutAt > MAX_AGE_MS || reruns >= MAX_RERUNS || this.same(e.host, hostPid)) return undefined;
     if (!(await this.gone(e.host))) return undefined;
-    this.write(sessionId, { reruns: reruns + 1 });
+    try {
+      this.write(sessionId, { reruns: reruns + 1 });
+    } catch {
+      return undefined;
+    }
     return CONTINUE_ENV;
   }
 
