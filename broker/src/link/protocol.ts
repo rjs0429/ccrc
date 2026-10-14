@@ -37,13 +37,18 @@ export type WrapperFrame =
   | { t: "settled"; id: string; by: Party }
   | { t: "dropped"; id: string; from: Party; by: Party }
   | { t: "rejected"; id?: string; reason: string }
+  // An MCP input request the wrapper keeps from VS Code, which would decline it, until the broker takes or passes it.
+  | { t: "held"; id: string }
   | { t: "exit"; code: number | null; signal: string | null };
 
 export type BrokerFrame =
   | { t: "claim_wait"; ms: number }
   // fork: the session is still held by another process, so Claude Code starts on a copy of it.
   | { t: "claim_ok"; fork?: boolean }
-  | { t: "to_cli"; m: Record<string, unknown> };
+  | { t: "to_cli"; m: Record<string, unknown> }
+  // take: the phone answers the held input request; pass: VS Code gets it after all.
+  | { t: "take"; id: string }
+  | { t: "pass"; id: string };
 
 // The user's runtime folder when there is one, else the ccrc state folder; never a shared folder such as /tmp.
 export function linkSocketPath(env: NodeJS.ProcessEnv = process.env): string {

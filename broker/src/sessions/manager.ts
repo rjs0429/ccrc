@@ -105,6 +105,9 @@ export class SessionManager extends EventEmitter {
   private probing = new Map<string, Promise<ContextWindow | undefined>>();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string) => Promise<UsageInfo> = probeUsage;
+  // Whether a phone can be reached now (connected or subscribed to notifications), so a VS Code session's MCP
+  // input request is better answered there than declined by VS Code.
+  remoteReachable: () => boolean = () => false;
   // Where the model list comes from before any session reported one: (cwd, Claude Code path).
   modelProbe: (cwd: string, claudePath?: string) => Promise<ModelInfo[]> = probeModels;
   // Where a model's context window comes from when no session reported it: (cwd, model, Claude Code path).
@@ -542,12 +545,13 @@ export class SessionManager extends EventEmitter {
   attachLink(link: Link): void {
     let session: WrappedSession | undefined;
     let claiming = false;
-    let early: { from: "out" | "in" | "settled"; v: unknown }[] = [];
+    let early: { from: "out" | "in" | "settled" | "held"; v: unknown }[] = [];
     const bind = (id: string) => {
       if (session?.id === id || !link.usable) return;
       session?.end("switched");
       const cwd = link.hello?.cwd ?? "";
       const s = new WrappedSession(link, id, cwd);
+      s.reachable = () => this.remoteReachable();
       session = s;
       const prev = this.wrapped.get(id);
       this.wrapped.set(id, s);
@@ -556,6 +560,7 @@ export class SessionManager extends EventEmitter {
       for (const h of early) {
         if (h.from === "out") s.onOut(h.v as Record<string, unknown>);
         else if (h.from === "in") s.onIn(h.v as Record<string, unknown>);
+        else if (h.from === "held") s.onHeld(h.v);
         else s.onSettled(h.v);
       }
       early = [];
@@ -568,7 +573,7 @@ export class SessionManager extends EventEmitter {
           if (this.current(s)) this.emit("attached", id);
         });
     };
-    const keep = (from: "out" | "in" | "settled", v: unknown) => {
+    const keep = (from: "out" | "in" | "settled" | "held", v: unknown) => {
       if (early.length < EARLY_LINES_MAX) early.push({ from, v });
     };
     link.on("hello", (h: Hello) => {
@@ -595,6 +600,8 @@ export class SessionManager extends EventEmitter {
     link.on("out", (m: Record<string, unknown>) => (session ? session.onOut(m) : keep("out", m)));
     link.on("in", (m: Record<string, unknown>) => (session ? session.onIn(m) : keep("in", m)));
     link.on("settled", (id: unknown) => (session ? session.onSettled(id) : keep("settled", id)));
+    link.on("held", (id: unknown) => (session ? session.onHeld(id) : keep("held", id)));
+    link.on("rejected", (id: unknown, reason: unknown) => session?.onRejected(id, reason));
     link.on("exit", () => session?.end("vscode_closed"));
     link.on("close", () => session?.end("vscode_closed"));
   }

@@ -11,6 +11,7 @@ import {
   allowedFlagSettings,
   allowedUpdateSettings,
   appliedAnswer,
+  elicitAnswer,
   launchSession,
   styleNames,
   usageAnswer,
@@ -818,4 +819,116 @@ test("a refused change does not touch VS Code", async () => {
   t.user("hi");
   await t.host.wait((m) => m.type === "result", "turn");
   assert.ok(!t.host.has(isSnapshot));
+});
+
+const isElicit = (id: string) => (m: Msg) => m.type === "control_request" && m.request_id === id;
+const elicitReply = (id: string, response: Msg) => ({ type: "control_response", response: { subtype: "success", request_id: id, response } });
+
+test("an MCP input request waits for the broker, which answers it in place of VS Code", async () => {
+  const t = await setup({ relay: { elicitTakeMs: 2000 } });
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("ELICIT");
+  await t.broker.frames.wait(frameOut(isElicit("elicit-1")), "request copied");
+  await t.broker.frames.wait((f) => f.t === "held" && f.id === "elicit-1", "held frame");
+  t.broker.send({ t: "to_cli", m: elicitReply("elicit-1", { action: "accept", content: { name: "Kim" } }) });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "elicit-1" && f.reason === "not answerable", "no answer before take");
+  t.broker.send({ t: "take", id: "elicit-1" });
+  t.broker.send({ t: "to_cli", m: elicitReply("elicit-1", { action: "maybe" }) });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "elicit-1" && f.reason === "invalid answer", "bad action refused");
+  t.broker.send({ t: "to_cli", m: elicitReply("elicit-1", { action: "accept", content: { name: "Kim" }, hookSpecificOutput: { x: 1 } }) });
+  const answered = await t.host.wait((m) => m.type === "answered" && m.request_id === "elicit-1", "CLI got the answer");
+  assert.deepEqual([answered.action, answered.content, answered.keys], ["accept", { name: "Kim" }, ["action", "content"]]);
+  await t.broker.frames.wait((f) => f.t === "settled" && f.id === "elicit-1" && f.by === "remote", "settled by remote");
+  await new Promise((r) => setTimeout(r, 2200));
+  assert.ok(!t.host.has(isElicit("elicit-1")), "VS Code never sees the request");
+  assert.ok(!t.host.has((m) => m.type === "control_cancel_request"), "nor a withdrawal");
+  t.broker.send({ t: "to_cli", m: elicitReply("elicit-1", { action: "decline" }) });
+  await t.broker.frames.wait((f) => f.t === "dropped" && f.id === "elicit-1" && f.from === "remote", "a second answer is dropped");
+});
+
+test("an MCP input request the broker does not take in time goes to VS Code", async () => {
+  const t = await setup({ relay: { elicitTakeMs: 300 } });
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("ELICIT");
+  await t.broker.frames.wait((f) => f.t === "held", "held frame");
+  assert.ok(!t.host.has(isElicit("elicit-1")));
+  await t.host.wait(isElicit("elicit-1"), "VS Code gets it after the wait");
+  t.write(elicitReply("elicit-1", { action: "decline" }));
+  const answered = await t.host.wait((m) => m.type === "answered", "CLI got VS Code's answer");
+  assert.equal(answered.action, "decline");
+  await t.broker.frames.wait((f) => f.t === "settled" && f.id === "elicit-1" && f.by === "host", "settled by host");
+  t.broker.send({ t: "take", id: "elicit-1" });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "elicit-1" && f.reason === "not held", "late take refused");
+});
+
+test("an MCP input request the broker passes goes to VS Code at once", async () => {
+  const t = await setup({ relay: { elicitTakeMs: 10_000 } });
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("ELICIT");
+  await t.broker.frames.wait((f) => f.t === "held", "held frame");
+  t.broker.send({ t: "pass", id: "elicit-1" });
+  await t.host.wait(isElicit("elicit-1"), "VS Code gets it", 2000);
+  t.broker.send({ t: "to_cli", m: elicitReply("elicit-1", { action: "cancel" }) });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "elicit-1", "the broker cannot answer a passed request");
+});
+
+test("without a broker an MCP input request goes straight to VS Code", async () => {
+  const t = await setup({ broker: false, relay: { elicitTakeMs: 10_000 } });
+  await t.started;
+  t.user("ELICIT");
+  await t.host.wait(isElicit("elicit-1"), "VS Code gets it", 2000);
+});
+
+test("a taken MCP input request goes to VS Code when the broker goes away", async () => {
+  const t = await setup({ relay: { elicitTakeMs: 10_000 } });
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("ELICIT");
+  await t.broker.frames.wait((f) => f.t === "held", "held frame");
+  t.broker.send({ t: "take", id: "elicit-1" });
+  await new Promise((r) => setTimeout(r, 200));
+  assert.ok(!t.host.has(isElicit("elicit-1")));
+  t.broker.frames = new Inbox();
+  t.broker.dropConnections();
+  await t.host.wait(isElicit("elicit-1"), "VS Code gets it", 2000);
+  await t.broker.frames.wait((f) => f.t === "hello", "hello again");
+  await t.broker.frames.wait(frameOut(isElicit("elicit-1")), "still open, re-sent");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(!t.broker.frames.has((f) => f.t === "held"), "but not held again");
+});
+
+test("an MCP input request Claude Code withdraws while held never reaches VS Code", async () => {
+  const t = await setup({ relay: { elicitTakeMs: 10_000 } });
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("ELICIT_CANCEL");
+  await t.broker.frames.wait((f) => f.t === "held", "held frame");
+  t.broker.send({ t: "take", id: "elicit-1" });
+  await t.broker.frames.wait((f) => f.t === "settled" && f.id === "elicit-1" && f.by === "cli", "settled by Claude Code");
+  await t.broker.frames.wait(frameOut((m) => m.type === "control_cancel_request" && m.request_id === "elicit-1"), "withdrawal copied");
+  t.broker.send({ t: "to_cli", m: elicitReply("elicit-1", { action: "accept", content: { name: "x" } }) });
+  await t.broker.frames.wait((f) => f.t === "dropped" && f.id === "elicit-1", "late answer dropped");
+  t.user("hi");
+  await t.host.wait((m) => m.type === "result", "relay still flows");
+  assert.ok(!t.host.has(isElicit("elicit-1")) && !t.host.has((m) => m.type === "control_cancel_request"), "VS Code saw neither");
+});
+
+test("an MCP input answer carries an action and, with accept, flat values only", () => {
+  assert.deepEqual(elicitAnswer({ action: "decline" }), { action: "decline" });
+  assert.deepEqual(elicitAnswer({ action: "cancel", extra: 1 }), { action: "cancel" });
+  assert.deepEqual(elicitAnswer({ action: "accept", content: { a: "x", b: 2, c: true, d: ["p", "q"] } }), {
+    action: "accept",
+    content: { a: "x", b: 2, c: true, d: ["p", "q"] },
+  });
+  const bad: unknown[] = [
+    null,
+    {},
+    { action: "allow" },
+    { action: "decline", content: { a: "x" } },
+    { action: "accept", content: [] },
+    { action: "accept", content: { a: { nested: 1 } } },
+    { action: "accept", content: { a: [1] } },
+    { action: "accept", content: { a: Infinity } },
+    { action: "accept", content: { a: "x".repeat(10_001) } },
+    { action: "accept", content: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`k${i}`, i])) },
+  ];
+  for (const b of bad) assert.equal(elicitAnswer(b), undefined, JSON.stringify(b)?.slice(0, 80));
 });

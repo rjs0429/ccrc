@@ -20,7 +20,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
 
 // One wrapper connection, that is one Claude Code conversation process started by VS Code.
 // Events: hello (Hello), session (id, when a line names a session other than the known one),
-// out (msg), in (msg), settled (id, by), dropped (id, from, by), rejected (id, reason),
+// out (msg), in (msg), settled (id, by), held (id), dropped (id, from, by), rejected (id, reason),
 // spawned (cpid), exit (code, signal), close.
 export class Link extends EventEmitter {
   hello?: Hello;
@@ -124,6 +124,9 @@ export class Link extends EventEmitter {
       }
       case "settled":
         this.emit("settled", f.id, f.by);
+        return;
+      case "held":
+        if (this.hello && typeof f.id === "string") this.emit("held", f.id);
         return;
       case "dropped":
         this.emit("dropped", f.id, f.from, f.by);
