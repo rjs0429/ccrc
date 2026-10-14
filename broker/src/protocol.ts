@@ -31,7 +31,7 @@ export interface ToolResult {
   truncated: boolean;
 }
 
-export type NoteCode = "interrupted" | "compacted" | "command" | "error";
+export type NoteCode = "interrupted" | "compacted" | "command" | "error" | "unsent";
 
 // One hunk of a file change as Claude Code reports it; each line starts with " ", "-" or "+".
 export interface Hunk {
@@ -97,7 +97,8 @@ export type DisplayItem =
       sub?: SubagentActivity;
       reply?: ToolReply;
     }
-  | { kind: "note"; id: string; ts?: string; code: NoteCode; text?: string }
+  // "unsent": a message sent from here that Claude Code never took in; its text, and how many files it carried.
+  | { kind: "note"; id: string; ts?: string; code: NoteCode; text?: string; attachments?: number }
   // The result of a local command (/usage, /context, ...): its text, and for some the data to draw it from.
   | { kind: "command"; id: string; ts?: string; name?: string; args?: string; text: string; usage?: UsageInfo; context?: ContextDetail };
 

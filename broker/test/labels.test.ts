@@ -58,6 +58,8 @@ test("a start refused for a missing folder and Claude Code's spawn failures read
   assert.equal(errorText("Claude Code process terminated by signal SIGKILL"), "Claude Code가 강제로 종료되었습니다 (SIGKILL)");
   assert.equal(noteText("error", "Claude Code process exited with code 2"), "오류: Claude Code가 종료되었습니다 (코드 2)");
   assert.equal(noteText("error", "API Error: 529"), "오류: API Error: 529");
+  assert.equal(noteText("unsent", "이 사진도 봐줘", 2), "Claude Code가 받지 못한 메시지 (첨부 2개): 이 사진도 봐줘");
+  assert.equal(noteText("unsent", undefined, 1), "Claude Code가 받지 못한 메시지 (첨부 1개)");
 });
 
 test("taking back a message VS Code's wrapper no longer holds reads as already received", () => {

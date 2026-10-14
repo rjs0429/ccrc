@@ -200,7 +200,7 @@ export const ItemView = memo(function ItemView({ item, running }: { item: Displa
     case "note":
       return (
         <div className={`text-center text-xs whitespace-pre-wrap ${item.code === "error" ? "text-danger" : "text-muted"}`}>
-          {noteText(item.code, item.text)}
+          {noteText(item.code, item.text, item.attachments)}
         </div>
       );
   }

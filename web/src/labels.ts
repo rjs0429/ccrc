@@ -105,8 +105,10 @@ export function closedText(reason?: string): string {
   }
 }
 
-export function noteText(code: NoteCode, text?: string): string {
+export function noteText(code: NoteCode, text?: string, attachments?: number): string {
   switch (code) {
+    case "unsent":
+      return `Claude Code가 받지 못한 메시지${attachments ? ` (첨부 ${attachments}개)` : ""}${text ? `: ${text}` : ""}`;
     case "interrupted":
       return "중단됨";
     case "compacted":

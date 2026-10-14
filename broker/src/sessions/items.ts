@@ -280,10 +280,10 @@ export class ItemBuilder {
     for (const item of later) this.put(item);
   }
 
-  note(code: NoteCode, text?: string, ts?: string, id?: string): DisplayItem | undefined {
+  note(code: NoteCode, text?: string, ts?: string, id?: string, attachments?: number): DisplayItem | undefined {
     const last = this.items.at(-1);
     if (code === "interrupted" && last?.kind === "note" && last.code === "interrupted") return undefined;
-    return this.put({ kind: "note", id: id ?? `note-${++this.noteCount}`, ts, code, ...(text ? { text } : {}) });
+    return this.put({ kind: "note", id: id ?? `note-${++this.noteCount}`, ts, code, ...(text ? { text } : {}), ...(attachments ? { attachments } : {}) });
   }
 
   userText(id: string, text: string, ts?: string, attachments: UserAttachment[] = []): DisplayItem {

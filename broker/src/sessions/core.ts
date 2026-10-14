@@ -161,6 +161,7 @@ export abstract class SessionCore extends EventEmitter {
   // Messages Claude Code holds until it takes them in, and the ones it has said it holds.
   readonly queue = new Map<string, QueuedMessage>();
   private held = new Set<string>();
+  private takingBack = new Set<string>();
   // Claude Code's own watchers, which run for the whole session and are not the user's work.
   private ambientTasks = new Set<string>();
   // How long a task that has ended stays listed.
@@ -346,7 +347,12 @@ export abstract class SessionCore extends EventEmitter {
     const q = this.queue.get(messageId);
     if (!q) throw Error("message is no longer queued");
     if (q.from !== "remote") throw Error("only a message sent from here can be taken back");
-    if (!(await this.cancelQueued(messageId))) throw Error("message is no longer queued");
+    this.takingBack.add(messageId);
+    try {
+      if (!(await this.cancelQueued(messageId))) throw Error("message is no longer queued");
+    } finally {
+      this.takingBack.delete(messageId);
+    }
     this.dequeue(messageId);
     this.touch();
   }
@@ -358,6 +364,17 @@ export abstract class SessionCore extends EventEmitter {
   private dequeue(id: string): void {
     this.held.delete(id);
     if (this.queue.delete(id)) this.emit("state");
+  }
+
+  // A message sent from here that leaves the queue without being taken in, other than by taking it back, stays
+  // in the conversation as a note so it is not lost unseen.
+  private unsent(id: string): void {
+    const q = this.queue.get(id);
+    if (q?.from === "remote" && !this.takingBack.has(id)) {
+      const item = this.builder.note("unsent", q.text, new Date().toISOString(), `unsent-${id}`, q.attachments?.length);
+      if (item) this.emit("item", item);
+    }
+    this.dequeue(id);
   }
 
   private deliver(id: string): void {
@@ -381,7 +398,7 @@ export abstract class SessionCore extends EventEmitter {
       this.held.add(q.id);
       this.emit("state");
     } else if (m.state === "started" || m.state === "completed") this.deliver(q.id);
-    else if (UNQUEUED.has(m.state)) this.dequeue(q.id);
+    else if (UNQUEUED.has(m.state)) this.unsent(q.id);
   }
 
   async setMode(mode: PermissionModeName): Promise<void> {
@@ -491,6 +508,7 @@ export abstract class SessionCore extends EventEmitter {
 
   protected finish(reason: string): void {
     if (this.ended) return;
+    for (const id of [...this.queue.keys()]) this.unsent(id);
     this.ended = true;
     this.closed = true;
     this.closedReason = reason;

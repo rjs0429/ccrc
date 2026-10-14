@@ -964,8 +964,11 @@ test("messages from VS Code show as queued at once, in Claude Code's order with 
 test("a queued message sent from here is taken back with cancel_async_message", async () => {
   const { s, wrapper } = await session();
   const asked: Msg[] = [];
+  let early: string | undefined;
   wrapper.autoReply((r) => {
     asked.push(r);
+    // Claude Code may report the cancel before it answers.
+    if (r.message_uuid === early) wrapper.out(lifecycle(early!, "cancelled"));
     return { cancelled: r.message_uuid !== "gone" };
   });
   s.send("never mind");
@@ -976,6 +979,9 @@ test("a queued message sent from here is taken back with cancel_async_message", 
   assert.equal(s.state().queued, undefined);
   wrapper.out(lifecycle(id, "cancelled"));
   await assert.rejects(s.unqueue(id), /no longer queued/);
+  s.send("this one too");
+  early = s.state().queued![0].id;
+  await s.unqueue(early);
   assert.equal(s.builder.items.length, 0, "nothing lands in the conversation");
 });
 
@@ -989,16 +995,20 @@ test("Claude Code dropping a message clears it, and a message still held stays q
   wrapper.out(lifecycle(two, "queued"));
   wrapper.out(lifecycle(one, "refused"));
   await until(() => s.state().queued?.length === 2, "a refused message leaves the queue");
+  assert.deepEqual(s.builder.items.map((i) => [i.kind, i.id, "text" in i ? i.text : undefined]), [["note", `unsent-${one}`, "one"]], "and is noted");
   // Claude Code 2.1.296 reports queued_turn_count 0 while a message it holds waits for the next turn.
   wrapper.out({ type: "result", subtype: "success", is_error: false, session_id: SID, queued_turn_count: 0 });
   await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(s.state().queued?.map((q) => q.id), [two, three]);
   wrapper.out(lifecycle(two, "started"));
   await until(() => s.state().queued?.length === 1, "the held message lands when Claude Code takes it in");
-  assert.deepEqual(s.builder.items.map((i) => i.id), [two]);
+  assert.deepEqual(s.builder.items.map((i) => i.id), [`unsent-${one}`, two]);
   assert.equal(s.state().queued![0].id, three, "one it has not seen yet stays");
+  const noted: string[] = [];
+  s.on("item", (i: { id: string }) => noted.push(i.id));
   const closed = new Promise((r) => s.once("closed", r));
   s.end("vscode_closed");
   await closed;
   assert.equal(s.state().queued, undefined);
+  assert.deepEqual(noted, [`unsent-${three}`], "a message left queued at the end is noted");
 });
