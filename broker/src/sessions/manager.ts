@@ -89,6 +89,19 @@ function isFolder(dir: string): boolean {
   }
 }
 
+// The project folder a session's transcript was moved to, when it no longer lies under the one of its cwd.
+function movedTo(sessionId: string, cwd: string): string | undefined {
+  const file = transcriptPath(sessionId, cwd);
+  const dir = file ? path.basename(path.dirname(file)) : undefined;
+  return dir && dir !== projectDirName(cwd) ? dir : undefined;
+}
+
+// Claude Code resumes a session from the project folder of its cwd. A transcript that was moved to
+// another project folder resumes from the known folder whose name matches where the file now is.
+function resumeIn(cwd: string, moved: string | undefined, infos: SDKSessionInfo[]): string {
+  return (moved && infos.find((i) => i.cwd && projectDirName(i.cwd) === moved)?.cwd) || cwd;
+}
+
 // A probe loads no project settings, so any folder serves when the session's is gone.
 const probeDir = (cwd: string): string => (isFolder(cwd) ? cwd : os.homedir());
 
@@ -180,10 +193,11 @@ export class SessionManager extends EventEmitter {
       pendingCount: s.pending.size || undefined,
     });
     const folders = new Map<string, boolean>();
-    const missing = (cwd: string) => {
-      if (!folders.has(cwd)) folders.set(cwd, !isFolder(cwd));
-      return folders.get(cwd);
+    const exists = (dir: string) => {
+      if (!folders.has(dir)) folders.set(dir, isFolder(dir));
+      return folders.get(dir);
     };
+    const missing = (sessionId: string, cwd: string) => !exists(cwd) && !exists(resumeIn(cwd, movedTo(sessionId, cwd), infos));
     const out: SessionSummary[] = infos.map((info) => {
       const s = this.controlled(info.sessionId);
       if (s) return summary(s, info);
@@ -199,7 +213,7 @@ export class SessionManager extends EventEmitter {
         host: l?.host,
         liveStatus: l?.status,
         busy: l?.status === "busy",
-        ...(!l && info.cwd && missing(info.cwd) ? { folderMissing: true } : {}),
+        ...(!l && info.cwd && missing(info.sessionId, info.cwd) ? { folderMissing: true } : {}),
       };
     });
     const listed = new Set(out.map((o) => o.id));
@@ -282,7 +296,7 @@ export class SessionManager extends EventEmitter {
       ...(ended ? { closedReason: ended.reason } : {}),
       ...(context ? { context } : {}),
       ...(start ? { start } : {}),
-      ...(l || isFolder(cwd) ? {} : { folderMissing: true }),
+      ...(l || isFolder(cwd) || isFolder(await this.resumeFolder(sessionId, cwd)) ? {} : { folderMissing: true }),
     };
   }
 
@@ -381,14 +395,9 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  // Claude Code resumes a session from the project folder of its cwd. A transcript that was moved to
-  // another project folder resumes from the known folder whose name matches where the file now is.
   private async resumeFolder(sessionId: string, cwd: string): Promise<string> {
-    const file = transcriptPath(sessionId, cwd);
-    const dir = file ? path.basename(path.dirname(file)) : undefined;
-    if (!dir || dir === projectDirName(cwd)) return cwd;
-    const known = (await this.infos()).map((i) => i.cwd).filter((c): c is string => Boolean(c));
-    return known.find((c) => projectDirName(c) === dir) ?? cwd;
+    const moved = movedTo(sessionId, cwd);
+    return moved ? resumeIn(cwd, moved, await this.infos()) : cwd;
   }
 
   async create(cwd: string, opts: { model?: string; mode?: PermissionModeName; effort?: EffortName }): Promise<BrokerSession> {
@@ -682,6 +691,7 @@ export class SessionManager extends EventEmitter {
       this.ended.set(s.id, { reason, at: Date.now() });
       this.catalog = undefined;
       this.emit("event", s.id, { t: "state", sessionId: s.id, state: s.state() });
+      if (!isFolder(s.cwd)) void this.restate(s.id);
       this.emit("changed");
       this.emit("detached", s.id);
     });

@@ -25,15 +25,18 @@ type ServerMsg = import("../src/protocol.ts").ServerMsg;
 const GONE = "8a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 const HERE = "9b2c3d4e-5f60-4b7c-8d9e-0f1a2b3c4d5e";
 const FILE = "7c3d4e5f-6071-4c8d-9eaf-1a2b3c4d5e6f";
+const MOVED = "6d4e5f60-7182-4d9e-8fb0-2b3c4d5e6f70";
+const VANISH = "5e5f6071-8293-4eaf-9fc1-3c4d5e6f7081";
 const gone = path.join(home, "gone");
+const vanish = path.join(home, "vanish");
 const here = path.join(home, "here");
 const file = path.join(home, "file");
 const FAKE = new URL("./fixtures/fake-claude.mjs", import.meta.url).pathname;
 const config = { host: "127.0.0.1", port: 0, allowedDevices: [], allowLocal: true, claudePath: FAKE, roots: [], leaseIdleMinutes: 1, sessionIdleMinutes: 1 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function writeTranscript(sessionId: string, cwd: string): void {
-  const dir = path.join(home, ".claude", "projects", projectDirName(cwd));
+function writeTranscript(sessionId: string, cwd: string, under = cwd): void {
+  const dir = path.join(home, ".claude", "projects", projectDirName(under));
   fs.mkdirSync(dir, { recursive: true });
   const row = { sessionId, cwd, isSidechain: false, userType: "external", version: "2.1.296", type: "user", uuid: `${sessionId.slice(0, 8)}-0000-4000-8000-000000000001`, parentUuid: null };
   fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), JSON.stringify({ ...row, timestamp: "2026-10-14T03:00:01.000Z", message: { role: "user", content: "hello" } }) + "\n");
@@ -44,6 +47,9 @@ fs.writeFileSync(file, "not a folder\n");
 writeTranscript(GONE, gone);
 writeTranscript(HERE, here);
 writeTranscript(FILE, file);
+writeTranscript(MOVED, path.join(home, "renamed"), here);
+fs.mkdirSync(vanish);
+writeTranscript(VANISH, vanish);
 
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 
@@ -110,4 +116,26 @@ test("a message to such a session from the phone comes back as an error naming t
   assert.equal(error?.message, `working folder is missing: ${gone}`);
   assert.equal(manager.isControlled(GONE), false);
   assert.equal(started(), false);
+});
+
+test("a moved transcript whose recorded folder is gone resumes in the folder it was moved to and is not flagged", async () => {
+  const manager = new SessionManager(config);
+  manager.windowProbe = async () => undefined;
+  assert.equal((await manager.list()).find((s) => s.id === MOVED)?.folderMissing, undefined);
+  assert.equal((await manager.snapshot(MOVED)).state.folderMissing, undefined);
+  await manager.closeAll();
+});
+
+test("a session whose folder goes away while it runs is shown without its folder once it stops", async () => {
+  const manager = new SessionManager(config);
+  manager.windowProbe = async () => undefined;
+  const states: { folderMissing?: boolean; state: string }[] = [];
+  manager.on("event", (id: string, m: ServerMsg) => id === VANISH && m.t === "state" && states.push(m.state));
+  await manager.call(VANISH, "resume", {});
+  fs.rmSync(vanish, { recursive: true });
+  await manager.release(VANISH);
+  for (let i = 0; i < 100 && !states.some((s) => s.folderMissing); i++) await sleep(20);
+  assert.equal(states.at(-1)?.state, "inactive");
+  assert.equal(states.at(-1)?.folderMissing, true);
+  await manager.closeAll();
 });
