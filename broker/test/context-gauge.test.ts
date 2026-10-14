@@ -102,6 +102,8 @@ test("the exact model comes from the transcript's newest model record of the mai
   const big = write("d.jsonl", [modelRow("claude-a-1[1m]"), ...Array.from({ length: 3000 }, () => filler)]);
   assert.ok(fs.statSync(big).size > 8 * 1024 * 1024);
   assert.equal(await lastModelId(big), "claude-a-1[1m]", "a session's first record is found at the start of a long transcript");
+  const mid = write("e.jsonl", [...Array.from({ length: 500 }, () => filler), modelRow("claude-a-2[1m]"), ...Array.from({ length: 1250 }, () => filler)]);
+  assert.equal(await lastModelId(mid), "claude-a-2[1m]", "a record up to 8 MB before the end is found");
 });
 
 test("a stopped session's model takes the 1M window only on evidence", () => {

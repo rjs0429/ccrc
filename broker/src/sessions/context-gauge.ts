@@ -124,7 +124,7 @@ export async function lastModelId(file: string): Promise<string | undefined> {
   try {
     const { size } = await fh.stat();
     let start = size;
-    for (let want = FIRST_TAIL; start > 0 && want <= MODEL_TAIL_MAX; want *= 8) {
+    for (let want = FIRST_TAIL; start > 0 && start > size - MODEL_TAIL_MAX; want = Math.min(want * 8, MODEL_TAIL_MAX)) {
       start = Math.max(0, size - want);
       const buf = Buffer.alloc(size - start);
       await fh.read(buf, 0, buf.length, start);
