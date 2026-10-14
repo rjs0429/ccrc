@@ -21,6 +21,7 @@ import { registerPush } from "./routes/push.ts";
 import { registerSearch } from "./routes/search.ts";
 import { registerUploads } from "./routes/upload.ts";
 import type { SessionManager } from "./sessions/manager.ts";
+import type { SessionSearch } from "./sessions/search.ts";
 import type { Store } from "./store.ts";
 import type { Uploads } from "./uploads.ts";
 
@@ -57,6 +58,13 @@ export interface ServerDeps {
   claudeSettings?: ClaudeSettings;
   webDir: string;
   logLevel?: string;
+  logStream?: NodeJS.WritableStream;
+  search?: SessionSearch;
+}
+
+// A file ticket in a URL opens the file without the login cookie until it expires, so request logs hide it.
+export function loggedUrl(url: string): string {
+  return url.replace(/^(\/api\/file-ticket\/)[^/?#]+/, "$1[redacted]");
 }
 
 // Browsers send Origin on POST and WebSocket requests; it must name this host. Hosts are compared
@@ -79,7 +87,16 @@ function sameOrigin(req: FastifyRequest): boolean {
 }
 
 export async function buildServer(d: ServerDeps) {
-  const app = Fastify({ logger: { level: d.logLevel ?? "info" }, bodyLimit: 256 * 1024 });
+  const app = Fastify({
+    logger: {
+      level: d.logLevel ?? "info",
+      ...(d.logStream ? { stream: d.logStream } : {}),
+      serializers: {
+        req: (req: FastifyRequest) => ({ method: req.method, url: loggedUrl(req.url), host: req.host, remoteAddress: req.ip, remotePort: req.socket?.remotePort }),
+      },
+    },
+    bodyLimit: 256 * 1024,
+  });
   await app.register(cookie);
   await app.register(websocket, { options: { maxPayload: 512 * 1024 } });
   app.decorateRequest("device", "");
@@ -171,7 +188,7 @@ export async function buildServer(d: ServerDeps) {
   await registerAudit(app, routes);
   await registerHealth(app, routes);
   await registerFiles(app, routes);
-  await registerSearch(app, routes);
+  await registerSearch(app, routes, d.search);
 
   app.get("/ws", { websocket: true }, (socket, req) => {
     const t = token(req);

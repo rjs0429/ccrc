@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import { tempDir } from "./helpers.ts";
 
 // The manager reads ~/.claude, so it runs against an empty home of its own.
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccrc-home-"));
@@ -65,7 +66,7 @@ after(async () => {
 
 async function setup() {
   const manager = new SessionManager(config, undefined, { handoffTurnMs: 200, handoffOtherMs: 400 });
-  const server = new LinkServer(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ccrc-link-")), "link.sock"));
+  const server = new LinkServer(path.join(tempDir("ccrc-link-"), "link.sock"));
   servers.push(server);
   server.on("link", (link) => manager.attachLink(link));
   await server.listen();

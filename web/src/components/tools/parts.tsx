@@ -1,5 +1,6 @@
 import { useContext, useState, type ReactNode } from "react";
-import { FileLinks } from "../fileLinks.ts";
+import { FileLinks, FileRoots } from "../fileLinks.ts";
+import { looksLikeFile } from "../filePaths.ts";
 import { Markdown } from "../Markdown.tsx";
 import { Icon } from "../ui.tsx";
 
@@ -72,6 +73,11 @@ export function FileLink({ path, line }: { path: string; line?: number }) {
   );
 }
 
+// A search location, usually a folder: a link only when its name says it is a file.
+export function PathValue({ path }: { path: string }) {
+  return looksLikeFile(path, [], true) ? <FileLink path={path} /> : <div className="font-mono text-[12.5px] break-all">{path}</div>;
+}
+
 export function FileCard({ path, note }: { path: string; note?: string }) {
   const open = useContext(FileLinks);
   const name = path.split("/").filter(Boolean).pop() ?? path;
@@ -115,20 +121,20 @@ export function Fields({ children }: { children: ReactNode }) {
 const PATH_KEY = /(^|_)(path|file|dir|directory|notebook)(_path)?s?$|Path$/i;
 const LONG_TEXT = 200;
 
-const looksLikePath = (key: string, v: string) => !v.includes("\n") && v.length < 1000 && (PATH_KEY.test(key) || /^(\/|~\/)[^\s]*\/[^\s]+$/.test(v));
-
 // Any value as readable as it gets: text, a file link, or compact JSON for nested values.
 export function Value({ name, value }: { name: string; value: unknown }) {
+  const roots = useContext(FileRoots);
+  const isFile = (v: string) => looksLikeFile(v, roots, PATH_KEY.test(name));
   if (typeof value === "string") {
     if (!value) return <span className="text-muted">(비어 있음)</span>;
-    if (looksLikePath(name, value)) return <FileLink path={value} />;
+    if (isFile(value)) return <FileLink path={value} />;
     if (value.length > LONG_TEXT || value.includes("\n")) return <Folded text={value} plain />;
     return <span className="whitespace-pre-wrap">{value}</span>;
   }
   if (typeof value === "boolean") return <span>{value ? "예" : "아니요"}</span>;
   if (typeof value === "number") return <span className="font-mono text-[13px]">{value}</span>;
   if (value == null) return <span className="text-muted">없음</span>;
-  if (Array.isArray(value) && value.length && value.every((v) => typeof v === "string") && looksLikePath(name, value[0] as string)) {
+  if (Array.isArray(value) && value.length && value.every((v) => typeof v === "string" && isFile(v))) {
     return (
       <div className="space-y-0.5">
         {(value as string[]).map((v, n) => (

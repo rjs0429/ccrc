@@ -146,6 +146,28 @@ test("choices for a stopped session are kept, shown, audited, applied when the b
   assert.equal(logged.at(-1)?.[1].start, undefined, "a running session changes at once");
 });
 
+test("choices for a stopped session survive a broker restart and are used by the next broker", async (t) => {
+  const W = "7f3c6d54-8091-42a3-8ebf-3a4b5c6d7e8f";
+  writeTranscript(W, "claude-test-1");
+  const first = new SessionManager(config);
+  first.windowProbe = async () => undefined;
+  await first.setMode(W, "acceptEdits");
+  await first.setEffort(W, "low");
+  await first.closeAll();
+  const next = new SessionManager(config);
+  next.windowProbe = async () => undefined;
+  t.after(() => next.closeAll());
+  assert.deepEqual(next.startSettings(W), { mode: "acceptEdits", effort: "low" });
+  assert.deepEqual((await next.snapshot(W)).state.start, { mode: "acceptEdits", effort: "low" });
+  fs.rmSync(requests, { force: true });
+  await next.call(W, "resume", {});
+  for (let i = 0; i < 150 && !recorded().some((r) => (r.request as { subtype?: string })?.subtype === "apply_flag_settings"); i++) await sleep(20);
+  const args = recorded().find((r) => r.args)?.args as string[];
+  assert.ok(args.includes("--permission-mode=acceptEdits") || args[args.indexOf("--permission-mode") + 1] === "acceptEdits");
+  assert.equal(next.startSettings(W), undefined);
+  assert.equal(new SessionManager(config).startSettings(W), undefined, "used settings are gone from the state folder too");
+});
+
 test("a message that starts a session goes out after the effort it starts with is applied", async () => {
   const manager = new SessionManager(config);
   manager.windowProbe = async () => undefined;
@@ -174,6 +196,44 @@ test("a stopped session's gauge comes from its transcript and the window asked o
   assert.deepEqual((await manager.snapshot(T)).state.context, later?.state.context);
   assert.equal(probes, 1);
   await manager.closeAll();
+});
+
+test("a stopped session that never ran here is sized by its 1M window when the transcript or settings show it", async (t) => {
+  const [X, Y, Z] = ["8a4d7e65-91a2-43b4-9fc0-4b5c6d7e8f90", "9b5e8f76-a2b3-44c5-a0d1-5c6d7e8f9a01", "ac6f9087-b3c4-45d6-b1e2-6d7e8f9a0b12"];
+  const dir = path.join(home, ".claude", "projects", projectDirName(cwd));
+  const rows = (id: string, model: string, tokens: number, record?: string) =>
+    [
+      ...(record ? [{ type: "attachment", sessionId: id, cwd, isSidechain: false, attachment: { type: "model", identity: { modelId: record } } }] : []),
+      { type: "user", sessionId: id, cwd, isSidechain: false, uuid: `${id.slice(0, 8)}-0000-4000-8000-000000000001`, parentUuid: null, timestamp: "2026-10-14T03:00:01.000Z", message: { role: "user", content: "hello" } },
+      { type: "assistant", sessionId: id, cwd, isSidechain: false, uuid: `${id.slice(0, 8)}-0000-4000-8000-000000000002`, timestamp: "2026-10-14T03:00:02.000Z", message: { id: "m", role: "assistant", model, content: [{ type: "text", text: "hi" }], usage: { input_tokens: tokens, output_tokens: 0 } } },
+    ]
+      .map((r) => JSON.stringify(r))
+      .join("\n") + "\n";
+  fs.writeFileSync(path.join(dir, `${X}.jsonl`), rows(X, "claude-wide-1", 50_000, "claude-wide-1[1m]"));
+  fs.writeFileSync(path.join(dir, `${Y}.jsonl`), rows(Y, "claude-wide-2", 300_000));
+  fs.writeFileSync(path.join(dir, `${Z}.jsonl`), rows(Z, "claude-wide-3", 50_000));
+  const settings = path.join(home, ".claude", "settings.json");
+  fs.writeFileSync(settings, JSON.stringify({ model: "claude-wide-3[1m]" }));
+  t.after(() => fs.rmSync(settings, { force: true }));
+
+  const manager = new SessionManager(config);
+  t.after(() => manager.closeAll());
+  const asked: string[] = [];
+  manager.windowProbe = async (_cwd, model) => (asked.push(model), model.endsWith("[1m]") ? { max: 1_000_000 } : { max: 200_000 });
+  const maxOf = async (id: string) => {
+    for (let i = 0; i < 100; i++) {
+      const c = (await manager.snapshot(id)).state.context;
+      if (c) return c.max;
+      await sleep(10);
+    }
+    return undefined;
+  };
+  assert.equal(await maxOf(X), 1_000_000, "the transcript records the exact model");
+  assert.equal(await maxOf(Z), 1_000_000, "the settings start this model with the 1M window");
+  let y: number | undefined;
+  for (let i = 0; i < 100 && y !== 1_000_000; i++) y = await maxOf(Y);
+  assert.equal(y, 1_000_000, "a context larger than the default window was the 1M window");
+  assert.deepEqual(asked.sort(), ["claude-wide-1[1m]", "claude-wide-2", "claude-wide-2[1m]", "claude-wide-3[1m]"]);
 });
 
 test("a window that could not be asked is asked again a while later", async () => {

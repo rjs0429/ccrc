@@ -15,7 +15,7 @@ import { RewindSheet } from "../components/sheets/Rewind.tsx";
 import { TasksSheet } from "../components/sheets/Tasks.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
-import { FileLinks } from "../components/fileLinks.ts";
+import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { baseName, closedText, errorText, hostLabel, sessionTitle } from "../labels.ts";
 import { call, focusDone, navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
@@ -134,6 +134,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const openFile = useCallback((href: string) => {
     if (!href.startsWith("#")) setFile({ href });
   }, []);
+  const roots = useMemo(() => (cwd ? [cwd] : []), [cwd]);
 
   useLayoutEffect(() => {
     const el = listRef.current;
@@ -178,9 +179,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
     <div className="flex h-dvh flex-col">
       <header className="pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
-          <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="relative rounded-lg p-2">
+          <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="relative -m-1 rounded-lg p-3">
             <Icon.back />
-            {othersWaiting && <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-warn" title="다른 세션에서 입력이 필요합니다" />}
+            {othersWaiting && <span className="absolute top-2.5 right-2.5 size-2 rounded-full bg-warn" title="다른 세션에서 입력이 필요합니다" />}
           </button>
           <div className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
             <div className="truncate text-[15px] font-semibold short:max-w-[60%] short:shrink-0">{title}</div>
@@ -204,47 +205,52 @@ export function Chat({ sessionId }: { sessionId: string }) {
         className="flex-1 overflow-y-auto overscroll-contain px-safe-0"
       >
         <FileLinks.Provider value={openFile}>
-          <div className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:py-3">
-            {!chat?.loaded && (
-              <div className="flex justify-center py-10 text-muted">
-                <Spinner className="size-6" />
-              </div>
-            )}
-            {chat?.hasMore && <div className="text-center text-xs text-muted">이전 대화는 생략했습니다</div>}
-            {items.map((item) => (
-              <div
-                key={item.id}
-                data-item={item.id}
-                className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
-              >
-                <ItemView item={item} running={busy} />
-              </div>
-            ))}
-            {chat?.stream && <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />}
-            {busy && !chat?.stream && !chat?.pending.length && (
-              <div className="flex items-center gap-2 text-sm text-muted">
-                <Spinner className="size-3.5" /> 작업 중…
-              </div>
-            )}
-            {chat?.pending.map((p) => (
-              <PendingCard
-                key={p.id}
-                request={p}
-                reply={(answer) => {
-                  if (!send({ t: "answer", sessionId, requestId: p.id, answer })) toast("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요");
-                }}
-              />
-            ))}
-            {chat?.loaded && kind === "inactive" && (
-              <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted" data-stopped-note>
-                {closedText(st?.closedReason)}메시지를 보내면 이 세션을 원격에서 이어서 실행합니다. 아래 칩에서 고른 모델·권한 모드·Effort는 여기서 시작할 때
-                적용됩니다.
-                <button onClick={startNow} disabled={starting} className="mx-auto mt-2 block min-h-11 rounded-lg bg-surface px-5 py-2.5 font-medium text-accent disabled:opacity-50">
-                  {starting ? "시작하는 중…" : "지금 시작"}
-                </button>
-              </div>
-            )}
-          </div>
+          <FileRoots.Provider value={roots}>
+            <div className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:py-3">
+              {!chat?.loaded && (
+                <div className="flex justify-center py-10 text-muted">
+                  <Spinner className="size-6" />
+                </div>
+              )}
+              {chat?.hasMore && <div className="text-center text-xs text-muted">이전 대화는 생략했습니다</div>}
+              {items.map((item) => (
+                <div
+                  key={item.id}
+                  data-item={item.id}
+                  className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
+                >
+                  <ItemView item={item} running={busy} />
+                </div>
+              ))}
+              {chat?.stream && <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />}
+              {busy && !chat?.stream && !chat?.pending.length && (
+                <div className="flex items-center gap-2 text-sm text-muted">
+                  <Spinner className="size-3.5" /> 작업 중…
+                </div>
+              )}
+              {chat?.pending.map((p) => (
+                <PendingCard
+                  key={p.id}
+                  request={p}
+                  reply={(answer) => {
+                    if (!send({ t: "answer", sessionId, requestId: p.id, answer })) toast("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요");
+                  }}
+                />
+              ))}
+              {chat?.loaded && kind === "inactive" && (
+                <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted" data-stopped-note>
+                  {closedText(st?.closedReason)}메시지를 보내면 이 세션을 원격에서 이어서 실행합니다. 아래 칩에서 고른 모델·권한 모드·Effort는 여기서 시작할 때 적용됩니다.
+                  <button
+                    onClick={startNow}
+                    disabled={starting}
+                    className="mx-auto mt-2 block min-h-11 rounded-lg bg-surface px-5 py-2.5 font-medium text-accent disabled:opacity-50"
+                  >
+                    {starting ? "시작하는 중…" : "지금 시작"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </FileRoots.Provider>
         </FileLinks.Provider>
       </div>
 

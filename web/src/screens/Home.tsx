@@ -224,7 +224,11 @@ export function Home() {
           </div>
           <div className={`order-5 flex basis-full gap-1 short:order-2 short:basis-auto ${searching ? "hidden" : ""}`}>
             {(["sessions", "folders"] as const).map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 text-sm ${tab === t ? "bg-surface-2 font-semibold" : "text-muted"}`}>
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`relative rounded-lg px-3 py-1.5 text-sm after:absolute after:inset-x-0 after:-inset-y-1.5 ${tab === t ? "bg-surface-2 font-semibold" : "text-muted"}`}
+              >
                 {t === "sessions" ? "세션" : "폴더"}
               </button>
             ))}

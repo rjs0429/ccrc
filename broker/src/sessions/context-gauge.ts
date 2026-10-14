@@ -7,6 +7,9 @@ const KEEP_SESSIONS = 500;
 const KEEP_MODELS = 50;
 const FIRST_TAIL = 256 * 1024;
 const READ_MAX = 64 * 1024 * 1024;
+const MODEL_TAIL_MAX = 8 * 1024 * 1024;
+const MODEL_HEAD = 1024 * 1024;
+const ONE_M = /\[1m\]$/i;
 
 // The window a model's context is measured against and where auto-compact starts, as Claude Code reports them.
 export interface ContextWindow {
@@ -98,6 +101,63 @@ export async function lastUsage(file: string): Promise<LastUsage | undefined> {
   } finally {
     await fh.close();
   }
+}
+
+function modelRecord(lines: string[]): string | undefined {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line.includes('"attachment"') || !line.includes('"modelId"')) continue;
+    try {
+      const e = JSON.parse(line) as Obj;
+      const a = isObj(e.attachment) ? e.attachment : undefined;
+      const id = a?.type === "model" && isObj(a.identity) ? a.identity.modelId : undefined;
+      if (e.isSidechain !== true && typeof id === "string" && id) return id.slice(0, NAME_MAX);
+    } catch {}
+  }
+  return undefined;
+}
+
+// The exact model ID in the transcript's newest model record; responses name the model without its [1m] window.
+// Read from the end in growing pieces, then from the start, where a session's first record is.
+export async function lastModelId(file: string): Promise<string | undefined> {
+  const fh = await fs.promises.open(file, "r");
+  try {
+    const { size } = await fh.stat();
+    let start = size;
+    for (let want = FIRST_TAIL; start > 0 && want <= MODEL_TAIL_MAX; want *= 8) {
+      start = Math.max(0, size - want);
+      const buf = Buffer.alloc(size - start);
+      await fh.read(buf, 0, buf.length, start);
+      const lines = buf.toString("utf8").split("\n");
+      if (start > 0) lines.shift();
+      const found = modelRecord(lines);
+      if (found) return found;
+    }
+    if (start === 0) return undefined;
+    const head = Buffer.alloc(Math.min(MODEL_HEAD, start));
+    await fh.read(head, 0, head.length, 0);
+    const lines = head.toString("utf8").split("\n");
+    lines.pop();
+    return modelRecord(lines);
+  } finally {
+    await fh.close();
+  }
+}
+
+// The model a stopped session's window is sized by: the transcript's record of the exact model when it is the model
+// that answered, else a [1m] default in the user's settings for the same model or model family.
+export function exactModel(answered: string, recorded: string | undefined, setting: string | undefined): string {
+  if (ONE_M.test(answered)) return answered;
+  if (recorded) return base(recorded) === answered ? recorded : answered;
+  if (!setting || !ONE_M.test(setting)) return answered;
+  const s = base(setting);
+  const same = s.includes("-") ? s === answered : answered.startsWith(`claude-${s}-`) || answered.includes(`-${s}-`);
+  return same ? `${answered}[1m]` : answered;
+}
+
+// A context larger than a model's window ran with its 1M window.
+export function widened(model: string, tokens: number, w: ContextWindow): string | undefined {
+  return tokens > w.max && !ONE_M.test(model) ? `${model}[1m]` : undefined;
 }
 
 interface Saved {

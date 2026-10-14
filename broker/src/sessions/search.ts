@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { setImmediate as yieldNow } from "node:timers/promises";
+import { setImmediate as yieldNow, setTimeout as pause } from "node:timers/promises";
 import type { SessionSummary } from "../protocol.ts";
 import { SEARCH_LIMIT_MAX, SEARCH_QUERY_MAX, type Mark, type SearchResponse, type SearchResult, type SearchSnippet } from "../search-protocol.ts";
 import { PROJECTS, projectDirName } from "./history.ts";
@@ -13,9 +13,11 @@ export interface SearchLimits {
   totalChars: number;
   // How long a search may spend reading transcripts before it answers with what it has.
   budgetMs: number;
+  // The pause between two transcripts that warming reads ahead of any search.
+  warmGapMs: number;
 }
 
-const LIMITS: SearchLimits = { messageChars: 16_000, transcriptChars: 400_000, totalChars: 48_000_000, budgetMs: 1500 };
+const LIMITS: SearchLimits = { messageChars: 16_000, transcriptChars: 400_000, totalChars: 48_000_000, budgetMs: 1500, warmGapMs: 20 };
 const TERMS_MAX = 8;
 const DEFAULT_RESULTS = 30;
 const SNIPPETS = 3;
@@ -202,6 +204,7 @@ export class SessionSearch {
   private entries = new Map<string, Entry>();
   private reading = new Map<string, Promise<Entry | undefined>>();
   private queue = new Set<string>();
+  private ahead = new Set<string>();
   private warming = false;
   private limits: SearchLimits;
   private root: string;
@@ -326,15 +329,37 @@ export class SessionSearch {
     return p;
   }
 
+  // Reads the transcripts of these sessions ahead of any search, newest first and one file at a time with a
+  // pause between files. A file that could push older ones out of the index is left for a search to read.
+  async prewarm(sessions: SessionSummary[]): Promise<void> {
+    const files = await this.locate(sessions);
+    for (const s of [...sessions].sort((a, b) => b.lastModified - a.lastModified)) {
+      const file = files.get(s.id);
+      if (file) this.ahead.add(file);
+    }
+    await this.warm();
+  }
+
+  // Files a search left for later come before those read ahead.
   private async warm(): Promise<void> {
     if (this.warming) return;
     this.warming = true;
     try {
-      while (this.queue.size) {
-        const file = this.queue.values().next().value!;
-        this.queue.delete(file);
-        await this.read(file);
-        await yieldNow();
+      for (;;) {
+        const left = this.queue.values().next();
+        if (!left.done) {
+          this.queue.delete(left.value);
+          await this.read(left.value);
+          await yieldNow();
+          continue;
+        }
+        const ahead = this.ahead.values().next();
+        if (ahead.done) break;
+        this.ahead.delete(ahead.value);
+        const st = await fs.promises.stat(ahead.value).catch(() => undefined);
+        if (st && !this.entries.has(ahead.value) && this.stats.chars + Math.min(st.size, this.limits.transcriptChars) > this.limits.totalChars) continue;
+        await this.ensure(ahead.value, Infinity);
+        await pause(this.limits.warmGapMs);
       }
     } finally {
       this.warming = false;
