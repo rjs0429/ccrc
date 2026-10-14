@@ -31,8 +31,8 @@ const TEXT_EXT = (
   "ps1 bat dockerfile makefile cmake tf nix diff patch lock"
 ).split(" ");
 
-// With image types and no capture attribute, iOS offers the photo library, the camera and Files.
-export const ACCEPT = ["image/*", "application/pdf", ".pdf", "text/*", ...TEXT_EXT.map((e) => `.${e}`)].join(",");
+export const IMAGE_ACCEPT = "image/*";
+export const DOCUMENT_ACCEPT = ["application/pdf", ".pdf", "text/*", ...TEXT_EXT.map((e) => `.${e}`)].join(",");
 
 const lists = new Map<string, Attachment[]>();
 const aborts = new Map<number, AbortController>();

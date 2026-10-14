@@ -27,6 +27,10 @@ import { contextDetail, usageAnswer } from "./reports.ts";
 
 const CLOSE_WAIT_MS = 10_000;
 const REQUEST_MS = 15_000;
+// A process started for one question still has to start up and sign in.
+const PROBE_MS = 45_000;
+
+type Requester = { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
 
 // Claude Code's answer, or an error once `ms` pass without one.
 function timed<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -252,7 +256,7 @@ export class BrokerSession extends SessionCore {
 
   readFile(path: string, maxBytes: number, encoding: "utf-8" | "base64"): Promise<FileContents> | undefined {
     if (this.closed || !this.q) return undefined;
-    const q = this.q as unknown as { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
+    const q = this.q as unknown as Requester;
     return timed(q.request({ subtype: "read_file", path, max_bytes: maxBytes, encoding }), READ_MS).then((r) => fileContents(r.response));
   }
 
@@ -262,8 +266,7 @@ export class BrokerSession extends SessionCore {
 
   // A control request the SDK sends but does not declare.
   private request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> {
-    const q = this.query() as unknown as { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
-    return timed(q.request(r), REQUEST_MS);
+    return timed((this.query() as unknown as Requester).request(r), REQUEST_MS);
   }
 
   private query(): Query {
@@ -306,5 +309,31 @@ export class BrokerSession extends SessionCore {
       }
     }
     this.finish(this.closedReason ?? "ended");
+  }
+}
+
+// The account's plan limits from a Claude Code process started for this question alone: it loads no
+// settings or MCP servers, writes no transcript and never starts a turn.
+export async function probeUsage(cwd: string, claudePath?: string): Promise<UsageInfo> {
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  async function* nothing(): AsyncGenerator<SDKUserMessage> {
+    await held;
+  }
+  const q = query({
+    prompt: nothing(),
+    options: { cwd, pathToClaudeCodeExecutable: claudePath, persistSession: false, settingSources: [], strictMcpConfig: true, stderr: () => {} },
+  });
+  void (async () => {
+    try {
+      for await (const _ of q);
+    } catch {}
+  })();
+  try {
+    const r = await timed((q as unknown as Requester).request({ subtype: "get_usage", skip_behaviors: true }), PROBE_MS);
+    return { limits: usageAnswer(r.response).limits };
+  } finally {
+    release();
+    q.close();
   }
 }

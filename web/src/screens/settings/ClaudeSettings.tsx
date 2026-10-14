@@ -10,7 +10,7 @@ import type { ModelOption } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
 import { Button, Choice, Icon, Sheet, Spinner } from "../../components/ui.tsx";
 import { EFFORT_LABEL, MODE_HINT, MODE_LABEL, shortPath } from "../../labels.ts";
-import { toast, useApp } from "../../state.ts";
+import { toast, useApp, type SettingsPart } from "../../state.ts";
 import { SectionTitle, Segmented, showError } from "./common.tsx";
 
 type Values = Record<string, unknown>;
@@ -277,7 +277,7 @@ function Rest({ view }: { view: ClaudeSettingsView }) {
   );
 }
 
-export function ClaudeSettingsSection() {
+export function ClaudeSettingsSection({ part }: { part?: SettingsPart }) {
   const models = useApp((s) => s.options?.models) ?? NO_MODELS;
   const [view, setView] = useState<ClaudeSettingsView>();
   const [draft, setDraft] = useState<Values>({});
@@ -298,6 +298,10 @@ export function ClaudeSettingsSection() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (view && part) document.getElementById(`claude-${part}`)?.scrollIntoView({ block: "start" });
+  }, [Boolean(view), part]);
 
   if (!view) {
     return (
@@ -396,9 +400,11 @@ export function ClaudeSettingsSection() {
               );
             })}
           </div>
-          {LISTS.map((key) => (
-            <ListEditor key={key} field={key} items={list(key)} onChange={(items) => set(key, items)} />
-          ))}
+          <div id="claude-permissions" className="scroll-mt-4 space-y-2">
+            {LISTS.map((key) => (
+              <ListEditor key={key} field={key} items={list(key)} onChange={(items) => set(key, items)} />
+            ))}
+          </div>
           <div className="flex gap-2">
             <Button className="flex-1" disabled={!count} onClick={() => setDraft({ ...view.values })}>
               변경 취소

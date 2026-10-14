@@ -12,7 +12,12 @@ import type {
 import { api, ApiError, type Me, type Options } from "./api.ts";
 
 export type SettingsPage = "claude" | "alerts" | "account" | "status";
-export type Route = { name: "home" } | { name: "chat"; sessionId: string } | { name: "new" } | { name: "settings"; page?: SettingsPage };
+export type SettingsPart = "permissions";
+export type Route =
+  | { name: "home" }
+  | { name: "chat"; sessionId: string }
+  | { name: "new" }
+  | { name: "settings"; page?: SettingsPage; part?: SettingsPart };
 export type Conn = "idle" | "connecting" | "ready" | "conflict" | "taken" | "offline";
 
 export interface Chat {
@@ -79,8 +84,8 @@ function parseRoute(): Route {
   if (m) return { name: "chat", sessionId: m[1] };
   if (h === "/new") return { name: "new" };
   if (h === "/settings") return { name: "settings" };
-  const p = h.match(/^\/settings\/(claude|alerts|account|status)$/);
-  if (p) return { name: "settings", page: p[1] as SettingsPage };
+  const p = h.match(/^\/settings\/(claude|alerts|account|status)(?:\/(permissions))?$/);
+  if (p) return { name: "settings", page: p[1] as SettingsPage, ...(p[2] ? { part: p[2] as SettingsPart } : {}) };
   return { name: "home" };
 }
 
@@ -91,14 +96,30 @@ export function navigate(route: Route): void {
       : route.name === "home"
         ? "#/"
         : route.name === "settings" && route.page
-          ? `#/settings/${route.page}`
+          ? `#/settings/${route.page}${route.part ? `/${route.part}` : ""}`
           : `#/${route.name}`;
   if (location.hash !== hash) location.hash = hash;
   else onRoute();
 }
 
+// Where the settings page opened by a "/" command returns to.
+let settingsReturn: string | undefined;
+
+export function openSettingsFrom(page: SettingsPage, part?: SettingsPart): void {
+  settingsReturn = location.hash;
+  navigate({ name: "settings", page, ...(part ? { part } : {}) });
+}
+
+export function leaveSettings(page?: SettingsPage): void {
+  const back = settingsReturn;
+  settingsReturn = undefined;
+  if (back && page) location.hash = back;
+  else navigate(page ? { name: "settings" } : { name: "home" });
+}
+
 function onRoute(): void {
   const route = parseRoute();
+  if (route.name !== "settings") settingsReturn = undefined;
   setState({ route });
   const viewing = route.name === "chat" ? route.sessionId : null;
   if (viewing && state.chat?.sessionId !== viewing) {

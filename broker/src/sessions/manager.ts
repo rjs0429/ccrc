@@ -17,8 +17,9 @@ import type {
   PermissionModeName,
   ServerMsg,
   SessionSummary,
+  UsageInfo,
 } from "../protocol.ts";
-import { BrokerSession } from "./broker-session.ts";
+import { BrokerSession, probeUsage } from "./broker-session.ts";
 import { lastCommands, rememberCommands } from "./commands.ts";
 import type { ContentBlock, SessionCore } from "./core.ts";
 import { searchFiles } from "./files.ts";
@@ -36,6 +37,7 @@ const HANDOFF_TURN_MS = 10_000;
 const HANDOFF_OTHER_MS = 9_000;
 const EARLY_LINES_MAX = 500;
 const ENDED_KEEP_MS = 10 * 60_000;
+const USAGE_KEEP_MS = 30_000;
 
 export interface ManagerTiming {
   handoffTurnMs: number;
@@ -81,6 +83,9 @@ export class SessionManager extends EventEmitter {
   private viewed: string | null = null;
   private sweeper: NodeJS.Timeout;
   private timing: ManagerTiming;
+  private accountUsage?: { at: number; value: Promise<UsageInfo> };
+  // Where plan limits come from when no running process can say: (cwd, Claude Code path).
+  usageProbe: (cwd: string, claudePath?: string) => Promise<UsageInfo> = probeUsage;
 
   constructor(cfg: Config, audit?: Audit, timing: Partial<ManagerTiming> = {}) {
     super();
@@ -288,7 +293,10 @@ export class SessionManager extends EventEmitter {
       case "context":
         return this.get(sessionId).contextDetail();
       case "usage":
-        return this.get(sessionId).usage();
+        return this.usage(sessionId);
+      case "resume":
+        await this.activate(sessionId);
+        return {};
       case "mcp_status":
         return this.get(sessionId).mcpStatus();
       case "mcp_toggle":
@@ -301,6 +309,37 @@ export class SessionManager extends EventEmitter {
         await this.get(sessionId).stopTask(String(args.taskId));
         return {};
     }
+  }
+
+  // Plan limits belong to the account, so a session without a process gets them without being resumed.
+  private async usage(sessionId: string): Promise<UsageInfo> {
+    const s = this.controlled(sessionId);
+    if (s && !s.closed) {
+      try {
+        return await s.usage();
+      } catch {}
+    }
+    const cwd = await this.cwdOf(sessionId);
+    const kept = this.accountUsage;
+    if (kept && Date.now() - kept.at < USAGE_KEEP_MS) return kept.value;
+    const value = this.freshAccountUsage(cwd, s);
+    const entry = { at: Date.now(), value };
+    this.accountUsage = entry;
+    value.catch(() => {
+      if (this.accountUsage === entry) this.accountUsage = undefined;
+    });
+    return value;
+  }
+
+  // Any running process answers for the account; the session totals it adds are its own, so they are left out.
+  private async freshAccountUsage(cwd: string, skip?: SessionCore): Promise<UsageInfo> {
+    for (const s of [...this.owned.values(), ...this.wrapped.values()]) {
+      if (s === skip || s.closed) continue;
+      try {
+        return { limits: (await s.usage()).limits };
+      } catch {}
+    }
+    return this.usageProbe(cwd, this.cfg.claudePath);
   }
 
   // What reading a linked file needs: the folder the session started in, the one it last worked in,

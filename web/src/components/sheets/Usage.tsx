@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import type { UsageInfo, UsageLimit } from "../../../../broker/src/protocol.ts";
-import { usageLimitLabel, usageResetText } from "../../labels.ts";
+import { errorText, usageLimitLabel, usageResetText } from "../../labels.ts";
 import { call, toast } from "../../state.ts";
 import { Sheet } from "../ui.tsx";
-import { SmallButton, Waiting } from "./parts.tsx";
+import { Failed, SmallButton, Waiting } from "./parts.tsx";
 import type { SheetProps } from "./types.ts";
 
-const WAIT_MS = 30_000;
+// Without a running session the broker starts a short-lived Claude Code process to ask.
+const WAIT_MS = 60_000;
 
 const SEVERITY_BAR: Record<string, string> = {
   normal: "bg-ok",
@@ -62,19 +63,22 @@ export function UsageView({ usage }: { usage: UsageInfo }) {
   );
 }
 
-// Fills from get_usage; when the session cannot answer the first time, `onFail` takes over (the command goes as text).
-export function UsageSheet({ sessionId, onClose, onFail }: SheetProps & { onFail: () => void }) {
+// Fills from get_usage, which the broker answers for the account even without a running session. When
+// nothing answers the first time, `onFail` takes over if given (the command goes as text).
+export function UsageSheet({ sessionId, onClose, onFail }: SheetProps & { onFail?: () => void }) {
   const [usage, setUsage] = useState<UsageInfo>();
+  const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [round, setRound] = useState(0);
 
   useEffect(() => {
     let live = true;
     setLoading(true);
+    setError(undefined);
     call(sessionId, "usage", {}, WAIT_MS)
       .then(
         (u) => live && setUsage(u),
-        () => live && (usage ? toast("사용량을 새로 불러오지 못했습니다") : onFail()),
+        (e: Error) => live && (usage ? toast("사용량을 새로 불러오지 못했습니다") : onFail ? onFail() : setError(errorText(e.message))),
       )
       .finally(() => live && setLoading(false));
     return () => {
@@ -86,6 +90,7 @@ export function UsageSheet({ sessionId, onClose, onFail }: SheetProps & { onFail
     <Sheet title="사용량" onClose={onClose}>
       {usage && <UsageView usage={usage} />}
       {loading && <Waiting text="사용량을 불러오는 중입니다" />}
+      {error && !loading && <Failed text={error} onRetry={() => setRound((r) => r + 1)} />}
       {usage && !loading && (
         <div className="mt-4 flex justify-end">
           <SmallButton onClick={() => setRound((r) => r + 1)}>새로 고침</SmallButton>

@@ -1,10 +1,13 @@
-import { Suspense, lazy, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ModelOption } from "../../../broker/src/protocol.ts";
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { commandName, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
+import type { DisplayItem, ModelOption } from "../../../broker/src/protocol.ts";
 import { ItemView, StreamPreview, shownItems } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
+import { commandSheet } from "../components/commandSheets.ts";
 import { PendingCard } from "../components/Pending.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
 import { ChangesSheet } from "../components/sheets/Changes.tsx";
+import { CommandResultSheet, StoppedSheet } from "../components/sheets/Command.tsx";
 import { ContextSheet } from "../components/sheets/Context.tsx";
 import { McpSheet } from "../components/sheets/Mcp.tsx";
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
@@ -14,15 +17,23 @@ import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { FileLinks } from "../components/fileLinks.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { baseName, closedText, hostLabel, sessionTitle } from "../labels.ts";
-import { navigate, send, toast, useApp } from "../state.ts";
+import { navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
 
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
 const NEAR_BOTTOM_PX = 160;
 const NO_MODELS: ModelOption[] = [];
+// How long a command sent from here may take before its sheet says it gave no result, once the session is idle.
+const RESULT_LATE_MS = 15_000;
 type SheetName = "changes" | "context" | "mcp" | "rewind" | "tasks" | "usage";
-// "/" commands that open a sheet when picked from the list, as VS Code opens its dialogs.
-const COMMAND_SHEETS: Record<string, SheetName> = { context: "context", mcp: "mcp", usage: "usage", cost: "usage", stats: "usage" };
+type CommandItem = Extract<DisplayItem, { kind: "command" }>;
+// A dialog command sent from here: its result shows in a sheet once a new result of that command arrives.
+interface Awaited {
+  title: string;
+  name: string;
+  before: Set<string>;
+  late: boolean;
+}
 
 export function Chat({ sessionId }: { sessionId: string }) {
   const chat = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat : undefined));
@@ -32,6 +43,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [menu, setMenu] = useState(false);
   const [sheet, setSheet] = useState<SheetName | null>(null);
   const [usageCommand, setUsageCommand] = useState("usage");
+  const [stopped, setStopped] = useState<string | null>(null);
+  const [composerSheet, setComposerSheet] = useState<{ name: "model" | "effort"; at: number }>();
+  const [awaited, setAwaited] = useState<Awaited>();
   const [file, setFile] = useState<FileTarget | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -47,16 +61,52 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   const sendText = (text: string, attachments: string[] = []) => {
     stick.current = true;
-    return send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
+    const c = attachments.length ? undefined : parseCommand(text);
+    const before = new Set((chat?.items ?? []).filter((i) => i.kind === "command").map((i) => i.id));
+    const ok = send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
+    if (ok && c && isDialogCommand(c.name)) setAwaited({ title: text.trim(), name: commandName(c.name), before, late: false });
+    return ok;
   };
 
+  const result = useMemo(
+    () =>
+      awaited &&
+      (chat?.items ?? []).find((i): i is CommandItem => i.kind === "command" && !awaited.before.has(i.id) && commandName(i.name ?? "") === awaited.name),
+    [awaited, chat?.items],
+  );
+
+  useEffect(() => {
+    if (!awaited || result || awaited.late) return;
+    const t = setTimeout(() => setAwaited((a) => a && { ...a, late: true }), RESULT_LATE_MS);
+    return () => clearTimeout(t);
+  }, [awaited, result]);
+
+  const openTarget = (name: string) => {
+    const target = commandSheet(name)?.sheet;
+    if (target === "model" || target === "effort") setComposerSheet({ name: target, at: Date.now() });
+    else if (target === "config") openSettingsFrom("claude");
+    else if (target === "permissions") openSettingsFrom("claude", "permissions");
+    else if (target === "usage") {
+      setUsageCommand(name);
+      setSheet("usage");
+    } else if (target) setSheet(target);
+  };
+
+  // A bare dialog command opens its sheet and is never sent; one that needs Claude Code waits for the user
+  // to start the session's process.
   const openCommand = (name: string) => {
-    const target = COMMAND_SHEETS[name];
-    if (!controllable || !target) return false;
-    if (target === "usage") setUsageCommand(name);
-    setSheet(target);
+    const target = commandSheet(name);
+    if (!target || kind === "live") return false;
+    if (target.live && !controllable) setStopped(name);
+    else openTarget(name);
     return true;
   };
+
+  useEffect(() => {
+    if (!stopped || !controllable) return;
+    setStopped(null);
+    openTarget(stopped);
+  }, [stopped, controllable]);
 
   const openFile = useCallback((href: string) => {
     if (!href.startsWith("#")) setFile({ href });
@@ -154,6 +204,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         placeholder="Claude에게 메시지"
         onSend={sendText}
         onCommand={openCommand}
+        openSheet={composerSheet}
         onStop={() => send({ t: "interrupt", sessionId })}
         onMode={(mode) => send({ t: "set_mode", sessionId, mode })}
         onModel={(model) => send({ t: "set_model", sessionId, model })}
@@ -201,12 +252,18 @@ export function Chat({ sessionId }: { sessionId: string }) {
         <UsageSheet
           sessionId={sessionId}
           onClose={() => setSheet(null)}
-          onFail={() => {
-            setSheet(null);
-            if (!sendText(`/${usageCommand}`)) toast("not connected");
-          }}
+          onFail={
+            controllable
+              ? () => {
+                  setSheet(null);
+                  if (!sendText(`/${usageCommand}`)) toast("not connected");
+                }
+              : undefined
+          }
         />
       )}
+      {stopped && <StoppedSheet sessionId={sessionId} title={commandSheet(stopped)?.title ?? `/${stopped}`} onClose={() => setStopped(null)} />}
+      {awaited && <CommandResultSheet title={awaited.title} item={result} late={awaited.late && !busy} onClose={() => setAwaited(undefined)} />}
       {sheet === "mcp" && <McpSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "rewind" && <RewindSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
     </div>

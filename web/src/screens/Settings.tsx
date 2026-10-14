@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, ApiError } from "../api.ts";
 import { Button, Icon, Row } from "../components/ui.tsx";
 import { loadDevice, turnOff } from "../push.ts";
-import { loggedOut, navigate, toast, useApp, type SettingsPage } from "../state.ts";
+import { leaveSettings, loggedOut, navigate, toast, useApp, type SettingsPage, type SettingsPart } from "../state.ts";
 import { AuditSection } from "./settings/Audit.tsx";
 import { ClaudeSettingsSection } from "./settings/ClaudeSettings.tsx";
 import { HealthSection } from "./settings/Health.tsx";
@@ -16,7 +16,7 @@ const PAGES: { page: SettingsPage; title: string }[] = [
   { page: "status", title: "상태와 점검" },
 ];
 
-export function Settings({ page }: { page?: SettingsPage }) {
+export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsPart }) {
   const me = useApp((s) => s.me);
   const device = me?.device === "local" ? "노트북" : me?.device;
   const title = PAGES.find((p) => p.page === page)?.title ?? "설정";
@@ -25,7 +25,7 @@ export function Settings({ page }: { page?: SettingsPage }) {
     <div className="flex h-dvh flex-col">
       <header className="pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-2 py-2">
-          <button onClick={() => navigate(page ? { name: "settings" } : { name: "home" })} aria-label="뒤로" className="rounded-lg p-2">
+          <button onClick={() => leaveSettings(page)} aria-label="뒤로" className="rounded-lg p-2">
             <Icon.back />
           </button>
           <div className="flex-1 text-[15px] font-semibold">{title}</div>
@@ -53,7 +53,7 @@ export function Settings({ page }: { page?: SettingsPage }) {
               </Button>
             </>
           )}
-          {page === "claude" && <ClaudeSettingsSection />}
+          {page === "claude" && <ClaudeSettingsSection part={part} />}
           {page === "alerts" && (
             <>
               <NotificationsSection />
