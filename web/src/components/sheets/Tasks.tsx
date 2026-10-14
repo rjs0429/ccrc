@@ -30,9 +30,9 @@ function TaskRow({ task, stopping, error, onStop }: { task: TaskInfo; stopping: 
     <div className="flex items-start gap-3 border-b border-line px-3 py-2.5 last:border-0">
       <span className={`mt-1.5 size-2.5 shrink-0 rounded-full ${dot}`} />
       <div className="min-w-0 flex-1">
-        <div className="line-clamp-3 text-[15px] break-words">{task.description || "(설명 없음)"}</div>
+        <div className="line-clamp-3 text-[15px]">{task.description || "(설명 없음)"}</div>
         <div className="mt-0.5 text-xs text-muted">{meta}</div>
-        {error && <div className="mt-1 text-xs break-words text-danger">{error}</div>}
+        {error && <div className="mt-1 text-xs text-danger">{error}</div>}
       </div>
       {task.status === "running" && (
         <SmallButton onClick={onStop} disabled={stopping} tone="text-danger">

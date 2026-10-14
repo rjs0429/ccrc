@@ -15,9 +15,9 @@ function UserItem({ text, ts, images, files }: { text: string; ts?: string; imag
   const attached = [images ? `이미지 ${images}개` : "", ...(files ?? []).map((f) => f || "문서")].filter(Boolean).join(" · ");
   return (
     <div className="flex flex-col items-end">
-      <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words">
+      <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap">
         {text}
-        {attached && <div className={`text-xs break-all text-muted ${text ? "mt-1" : ""}`}>{attached}</div>}
+        {attached && <div className={`text-xs text-muted ${text ? "mt-1" : ""}`}>{attached}</div>}
       </div>
       {ts && <div className="mt-1 text-[11px] text-muted">{clock(ts)}</div>}
     </div>
@@ -46,7 +46,7 @@ function SubActivity({ sub }: { sub: SubagentActivity }) {
           <span className="text-fg">{r.name}</span> {r.summary}
         </div>
       ))}
-      {sub.text && <div className="line-clamp-3 text-[13px] break-words whitespace-pre-wrap text-muted">{sub.text}</div>}
+      {sub.text && <div className="line-clamp-3 text-[13px] whitespace-pre-wrap text-muted">{sub.text}</div>}
     </div>
   );
 }

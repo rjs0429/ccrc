@@ -73,7 +73,7 @@ function OptionRow({ q, option, on, dimmed }: { q: Question; option: Option; on:
     >
       <div className="flex items-start gap-2">
         <span className="min-w-0 flex-1">
-          <span className="block text-[15px] break-words">{option.label}</span>
+          <span className="block text-[15px]">{option.label}</span>
           {option.description && <span className="block text-xs text-muted">{option.description}</span>}
         </span>
         {on && <Icon.check className="mt-0.5 size-4 shrink-0 text-accent" />}
@@ -95,7 +95,7 @@ function QuestionBlock({ q, answer, note, preview, answered }: { q: Question; an
           {q.multiSelect && <span className="text-xs text-muted">여러 개 선택</span>}
         </div>
       )}
-      <div className="text-[15px] font-medium break-words">{q.question}</div>
+      <div className="text-[15px] font-medium">{q.question}</div>
       {q.options.map((o) => (
         <OptionRow key={o.label} q={q} option={o} on={picked.includes(o.label)} dimmed={chosen && !picked.includes(o.label)} />
       ))}
@@ -103,7 +103,7 @@ function QuestionBlock({ q, answer, note, preview, answered }: { q: Question; an
         <div role={q.multiSelect ? "checkbox" : "radio"} aria-checked className="flex items-start gap-2 rounded-xl border border-accent bg-accent-soft px-3 py-2" data-other>
           <span className="min-w-0 flex-1">
             <span className="block text-xs text-muted">직접 입력</span>
-            <span className="block text-[15px] break-words whitespace-pre-wrap">{other}</span>
+            <span className="block text-[15px] whitespace-pre-wrap">{other}</span>
           </span>
           <Icon.check className="mt-0.5 size-4 shrink-0 text-accent" />
         </div>
@@ -119,7 +119,7 @@ function QuestionBlock({ q, answer, note, preview, answered }: { q: Question; an
       {note && (
         <div className="rounded-lg bg-surface-2 px-2.5 py-1.5 text-sm" data-note>
           <span className="mr-1.5 text-xs text-muted">메모</span>
-          <span className="break-words whitespace-pre-wrap">{note}</span>
+          <span className="whitespace-pre-wrap">{note}</span>
         </div>
       )}
       {answered && !chosen && !note && <div className="text-sm text-muted">답하지 않음</div>}
@@ -151,7 +151,7 @@ export function QuestionView({ input, reply }: { input: Input; reply?: ToolReply
       {line && (
         <div className="rounded-lg bg-surface-2 px-2.5 py-1.5 text-sm text-muted" data-status>
           {line}
-          {reply?.kind === "declined" && reply.reason && <div className="mt-0.5 break-words whitespace-pre-wrap text-fg">이유: {reply.reason}</div>}
+          {reply?.kind === "declined" && reply.reason && <div className="mt-0.5 whitespace-pre-wrap text-fg">이유: {reply.reason}</div>}
         </div>
       )}
       {questions.map((q) => (

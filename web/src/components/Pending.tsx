@@ -20,7 +20,7 @@ function Card({ title, sub, children, ...rest }: { title: string; sub?: string; 
   return (
     <div className="rounded-2xl border border-accent/40 bg-surface p-3.5 shadow-sm" {...rest}>
       <div className="text-xs font-semibold tracking-wide text-accent">{title}</div>
-      {sub && <div className="mt-0.5 text-[15px] font-medium break-all">{sub}</div>}
+      {sub && <div className="mt-0.5 text-[15px] font-medium">{sub}</div>}
       <div className="mt-2.5 space-y-3">{children}</div>
     </div>
   );
@@ -232,7 +232,7 @@ function FieldInput({ field: f, value, onChange }: { field: ElicitField; value: 
               onClick={() => pick(o.value)}
               className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-[15px] ${on ? "border-accent bg-accent-soft" : "border-line"}`}
             >
-              <span className="min-w-0 break-words">{o.title}</span>
+              <span className="min-w-0">{o.title}</span>
               {on && <Icon.check className="size-4 shrink-0 text-accent" />}
             </button>
           );
@@ -280,7 +280,7 @@ function ElicitHead({ info }: { info: ElicitInfo }) {
     <>
       {info.title && <div className="text-sm font-medium">{info.title}</div>}
       {info.description && <div className="text-xs text-muted">{info.description}</div>}
-      {info.message && <div className="text-[15px] break-words whitespace-pre-wrap">{info.message}</div>}
+      {info.message && <div className="text-[15px] whitespace-pre-wrap">{info.message}</div>}
     </>
   );
 }
@@ -343,7 +343,7 @@ function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
                 <div key={f.key} data-field={f.key} className="space-y-1.5">
                   <div className={f.type === "boolean" ? "flex items-center justify-between gap-3" : "space-y-1.5"}>
                     <div className="min-w-0">
-                      <div className="text-[15px] font-medium break-words">
+                      <div className="text-[15px] font-medium">
                         {f.title ?? f.key}
                         {f.required && <span className="ml-1 text-xs font-normal text-danger">필수</span>}
                       </div>

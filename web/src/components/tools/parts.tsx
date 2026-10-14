@@ -24,9 +24,9 @@ export function Folded({ text, mono, plain }: { text: string; mono?: boolean; pl
     <div>
       <div className={open ? "" : "max-h-48 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]"}>
         {mono ? (
-          <pre className="font-mono text-[12.5px] break-words whitespace-pre-wrap">{text}</pre>
+          <pre className="font-mono text-[12.5px] whitespace-pre-wrap">{text}</pre>
         ) : plain ? (
-          <div className="text-[14px] break-words whitespace-pre-wrap">{text}</div>
+          <div className="text-[14px] whitespace-pre-wrap">{text}</div>
         ) : (
           <Markdown text={text} className="text-[14px]" />
         )}
@@ -103,7 +103,7 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   return (
     <div className="min-w-0" data-key={label}>
       <div className="text-xs text-muted">{label}</div>
-      <div className="mt-0.5 min-w-0 text-[14px] break-words">{children}</div>
+      <div className="mt-0.5 min-w-0 text-[14px]">{children}</div>
     </div>
   );
 }
@@ -138,7 +138,7 @@ export function Value({ name, value }: { name: string; value: unknown }) {
     );
   }
   if (Array.isArray(value) && value.length && value.every((v) => typeof v === "string" && v && !v.includes("\n") && v.length <= LONG_TEXT)) {
-    return <span className="break-words">{value.join(", ")}</span>;
+    return <span>{value.join(", ")}</span>;
   }
   return <Code text={JSON.stringify(value)} />;
 }

@@ -81,6 +81,14 @@ body {
   font-family: var(--font-sans);
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
+  /* Korean breaks between words; a path or URL longer than the line still wraps. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+/* Short centred notes break into even lines. */
+.text-center {
+  text-wrap: balance;
 }
 
 .pt-safe {
@@ -120,7 +128,6 @@ body {
 
 .md {
   line-height: 1.65;
-  overflow-wrap: anywhere;
 }
 .md > * + * {
   margin-top: 0.7em;
@@ -190,8 +197,10 @@ body {
   border-collapse: collapse;
   font-size: 0.92em;
 }
+/* Cells keep their words whole and the table scrolls instead. */
 .md th,
 .md td {
+  overflow-wrap: break-word;
   border: 1px solid var(--line);
   padding: 0.3em 0.6em;
   text-align: left;

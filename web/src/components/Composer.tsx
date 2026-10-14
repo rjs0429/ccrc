@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { EffortName, LiveState, ModelOption, PermissionModeName } from "../../../broker/src/protocol.ts";
-import { MODE_HINT, MODE_LABEL, baseName, effortLabel, findModel, modelLabel } from "../labels.ts";
+import { MODE_HINT, MODE_LABEL, baseName, effortLabel, effortLevels, findModel, modelLabel } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
 import { usePrefs } from "../prefs.ts";
 import { toast, useApp } from "../state.ts";
@@ -8,13 +8,13 @@ import { isDialogCommand, parseCommand } from "../../../broker/src/dialog-comman
 import { bareCommandSheet } from "./commandSheets.ts";
 import { ContextRing } from "./ContextRing.tsx";
 import { AttachmentChips } from "./composer/AttachmentChips.tsx";
-import { DOCUMENT_ACCEPT, IMAGE_ACCEPT, MAX_MESSAGE_BYTES, addFiles, clearAttachments, useAttachments } from "./composer/attachments.ts";
+import { ATTACH_ACCEPT, MAX_MESSAGE_BYTES, addFiles, clearAttachments, useAttachments } from "./composer/attachments.ts";
+import { afterKeyboard } from "./composer/picker.ts";
 import { Suggestions, type SuggestRow } from "./composer/Suggestions.tsx";
 import { commandQuery, mentionAt, mentionText, rankCommands, useCommands, useFileSuggestions } from "./composer/suggest.ts";
 import { Choice, Icon, Sheet } from "./ui.tsx";
 
 const MODES: PermissionModeName[] = ["default", "acceptEdits", "plan", "auto"];
-const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const MAX_INPUT_PX = 168;
 const MAX_COMMAND_ROWS = 50;
 const DRAFT_KEY = "ccrc.draft.";
@@ -40,47 +40,29 @@ function saveDraft(sessionId: string | undefined, text: string): void {
   } catch {}
 }
 
-// A direct tap on the file input itself, so iOS opens its picker for this row.
-function AttachOption({
-  icon,
-  label,
-  hint,
-  onFiles,
-  ...input
-}: { icon: React.ReactNode; label: string; hint?: string; onFiles: (files: File[]) => void } & React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <label className="relative flex w-full cursor-pointer items-center gap-3 overflow-hidden rounded-xl px-3 py-3 text-[15px] hover:bg-surface-2">
-      <span className="text-muted">{icon}</span>
-      <span className="min-w-0">
-        {label}
-        {hint && <span className="block text-xs text-muted">{hint}</span>}
-      </span>
-      <input
-        type="file"
-        aria-label={label}
-        {...input}
-        onChange={(e) => {
-          const picked = [...(e.target.files ?? [])];
-          e.target.value = "";
-          if (picked.length) onFiles(picked);
-        }}
-        className="absolute inset-0 size-full cursor-pointer opacity-0"
-      />
-    </label>
-  );
-}
-
 function StartHint() {
   return <div className="mb-2 px-3 text-xs text-muted">{START_HINT}</div>;
 }
 
-function Chip({ name, children, onClick, disabled }: { name: string; children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
+function Chip({
+  name,
+  children,
+  onClick,
+  disabled,
+  className = "shrink-0",
+}: {
+  name: string;
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  className?: string;
+}) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       data-chip={name}
-      className="flex shrink-0 items-center gap-0.5 rounded-lg px-2 py-1 text-[13px] text-muted hover:bg-surface-2 disabled:opacity-50"
+      className={`flex min-h-8 items-center gap-0.5 rounded-lg px-1.5 py-1 text-[13px] text-muted hover:bg-surface-2 disabled:opacity-50 ${className}`}
     >
       {children}
     </button>
@@ -137,8 +119,10 @@ export function Composer({
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
-  const [sheet, setSheet] = useState<"mode" | "model" | "effort" | "attach" | null>(null);
+  const [sheet, setSheet] = useState<"mode" | "model" | "effort" | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const picking = useRef(false);
   const nextCaret = useRef<number | null>(null);
   const { enterToSend } = usePrefs();
   const insert = useApp((s) => s.insert);
@@ -151,8 +135,7 @@ export function Composer({
   const effort = deferred ? start?.effort : state?.effort;
   const ultracode = deferred ? start?.ultracode === true : state?.ultracode === true;
   const current = findModel(models, model);
-  const efforts = current?.efforts?.length ? current.efforts : EFFORTS;
-  const hasEffort = !current || Boolean(current.efforts?.length) || Boolean(effort);
+  const efforts = effortLevels(models, model, effort);
   const chosen = Boolean(start && (start.model || start.mode || start.effort || start.ultracode));
   const uploading = attachments.some((a) => !a.uploaded);
   const canSend = !uploading && (text.trim() !== "" || attachments.length > 0);
@@ -213,6 +196,21 @@ export function Composer({
     ref.current?.blur();
     setSheet(openSheet.name);
   }, [openSheet?.at]);
+
+  // With the keyboard up, the picker opens once it has gone down, so iOS anchors its menu to where the
+  // paperclip settles; otherwise it opens within the tap.
+  const attach = () => {
+    const input = fileRef.current;
+    if (!input || picking.current) return;
+    const keyboard = document.documentElement.hasAttribute("data-keyboard");
+    ref.current?.blur();
+    if (!keyboard) return input.click();
+    picking.current = true;
+    afterKeyboard(() => {
+      picking.current = false;
+      input.click();
+    });
+  };
 
   const pick = (i: number) => {
     const row = rows[i];
@@ -296,75 +294,69 @@ export function Composer({
               고른 값은 여기서 시작할 때 적용됩니다
             </div>
           )}
-          <div className="mt-1 flex items-center gap-1 short:mt-0.5">
-            <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+          <div className="mt-1 flex flex-wrap items-center gap-x-1 gap-y-0.5 short:mt-0.5 sm:flex-nowrap" data-chip-rows>
+            <div className="flex min-w-0 basis-full items-center sm:flex-1 sm:basis-auto" data-chip-group="left">
               {sessionId && (
-                // The keyboard goes down first, so the sheet and any picker menu open on a page that stays put.
-                <button
-                  aria-label="파일 첨부"
-                  onClick={() => {
-                    ref.current?.blur();
-                    setSheet("attach");
-                  }}
-                  className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-2"
-                >
-                  <Icon.paperclip className="size-[18px]" />
-                </button>
+                <span className="relative shrink-0">
+                  <button
+                    aria-label="파일 첨부"
+                    onClick={attach}
+                    className="flex size-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2"
+                  >
+                    <Icon.paperclip className="size-[18px]" />
+                  </button>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    multiple
+                    accept={ATTACH_ACCEPT}
+                    tabIndex={-1}
+                    aria-hidden
+                    onChange={(e) => {
+                      const picked = [...(e.target.files ?? [])];
+                      e.target.value = "";
+                      if (picked.length) addFiles(sessionId, picked);
+                    }}
+                    className="pointer-events-none absolute inset-0 size-full opacity-0"
+                  />
+                </span>
               )}
-              <Chip name="model" disabled={!choosable} onClick={() => setSheet("model")}>
-                {modelLabel(models, model)}
-                <Icon.chevronDown className="size-3.5" />
+              <Chip name="model" className="min-w-0" disabled={!choosable} onClick={() => setSheet("model")}>
+                <span className="truncate">{modelLabel(models, model)}</span>
+                <Icon.chevronDown className="size-3 shrink-0" />
               </Chip>
-              {onContext && <ContextRing gauge={state?.context} onClick={onContext} />}
-              <Chip name="mode" disabled={!choosable} onClick={() => setSheet("mode")}>
-                {MODE_LABEL[mode ?? ""] ?? "권한 모드"}
-                <Icon.chevronDown className="size-3.5" />
-              </Chip>
-              {hasEffort && (
+              {efforts && (
                 <Chip name="effort" disabled={!choosable} onClick={() => setSheet("effort")}>
                   {effort || controllable ? `Effort ${effortLabel(effort)}` : "Effort"}
-                  {ultracode && <span className="ml-1 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">Ultracode</span>}
-                  <Icon.chevronDown className="size-3.5" />
+                  {ultracode && <span className="ml-0.5 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">Ultracode</span>}
+                  <Icon.chevronDown className="size-3" />
                 </Chip>
               )}
             </div>
-            {busy && (
-              <button onClick={onStop} aria-label="중지" className="flex size-9 items-center justify-center rounded-full bg-surface-2 text-fg">
-                <Icon.stop />
+            <div className="ml-auto flex shrink-0 items-center gap-0.5" data-chip-group="right">
+              <Chip name="mode" disabled={!choosable} onClick={() => setSheet("mode")}>
+                {MODE_LABEL[mode ?? ""] ?? "권한 모드"}
+                <Icon.chevronDown className="size-3" />
+              </Chip>
+              {onContext && <ContextRing gauge={state?.context} onClick={onContext} />}
+              {busy && (
+                <button onClick={onStop} aria-label="중지" className="flex size-11 shrink-0 items-center justify-center rounded-full bg-surface-2 text-fg">
+                  <Icon.stop />
+                </button>
+              )}
+              <button
+                onClick={submit}
+                disabled={!canSend}
+                aria-label="보내기"
+                className="flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30"
+              >
+                <Icon.send className="size-5" />
               </button>
-            )}
-            <button
-              onClick={submit}
-              disabled={!canSend}
-              aria-label="보내기"
-              className="flex size-9 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30"
-            >
-              <Icon.send className="size-5" />
-            </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {sheet === "attach" && sessionId && (
-        <Sheet title="첨부" onClose={() => setSheet(null)}>
-          {[
-            // iOS answers an image input without capture with its own menu: library, camera or files.
-            { key: "photos", icon: <Icon.image />, label: "사진", hint: "보관함·촬영·파일 중에서 고릅니다", accept: IMAGE_ACCEPT, multiple: true },
-            { key: "camera", icon: <Icon.camera />, label: "카메라", accept: IMAGE_ACCEPT, capture: "environment" as const },
-            { key: "files", icon: <Icon.file />, label: "파일", accept: DOCUMENT_ACCEPT, multiple: true },
-          ].map(({ key, ...o }) => (
-            <AttachOption
-              key={key}
-              data-attach={key}
-              {...o}
-              onFiles={(files) => {
-                addFiles(sessionId, files);
-                setSheet(null);
-              }}
-            />
-          ))}
-        </Sheet>
-      )}
       {sheet === "mode" && (
         <Sheet title="권한 모드" onClose={() => setSheet(null)}>
           {deferred && <StartHint />}
@@ -385,7 +377,8 @@ export function Composer({
       {sheet === "effort" && (
         <Sheet title="Effort" onClose={() => setSheet(null)}>
           {deferred && <StartHint />}
-          {efforts.map((e) => (
+          {!efforts && <div className="px-3 py-2 text-sm text-muted">이 모델은 Effort를 고를 수 없습니다</div>}
+          {(efforts ?? []).map((e) => (
             <Choice key={e} label={effortLabel(e)} selected={effort === e} onClick={() => (onEffort(e), setSheet(null))} />
           ))}
           {(deferred || state?.ultracodeAvailable) && (

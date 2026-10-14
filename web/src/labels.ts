@@ -1,4 +1,4 @@
-import type { ModelOption, NoteCode, SessionSummary } from "../../broker/src/protocol.ts";
+import type { EffortName, ModelOption, NoteCode, SessionSummary } from "../../broker/src/protocol.ts";
 
 export const MODE_LABEL: Record<string, string> = {
   default: "Manual",
@@ -40,12 +40,30 @@ export function findModel(models: ModelOption[], model?: string): ModelOption | 
   );
 }
 
+const LONG_CONTEXT = "[1m]";
+
+// The base model's entry for a 1M context variant the list does not name itself.
+function baseModel(models: ModelOption[], model?: string): ModelOption | undefined {
+  return model?.endsWith(LONG_CONTEXT) ? findModel(models, model.slice(0, -LONG_CONTEXT.length)) : undefined;
+}
+
+const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
+
+// The Effort levels to offer; none when the model's entry lists none and no level is set.
+export function effortLevels(models: ModelOption[], model?: string, effort?: string): EffortName[] | undefined {
+  const known = findModel(models, model) ?? baseModel(models, model);
+  if (known?.efforts?.length) return known.efforts;
+  return !known || effort ? EFFORTS : undefined;
+}
+
 export function modelLabel(models: ModelOption[], model?: string): string {
   if (!model) return "모델";
   const known = findModel(models, model);
   if (known) return known.label;
+  const base = baseModel(models, model);
+  if (base) return `${base.label} (1M)`;
   const m = model.match(/^claude-([a-z]+)-(\d+)-(\d+)/);
-  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}${model.endsWith("[1m]") ? " (1M)" : ""}` : model;
+  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}${model.endsWith(LONG_CONTEXT) ? " (1M)" : ""}` : model;
 }
 
 const DESTINATION_LABEL: Record<string, string> = {

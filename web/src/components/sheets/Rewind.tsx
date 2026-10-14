@@ -108,7 +108,7 @@ export function RewindSheet({ sessionId, onClose }: SheetProps) {
         {messages.map((m) => (
           <div key={m.id} className={`rounded-xl border ${selected === m.id ? "border-accent" : "border-line"} bg-surface`}>
             <button onClick={() => pick(m.id)} className="flex w-full items-start gap-3 px-3 py-2.5 text-left">
-              <span className="min-w-0 flex-1 text-[15px] break-words">{excerpt(m)}</span>
+              <span className="min-w-0 flex-1 text-[15px]">{excerpt(m)}</span>
               <span className="shrink-0 pt-0.5 text-xs text-muted">{when(m.ts)}</span>
             </button>
             {selected === m.id && (

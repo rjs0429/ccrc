@@ -46,7 +46,7 @@ function ServerRow(props: { server: McpServerInfo; working: boolean; locked: boo
         </span>
       </div>
       {meta && <div className="mt-0.5 text-xs text-muted">{meta}</div>}
-      {server.error && <div className="mt-1 line-clamp-3 text-xs break-words text-danger">{server.error}</div>}
+      {server.error && <div className="mt-1 line-clamp-3 text-xs text-danger">{server.error}</div>}
       {server.status === "needs-auth" && <div className="mt-1 text-xs text-muted">인증은 VS Code나 터미널의 /mcp에서 하세요</div>}
       <div className="mt-2 flex items-center gap-2">
         <SmallButton onClick={props.onToggle} disabled={locked}>
@@ -59,7 +59,7 @@ function ServerRow(props: { server: McpServerInfo; working: boolean; locked: boo
         )}
         {working && <Spinner className="size-4 text-muted" />}
       </div>
-      {error && error !== server.error && <div className="mt-1.5 text-xs break-words text-danger">{error}</div>}
+      {error && error !== server.error && <div className="mt-1.5 text-xs text-danger">{error}</div>}
     </div>
   );
 }
