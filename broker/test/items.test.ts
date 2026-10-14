@@ -322,6 +322,31 @@ test("task events and the final result raise the subagent's tool count", () => {
   assert.equal(tool.result?.text, "Done.");
 });
 
+test("a background subagent's end notice in the transcript gives its tool count and answer", () => {
+  const b = new ItemBuilder(cwd);
+  agentTurn(b);
+  b.add({
+    type: "user",
+    uuid: "u2",
+    message: { content: [{ type: "tool_result", tool_use_id: "toolu_agent", content: [{ type: "text", text: "Async agent launched successfully." }] }] },
+    toolUseResult: { isAsync: true, status: "async_launched", agentId: "a1" },
+  });
+  const notice = (body: string) => ({ type: "user", uuid: "u3", message: { content: `<task-notification>\n<task-id>a1</task-id>\n${body}\n</task-notification>` } });
+  const [item] = b.add(
+    notice(
+      "<tool-use-id>toolu_agent</tool-use-id>\n<status>completed</status>\n<result>Three files:\na.ts</result>\n<usage><subagent_tokens>17723</subagent_tokens><tool_uses>2</tool_uses><duration_ms>7813</duration_ms></usage>",
+    ),
+  );
+  assert.deepEqual(item.kind === "tool" && item.sub, { tools: 2, recent: [], text: "Three files:\na.ts" });
+  assert.deepEqual(
+    b.items.map((i) => i.kind),
+    ["user", "tool"],
+  );
+  assert.equal(b.add(notice("<tool-use-id>toolu_agent</tool-use-id>\n<status>killed</status>")).length, 0, "a notice without usage changes nothing");
+  assert.equal(b.add(notice("<tool-use-id>toolu_other</tool-use-id>\n<usage><tool_uses>5</tool_uses></usage>")).length, 0);
+  assert.equal(toolItem(b, "toolu_agent").sub?.tools, 2);
+});
+
 test("task tool summaries name the task", () => {
   assert.equal(summarizeTool("TaskCreate", { subject: "Run tests", description: "All of them" }, cwd), "Run tests");
   assert.equal(summarizeTool("TaskUpdate", { taskId: "2", status: "completed" }, cwd), "#2 completed");

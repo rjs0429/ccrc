@@ -255,7 +255,9 @@ export class ItemBuilder {
       else if (b.type === "document") files.push(String(b.title ?? ""));
       else if (b.type === "text") {
         const text = String(b.text ?? "").trim();
-        if (text && !CONTEXT_TAGS.test(text)) texts.push(text);
+        const ended = text.startsWith("<task-notification>") ? this.taskEnded(text) : undefined;
+        if (ended) out.push(ended);
+        else if (text && !CONTEXT_TAGS.test(text)) texts.push(text);
       }
     }
     if (m.isSynthetic || (!texts.length && !images && !files.length)) return out;
@@ -341,6 +343,19 @@ export class ItemBuilder {
     const owner = this.tool(toolUseId);
     const sub = owner && counted(owner.sub, tools);
     return owner && sub ? this.put({ ...owner, sub }) : undefined;
+  }
+
+  // A transcript keeps no task events; a background subagent's end shows there only in the notice
+  // Claude Code gives the model, with the subagent's tool count and answer.
+  private taskEnded(text: string): DisplayItem | undefined {
+    const tag = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1].trim() ?? "";
+    const owner = this.tool(tag("tool-use-id"));
+    const tools = Number(tag("tool_uses"));
+    if (!owner || !tag("tool_uses") || !Number.isInteger(tools)) return undefined;
+    const prev = owner.sub ?? { tools: 0, recent: [] };
+    const answer = tag("result");
+    const sub = { ...prev, tools: Math.max(prev.tools, tools), ...(!prev.text && answer ? { text: clipped(answer, SUB_TEXT_LIMIT) } : {}) };
+    return JSON.stringify(sub) === JSON.stringify(owner.sub) ? undefined : this.put({ ...owner, sub });
   }
 
   private result(m: RawMessage, ts?: string): DisplayItem[] {
