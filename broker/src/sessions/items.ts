@@ -1,5 +1,6 @@
-import type { DisplayItem, Hunk, NoteCode, SubagentActivity, ToolResult } from "../protocol.ts";
+import type { DisplayItem, Hunk, NoteCode, SubagentActivity, ToolResult, UserAttachment } from "../protocol.ts";
 import { workflowMeta } from "../tools.ts";
+import { attachmentsOf } from "./attachments.ts";
 import { PLAN_LIMIT, toolReply } from "./replies.ts";
 import { contextDetail, usageReport } from "./reports.ts";
 
@@ -268,8 +269,8 @@ export class ItemBuilder {
     return this.put({ kind: "note", id: id ?? `note-${++this.noteCount}`, ts, code, ...(text ? { text } : {}) });
   }
 
-  userText(id: string, text: string, ts?: string, images?: number, files?: string[]): DisplayItem {
-    return this.put({ kind: "user", id, ts, text, ...(images ? { images } : {}), ...(files?.length ? { files } : {}) });
+  userText(id: string, text: string, ts?: string, attachments: UserAttachment[] = []): DisplayItem {
+    return this.put({ kind: "user", id, ts, text, ...(attachments.length ? { attachments } : {}) });
   }
 
   add(m: RawMessage, fallbackTs?: string): DisplayItem[] {
@@ -294,14 +295,11 @@ export class ItemBuilder {
     const content = m.message?.content;
     const blocks: Block[] = typeof content === "string" ? [{ type: "text", text: content }] : (content ?? []);
     const texts: string[] = [];
-    const files: string[] = [];
-    let images = 0;
+    const attachments = attachmentsOf(blocks);
     const results = blocks.filter((b) => b.type === "tool_result").length;
     const output = results === 1 ? (m.tool_use_result ?? m.toolUseResult) : undefined;
     for (const b of blocks) {
       if (b.type === "tool_result") out.push(this.toolResult(b, output));
-      else if (b.type === "image") images++;
-      else if (b.type === "document") files.push(String(b.title ?? ""));
       else if (b.type === "text") {
         const text = String(b.text ?? "").trim();
         const ended = text.startsWith("<task-notification>") ? this.taskEnded(text) : undefined;
@@ -309,7 +307,7 @@ export class ItemBuilder {
         else if (text && !CONTEXT_TAGS.test(text)) texts.push(text);
       }
     }
-    if (m.isSynthetic || (!texts.length && !images && !files.length)) return out;
+    if (m.isSynthetic || (!texts.length && !attachments.length)) return out;
     const text = texts.join("\n\n");
     const id = m.uuid ?? `user-${this.items.length}`;
     const printed = commandOutput(text);
@@ -318,7 +316,7 @@ export class ItemBuilder {
       return out;
     }
     const special = commandNote(text);
-    const item = special ? this.note(special.code, special.text, ts, id) : this.userText(id, text, ts, images, files);
+    const item = special ? this.note(special.code, special.text, ts, id) : this.userText(id, text, ts, attachments);
     if (item) out.push(item);
     return out;
   }

@@ -462,6 +462,11 @@ export class SessionManager extends EventEmitter {
     return { start, latest: latest !== start ? latest : undefined, session: s && !s.closed ? s : undefined };
   }
 
+  // The transcript of a known session, where the images of its messages are read from.
+  async transcriptFile(sessionId: string): Promise<string | undefined> {
+    return transcriptPath(sessionId, await this.cwdOf(sessionId));
+  }
+
   private async cwdOf(sessionId: string): Promise<string> {
     const cwd = this.controlled(sessionId)?.cwd ?? (await this.info(sessionId))?.cwd;
     if (!cwd) throw Error("unknown session");

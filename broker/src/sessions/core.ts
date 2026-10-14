@@ -20,6 +20,7 @@ import {
   type UsageInfo,
 } from "../protocol.ts";
 import { elicitResult } from "../elicit.ts";
+import { attachmentsOf } from "./attachments.ts";
 import { gaugeOf } from "./context-gauge.ts";
 import type { FileContents } from "./file-read.ts";
 import { ItemBuilder, clipInput, type RawMessage } from "./items.ts";
@@ -315,9 +316,7 @@ export abstract class SessionCore extends EventEmitter {
 
   // The item for a message sent from here, before Claude Code echoes it.
   protected sentItem(uuid: string, text: string, blocks: ContentBlock[] = []): DisplayItem {
-    const images = blocks.filter((b) => b.type === "image").length;
-    const files = blocks.filter((b) => b.type === "document").map((b) => String(b.title ?? ""));
-    return this.builder.userText(uuid, text, new Date().toISOString(), images, files.length ? files : undefined);
+    return this.builder.userText(uuid, text, new Date().toISOString(), attachmentsOf(blocks));
   }
 
   async setMode(mode: PermissionModeName): Promise<void> {

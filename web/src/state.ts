@@ -10,6 +10,7 @@ import type {
   SessionSummary,
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, type Me, type Options } from "./api.ts";
+import { bindSent } from "./sentPreviews.ts";
 
 export type SettingsPage = "claude" | "alerts" | "account" | "status";
 export type SettingsPart = "permissions";
@@ -293,9 +294,11 @@ function onServer(msg: ServerMsg): void {
       setState({ loggedOutReason: msg.reason });
       return;
     case "snapshot":
+      for (const item of msg.items) bindSent(msg.sessionId, item);
       updateChat(msg.sessionId, () => ({ loaded: true, items: msg.items, pending: msg.pending, state: msg.state, hasMore: msg.hasMore, stream: undefined }));
       return;
     case "item":
+      bindSent(msg.sessionId, msg.item);
       updateChat(msg.sessionId, (c) => ({ items: upsert(c.items, msg.item) }));
       return;
     case "stream":

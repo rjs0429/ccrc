@@ -202,6 +202,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
         }}
         className="flex-1 overflow-y-auto overscroll-contain px-safe-0"
+        data-scroll-root
       >
         <FileLinks.Provider value={openFile}>
           <div className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:py-3">

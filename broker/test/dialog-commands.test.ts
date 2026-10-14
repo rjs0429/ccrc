@@ -66,7 +66,7 @@ test("dialog command results and the lines that ran them stay out of the convers
     note("n4", "/plan write the tests"),
     { kind: "assistant", id: "a1", text: "planning" },
     { kind: "user", id: "u2", text: "/stats" },
-    { kind: "user", id: "u3", text: "/status", images: 1 },
+    { kind: "user", id: "u3", text: "/status", attachments: [{ kind: "image", mediaType: "image/png", size: 1 }] },
     result("c4", "cost"),
     { kind: "command", id: "c5", text: "no name" },
     note("n5", "/model opus"),

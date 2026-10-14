@@ -8,18 +8,18 @@ import { Markdown } from "./Markdown.tsx";
 import { ContextView } from "./sheets/Context.tsx";
 import { UsageView } from "./sheets/Usage.tsx";
 import { ToolInput, ToolOutput } from "./ToolInput.tsx";
+import { UserAttachments } from "./UserAttachments.tsx";
 import { Folded } from "./tools/parts.tsx";
 import { Icon, Spinner } from "./ui.tsx";
 
-function UserItem({ text, ts, images, files }: { text: string; ts?: string; images?: number; files?: string[] }) {
-  const attached = [images ? `이미지 ${images}개` : "", ...(files ?? []).map((f) => f || "문서")].filter(Boolean).join(" · ");
+function UserItem({ item }: { item: Extract<DisplayItem, { kind: "user" }> }) {
   return (
-    <div className="flex flex-col items-end">
-      <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-        {text}
-        {attached && <div className={`text-xs break-all text-muted ${text ? "mt-1" : ""}`}>{attached}</div>}
-      </div>
-      {ts && <div className="mt-1 text-[11px] text-muted">{clock(ts)}</div>}
+    <div className="flex flex-col items-end gap-1.5">
+      {item.attachments && <UserAttachments messageId={item.id} list={item.attachments} />}
+      {item.text && (
+        <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words">{item.text}</div>
+      )}
+      {item.ts && <div className="-mt-0.5 text-[11px] text-muted">{clock(item.ts)}</div>}
     </div>
   );
 }
@@ -164,7 +164,7 @@ export function shownItems(all: DisplayItem[]): DisplayItem[] {
 export const ItemView = memo(function ItemView({ item, running }: { item: DisplayItem; running: boolean }) {
   switch (item.kind) {
     case "user":
-      return <UserItem text={item.text} ts={item.ts} images={item.images} files={item.files} />;
+      return <UserItem item={item} />;
     case "assistant":
       return <Markdown text={item.text} className="text-[15px]" />;
     case "thinking":
