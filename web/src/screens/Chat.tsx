@@ -52,6 +52,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [file, setFile] = useState<FileTarget | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [sentStart, setSentStart] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -71,8 +72,17 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const before = new Set((chat?.items ?? []).filter((i) => i.kind === "command").map((i) => i.id));
     const ok = send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
     if (ok && c && isDialogCommand(c.name)) setAwaited({ title: text.trim(), name: commandName(c.name), before, late: false });
+    if (ok && deferred) setSentStart(true);
     return ok;
   };
+
+  // A message to a stopped session starts it; that lasts until the session runs or the wait runs out.
+  useEffect(() => {
+    if (!sentStart) return;
+    if (!deferred) return setSentStart(false);
+    const t = setTimeout(() => setSentStart(false), RESUME_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [sentStart, deferred]);
 
   // Starts the session's Claude Code process here without sending anything.
   const startNow = () => {
@@ -246,6 +256,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         models={models}
         controllable={controllable}
         deferred={deferred}
+        starting={starting || sentStart}
         disabledReason={disabledReason}
         placeholder="Claude에게 메시지"
         onSend={sendText}

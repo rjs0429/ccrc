@@ -86,6 +86,8 @@ interface Props {
   controllable: boolean;
   // A session without a process: the chips choose what it starts with here (state.start).
   deferred?: boolean;
+  // The session is being started here; its chips wait until it runs.
+  starting?: boolean;
   disabledReason?: string;
   placeholder: string;
   // attachments: upload ids, in the order they were added. Returns whether the message went out.
@@ -109,6 +111,7 @@ export function Composer({
   models,
   controllable,
   deferred = false,
+  starting = false,
   disabledReason,
   placeholder,
   onSend,
@@ -132,7 +135,7 @@ export function Composer({
   const insert = useApp((s) => s.insert);
   const attachments = useAttachments(sessionId);
   const busy = Boolean(state?.busy);
-  const choosable = controllable || deferred;
+  const choosable = (controllable || deferred) && !starting;
   const start = deferred ? state?.start : undefined;
   const model = deferred ? start?.model : state?.model;
   const mode = deferred ? start?.mode : state?.permissionMode;

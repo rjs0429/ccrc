@@ -101,6 +101,9 @@ export function noteText(code: NoteCode, text?: string): string {
 }
 
 const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
+  [/^session is starting$/, "세션을 시작하는 중입니다. 시작된 뒤 다시 고르세요"],
+  [/^session started meanwhile$/, "그 사이 세션이 시작되었습니다. 다시 고르세요"],
+  [/^unknown model$/, "목록에 없는 모델입니다"],
   [/^session is open in (.+)$/, (m) => `${hostLabel(m[1])}에서 열려 있어 원격으로 실행할 수 없습니다`],
   [/^folder is not allowed for new sessions$/, "이 폴더에서는 새 세션을 시작할 수 없습니다"],
   [/^folder does not exist$/, "폴더가 없습니다"],
