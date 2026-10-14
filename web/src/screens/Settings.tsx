@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, ApiError } from "../api.ts";
 import { Button, Icon } from "../components/ui.tsx";
+import { loadDevice, turnOff } from "../push.ts";
 import { loggedOut, navigate, toast, useApp } from "../state.ts";
 import { AuditSection } from "./settings/Audit.tsx";
 import { ClaudeSettingsSection } from "./settings/ClaudeSettings.tsx";
@@ -55,6 +56,7 @@ export function Settings() {
               kind="danger"
               className="w-full"
               onClick={async () => {
+                await Promise.race([loadDevice().then(turnOff), new Promise((r) => setTimeout(r, 3000))]).catch(() => {});
                 await api.logout().catch(() => {});
                 loggedOut("logout");
               }}

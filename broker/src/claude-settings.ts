@@ -229,6 +229,7 @@ export class ClaudeSettings {
     }
     if (isObject(rest.permissions)) for (const key of Object.keys(rest.permissions)) notes.push({ key: `permissions.${key}`, reason: "security" });
     if (isObject(rest.env)) rest.env = Object.fromEntries(Object.keys(rest.env).map((k) => [k, HIDDEN]));
+    for (const key of [...COMMAND_KEYS, "pluginConfigs"]) if (key in rest) rest[key] = HIDDEN;
     return { ...base, values, rest, notes };
   }
 

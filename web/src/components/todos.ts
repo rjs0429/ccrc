@@ -11,6 +11,7 @@ export interface Todo {
 type Input = Record<string, unknown>;
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
+const isInput = (v: unknown): v is Input => v !== null && typeof v === "object";
 const status = (v: unknown): TodoStatus => (v === "in_progress" || v === "completed" ? v : "pending");
 const CREATED = /^Task #(\S+) created/;
 // TaskList answers with one "#<id> [<status>] <subject>" line per task.
@@ -26,7 +27,7 @@ export function currentTodos(items: DisplayItem[]): Todo[] {
     if (item.kind !== "tool" || item.result?.isError) continue;
     const i = (item.input && typeof item.input === "object" ? item.input : {}) as Input;
     if (item.name === "TodoWrite" && Array.isArray(i.todos)) {
-      written = (i.todos as Input[]).map((t) => ({ text: str(t.content), status: status(t.status), activeForm: str(t.activeForm) || undefined }));
+      written = i.todos.filter(isInput).map((t) => ({ text: str(t.content), status: status(t.status), activeForm: str(t.activeForm) || undefined }));
       fromTasks = false;
     } else if (item.name === "TaskCreate") {
       const id = item.result?.text.match(CREATED)?.[1];

@@ -557,6 +557,16 @@ test("tasks follow Claude Code's task messages and leave the list a while after 
   assert.equal(s.state().tasks, undefined);
 });
 
+test("Claude Code's own ambient watchers are not listed as tasks", async () => {
+  const { s, wrapper, next } = await session();
+  wrapper.out({ type: "system", subtype: "task_started", task_id: "w1", description: "watch", task_type: "local_bash", ambient: true, session_id: SID });
+  wrapper.out({ type: "system", subtype: "task_progress", task_id: "w1", description: "watch", usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 }, session_id: SID });
+  const st = next("state");
+  wrapper.out({ type: "system", subtype: "task_started", task_id: "u1", description: "npm test", task_type: "local_bash", session_id: SID });
+  await st;
+  assert.deepEqual(s.state().tasks?.map((t) => t.id), ["u1"]);
+});
+
 test("only a running task of this session can be stopped", async () => {
   const { s, wrapper, next } = await session();
   const seen: Msg[] = [];

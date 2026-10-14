@@ -154,6 +154,8 @@ export abstract class SessionCore extends EventEmitter {
   readonly builder: ItemBuilder;
   readonly pending = new Map<string, PendingEntry>();
   readonly tasks = new Map<string, TaskInfo>();
+  // Claude Code's own watchers, which run for the whole session and are not the user's work.
+  private ambientTasks = new Set<string>();
   // How long a task that has ended stays listed.
   taskKeepMs = TASK_KEEP_MS;
   commands?: CommandInfo[];
@@ -424,7 +426,11 @@ export abstract class SessionCore extends EventEmitter {
   // `patch`; a task first seen through its progress counts as running. An ended task stays listed a while.
   private onTask(m: Obj): void {
     const id = m.task_id;
-    if (typeof id !== "string" || !id || id.length > NAME_MAX) return;
+    if (typeof id !== "string" || !id || id.length > NAME_MAX || this.ambientTasks.has(id)) return;
+    if (m.subtype === "task_started" && m.ambient === true) {
+      this.ambientTasks.add(id);
+      return;
+    }
     const prev = this.tasks.get(id);
     const started = m.subtype === "task_started";
     if (!prev && !started && m.subtype !== "task_progress") return;

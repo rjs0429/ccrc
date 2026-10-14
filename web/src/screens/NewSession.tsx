@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { EffortName, PermissionModeName } from "../../../broker/src/protocol.ts";
 import { Button, Choice, Icon, Sheet } from "../components/ui.tsx";
 import { EFFORT_LABEL, MODE_HINT, MODE_LABEL, baseName, shortPath } from "../labels.ts";
-import { navigate, send, useApp } from "../state.ts";
+import { navigate, send, toast, useApp } from "../state.ts";
 
 const MODES: PermissionModeName[] = ["default", "acceptEdits", "plan", "auto"];
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
@@ -42,8 +42,8 @@ export function NewSession() {
   const models = options?.models ?? [];
   const start = () => {
     if (!cwd || !text.trim()) return;
+    if (!send({ t: "new_session", cwd, text: text.trim(), model, mode, effort })) return toast("연결되어 있지 않습니다. 다시 연결된 뒤 시작하세요");
     setStarting(true);
-    send({ t: "new_session", cwd, text: text.trim(), model, mode, effort });
     setTimeout(() => setStarting(false), 15000);
   };
 

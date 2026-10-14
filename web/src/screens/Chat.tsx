@@ -11,7 +11,7 @@ import { RewindSheet } from "../components/sheets/Rewind.tsx";
 import { TasksSheet } from "../components/sheets/Tasks.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { baseName, closedText, hostLabel, sessionTitle } from "../labels.ts";
-import { navigate, send, useApp } from "../state.ts";
+import { navigate, send, toast, useApp } from "../state.ts";
 
 const NEAR_BOTTOM_PX = 160;
 const NO_MODELS: ModelOption[] = [];
@@ -98,7 +98,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
             </div>
           )}
           {chat?.pending.map((p) => (
-            <PendingCard key={p.id} request={p} reply={(answer) => send({ t: "answer", sessionId, requestId: p.id, answer })} />
+            <PendingCard
+              key={p.id}
+              request={p}
+              reply={(answer) => {
+                if (!send({ t: "answer", sessionId, requestId: p.id, answer })) toast("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요");
+              }}
+            />
           ))}
           {chat?.loaded && kind === "inactive" && (
             <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted">
