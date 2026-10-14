@@ -317,7 +317,7 @@ export function Composer({
               )}
             </div>
             {busy && (
-              <button onClick={onStop} aria-label="중지" className="flex size-9 items-center justify-center rounded-full bg-surface-2 text-fg short:size-8">
+              <button onClick={onStop} aria-label="중지" className="flex size-9 items-center justify-center rounded-full bg-surface-2 text-fg">
                 <Icon.stop />
               </button>
             )}
@@ -325,7 +325,7 @@ export function Composer({
               onClick={submit}
               disabled={!canSend}
               aria-label="보내기"
-              className="flex size-9 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30 short:size-8"
+              className="flex size-9 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30"
             >
               <Icon.send className="size-5" />
             </button>

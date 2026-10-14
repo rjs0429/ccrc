@@ -98,6 +98,10 @@ body {
     padding-left: var(--sal);
     padding-right: var(--sar);
   }
+  /* The keyboard covers the home indicator. */
+  [data-keyboard] .overlay {
+    --sab: 0px;
+  }
   @media (min-width: 40rem) {
     .overlay {
       padding-top: max(0.5rem, var(--sat));
