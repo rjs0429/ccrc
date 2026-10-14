@@ -14,7 +14,8 @@ import { ContextUsageSheet } from "../components/sheets/ContextUsage.tsx";
 import { McpSheet } from "../components/sheets/Mcp.tsx";
 import { OutputStyleSheet, outputStyleLabel } from "../components/sheets/OutputStyle.tsx";
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
-import { TasksSheet } from "../components/sheets/Tasks.tsx";
+import { AgentMapSheet } from "../components/sheets/AgentMap.tsx";
+import { agentMap } from "../components/agents/tree.ts";
 import { ThreadSheet, type ShownThread } from "../components/sheets/Thread.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
@@ -22,7 +23,7 @@ import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { baseName, closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
-import { call, composerInsert, focusDone, navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
+import { call, composerInsert, focusDone, navigate, openAt, openSettingsFrom, send, toast, useApp } from "../state.ts";
 import { takeSent } from "../sentPreviews.ts";
 
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
@@ -34,7 +35,7 @@ const NO_MODELS: ModelOption[] = [];
 // How long a command sent from here may take before its sheet says it gave no result, once the session is idle.
 const RESULT_LATE_MS = 15_000;
 const RESUME_WAIT_MS = 60_000;
-type SheetName = "changes" | "context" | "contextUsage" | "mcp" | "outputStyle" | "rewind" | "tasks" | "usage";
+type SheetName = "agents" | "changes" | "context" | "contextUsage" | "mcp" | "outputStyle" | "rewind" | "usage";
 type CommandItem = Extract<DisplayItem, { kind: "command" }>;
 // A dialog command sent from here: its result shows in a sheet once a new result of that command arrives.
 interface Awaited {
@@ -217,6 +218,39 @@ export function Chat({ sessionId }: { sessionId: string }) {
     openTarget(stopped);
   }, [stopped, controllable]);
 
+  const agentChip = useMemo(
+    () => agentMap({ tasks: st?.tasks, items: chat?.items ?? [], pending: chat?.pending ?? [], busy }).chip,
+    [st?.tasks, chat?.items, chat?.pending, busy],
+  );
+
+  // The subagent a permission request comes from, by its task or as an agent of a workflow.
+  const askingAgent = (agentId?: string) => {
+    if (!agentId) return undefined;
+    const t = st?.tasks?.find((x) => x.id === agentId);
+    if (t) return t.description || t.agentType ? `서브에이전트 · ${t.description || t.agentType}` : "서브에이전트";
+    const w = st?.tasks?.flatMap((x) => x.workflow?.agents ?? []).find((a) => a.id === agentId);
+    return w ? `워크플로 에이전트 · ${w.label}` : "서브에이전트";
+  };
+
+  // Closes the map and shows a conversation item, fetching the part around it when it is not loaded.
+  const jumpTo = (itemId: string) => {
+    setSheet(null);
+    const el = listRef.current?.querySelector(`[data-item="${CSS.escape(itemId)}"]`);
+    if (!el) return openAt(sessionId, itemId);
+    el.scrollIntoView({ block: "center" });
+    follow(gapBelow(listRef.current!) < NEAR_BOTTOM_PX);
+    setFlash(itemId);
+  };
+
+  const jumpToRequest = (requestId: string) => {
+    setSheet(null);
+    const el = listRef.current?.querySelector(`[data-pending="${CSS.escape(requestId)}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: "center" });
+    follow(gapBelow(listRef.current!) < NEAR_BOTTOM_PX);
+    setFlash(requestId);
+  };
+
   const openFile = useCallback((href: string) => {
     if (!href.startsWith("#")) setFile({ href });
   }, []);
@@ -358,13 +392,15 @@ export function Chat({ sessionId }: { sessionId: string }) {
                 />
               ))}
               {chat?.pending.map((p) => (
-                <PendingCard
-                  key={p.id}
-                  request={p}
-                  reply={(answer) => {
-                    if (!send({ t: "answer", sessionId, requestId: p.id, answer })) toast("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요");
-                  }}
-                />
+                <div key={p.id} data-pending={p.id} className={`rounded-2xl transition-shadow duration-700 ${flash === p.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}>
+                  <PendingCard
+                    request={p}
+                    agent={askingAgent(p.agentId)}
+                    reply={(answer) => {
+                      if (!send({ t: "answer", sessionId, requestId: p.id, answer })) toast("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요");
+                    }}
+                  />
+                </div>
               ))}
               {chat?.loaded && kind === "inactive" && (
                 <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-stopped-note={folderMissing ? "folder-missing" : ""}>
@@ -409,6 +445,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onEffort={(effort) => send({ t: "set_effort", sessionId, effort })}
         onUltracode={(on) => send({ t: "set_ultracode", sessionId, on })}
         onContext={() => setSheet("contextUsage")}
+        agents={controllable ? agentChip : undefined}
+        onAgents={() => setSheet("agents")}
       />
 
       {menu && (
@@ -417,9 +455,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
           <Choice label="새로고침" onClick={() => (send({ t: "view", sessionId }), setMenu(false))} />
           <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
           <Choice label="Context와 사용량" hint="Context, 요금제 사용량, Compact" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
+          <Choice label="에이전트 지도" hint="에이전트와 백그라운드 작업 보기·중지" onClick={() => (setSheet("agents"), setMenu(false))} />
           {controllable && (
             <>
-              <Choice label="백그라운드 작업" hint="서브에이전트·백그라운드 명령" onClick={() => (setSheet("tasks"), setMenu(false))} />
               <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
               <Choice
                 label="출력 스타일"
@@ -451,7 +489,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
       )}
       {thread && <ThreadSheet thread={thread} onClose={() => setThread(null)} />}
       {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
-      {sheet === "tasks" && <TasksSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "agents" && (
+        <AgentMapSheet sessionId={sessionId} title={title} controllable={controllable} onClose={() => setSheet(null)} onJump={jumpTo} onPending={jumpToRequest} />
+      )}
       {sheet === "context" && (
         <ContextSheet sessionId={sessionId} state={st} kind={kind} starting={starting} cannotStart={cannotStart} onClose={() => setSheet(null)} onStart={startNow} />
       )}

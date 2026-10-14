@@ -13,6 +13,12 @@ const SUB_RECENT = 5;
 const SUB_TEXT_LIMIT = 200;
 const COMMAND_TEXT_LIMIT = 8000;
 const COMMAND_NAME_LIMIT = 100;
+const ENDED = new Map<string, NonNullable<SubagentActivity["ended"]>["status"]>([
+  ["completed", "completed"],
+  ["failed", "failed"],
+  ["killed", "stopped"],
+  ["stopped", "stopped"],
+]);
 
 type Block = { type: string; [key: string]: unknown };
 type ToolItem = Extract<DisplayItem, { kind: "tool" }>;
@@ -422,16 +428,34 @@ export class ItemBuilder {
     return owner && sub ? this.put({ ...owner, sub }) : undefined;
   }
 
-  // A transcript keeps no task events; a background subagent's end shows there only in the notice
-  // Claude Code gives the model, with the subagent's tool count and answer.
+  // A transcript keeps no task events; a background subagent's or workflow's end shows there only in the notice
+  // Claude Code gives the model, with its status, usage and answer.
   private taskEnded(text: string): DisplayItem | undefined {
     const tag = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1].trim() ?? "";
+    const count = (name: string) => (/^\d+$/.test(tag(name)) ? Number(tag(name)) : undefined);
     const owner = this.tool(tag("tool-use-id"));
-    const tools = Number(tag("tool_uses"));
-    if (!owner || !tag("tool_uses") || !Number.isInteger(tools)) return undefined;
+    const status = ENDED.get(tag("status"));
+    const tools = count("tool_uses");
+    if (!owner || (tools === undefined && !status)) return undefined;
     const prev = owner.sub ?? { tools: 0, recent: [] };
     const answer = tag("result");
-    const sub = { ...prev, tools: Math.max(prev.tools, tools), ...(!prev.text && answer ? { text: clipped(answer, SUB_TEXT_LIMIT) } : {}) };
+    const tokens = count("subagent_tokens") ?? count("total_tokens");
+    const ms = count("duration_ms");
+    const agents = count("agent_count");
+    const agentsFailed = count("agents_error");
+    const ended = status && {
+      status,
+      ...(tokens !== undefined ? { tokens } : {}),
+      ...(ms !== undefined ? { ms } : {}),
+      ...(agents !== undefined ? { agents } : {}),
+      ...(agentsFailed !== undefined ? { agentsFailed } : {}),
+    };
+    const sub = {
+      ...prev,
+      tools: Math.max(prev.tools, tools ?? 0),
+      ...(!prev.text && answer ? { text: clipped(answer, SUB_TEXT_LIMIT) } : {}),
+      ...(ended ? { ended } : {}),
+    };
     return JSON.stringify(sub) === JSON.stringify(owner.sub) ? undefined : this.put({ ...owner, sub });
   }
 

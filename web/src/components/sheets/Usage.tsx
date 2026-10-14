@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { UsageInfo, UsageLimit } from "../../../../broker/src/protocol.ts";
-import { errorText, usageLimitLabel, usageResetText } from "../../labels.ts";
+import { duration, errorText, usageLimitLabel, usageResetText } from "../../labels.ts";
 import { call, toast } from "../../state.ts";
 import { Sheet } from "../ui.tsx";
 import { Failed, SmallButton, Waiting } from "./parts.tsx";
@@ -19,13 +19,6 @@ const SEVERITY_BAR: Record<string, string> = {
 function barColour(l: UsageLimit): string {
   if (l.severity) return SEVERITY_BAR[l.severity] ?? SEVERITY_BAR.normal;
   return l.percent >= 90 ? SEVERITY_BAR.critical : l.percent >= 75 ? SEVERITY_BAR.warning : SEVERITY_BAR.normal;
-}
-
-function duration(ms: number): string {
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}초`;
-  const m = Math.floor(s / 60);
-  return m < 60 ? `${m}분 ${s % 60}초` : `${Math.floor(m / 60)}시간 ${m % 60}분`;
 }
 
 function SessionLine({ session }: { session: NonNullable<UsageInfo["session"]> }) {

@@ -42,11 +42,13 @@ export interface Hunk {
   lines: string[];
 }
 
-// What a subagent started by an Agent/Task tool call has done so far.
+// What a subagent started by an Agent/Task tool call has done so far. ended: how it ended, from the notice
+// Claude Code gives the model (agents and agentsFailed for a workflow).
 export interface SubagentActivity {
   tools: number;
   recent: { name: string; summary: string }[];
   text?: string;
+  ended?: { status: "completed" | "failed" | "stopped"; tokens?: number; ms?: number; agents?: number; agentsFailed?: number };
 }
 
 // What the user did with a question or plan call (AskUserQuestion, ExitPlanMode). answers, notes and
@@ -102,13 +104,57 @@ export type DisplayItem =
   // The result of a local command (/usage, /context, ...): its text, and for some the data to draw it from.
   | { kind: "command"; id: string; ts?: string; name?: string; args?: string; text: string; usage?: UsageInfo; context?: ContextDetail };
 
-// A background task of a session (subagent, shell, workflow) as Claude Code reports it.
+// A task of a session as Claude Code reports it: a subagent, a workflow, a shell, a monitor, ...
+// description: as the task started; activity: what it does now. kind: Claude Code's task_type (local_agent,
+// local_workflow, local_bash, monitor_mcp, ...); agentType: the subagent type. type: agentType or kind.
+// parentId: the subagent that started it. ms: how long it has run as the broker measured it when the state was
+// made, or in all once it ended.
 export interface TaskInfo {
   id: string;
   description: string;
   type?: string;
+  kind?: string;
+  agentType?: string;
   status: "running" | "completed" | "failed" | "stopped";
   toolUseId?: string;
+  parentId?: string;
+  depth?: number;
+  background?: boolean;
+  ms?: number;
+  tokens?: number;
+  tools?: number;
+  activity?: string;
+  summary?: string;
+  error?: string;
+  workflow?: WorkflowInfo;
+}
+
+export type WorkflowAgentState = "queued" | "running" | "done" | "failed";
+
+// An agent of a workflow; id: its agent id, which a permission request it makes carries. phase: index into phases.
+export interface WorkflowAgent {
+  label: string;
+  id?: string;
+  phase?: number;
+  state: WorkflowAgentState;
+  model?: string;
+  tokens?: number;
+  tools?: number;
+  ms?: number;
+  activity?: string;
+  error?: string;
+}
+
+// A workflow's phases and agents as its progress reports them; agents lists at most the first 40, the counts cover all.
+export interface WorkflowInfo {
+  name?: string;
+  phases: string[];
+  phase?: number;
+  agents: WorkflowAgent[];
+  total: number;
+  running: number;
+  done: number;
+  failed: number;
 }
 
 // A message sent while Claude Code works, which it holds until it takes it in: from here ("remote") or from VS Code ("host").
@@ -292,6 +338,8 @@ export interface PendingRequest {
   // Claude Code allows this answer only where the session is open.
   localOnly?: boolean;
   elicitation?: ElicitInfo;
+  // The task id of the subagent that asks, when one does.
+  agentId?: string;
 }
 
 export type Answer =

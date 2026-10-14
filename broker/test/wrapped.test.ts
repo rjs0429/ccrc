@@ -600,13 +600,14 @@ test("a dry run Claude Code cannot apply comes back with its reason", async () =
 
 test("tasks follow Claude Code's task messages and leave the list a while after they end", async () => {
   const { s, wrapper, events, next } = await session();
-  s.taskKeepMs = 150;
+  s.tasks.keepMs = 150;
   const states = () => events.filter(([e]) => e === "state").length;
   const out = async (m: Msg) => {
     const st = next("state");
     wrapper.out({ type: "system", session_id: SID, ...m });
     await st;
   };
+  const shown = () => s.state().tasks?.map(({ ms: _ms, ...t }) => t);
   await out({
     subtype: "task_started",
     task_id: "a1",
@@ -614,11 +615,13 @@ test("tasks follow Claude Code's task messages and leave the list a while after 
     description: "Find the tests",
     subagent_type: "Explore",
     task_type: "local_agent",
+    is_backgrounded: true,
+    spawn_depth: 1,
   });
-  await out({ subtype: "task_started", task_id: "b2", description: "npm test", task_type: "local_bash" });
-  assert.deepEqual(s.state().tasks, [
-    { id: "a1", description: "Find the tests", type: "Explore", status: "running", toolUseId: "toolu_a" },
-    { id: "b2", description: "npm test", type: "local_bash", status: "running" },
+  await out({ subtype: "task_started", task_id: "b2", description: "npm test", task_type: "local_bash", parent_task_id: "a1" });
+  assert.deepEqual(shown(), [
+    { id: "a1", description: "Find the tests", type: "Explore", kind: "local_agent", agentType: "Explore", status: "running", toolUseId: "toolu_a", depth: 1, background: true },
+    { id: "b2", description: "npm test", type: "local_bash", kind: "local_bash", status: "running", parentId: "a1" },
   ]);
 
   const before = states();
@@ -627,23 +630,69 @@ test("tasks follow Claude Code's task messages and leave the list a while after 
     subtype: "task_progress",
     task_id: "a1",
     tool_use_id: "toolu_a",
-    description: "Find the tests",
+    description: "Running Grep loadConfig",
     usage: { total_tokens: 5, tool_uses: 1, duration_ms: 9 },
+    last_tool_name: "Grep",
     session_id: SID,
   });
   wrapper.out({ type: "system", subtype: "task_notification", task_id: "zz", status: "completed", output_file: "", summary: "", session_id: SID });
   await out({ subtype: "task_progress", task_id: "c3", description: "Watch the build", usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 } });
-  assert.equal(states(), before + 1, "only the task first seen through its progress changed the state");
+  assert.equal(states(), before + 1, "a new task goes out at once and carries the progress before it");
   assert.equal(s.tasks.get("c3")?.status, "running");
   assert.equal(s.tasks.has("zz"), false);
+  const a1 = s.tasks.get("a1")!;
+  assert.equal(a1.description, "Find the tests", "the name stays as the task started");
+  assert.equal(a1.activity, "Running Grep loadConfig");
+  assert.deepEqual([a1.tokens, a1.tools], [5, 1]);
 
   await out({ subtype: "task_updated", task_id: "b2", patch: { status: "killed", end_time: 1 } });
   assert.equal(s.tasks.get("b2")?.status, "stopped");
-  await out({ subtype: "task_notification", task_id: "a1", tool_use_id: "toolu_a", status: "completed", output_file: "/tmp/out", summary: "Found them" });
-  assert.equal(s.tasks.get("a1")?.status, "completed");
+  await out({
+    subtype: "task_notification",
+    task_id: "a1",
+    tool_use_id: "toolu_a",
+    status: "completed",
+    output_file: "/tmp/out",
+    summary: "Found them",
+    usage: { total_tokens: 900, tool_uses: 4, duration_ms: 61_000 },
+  });
+  assert.deepEqual([s.tasks.get("a1")?.status, s.tasks.get("a1")?.summary, s.tasks.get("a1")?.ms, s.tasks.get("a1")?.tokens], ["completed", "Found them", 61_000, 900]);
   await out({ subtype: "task_updated", task_id: "c3", patch: { status: "failed", error: "boom" } });
+  assert.equal(s.tasks.get("c3")?.error, "boom");
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(s.state().tasks, undefined);
+});
+
+test("a permission request from a subagent names it", async () => {
+  const { s, wrapper, next } = await session();
+  const added = next("pending_add");
+  wrapper.out({
+    type: "control_request",
+    request_id: "perm-sub",
+    request: { subtype: "can_use_tool", tool_name: "Write", input: { file_path: "/tmp/project/note.txt", content: "hi" }, tool_use_id: "toolu_w", agent_id: "a9eb6f7189f57f617" },
+  });
+  await added;
+  assert.equal(s.pending.get("perm-sub")?.request.agentId, "a9eb6f7189f57f617");
+});
+
+test("the wrapper's replayed list of background tasks restores them after a reconnect", async () => {
+  const { s, wrapper, next } = await session();
+  let st = next("state");
+  wrapper.out({
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks: [
+      { task_id: "wf1", run_id: "r1", task_type: "local_workflow", description: "Review the code" },
+      { task_id: "w0", task_type: "local_bash", description: "watch", ambient: true },
+    ],
+    session_id: SID,
+  });
+  await st;
+  assert.deepEqual(s.state().tasks?.map((t) => [t.id, t.kind, t.status, t.background]), [["wf1", "local_workflow", "running", true]]);
+  st = next("state");
+  wrapper.out({ type: "system", subtype: "task_progress", task_id: "wf1", run_id: "r1", description: "x", usage: { total_tokens: 1, tool_uses: 0, duration_ms: 120_000 }, session_id: SID });
+  await st;
+  assert.ok((s.tasks.get("wf1")?.ms ?? 0) >= 120_000, "its first progress tells how long it has run");
 });
 
 test("Claude Code's own ambient watchers are not listed as tasks", async () => {

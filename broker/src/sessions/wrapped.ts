@@ -336,6 +336,7 @@ export class WrappedSession extends SessionCore {
       blockedPath: str(r.blocked_path),
       suppressAlwaysAllowRule: r.suppress_always_allow_rule === true,
       localOnly: r.requires_user_interaction === true,
+      agentId: r.agent_id,
     });
   }
 

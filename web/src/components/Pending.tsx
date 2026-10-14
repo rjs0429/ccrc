@@ -43,9 +43,9 @@ function DenyBox({ placeholder, label, onSend }: { placeholder: string; label: s
   );
 }
 
-function PermissionCard({ request, reply }: { request: PendingRequest; reply: Reply }) {
+function PermissionCard({ request, reply, agent }: { request: PendingRequest; reply: Reply; agent?: string }) {
   return (
-    <Card title="권한 요청" sub={`${request.toolName}${request.description ? ` · ${request.description}` : ""}`}>
+    <Card title="권한 요청" sub={`${agent ? `${agent} · ` : ""}${request.toolName}${request.description ? ` · ${request.description}` : ""}`}>
       {request.title && <div className="text-sm">{request.title}</div>}
       {request.decisionReason && <div className="text-xs text-muted">{request.decisionReason}</div>}
       <ToolInput name={request.toolName} input={request.input} />
@@ -379,10 +379,11 @@ function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
   );
 }
 
-export function PendingCard({ request, reply }: { request: PendingRequest; reply: Reply }) {
+// agent: names the subagent that asks, when one does.
+export function PendingCard({ request, reply, agent }: { request: PendingRequest; reply: Reply; agent?: string }) {
   if (request.kind === "question") return <QuestionCard request={request} reply={reply} />;
   if (request.kind === "plan") return <PlanCard request={request} reply={reply} />;
   if (request.kind === "dialog") return <DialogCard request={request} />;
   if (request.kind === "elicitation" && request.elicitation) return <ElicitationCard info={request.elicitation} reply={reply} />;
-  return <PermissionCard request={request} reply={reply} />;
+  return <PermissionCard request={request} reply={reply} agent={agent} />;
 }

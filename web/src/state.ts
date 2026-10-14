@@ -28,6 +28,8 @@ export interface Chat {
   items: DisplayItem[];
   pending: PendingRequest[];
   state?: LiveState;
+  // When the state arrived, so a running task's time counts on from the broker's measure.
+  stateAt?: number;
   stream?: { text: string; thinking: boolean };
   hasMore: boolean;
   gap?: SnapshotGap;
@@ -298,7 +300,7 @@ function onServer(msg: ServerMsg): void {
       return;
     case "snapshot":
       for (const item of [...msg.items, ...(msg.state.queued ?? [])]) bindSent(msg.sessionId, item);
-      updateChat(msg.sessionId, () => ({ loaded: true, items: msg.items, pending: msg.pending, state: msg.state, hasMore: msg.hasMore, gap: msg.gap, stream: undefined }));
+      updateChat(msg.sessionId, () => ({ loaded: true, items: msg.items, pending: msg.pending, state: msg.state, stateAt: Date.now(), hasMore: msg.hasMore, gap: msg.gap, stream: undefined }));
       return;
     case "item":
       bindSent(msg.sessionId, msg.item);
@@ -315,7 +317,7 @@ function onServer(msg: ServerMsg): void {
       return;
     case "state":
       for (const q of msg.state.queued ?? []) bindSent(msg.sessionId, q);
-      updateChat(msg.sessionId, () => ({ state: msg.state }));
+      updateChat(msg.sessionId, () => ({ state: msg.state, stateAt: Date.now() }));
       if (!state.options?.models.length) void refreshOptions();
       return;
     case "session_started":

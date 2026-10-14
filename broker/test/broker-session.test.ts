@@ -43,7 +43,7 @@ test("owned sessions run the session controls through the SDK query", async () =
   assert.deepEqual(await s.mcpToggle("github", true), [{ name: "github", status: "disabled", scope: "user" }]);
   await s.mcpReconnect("github");
   assert.deepEqual(await s.rewind(MSG, true), { canRewind: true, filesChanged: ["/tmp/project/a.txt"], insertions: 3, deletions: 0 });
-  s.tasks.set("b1", { id: "b1", description: "npm test", type: "local_bash", status: "running" });
+  s.tasks.on({ type: "system", subtype: "task_started", task_id: "b1", description: "npm test", task_type: "local_bash" });
   await s.stopTask("b1");
   assert.deepEqual(calls, [
     ["getContextUsage", { detail: "full" }],

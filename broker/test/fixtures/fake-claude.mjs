@@ -138,6 +138,11 @@ function handle(m) {
       out({ type: "system", subtype: "status", status: "compacting", session_id: sid });
       return;
     }
+    if (text === "BGTASKS") {
+      out({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "a1", run_id: "r1", task_type: "local_agent", description: "Find the tests" }], session_id: sid });
+      out({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "a1", run_id: "r1", task_type: "local_agent", description: "Find the tests" }, { task_id: "b2", task_type: "local_bash", description: "npm test" }], session_id: sid });
+      return;
+    }
     if (text === "MCP") {
       out({ type: "control_request", request_id: "mcp-1", request: { subtype: "mcp_message", server_name: "claude-vscode", message: { method: "x" } } });
       return;

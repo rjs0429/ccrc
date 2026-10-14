@@ -150,7 +150,7 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^unknown MCP server$/, "MCP 서버를 찾을 수 없습니다"],
   [/^unknown message$/, "이 세션에서 찾을 수 없는 메시지입니다"],
   [/^session is busy$/, "Claude가 작업 중입니다. 작업이 끝난 뒤 다시 시도하세요"],
-  [/^task is not running$/, "실행 중인 작업이 아닙니다"],
+  [/^task is not running$/, "멈추지 못했습니다. 이미 끝났을 수 있습니다."],
   [/^message is no longer queued$/, "Claude Code가 이미 받은 메시지라 되돌릴 수 없습니다"],
   [/^only a message sent from here can be taken back$/, "여기서 보낸 메시지만 되돌릴 수 있습니다"],
   [/^unknown output style$/, "목록에 없는 출력 스타일입니다"],
@@ -255,4 +255,27 @@ export function usageResetText(at: string, now = new Date()): string {
   const time = clock(at);
   const day = d.toDateString() === now.toDateString() ? "오늘" : `${d.getMonth() + 1}월 ${d.getDate()}일`;
   return `${day} ${time} 초기화`;
+}
+
+// How long something took: "12초", "3분 4초", "1시간 2분".
+export function duration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}초`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}분 ${s % 60}초` : `${Math.floor(m / 60)}시간 ${m % 60}분`;
+}
+
+export const TASK_KIND_LABEL: Record<string, string> = {
+  local_agent: "서브에이전트",
+  local_bash: "셸 (Bash)",
+  local_workflow: "워크플로",
+  remote_agent: "원격 에이전트",
+  monitor_mcp: "모니터",
+  mcp_task: "MCP 작업",
+  in_process_teammate: "팀원",
+  dream: "기억 정리",
+};
+
+export function taskKindLabel(kind?: string): string {
+  return kind ? (TASK_KIND_LABEL[kind] ?? kind) : "";
 }
