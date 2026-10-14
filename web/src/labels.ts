@@ -89,6 +89,15 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^this request can only be answered where the session is open$/, "이 요청은 VS Code에서만 응답할 수 있습니다"],
   [/^Claude Code did not answer$/, "Claude Code가 응답하지 않았습니다"],
   [/^rejected by the wrapper: (.+)$/, (m) => `VS Code 쪽에서 받지 않았습니다 (${m[1]})`],
+  [/^unknown MCP server$/, "MCP 서버를 찾을 수 없습니다"],
+  [/^unknown message$/, "이 세션에서 찾을 수 없는 메시지입니다"],
+  [/^session is busy$/, "Claude가 작업 중입니다. 작업이 끝난 뒤 다시 시도하세요"],
+  [/^task is not running$/, "실행 중인 작업이 아닙니다"],
+  [/^File rewinding is not enabled\.?$/, "이 세션은 파일 되돌리기가 꺼져 있습니다"],
+  [/^No file checkpoint found for this message\.?$/, "이 메시지 시점의 파일 기록이 없습니다"],
+  [/^Failed to rewind: (.+)$/, (m) => `되돌리지 못했습니다: ${m[1]}`],
+  [/^no answer$/, "응답이 없습니다"],
+  [/^not connected$/, "연결되어 있지 않습니다"],
 ];
 
 export function errorText(message: string): string {
