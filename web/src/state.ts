@@ -23,6 +23,8 @@ export interface Chat {
   state?: LiveState;
   stream?: { text: string; thinking: boolean };
   hasMore: boolean;
+  // An item to scroll to once it has arrived, as a search result asks.
+  focus?: string;
 }
 
 export interface AppState {
@@ -97,6 +99,22 @@ export function navigate(route: Route): void {
   else onRoute();
 }
 
+function viewMsg(): ClientMsg {
+  const sessionId = state.route.name === "chat" ? state.route.sessionId : null;
+  const focus = sessionId && state.chat?.sessionId === sessionId ? state.chat.focus : undefined;
+  return { t: "view", sessionId, ...(focus ? { focus } : {}) };
+}
+
+// Opens a session at one of its items.
+export function openAt(sessionId: string, itemId?: string): void {
+  setState({ chat: { sessionId, loaded: false, items: [], pending: [], hasMore: false, focus: itemId } });
+  navigate({ name: "chat", sessionId });
+}
+
+export function focusDone(sessionId: string): void {
+  updateChat(sessionId, () => ({ focus: undefined }));
+}
+
 function onRoute(): void {
   const route = parseRoute();
   setState({ route });
@@ -105,7 +123,7 @@ function onRoute(): void {
     setState({ chat: { sessionId: viewing, loaded: false, items: [], pending: [], hasMore: false } });
   }
   if (!viewing) setState({ chat: undefined });
-  send({ t: "view", sessionId: viewing });
+  send(viewMsg());
   if (route.name === "home" || route.name === "new") void refreshSessions();
 }
 window.addEventListener("hashchange", onRoute);
@@ -242,7 +260,7 @@ function onServer(msg: ServerMsg): void {
       retry = 0;
       setState({ conn: "ready" });
       send({ t: "visibility", visible: document.visibilityState === "visible" });
-      send({ t: "view", sessionId: state.route.name === "chat" ? state.route.sessionId : null });
+      send(viewMsg());
       return;
     case "window_conflict":
       setState({ conn: "conflict" });

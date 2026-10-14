@@ -189,6 +189,11 @@ function commandOutput(text: string): string | undefined {
   return /^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>$/.exec(text.trim())?.[2].trim();
 }
 
+// Whether a user text block is something the user typed, not context or a command and its output.
+export function typedText(text: string): boolean {
+  return !CONTEXT_TAGS.test(text) && commandOutput(text) === undefined && !commandNote(text);
+}
+
 function commandResult(id: string, ts: string | undefined, text: string, m: RawMessage): CommandItem {
   const run = record(m.local_command_run);
   const name = typeof run?.command === "string" ? run.command.slice(0, COMMAND_NAME_LIMIT) : "";

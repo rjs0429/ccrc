@@ -220,7 +220,8 @@ export interface LiveState {
 
 export type ClientMsg =
   | { t: "take_window" }
-  | { t: "view"; sessionId: string | null }
+  // focus: an item to include, when it lies before the latest items a snapshot holds.
+  | { t: "view"; sessionId: string | null; focus?: string }
   // attachments: ids from POST /api/upload, sent before the text as Claude Code content blocks.
   | { t: "send"; sessionId: string; text: string; attachments?: string[] }
   | { t: "new_session"; cwd: string; text: string; model?: string; mode?: PermissionModeName; effort?: EffortName }

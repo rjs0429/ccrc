@@ -18,6 +18,7 @@ import { registerClaudeSettings } from "./routes/claude-settings.ts";
 import { registerFiles } from "./routes/files.ts";
 import { registerHealth } from "./routes/health.ts";
 import { registerPush } from "./routes/push.ts";
+import { registerSearch } from "./routes/search.ts";
 import { registerUploads } from "./routes/upload.ts";
 import type { SessionManager } from "./sessions/manager.ts";
 import type { Store } from "./store.ts";
@@ -170,6 +171,7 @@ export async function buildServer(d: ServerDeps) {
   await registerAudit(app, routes);
   await registerHealth(app, routes);
   await registerFiles(app, routes);
+  await registerSearch(app, routes);
 
   app.get("/ws", { websocket: true }, (socket, req) => {
     const t = token(req);

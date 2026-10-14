@@ -28,6 +28,8 @@ import { WrappedSession } from "./wrapped.ts";
 
 const CATALOG_MS = 3000;
 const SNAPSHOT_ITEMS = 400;
+const FOCUS_BEFORE = 20;
+const FOCUS_ITEMS_MAX = 1500;
 const SWEEP_MS = 60_000;
 const WATCH_INTERVAL_MS = 2000;
 // Handing a session to VS Code: how long the broker's running turn may go on before it is interrupted,
@@ -53,8 +55,11 @@ function titleOf(info: SDKSessionInfo): string {
   return info.customTitle || info.summary || info.firstPrompt || "";
 }
 
-function tail(items: DisplayItem[]): { items: DisplayItem[]; hasMore: boolean } {
-  return { items: items.slice(-SNAPSHOT_ITEMS), hasMore: items.length > SNAPSHOT_ITEMS };
+// The latest items, reaching back to the focused item when that stays within a bound.
+export function tail(items: DisplayItem[], focus?: string): { items: DisplayItem[]; hasMore: boolean } {
+  const at = focus ? items.findIndex((i) => i.id === focus) : -1;
+  const from = at >= 0 && items.length - at <= FOCUS_ITEMS_MAX ? Math.min(Math.max(0, at - FOCUS_BEFORE), items.length - SNAPSHOT_ITEMS) : items.length - SNAPSHOT_ITEMS;
+  return { items: items.slice(Math.max(0, from)), hasMore: from > 0 };
 }
 
 function within(dir: string, root: string): boolean {
@@ -183,16 +188,16 @@ export class SessionManager extends EventEmitter {
     return [...new Set([...this.cfg.roots, ...known])].sort();
   }
 
-  async snapshot(sessionId: string): Promise<Snapshot> {
+  async snapshot(sessionId: string, focus?: string): Promise<Snapshot> {
     const s = this.controlled(sessionId);
-    if (s) return { ...tail(s.builder.items), pending: [...s.pending.values()].map((e) => e.request), state: s.state() };
+    if (s) return { ...tail(s.builder.items, focus), pending: [...s.pending.values()].map((e) => e.request), state: s.state() };
     const info = await this.info(sessionId);
     if (!info?.cwd) throw Error("unknown session");
     const items = await loadHistory(sessionId, info.cwd);
     const l = liveProcesses({ fresh: true }).find((p) => p.sessionId === sessionId);
     const ended = this.ended.get(sessionId);
     return {
-      ...tail(items),
+      ...tail(items, focus),
       pending: [],
       state: {
         sessionId,
