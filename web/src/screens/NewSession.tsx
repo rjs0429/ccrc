@@ -114,7 +114,7 @@ export function NewSession() {
       )}
       {sheet === "effort" && (
         <Sheet title="Effort" onClose={() => setSheet(null)}>
-          <Choice label="기본값" selected={!effort} onClick={() => (setEffort(undefined), setSheet(null))} />
+          <Choice label="Auto" hint="모델 기본값" selected={!effort} onClick={() => (setEffort(undefined), setSheet(null))} />
           {EFFORTS.map((e) => (
             <Choice key={e} label={EFFORT_LABEL[e]} selected={effort === e} onClick={() => (setEffort(e), setSheet(null))} />
           ))}
