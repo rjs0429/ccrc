@@ -126,6 +126,7 @@ export function ContextUsageSheet({ sessionId, state, kind, starting, onClose, o
         {stopped && (
           <div className="mt-3 px-1">
             <SmallButton
+              tall
               disabled={starting}
               onClick={() => {
                 setOpen(true);

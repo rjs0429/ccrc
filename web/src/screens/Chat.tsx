@@ -239,7 +239,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted" data-stopped-note>
                 {closedText(st?.closedReason)}메시지를 보내면 이 세션을 원격에서 이어서 실행합니다. 아래 칩에서 고른 모델·권한 모드·Effort는 여기서 시작할 때
                 적용됩니다.
-                <button onClick={startNow} disabled={starting} className="mx-auto mt-2 block rounded-lg bg-surface px-3 py-1.5 font-medium text-accent disabled:opacity-50">
+                <button onClick={startNow} disabled={starting} className="mx-auto mt-2 block min-h-11 rounded-lg bg-surface px-5 py-2.5 font-medium text-accent disabled:opacity-50">
                   {starting ? "시작하는 중…" : "지금 시작"}
                 </button>
               </div>
