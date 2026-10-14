@@ -1,19 +1,19 @@
 import { randomUUID } from "node:crypto";
 import type { Link } from "../link/server.ts";
-import type { ContextDetail, DisplayItem, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
   MCP_CHANGE_MS,
   SessionCore,
   commandInfo,
-  contextDetail,
   mcpServers,
   rewindResult,
   type ContentBlock,
   type Decision,
 } from "./core.ts";
 import type { RawMessage } from "./items.ts";
+import { contextDetail, usageAnswer } from "./reports.ts";
 
 type Obj = Record<string, unknown>;
 type Held = { from: "out" | "in" | "settled"; v: unknown };
@@ -137,6 +137,11 @@ export class WrappedSession extends SessionCore {
   async contextDetail(): Promise<ContextDetail> {
     this.ensureOpen();
     return this.counted(contextDetail(await this.link.request({ subtype: "get_context_usage", detail: "full" }, CONTEXT_MS)));
+  }
+
+  async usage(): Promise<UsageInfo> {
+    this.ensureOpen();
+    return usageAnswer(await this.link.request({ subtype: "get_usage", skip_behaviors: true }));
   }
 
   async mcpStatus(): Promise<McpServerInfo[]> {

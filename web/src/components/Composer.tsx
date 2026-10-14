@@ -63,9 +63,11 @@ interface Props {
   onModel: (model: string) => void;
   onEffort: (effort: EffortName) => void;
   onUltracode: (on: boolean) => void;
+  // A "/" command picked from the list that opens a screen here instead of being sent; true when it did.
+  onCommand?: (name: string) => boolean;
 }
 
-export function Composer({ sessionId, state, models, controllable, disabledReason, placeholder, onSend, onStop, onMode, onModel, onEffort, onUltracode }: Props) {
+export function Composer({ sessionId, state, models, controllable, disabledReason, placeholder, onSend, onStop, onMode, onModel, onEffort, onUltracode, onCommand }: Props) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
@@ -133,6 +135,11 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
     if (mention) {
       const added = `${mentionText(row.key)} `;
       edit(text.slice(0, mention.start) + added + text.slice(mention.end), mention.start + added.length);
+    } else if (controllable && row.key === "model") {
+      setText("");
+      setSheet("model");
+    } else if (onCommand?.(row.key)) {
+      setText("");
     } else {
       edit(`/${row.key} `, row.key.length + 2);
     }

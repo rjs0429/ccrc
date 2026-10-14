@@ -6,7 +6,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { after, test } from "node:test";
 import { LineSplitter, parseLine } from "../src/link/lines.ts";
-import { Relay, allowedFlagSettings, appliedAnswer, launchSession, type RelayOptions } from "../src/wrapper/relay.ts";
+import { Relay, allowedFlagSettings, appliedAnswer, launchSession, usageAnswer, type RelayOptions } from "../src/wrapper/relay.ts";
 import { TurnStore } from "../src/wrapper/turns.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -433,6 +433,29 @@ test("the broker's get_settings is answered with the applied part only", async (
   });
   assert.ok(!JSON.stringify(t.broker.frames.items).includes("s3cret"));
   assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code does not see the broker's answer");
+});
+
+test("the broker's get_usage is answered with the limit windows and session totals only", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-gu", request: { subtype: "get_usage", skip_behaviors: true } } });
+  const f = await t.broker.frames.wait((x) => x.t === "reply" && ((x.m as Msg).response as Msg).request_id === "ccrc-gu", "reply");
+  assert.deepEqual(((f.m as Msg).response as Msg).response, {
+    session: { total_cost_usd: 0.25, total_duration_ms: 4000, total_api_duration_ms: 900, total_lines_added: 3, total_lines_removed: 1 },
+    rate_limits: {
+      five_hour: { utilization: 32, resets_at: "2026-10-14T05:19:59Z" },
+      seven_day: { utilization: 91, resets_at: "2026-10-17T12:59:59Z" },
+      model_scoped: [{ display_name: "Fable", utilization: 0, resets_at: "2026-10-17T13:00:00Z" }],
+    },
+  });
+  const seen = JSON.stringify(t.broker.frames.items);
+  for (const leak of ["s3cret", "extra_usage", "subscription_type", "model_usage", "behaviors"]) assert.ok(!seen.includes(leak), leak);
+  assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code does not see the broker's answer");
+});
+
+test("a get_usage answer keeps only an error's message", () => {
+  const err = JSON.parse(usageAnswer({ type: "control_response", response: { subtype: "error", request_id: "r", error: "no", rate_limits: { x: 1 } } }).toString());
+  assert.deepEqual(err, { type: "control_response", response: { subtype: "error", request_id: "r", error: "no" } });
 });
 
 test("a get_settings answer is reduced to plain applied values, and an error keeps only its message", () => {

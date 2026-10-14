@@ -8,20 +8,20 @@ import {
   type Query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { ContextDetail, DisplayItem, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
   MCP_CHANGE_MS,
   SessionCore,
   commandInfo,
-  contextDetail,
   mcpServers,
   rewindResult,
   type ContentBlock,
   type Decision,
 } from "./core.ts";
 import type { RawMessage } from "./items.ts";
+import { contextDetail, usageAnswer } from "./reports.ts";
 
 const CLOSE_WAIT_MS = 10_000;
 const REQUEST_MS = 15_000;
@@ -159,6 +159,10 @@ export class BrokerSession extends SessionCore {
     return this.counted(contextDetail(await timed(this.query().getContextUsage({ detail: "full" }), CONTEXT_MS)));
   }
 
+  async usage(): Promise<UsageInfo> {
+    return usageAnswer((await this.request({ subtype: "get_usage", skip_behaviors: true })).response);
+  }
+
   async mcpStatus(): Promise<McpServerInfo[]> {
     return mcpServers(await timed(this.query().mcpServerStatus(), REQUEST_MS));
   }
@@ -244,10 +248,14 @@ export class BrokerSession extends SessionCore {
       .catch(() => {});
   }
 
-  // The SDK sends get_settings but does not declare it.
   protected async readApplied(): Promise<Record<string, unknown>> {
+    return (await this.request({ subtype: "get_settings" })).response ?? {};
+  }
+
+  // A control request the SDK sends but does not declare.
+  private request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> {
     const q = this.query() as unknown as { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
-    return (await timed(q.request({ subtype: "get_settings" }), REQUEST_MS)).response ?? {};
+    return timed(q.request(r), REQUEST_MS);
   }
 
   private query(): Query {

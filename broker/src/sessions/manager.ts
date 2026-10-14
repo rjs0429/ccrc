@@ -287,6 +287,8 @@ export class SessionManager extends EventEmitter {
       }
       case "context":
         return this.get(sessionId).contextDetail();
+      case "usage":
+        return this.get(sessionId).usage();
       case "mcp_status":
         return this.get(sessionId).mcpStatus();
       case "mcp_toggle":

@@ -1,4 +1,5 @@
 import type { DisplayItem, Hunk, NoteCode, SubagentActivity, ToolResult } from "../protocol.ts";
+import { contextDetail, usageReport } from "./reports.ts";
 
 const RESULT_LIMIT = 4000;
 const INPUT_STRING_LIMIT = 2000;
@@ -7,9 +8,12 @@ const PATCH_LINES = 800;
 const PATCH_LINE_LIMIT = 500;
 const SUB_RECENT = 5;
 const SUB_TEXT_LIMIT = 200;
+const COMMAND_TEXT_LIMIT = 8000;
+const COMMAND_NAME_LIMIT = 100;
 
 type Block = { type: string; [key: string]: unknown };
 type ToolItem = Extract<DisplayItem, { kind: "tool" }>;
+type CommandItem = Extract<DisplayItem, { kind: "command" }>;
 
 // The subset of SDK and transcript messages that the conversation view uses.
 export interface RawMessage {
@@ -30,6 +34,12 @@ export interface RawMessage {
   // task_progress and task_notification: the call that started the task and its tool count so far.
   tool_use_id?: string;
   usage?: { tool_uses?: unknown };
+  // A local command's result: the command and its data beside the text (/usage, /context). A transcript
+  // keeps them on a system/local_command row; history.ts gives them these names.
+  local_command_run?: unknown;
+  local_command_source?: unknown;
+  usage_report?: unknown;
+  context_usage?: unknown;
 }
 
 // Text blocks that carry editor or harness context rather than something the user typed.
@@ -164,16 +174,37 @@ function counted(sub: SubagentActivity | undefined, tools: unknown): SubagentAct
   return { recent: [], ...sub, tools };
 }
 
-function commandNote(text: string): { code: NoteCode; text?: string } | null | undefined {
+function commandNote(text: string): { code: NoteCode; text?: string } | undefined {
   if (INTERRUPTED.test(text)) return { code: "interrupted" };
   const name = text.match(/<command-name>([\s\S]*?)<\/command-name>/)?.[1];
   if (name !== undefined) {
     const args = text.match(/<command-args>([\s\S]*?)<\/command-args>/)?.[1] ?? "";
     return { code: "command", text: `${name.trim()} ${args.trim()}`.trim() };
   }
-  const out = text.match(/^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>$/);
-  if (out) return out[2].trim() ? { code: "command_output", text: out[2].trim() } : null;
   return undefined;
+}
+
+// The text of a local command's output, without the tags Claude Code wraps it in.
+function commandOutput(text: string): string | undefined {
+  return /^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>$/.exec(text.trim())?.[2].trim();
+}
+
+function commandResult(id: string, ts: string | undefined, text: string, m: RawMessage): CommandItem {
+  const run = record(m.local_command_run);
+  const name = typeof run?.command === "string" ? run.command.slice(0, COMMAND_NAME_LIMIT) : "";
+  const args = typeof run?.args === "string" ? clipped(run.args.trim(), SUMMARY_LIMIT) : "";
+  const usage = usageReport(m.usage_report);
+  const context = record(m.context_usage) ? contextDetail(m.context_usage) : undefined;
+  return {
+    kind: "command",
+    id,
+    ts,
+    ...(name ? { name } : {}),
+    ...(args ? { args } : {}),
+    text: clipped(text.trim(), COMMAND_TEXT_LIMIT),
+    ...(usage ? { usage } : {}),
+    ...(context ? { context } : {}),
+  };
 }
 
 // Turns SDK messages (live or from a transcript) into conversation items. Items keep stable ids
@@ -262,9 +293,13 @@ export class ItemBuilder {
     }
     if (m.isSynthetic || (!texts.length && !images && !files.length)) return out;
     const text = texts.join("\n\n");
-    const special = commandNote(text);
-    if (special === null) return out;
     const id = m.uuid ?? `user-${this.items.length}`;
+    const printed = commandOutput(text);
+    if (printed !== undefined) {
+      if (printed) out.push(this.put(commandResult(id, ts, printed, m)));
+      return out;
+    }
+    const special = commandNote(text);
     const item = special ? this.note(special.code, special.text, ts, id) : this.userText(id, text, ts, images, files);
     if (item) out.push(item);
     return out;
@@ -273,6 +308,11 @@ export class ItemBuilder {
   private assistant(m: RawMessage, ts?: string): DisplayItem[] {
     const out: DisplayItem[] = [];
     const blocks = Array.isArray(m.message?.content) ? m.message.content : [];
+    if (m.local_command_run || typeof m.local_command_source === "string" || m.usage_report || m.context_usage) {
+      const text = blocks.map((b) => (b.type === "text" ? String(b.text ?? "") : "")).join("\n");
+      // The transcript keeps the result under the same uuid, so a reload finds the same item.
+      return [this.put(commandResult(m.uuid ?? `note-${++this.noteCount}`, ts, text, m))];
+    }
     blocks.forEach((b, i) => {
       const id = `${m.uuid}:${i}`;
       if (b.type === "text" && String(b.text ?? "").trim()) {
@@ -332,8 +372,9 @@ export class ItemBuilder {
 
   private system(m: RawMessage, ts?: string): DisplayItem[] {
     let item: DisplayItem | undefined;
+    const output = m.subtype === "local_command_output" || m.subtype === "local_command" ? (commandOutput(m.content ?? "") ?? m.content?.trim()) : undefined;
     if (m.subtype === "compact_boundary") item = this.note("compacted", undefined, ts, m.uuid);
-    else if (m.subtype === "local_command_output" && m.content?.trim()) item = this.note("command_output", m.content.trim(), ts, m.uuid);
+    else if (output) item = this.put(commandResult(m.uuid ?? `note-${++this.noteCount}`, ts, output, m));
     else if ((m.subtype === "task_progress" || m.subtype === "task_notification") && m.tool_use_id) item = this.taskTools(m.tool_use_id, m.usage?.tool_uses);
     return item ? [item] : [];
   }

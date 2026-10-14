@@ -1,6 +1,6 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ModelOption } from "../../../broker/src/protocol.ts";
-import { ItemView, StreamPreview } from "../components/Items.tsx";
+import { ItemView, StreamPreview, shownItems } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { PendingCard } from "../components/Pending.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
@@ -9,13 +9,16 @@ import { ContextSheet } from "../components/sheets/Context.tsx";
 import { McpSheet } from "../components/sheets/Mcp.tsx";
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
 import { TasksSheet } from "../components/sheets/Tasks.tsx";
+import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { baseName, closedText, hostLabel, sessionTitle } from "../labels.ts";
 import { navigate, send, toast, useApp } from "../state.ts";
 
 const NEAR_BOTTOM_PX = 160;
 const NO_MODELS: ModelOption[] = [];
-type SheetName = "changes" | "context" | "mcp" | "rewind" | "tasks";
+type SheetName = "changes" | "context" | "mcp" | "rewind" | "tasks" | "usage";
+// "/" commands that open a sheet when picked from the list, as VS Code opens its dialogs.
+const COMMAND_SHEETS: Record<string, SheetName> = { context: "context", mcp: "mcp", usage: "usage", cost: "usage", stats: "usage" };
 
 export function Chat({ sessionId }: { sessionId: string }) {
   const chat = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat : undefined));
@@ -24,6 +27,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const othersWaiting = useApp((s) => (s.sessions ?? []).some((x) => x.id !== sessionId && x.pendingCount));
   const [menu, setMenu] = useState(false);
   const [sheet, setSheet] = useState<SheetName | null>(null);
+  const [usageCommand, setUsageCommand] = useState("usage");
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -34,6 +38,20 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const busy = Boolean(st?.busy);
   const cwd = st?.cwd ?? summary?.cwd ?? "";
   const title = sessionTitle({ title: st?.title || summary?.title || "" });
+  const items = useMemo(() => shownItems(chat?.items ?? []), [chat?.items]);
+
+  const sendText = (text: string, attachments: string[] = []) => {
+    stick.current = true;
+    return send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
+  };
+
+  const openCommand = (name: string) => {
+    const target = COMMAND_SHEETS[name];
+    if (!controllable || !target) return false;
+    if (target === "usage") setUsageCommand(name);
+    setSheet(target);
+    return true;
+  };
 
   useLayoutEffect(() => {
     const el = listRef.current;
@@ -90,7 +108,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
             </div>
           )}
           {chat?.hasMore && <div className="text-center text-xs text-muted">이전 대화는 생략했습니다</div>}
-          {chat?.items.map((item) => <ItemView key={item.id} item={item} running={busy} />)}
+          {items.map((item) => <ItemView key={item.id} item={item} running={busy} />)}
           {chat?.stream && <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />}
           {busy && !chat?.stream && !chat?.pending.length && (
             <div className="flex items-center gap-2 text-sm text-muted">
@@ -123,10 +141,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
         controllable={controllable}
         disabledReason={disabledReason}
         placeholder="Claude에게 메시지"
-        onSend={(text, attachments) => {
-          stick.current = true;
-          return send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
-        }}
+        onSend={sendText}
+        onCommand={openCommand}
         onStop={() => send({ t: "interrupt", sessionId })}
         onMode={(mode) => send({ t: "set_mode", sessionId, mode })}
         onModel={(model) => send({ t: "set_model", sessionId, model })}
@@ -159,6 +175,16 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "tasks" && <TasksSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "context" && <ContextSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "usage" && (
+        <UsageSheet
+          sessionId={sessionId}
+          onClose={() => setSheet(null)}
+          onFail={() => {
+            setSheet(null);
+            if (!sendText(`/${usageCommand}`)) toast("not connected");
+          }}
+        />
+      )}
       {sheet === "mcp" && <McpSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "rewind" && <RewindSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
     </div>

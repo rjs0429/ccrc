@@ -200,3 +200,18 @@ export function clock(ts?: string): string {
   const d = new Date(ts);
   return Number.isNaN(d.getTime()) ? "" : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
+
+export function usageLimitLabel(kind: string, scope?: string): string {
+  if (kind === "session") return "현재 세션";
+  if (kind === "weekly_all") return "이번 주 · 모든 모델";
+  if (kind === "weekly_scoped" && scope) return `이번 주 · ${scope}`;
+  return scope ? `${kind} · ${scope}` : kind;
+}
+
+export function usageResetText(at: string, now = new Date()): string {
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return "";
+  const time = clock(at);
+  const day = d.toDateString() === now.toDateString() ? "오늘" : `${d.getMonth() + 1}월 ${d.getDate()}일`;
+  return `${day} ${time} 초기화`;
+}

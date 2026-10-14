@@ -6,6 +6,7 @@ import type { DisplayItem } from "../protocol.ts";
 import { ItemBuilder, type RawMessage } from "./items.ts";
 
 const PROJECTS = path.join(os.homedir(), ".claude", "projects");
+const TRAILING_COMMANDS = 50;
 
 export function projectDirName(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
@@ -29,36 +30,67 @@ export function transcriptPath(sessionId: string, cwd?: string): string | undefi
 interface Row {
   timestamp?: string;
   toolUseResult?: unknown;
+  command?: Pick<RawMessage, "subtype" | "content" | "local_command_run" | "usage_report" | "context_usage">;
 }
 
-// The SDK's session reader resolves the conversation chain but drops timestamps and structured tool
-// output; take them from the file. Only the outputs items are built from (file patches, subagent totals)
-// are kept.
-async function rows(file: string): Promise<Map<string, Row>> {
+interface FileRow {
+  uuid?: string;
+  parentUuid?: string | null;
+  type?: string;
+  subtype?: string;
+  timestamp?: string;
+  toolUseResult?: unknown;
+  content?: unknown;
+  commandRun?: unknown;
+  usageReport?: unknown;
+  contextUsage?: unknown;
+}
+
+// A local command's result row, which the SDK's reader returns without its subtype and content.
+function commandRow(e: FileRow): Row["command"] {
+  if (e.type !== "system" || e.subtype !== "local_command" || typeof e.content !== "string") return undefined;
+  return { subtype: e.subtype, content: e.content, local_command_run: e.commandRun, usage_report: e.usageReport, context_usage: e.contextUsage };
+}
+
+// The SDK's session reader resolves the conversation chain but drops timestamps, structured tool
+// output and local command results; take them from the file. Only the outputs items are built from
+// (file patches, subagent totals) are kept.
+async function rows(file: string): Promise<{ map: Map<string, Row>; after: Map<string, string> }> {
   const map = new Map<string, Row>();
+  const after = new Map<string, string>();
   const text = await fs.promises.readFile(file, "utf8");
   for (const line of text.split("\n")) {
     if (!line.includes('"timestamp"')) continue;
     try {
-      const e = JSON.parse(line) as Row & { uuid?: string };
+      const e = JSON.parse(line) as FileRow;
       const out = e.toolUseResult;
       const used = out !== null && typeof out === "object" && ("structuredPatch" in out || "totalToolUseCount" in out);
-      if (e.uuid) map.set(e.uuid, { timestamp: e.timestamp, ...(used ? { toolUseResult: out } : {}) });
+      const command = commandRow(e);
+      if (!e.uuid) continue;
+      map.set(e.uuid, { timestamp: e.timestamp, ...(used ? { toolUseResult: out } : {}), ...(command ? { command } : {}) });
+      if (command && e.parentUuid) after.set(e.parentUuid, e.uuid);
     } catch {}
   }
-  return map;
+  return { map, after };
 }
 
 export async function loadHistory(sessionId: string, cwd: string): Promise<DisplayItem[]> {
   const file = transcriptPath(sessionId, cwd);
-  const [messages, extra] = await Promise.all([
+  const [messages, { map: extra, after }] = await Promise.all([
     getSessionMessages(sessionId, { includeSystemMessages: true }),
-    file ? rows(file) : Promise.resolve(new Map<string, Row>()),
+    file ? rows(file) : Promise.resolve({ map: new Map<string, Row>(), after: new Map<string, string>() }),
   ]);
   const builder = new ItemBuilder(cwd);
   for (const m of messages) {
     const row = extra.get(m.uuid);
-    builder.add({ ...(m as unknown as RawMessage), toolUseResult: row?.toolUseResult }, row?.timestamp);
+    builder.add({ ...(m as unknown as RawMessage), toolUseResult: row?.toolUseResult, ...row?.command }, row?.timestamp);
+  }
+  // The reader's chain ends at the last user or assistant message, before the results of commands run last.
+  let tail = messages.at(-1)?.uuid;
+  for (let n = 0; tail && after.has(tail) && n < TRAILING_COMMANDS; n++) {
+    tail = after.get(tail)!;
+    const row = extra.get(tail);
+    if (row?.command) builder.add({ type: "system", uuid: tail, ...row.command }, row.timestamp);
   }
   return builder.items;
 }

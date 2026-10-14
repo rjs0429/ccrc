@@ -13,6 +13,7 @@ import {
   type PermissionModeName,
   type RewindResult,
   type TaskInfo,
+  type UsageInfo,
 } from "../protocol.ts";
 import { ItemBuilder, clipInput, type RawMessage } from "./items.ts";
 
@@ -33,7 +34,6 @@ const TASK_STATUS = new Map<unknown, TaskInfo["status"]>([
   ["killed", "stopped"],
   ["stopped", "stopped"],
 ]);
-const CONTEXT_KINDS = new Set<unknown>(["used", "free", "buffer", "deferred"]);
 // An approved plan continues in the chosen mode, so only modes offered remotely may be named.
 const PLAN_DECISIONS = new Set<unknown>(["auto", "acceptEdits", "default", "keep_planning"]);
 
@@ -80,23 +80,6 @@ export function commandInfo(list: unknown): CommandInfo[] {
       description: typeof c.description === "string" ? c.description : "",
       ...(typeof c.argumentHint === "string" && c.argumentHint ? { argumentHint: c.argumentHint } : {}),
     }));
-}
-
-// Claude Code's get_context_usage answer, as the web client shows it.
-export function contextDetail(r: unknown): ContextDetail {
-  const o = isObj(r) ? r : {};
-  const model = clipped(o.model, NAME_MAX);
-  return {
-    percentage: count(o.percentage),
-    totalTokens: count(o.totalTokens),
-    maxTokens: count(o.maxTokens),
-    ...(model ? { model } : {}),
-    categories: (Array.isArray(o.categories) ? o.categories.filter(isObj) : []).map((c) => ({
-      name: clipped(c.name, NAME_MAX) ?? "",
-      tokens: count(c.tokens),
-      kind: CONTEXT_KINDS.has(c.kind) ? (c.kind as string) : c.isDeferred === true ? "deferred" : "used",
-    })),
-  };
 }
 
 // The servers of an mcp_status answer, with the number of tools in place of the tool list.
@@ -218,6 +201,10 @@ export abstract class SessionCore extends EventEmitter {
 
   // Session operations behind the web client's calls; a process type overrides the ones it supports.
   contextDetail(): Promise<ContextDetail> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  usage(): Promise<UsageInfo> {
     return Promise.reject(Error("not available for this session"));
   }
 

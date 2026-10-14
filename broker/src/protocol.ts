@@ -29,7 +29,7 @@ export interface ToolResult {
   truncated: boolean;
 }
 
-export type NoteCode = "interrupted" | "compacted" | "command" | "command_output" | "error";
+export type NoteCode = "interrupted" | "compacted" | "command" | "error";
 
 // One hunk of a file change as Claude Code reports it; each line starts with " ", "-" or "+".
 export interface Hunk {
@@ -67,7 +67,9 @@ export type DisplayItem =
       patchCut?: number;
       sub?: SubagentActivity;
     }
-  | { kind: "note"; id: string; ts?: string; code: NoteCode; text?: string };
+  | { kind: "note"; id: string; ts?: string; code: NoteCode; text?: string }
+  // The result of a local command (/usage, /context, ...): its text, and for some the data to draw it from.
+  | { kind: "command"; id: string; ts?: string; name?: string; args?: string; text: string; usage?: UsageInfo; context?: ContextDetail };
 
 // A background task of a session (subagent, shell, workflow) as Claude Code reports it.
 export interface TaskInfo {
@@ -92,6 +94,22 @@ export interface ContextDetail {
   categories: { name: string; tokens: number; kind: string }[];
 }
 
+// One of the plan's usage limits. kind: "session", "weekly_all", "weekly_scoped", ...; scope names the model
+// or surface a scoped limit is for; severity is Claude's reading of it ("normal", "warning", "critical").
+export interface UsageLimit {
+  kind: string;
+  scope?: string;
+  percent: number;
+  resetsAt?: string;
+  severity?: string;
+  active?: boolean;
+}
+
+export interface UsageInfo {
+  limits: UsageLimit[];
+  session?: { costUsd: number; durationMs: number; apiDurationMs: number; linesAdded: number; linesRemoved: number };
+}
+
 export interface McpServerInfo {
   name: string;
   status: string;
@@ -111,6 +129,7 @@ export interface RewindResult {
 // Requests the web client makes about one session and their answers ("call" / "call_result").
 export interface CallMap {
   context: { args: Record<string, never>; data: ContextDetail };
+  usage: { args: Record<string, never>; data: UsageInfo };
   mcp_status: { args: Record<string, never>; data: McpServerInfo[] };
   mcp_toggle: { args: { server: string; enabled: boolean }; data: McpServerInfo[] };
   mcp_reconnect: { args: { server: string }; data: McpServerInfo[] };
@@ -120,7 +139,7 @@ export interface CallMap {
   files: { args: { query: string }; data: string[] };
 }
 export type CallOp = keyof CallMap;
-export const CALL_OPS: CallOp[] = ["context", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files"];
+export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files"];
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {

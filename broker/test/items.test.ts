@@ -53,8 +53,113 @@ test("editor context and harness wrappers are not shown as user text", () => {
   b.add({ type: "user", uuid: "u5", isSynthetic: true, message: { content: "summary of earlier turns" } });
   b.add({ type: "user", uuid: "u6", message: { content: "<task-notification>\n<task-id>x</task-id>\n</task-notification>" } });
   assert.deepEqual(
-    b.items.map((i) => (i.kind === "note" ? `${i.code}:${i.text}` : i.kind === "user" ? `user:${i.text}` : i.kind)),
-    ["user:Explain this file", "command:/model sonnet", "command_output:Set model to sonnet"],
+    b.items.map((i) => (i.kind === "note" ? `${i.code}:${i.text}` : i.kind === "user" || i.kind === "command" ? `${i.kind}:${i.text}` : i.kind)),
+    ["user:Explain this file", "command:/model sonnet", "command:Set model to sonnet"],
+  );
+});
+
+const USAGE_REPORT = {
+  session: { total_cost_usd: 0.5, total_api_duration_ms: 0, total_duration_ms: 1496, total_lines_added: 2, total_lines_removed: 0, model_usage: { "claude-haiku-5-5": {} } },
+  rate_limits: {
+    limits: [
+      { kind: "session", group: "session", percent: 32, resets_at: "2026-10-14T05:19:59.650837+00:00", scope: null, severity: "normal", is_active: false },
+      { kind: "weekly_all", group: "weekly", percent: 91, resets_at: "2026-10-17T12:59:59.650860+00:00", scope: null, severity: "critical", is_active: true },
+      { kind: "weekly_scoped", group: "weekly", percent: 0, resets_at: null, scope: { model: { display_name: "Fable" }, surface: null }, severity: "normal", is_active: false },
+      { kind: "broken", percent: "x" },
+    ],
+    extra_usage: { is_enabled: true, monthly_limit: 5000, used_credits: 100, utilization: 2, currency: "USD" },
+  },
+};
+
+const CONTEXT_USAGE = {
+  model: "claude-haiku-5-5",
+  total_tokens: 27623,
+  raw_max_tokens: 1000000,
+  percentage: 3,
+  categories: [
+    { name: "System prompt", tokens: 3180, kind: "used" },
+    { name: "System tools (deferred)", tokens: 11198, kind: "deferred" },
+    { name: "Free space", tokens: 939377, kind: "free" },
+  ],
+  mcp_tools: [{ name: "mcp__x__y", server_name: "x", tokens: 10 }],
+  memory_files: [{ path: "/home/u/.claude/CLAUDE.md", type: "User", tokens: 2237 }],
+  agents: [],
+};
+
+const USAGE_ITEM = {
+  kind: "command",
+  name: "usage",
+  text: "Current session: 32% used",
+  usage: {
+    limits: [
+      { kind: "session", percent: 32, resetsAt: "2026-10-14T05:19:59.650837+00:00", severity: "normal" },
+      { kind: "weekly_all", percent: 91, resetsAt: "2026-10-17T12:59:59.650860+00:00", severity: "critical", active: true },
+      { kind: "weekly_scoped", percent: 0, scope: "Fable", severity: "normal" },
+    ],
+    session: { costUsd: 0.5, durationMs: 1496, apiDurationMs: 0, linesAdded: 2, linesRemoved: 0 },
+  },
+};
+
+const CONTEXT_ITEM = {
+  kind: "command",
+  name: "context",
+  text: "## Context Usage",
+  context: {
+    percentage: 3,
+    totalTokens: 27623,
+    maxTokens: 1000000,
+    model: "claude-haiku-5-5",
+    categories: [
+      { name: "System prompt", tokens: 3180, kind: "used" },
+      { name: "System tools (deferred)", tokens: 11198, kind: "deferred" },
+      { name: "Free space", tokens: 939377, kind: "free" },
+    ],
+  },
+};
+
+test("a local command's live result becomes a command item with its card data", () => {
+  const b = new ItemBuilder(cwd);
+  b.userText("u1", "/usage");
+  b.add({
+    type: "assistant",
+    uuid: "a1",
+    message: { content: [{ type: "text", text: "Current session: 32% used" }] },
+    local_command_source: "<local-command-stdout>Current session: 32% used</local-command-stdout>",
+    local_command_run: { command: "usage", args: "" },
+    usage_report: USAGE_REPORT,
+  });
+  b.add({ type: "user", uuid: "u1", message: { content: "<command-name>/usage</command-name>\n<command-message>usage</command-message>\n<command-args></command-args>" } });
+  b.add({
+    type: "assistant",
+    uuid: "a2",
+    message: { content: [{ type: "text", text: "## Context Usage" }] },
+    local_command_source: "<local-command-stdout>## Context Usage</local-command-stdout>",
+    local_command_run: { command: "context", args: "" },
+    context_usage: CONTEXT_USAGE,
+  });
+  b.add({ type: "assistant", uuid: "a3", message: { content: [{ type: "text", text: "Set model to sonnet" }] }, local_command_run: { command: "model", args: " sonnet " } });
+  assert.deepEqual(
+    b.items.map(({ ts: _ts, ...i }) => i),
+    [
+      { kind: "note", id: "u1", code: "command", text: "/usage" },
+      { id: "a1", ...USAGE_ITEM },
+      { id: "a2", ...CONTEXT_ITEM },
+      { kind: "command", id: "a3", name: "model", args: "sonnet", text: "Set model to sonnet" },
+    ],
+  );
+});
+
+test("a transcript's local command row and live command output become command items", () => {
+  const b = new ItemBuilder(cwd);
+  b.add({ type: "system", subtype: "local_command", uuid: "s1", content: "<local-command-stdout>Current session: 32% used</local-command-stdout>", local_command_run: { command: "usage", args: "" }, usage_report: USAGE_REPORT });
+  b.add({ type: "system", subtype: "local_command", uuid: "s2", content: "<local-command-stdout></local-command-stdout>", local_command_run: { command: "model", args: "" } });
+  b.add({ type: "system", subtype: "local_command_output", uuid: "s3", content: "Voice mode on" });
+  assert.deepEqual(
+    b.items.map(({ ts: _ts, ...i }) => i),
+    [
+      { id: "s1", ...USAGE_ITEM },
+      { kind: "command", id: "s3", text: "Voice mode on" },
+    ],
   );
 });
 

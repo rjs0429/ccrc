@@ -4,6 +4,8 @@ import { clock, noteText } from "../labels.ts";
 import { useApp } from "../state.ts";
 import { DiffView, PatchStats } from "./diff/DiffView.tsx";
 import { Markdown } from "./Markdown.tsx";
+import { ContextView } from "./sheets/Context.tsx";
+import { UsageView } from "./sheets/Usage.tsx";
 import { ToolInput, ToolOutput } from "./ToolInput.tsx";
 import { Icon, Spinner } from "./ui.tsx";
 
@@ -91,6 +93,74 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
   );
 }
 
+type CommandResult = Extract<DisplayItem, { kind: "command" }>;
+
+const FOLD_CHARS = 600;
+const FOLD_LINES = 12;
+
+function Folded({ text, mono }: { text: string; mono?: boolean }) {
+  const long = text.length > FOLD_CHARS || text.split("\n").length > FOLD_LINES;
+  const [open, setOpen] = useState(!long);
+  return (
+    <div>
+      <div className={open ? "" : "max-h-48 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]"}>
+        {mono ? <pre className="font-mono text-[12.5px] break-words whitespace-pre-wrap">{text}</pre> : <Markdown text={text} className="text-[14px]" />}
+      </div>
+      {long && (
+        <button onClick={() => setOpen(!open)} className="mt-1 text-sm font-medium text-accent">
+          {open ? "접기" : "더 보기"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// A local command's result: /usage and /context drawn from their data, any other output as text.
+function CommandCard({ item }: { item: CommandResult }) {
+  const [more, setMore] = useState(false);
+  const head = item.name ? `/${item.name}${item.args ? ` ${item.args}` : ""}` : "명령 출력";
+  const data = item.usage || item.context;
+  return (
+    <div className="rounded-xl border border-line bg-surface" data-command={item.name ?? ""}>
+      <div className="flex items-center gap-2 px-3 pt-2 pb-1">
+        <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted">{head}</span>
+        {data && item.text && (
+          <button onClick={() => setMore(!more)} className="shrink-0 text-xs font-medium text-accent">
+            {more ? "접기" : item.context ? "자세히" : "원문"}
+          </button>
+        )}
+      </div>
+      <div className="px-3 pb-3 pt-1">
+        {item.usage ? (
+          <UsageView usage={item.usage} />
+        ) : item.context ? (
+          <ContextView detail={item.context} full={more} />
+        ) : (
+          <Folded text={item.text} />
+        )}
+        {item.usage && more && (
+          <div className="mt-3 border-t border-line pt-2">
+            <Folded text={item.text} mono />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const USAGE_NAMES = new Set(["usage", "cost", "stats"]);
+const commandOf = (item?: DisplayItem) => (item?.kind === "command" && item.name ? (USAGE_NAMES.has(item.name) ? "usage" : item.name) : undefined);
+
+// The "/name" line next to the card of the same command says nothing the card's head does not.
+export function shownItems(items: DisplayItem[]): DisplayItem[] {
+  return items.filter((item, i) => {
+    if (item.kind !== "note" || item.code !== "command") return true;
+    let name = /^\/(\S+)/.exec(item.text ?? "")?.[1];
+    if (name && USAGE_NAMES.has(name)) name = "usage";
+    return !name || (commandOf(items[i - 1]) !== name && commandOf(items[i + 1]) !== name);
+  });
+}
+
 export const ItemView = memo(function ItemView({ item, running }: { item: DisplayItem; running: boolean }) {
   switch (item.kind) {
     case "user":
@@ -101,6 +171,8 @@ export const ItemView = memo(function ItemView({ item, running }: { item: Displa
       return <Thinking text={item.text} />;
     case "tool":
       return <ToolItem item={item} running={running} />;
+    case "command":
+      return <CommandCard item={item} />;
     case "note":
       return (
         <div className={`text-center text-xs whitespace-pre-wrap ${item.code === "error" ? "text-danger" : "text-muted"}`}>

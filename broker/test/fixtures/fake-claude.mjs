@@ -6,8 +6,11 @@
 // {"type":"answered"}. FAKE_BURST=1 writes a long line and an error result at start and exits at once;
 // FAKE_LINGER_MS keeps it running that long after its input ends.
 // The answer to initialize lists models and commands; FAKE_NO_INIT=1 leaves initialize unanswered.
+// "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data;
+// get_usage fails while the working folder holds a file named .fake-no-usage.
 // --version prints a version and exits.
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 
 const args = process.argv.slice(2);
 if (args.includes("--version")) {
@@ -47,6 +50,31 @@ function handle(m) {
   if (m.type === "user") {
     const content = m.message.content;
     const text = typeof content === "string" ? content : content.map((c) => c.text).join("");
+    if (text === "/usage") {
+      const shown = "Current session: 32% used\nCurrent week (all models): 91% used";
+      out({
+        type: "assistant",
+        session_id: sid,
+        uuid: randomUUID(),
+        parent_tool_use_id: null,
+        message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: shown }] },
+        local_command_source: `<local-command-stdout>${shown}</local-command-stdout>`,
+        local_command_run: { command: "usage", args: "" },
+        usage_report: {
+          session: { total_cost_usd: 0, total_api_duration_ms: 0, total_duration_ms: 1200, total_lines_added: 0, total_lines_removed: 0, model_usage: {} },
+          rate_limits: {
+            limits: [
+              { kind: "session", group: "session", percent: 32, resets_at: "2026-10-14T05:19:59Z", scope: null, severity: "normal", is_active: false },
+              { kind: "weekly_all", group: "weekly", percent: 91, resets_at: "2026-10-17T12:59:59Z", scope: null, severity: "critical", is_active: true },
+            ],
+          },
+        },
+      });
+      const replay = "<command-name>/usage</command-name>\n<command-message>usage</command-message>\n<command-args></command-args>";
+      out({ type: "user", session_id: sid, uuid: m.uuid ?? randomUUID(), isReplay: true, message: { role: "user", content: replay } });
+      out({ type: "result", subtype: "success", session_id: sid, is_error: false, result: shown, num_turns: 0, local_command: "usage", total_cost_usd: 0 });
+      return;
+    }
     out({ ...m, session_id: sid, uuid: m.uuid ?? randomUUID(), isReplay: true });
     if (text === "HOLD") return;
     if (text === "MCP") {
@@ -67,6 +95,10 @@ function handle(m) {
   if (m.type === "control_request") {
     const init = m.request.subtype === "initialize";
     if (init && process.env.FAKE_NO_INIT) return;
+    if (m.request.subtype === "get_usage" && fs.existsSync(".fake-no-usage")) {
+      out({ type: "control_response", response: { subtype: "error", request_id: m.request_id, error: "usage unavailable" } });
+      return;
+    }
     const extra = init
       ? { models: [{ value: "default", displayName: "Default" }], commands: [{ name: "compact", description: "Compact the conversation", argumentHint: "" }], current_permission_mode: "default" }
       : m.request.subtype === "get_settings"
@@ -75,7 +107,21 @@ function handle(m) {
             sources: [{ source: "userSettings", settings: { env: { SECRET_TOKEN: "s3cret" } } }],
             applied: { model: "claude-haiku-5-5", effort: "medium", advisor: { secret: "s3cret" }, ultracode: false, ultracodeRequested: false, ultracodeAvailable: true },
           }
-        : {};
+        : m.request.subtype === "get_usage"
+          ? {
+              session: { total_cost_usd: 0.25, total_api_duration_ms: 900, total_duration_ms: 4000, total_lines_added: 3, total_lines_removed: 1, model_usage: { "claude-haiku-5-5": { inputTokens: 10 } } },
+              subscription_type: "max",
+              rate_limits_available: true,
+              rate_limits: {
+                five_hour: { utilization: 32, resets_at: "2026-10-14T05:19:59Z", note: "s3cret" },
+                seven_day: { utilization: 91, resets_at: "2026-10-17T12:59:59Z" },
+                seven_day_opus: null,
+                model_scoped: [{ display_name: "Fable", utilization: 0, resets_at: "2026-10-17T13:00:00Z", id: "s3cret" }],
+                extra_usage: { is_enabled: true, monthly_limit: 5000, used_credits: 1200, utilization: 24, currency: "USD" },
+              },
+              behaviors: { day: { request_count: 1, project: "s3cret" } },
+            }
+          : {};
     out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { subtype: m.request.subtype, ...extra } } });
     if (m.request.subtype === "set_permission_mode") out({ type: "system", subtype: "status", permissionMode: m.request.mode, session_id: sid });
     return;

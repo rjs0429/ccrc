@@ -67,8 +67,40 @@ function Group({ title, hint, rows, max }: { title: string; hint?: string; rows:
   );
 }
 
-export function ContextSheet({ sessionId, onClose }: SheetProps) {
+// The context count: the share in use and its bar, and with `full` the categories in groups.
+export function ContextView({ detail, full }: { detail: ContextDetail; full?: boolean }) {
   const models = useApp((s) => s.options?.models);
+  const max = detail.maxTokens || 1;
+  const byKind = (kind: string) => detail.categories.filter((c) => c.kind === kind);
+  const reserved = byKind("buffer").reduce((n, c) => n + c.tokens, 0);
+  const model = detail.model ? modelLabel(models ?? [], detail.model) : undefined;
+  return (
+    <>
+      <div className="px-1">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-2xl font-semibold tabular-nums">{Math.round(detail.percentage)}%</span>
+          <span className="text-xs text-muted tabular-nums">
+            {detail.totalTokens.toLocaleString()} / {detail.maxTokens.toLocaleString()} 토큰
+          </span>
+        </div>
+        <div className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-surface-2">
+          <div className="bg-accent" style={{ width: `${Math.min(100, (detail.totalTokens / max) * 100)}%` }} />
+          <div className="bg-muted/50" style={{ width: `${Math.min(100, (reserved / max) * 100)}%` }} />
+        </div>
+        {model && <div className="mt-2 text-xs text-muted">모델 {model}</div>}
+      </div>
+      {full && (
+        <>
+          <Group title="사용 중" rows={byKind("used")} max={max} />
+          <Group title="남은 공간" hint="Autocompact buffer는 대화를 요약할 때 쓰려고 남겨 둔 자리입니다" rows={[...byKind("buffer"), ...byKind("free")]} max={max} />
+          <Group title="필요할 때만 불러옴" hint="쓸 때만 context에 올라오는 도구라 지금은 자리를 차지하지 않습니다" rows={byKind("deferred")} />
+        </>
+      )}
+    </>
+  );
+}
+
+export function ContextSheet({ sessionId, onClose }: SheetProps) {
   const [detail, setDetail] = useState<ContextDetail>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
@@ -89,33 +121,9 @@ export function ContextSheet({ sessionId, onClose }: SheetProps) {
     };
   }, [sessionId, round]);
 
-  const max = detail?.maxTokens || 1;
-  const byKind = (kind: string) => detail?.categories.filter((c) => c.kind === kind) ?? [];
-  const reserved = byKind("buffer").reduce((n, c) => n + c.tokens, 0);
-  const model = detail?.model ? modelLabel(models ?? [], detail.model) : undefined;
-
   return (
     <Sheet title="Context 사용량" onClose={onClose}>
-      {detail && (
-        <>
-          <div className="px-1">
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="text-2xl font-semibold tabular-nums">{Math.round(detail.percentage)}%</span>
-              <span className="text-xs text-muted tabular-nums">
-                {detail.totalTokens.toLocaleString()} / {detail.maxTokens.toLocaleString()} 토큰
-              </span>
-            </div>
-            <div className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-surface-2">
-              <div className="bg-accent" style={{ width: `${Math.min(100, (detail.totalTokens / max) * 100)}%` }} />
-              <div className="bg-muted/50" style={{ width: `${Math.min(100, (reserved / max) * 100)}%` }} />
-            </div>
-            {model && <div className="mt-2 text-xs text-muted">모델 {model}</div>}
-          </div>
-          <Group title="사용 중" rows={byKind("used")} max={max} />
-          <Group title="남은 공간" hint="Autocompact buffer는 대화를 요약할 때 쓰려고 남겨 둔 자리입니다" rows={[...byKind("buffer"), ...byKind("free")]} max={max} />
-          <Group title="필요할 때만 불러옴" hint="쓸 때만 context에 올라오는 도구라 지금은 자리를 차지하지 않습니다" rows={byKind("deferred")} />
-        </>
-      )}
+      {detail && <ContextView detail={detail} full />}
       {loading && <Waiting text="Context 사용량을 계산하는 중입니다. 1분까지 걸릴 수 있습니다" />}
       {error && !loading && <Failed text={error} onRetry={() => setRound((r) => r + 1)} />}
       {detail && !loading && (

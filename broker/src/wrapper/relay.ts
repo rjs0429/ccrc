@@ -18,6 +18,7 @@ const MODELS = Buffer.from('"models":');
 const RESULT = Buffer.from('"type":"result"');
 const USER = Buffer.from('"type":"user"');
 const APPLIED = Buffer.from('"applied":');
+const RATE_LIMITS = Buffer.from('"rate_limits"');
 // The broker sees the conversation, these requests from Claude Code (only can_use_tool may be answered
 // remotely), the answer to VS Code's initialize, the applied part of its get_settings answers, and these
 // settings changes from VS Code; other control traffic between VS Code and Claude Code stays between them.
@@ -31,6 +32,7 @@ const REMOTE_REQUESTS = new Set([
   "apply_flag_settings",
   "get_settings",
   "get_context_usage",
+  "get_usage",
   "mcp_status",
   "mcp_toggle",
   "mcp_reconnect",
@@ -41,6 +43,9 @@ const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
 // The only part of a get_settings answer that leaves the wrapper: what the next request runs with.
 // The merged settings and their sources carry env values and hooks and stay between VS Code and Claude Code.
 const APPLIED_KEYS = ["model", "effort", "ultracode", "ultracodeAvailable"];
+// The only parts of a get_usage answer that leave the wrapper: the plan's limit windows and the session totals.
+const USAGE_WINDOWS = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"];
+const SESSION_TOTALS = ["total_cost_usd", "total_duration_ms", "total_api_duration_ms", "total_lines_added", "total_lines_removed"];
 const SETTLED_KEEP = 500;
 const ASKED_KEEP = 100;
 const LINK_BUFFER_MAX = 16 * 1024 * 1024;
@@ -96,6 +101,26 @@ export function allowedFlagSettings(settings: unknown): boolean {
   );
 }
 
+const plainObj = (v: unknown): Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+function usageWindow(v: unknown, label?: unknown): Record<string, unknown> {
+  const w = plainObj(v);
+  const out: Record<string, unknown> = {};
+  if (typeof label === "string") out.display_name = label;
+  if (typeof w.utilization === "number") out.utilization = w.utilization;
+  if (typeof w.resets_at === "string") out.resets_at = w.resets_at;
+  return out;
+}
+
+function reply(r: Record<string, unknown>, response: () => Record<string, unknown>): Buffer {
+  const out =
+    r.subtype === "success"
+      ? { subtype: "success", request_id: r.request_id, response: response() }
+      : { subtype: "error", request_id: r.request_id, error: typeof r.error === "string" ? r.error : "request failed" };
+  return Buffer.from(JSON.stringify({ type: "control_response", response: out }));
+}
+
 // A get_settings answer reduced to the applied model, effort and ultracode state.
 export function appliedAnswer(msg: Record<string, unknown>): Buffer {
   const r = (msg.response ?? {}) as Record<string, unknown>;
@@ -105,11 +130,23 @@ export function appliedAnswer(msg: Record<string, unknown>): Buffer {
     const v = a[k];
     if (typeof v === "string" || typeof v === "boolean" || v === null) applied[k] = v;
   }
-  const response =
-    r.subtype === "success"
-      ? { subtype: "success", request_id: r.request_id, response: { applied } }
-      : { subtype: "error", request_id: r.request_id, error: typeof r.error === "string" ? r.error : "request failed" };
-  return Buffer.from(JSON.stringify({ type: "control_response", response }));
+  return reply(r, () => ({ applied }));
+}
+
+// A get_usage answer reduced to the limit windows and the session totals.
+export function usageAnswer(msg: Record<string, unknown>): Buffer {
+  const r = plainObj(msg.response);
+  return reply(r, () => {
+    const a = plainObj(r.response);
+    const limits = plainObj(a.rate_limits);
+    const session = plainObj(a.session);
+    const windows: Record<string, unknown> = {};
+    for (const k of USAGE_WINDOWS) if (plainObj(limits[k]).utilization !== undefined) windows[k] = usageWindow(limits[k]);
+    if (Array.isArray(limits.model_scoped)) windows.model_scoped = limits.model_scoped.map((m) => usageWindow(m, plainObj(m).display_name));
+    const totals: Record<string, unknown> = {};
+    for (const k of SESSION_TOTALS) if (typeof session[k] === "number") totals[k] = session[k];
+    return { session: totals, rate_limits: windows };
+  });
 }
 
 class Gate {
@@ -143,6 +180,11 @@ function ask(set: Set<string>, id: string): void {
   if (set.size > ASKED_KEEP) set.delete(set.values().next().value!);
 }
 
+function askFor(map: Map<string, string>, id: string, subtype: string): void {
+  map.set(id, subtype);
+  if (map.size > ASKED_KEEP) map.delete(map.keys().next().value!);
+}
+
 // Sits between VS Code (hostIn/hostOut) and the Claude Code process it asked for. Every line passes
 // through unchanged and a copy goes to the broker, which may add user messages, its own control
 // requests and answers to open permission prompts. Whichever side answers a prompt first wins.
@@ -156,9 +198,10 @@ export class Relay extends EventEmitter {
   private hostGone = false;
   private open = new Map<string, { subtype: string; line: Buffer }>();
   private settled = new Map<string, Party>();
-  // get_settings requests whose answers go on reduced: VS Code's to the broker as well, the broker's only to it.
+  // Requests whose answers go on reduced: VS Code's get_settings to the broker as well, the broker's
+  // get_settings and get_usage only to it.
   private hostAsked = new Set<string>();
-  private remoteAsked = new Set<string>();
+  private remoteAsked = new Map<string, string>();
   private state = new Map<string, { seq: number; t: "out" | "in"; line: Buffer }>();
   private seq = 0;
   private sessionId?: string;
@@ -321,7 +364,10 @@ export class Relay extends EventEmitter {
       const id = msg?.type === "control_response" ? (msg.response as Record<string, unknown> | undefined)?.request_id : msg?.request_id;
       if (msg?.type === "control_response") {
         if (typeof id === "string" && id.startsWith(REMOTE_PREFIX)) {
-          this.copy("reply", this.remoteAsked.delete(id) || line.includes(APPLIED) ? appliedAnswer(msg) : line);
+          const asked = this.remoteAsked.get(id);
+          this.remoteAsked.delete(id);
+          const usage = asked === "get_usage" || (!asked && line.includes(RATE_LIMITS));
+          this.copy("reply", usage ? usageAnswer(msg) : asked || line.includes(APPLIED) ? appliedAnswer(msg) : line);
           return;
         }
         if (typeof id === "string" && this.hostAsked.delete(id)) {
@@ -400,7 +446,7 @@ export class Relay extends EventEmitter {
       if (typeof req.subtype !== "string" || !REMOTE_REQUESTS.has(req.subtype)) return reject("request not allowed", m.request_id);
       if (req.subtype === "set_permission_mode" && req.mode === "bypassPermissions") return reject("mode not allowed", m.request_id);
       if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
-      if (req.subtype === "get_settings") ask(this.remoteAsked, m.request_id);
+      if (req.subtype === "get_settings" || req.subtype === "get_usage") askFor(this.remoteAsked, m.request_id, req.subtype);
       this.toChild(Buffer.from(JSON.stringify(m)));
       return;
     }
