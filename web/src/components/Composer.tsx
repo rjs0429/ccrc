@@ -377,6 +377,7 @@ export function Composer({
       {sheet === "effort" && (
         <Sheet title="Effort" onClose={() => setSheet(null)}>
           {deferred && <StartHint />}
+          {!efforts && <div className="px-3 py-2 text-sm text-muted">이 모델은 Effort를 고를 수 없습니다</div>}
           {(efforts ?? []).map((e) => (
             <Choice key={e} label={effortLabel(e)} selected={effort === e} onClick={() => (onEffort(e), setSheet(null))} />
           ))}
