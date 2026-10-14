@@ -5,9 +5,15 @@
 // requests get a success response, and each control_response it receives is reported back as
 // {"type":"answered"}. FAKE_BURST=1 writes a long line and an error result at start and exits at once;
 // FAKE_LINGER_MS keeps it running that long after its input ends.
+// The answer to initialize lists models and commands; FAKE_NO_INIT=1 leaves initialize unanswered.
+// --version prints a version and exits.
 import { randomUUID } from "node:crypto";
 
 const args = process.argv.slice(2);
+if (args.includes("--version")) {
+  console.log("2.1.296 (Claude Code)");
+  process.exit(0);
+}
 const value = (name) => {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === name) return args[i + 1];
@@ -59,7 +65,11 @@ function handle(m) {
     return;
   }
   if (m.type === "control_request") {
-    const extra = m.request.subtype === "initialize" ? { models: [{ value: "default", displayName: "Default" }], current_permission_mode: "default" } : {};
+    const init = m.request.subtype === "initialize";
+    if (init && process.env.FAKE_NO_INIT) return;
+    const extra = init
+      ? { models: [{ value: "default", displayName: "Default" }], commands: [{ name: "compact", description: "Compact the conversation", argumentHint: "" }], current_permission_mode: "default" }
+      : {};
     out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { subtype: m.request.subtype, ...extra } } });
     if (m.request.subtype === "set_permission_mode") out({ type: "system", subtype: "status", permissionMode: m.request.mode, session_id: sid });
     return;
