@@ -57,6 +57,8 @@ export interface StartOptions {
   mode?: PermissionModeName;
   effort?: EffortName;
   claudePath?: string;
+  // Starts with Ultracode asked for, as a flag setting, so the first message waits for nothing.
+  ultracode?: boolean;
   // Applied once Claude Code has started, the way a running session changes them.
   later?: { effort?: EffortName; ultracode?: boolean };
 }
@@ -138,6 +140,7 @@ export class BrokerSession extends SessionCore {
         permissionMode: opts.mode,
         model: opts.model,
         effort: opts.effort,
+        ...(opts.ultracode ? { settings: { ultracode: true } } : {}),
         settingSources: ["user", "project", "local"],
         systemPrompt: { type: "preset", preset: "claude_code" },
         includePartialMessages: true,
@@ -158,10 +161,19 @@ export class BrokerSession extends SessionCore {
         this.adoptStyles(r.output_style, r.available_output_styles);
         if (opts.later) await this.applyLater(opts.later).catch(() => {});
         ready();
-        this.refreshApplied();
+        if (opts.ultracode || opts.later?.ultracode) await this.confirmUltracode();
+        else this.refreshApplied();
         this.refreshContext();
       })
       .catch(() => ready());
+  }
+
+  // Claude Code takes Ultracode only with a model that offers it and workflows on; the conversation says so when it did not.
+  private async confirmUltracode(): Promise<void> {
+    this.adoptSettings(await this.readApplied().catch(() => ({})));
+    if (this.ultracodeAvailable === undefined || this.ultracode === true || this.closed) return;
+    const item = this.builder.note("ultracode", undefined, new Date().toISOString());
+    if (item) this.emit("item", item);
   }
 
   // Ultracode goes on only where the model offers it.

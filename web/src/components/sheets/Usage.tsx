@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import type { UsageInfo, UsageLimit } from "../../../../broker/src/protocol.ts";
 import { errorText, usageLimitLabel, usageResetText } from "../../labels.ts";
-import { call, toast } from "../../state.ts";
+import { call, callFolder, toast } from "../../state.ts";
 import { Sheet } from "../ui.tsx";
 import { Failed, SmallButton, Waiting } from "./parts.tsx";
-import type { SheetProps } from "./types.ts";
 
 // Without a running session the broker starts a short-lived Claude Code process to ask.
 const WAIT_MS = 60_000;
@@ -63,9 +62,9 @@ export function UsageView({ usage }: { usage: UsageInfo }) {
   );
 }
 
-// Fills from get_usage, which the broker answers for the account even without a running session. When
-// nothing answers the first time, `onFail` takes over if given (the command goes as text).
-export function UsageSheet({ sessionId, onClose, onFail }: SheetProps & { onFail?: () => void }) {
+// Fills from get_usage, which the broker answers for the account even without a running session, or before one
+// starts in `cwd`. When nothing answers the first time, `onFail` takes over if given (the command goes as text).
+export function UsageSheet({ sessionId, cwd, onClose, onFail }: { sessionId?: string; cwd?: string; onClose: () => void; onFail?: () => void }) {
   const [usage, setUsage] = useState<UsageInfo>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
@@ -75,7 +74,7 @@ export function UsageSheet({ sessionId, onClose, onFail }: SheetProps & { onFail
     let live = true;
     setLoading(true);
     setError(undefined);
-    call(sessionId, "usage", {}, WAIT_MS)
+    (sessionId ? call(sessionId, "usage", {}, WAIT_MS) : callFolder(cwd ?? "", "usage", {}, WAIT_MS))
       .then(
         (u) => live && setUsage(u),
         (e: Error) => live && (usage ? toast("사용량을 새로 불러오지 못했습니다") : onFail ? onFail() : setError(errorText(e.message))),
@@ -84,7 +83,7 @@ export function UsageSheet({ sessionId, onClose, onFail }: SheetProps & { onFail
     return () => {
       live = false;
     };
-  }, [sessionId, round]);
+  }, [sessionId, cwd, round]);
 
   return (
     <Sheet title="사용량" onClose={onClose}>

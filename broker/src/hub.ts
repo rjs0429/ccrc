@@ -1,7 +1,7 @@
 import type { WebSocket } from "ws";
 import type { Audit } from "./audit.ts";
 import type { Leases } from "./lease.ts";
-import { CALL_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg } from "./protocol.ts";
+import { CALL_OPS, FOLDER_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg } from "./protocol.ts";
 import type { SessionManager } from "./sessions/manager.ts";
 import type { Uploads } from "./uploads.ts";
 
@@ -13,6 +13,10 @@ const MAX_ATTACHMENTS = 10;
 const ELICIT_ACTIONS = new Set<unknown>(["accept", "decline", "cancel"]);
 // Calls that change something are recorded in the audit log.
 const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "resume", "set_output_style", "unqueue"]);
+// A folder call refused for a folder is recorded once in this long.
+const DENIED_LOG_MS = 60_000;
+const DENIED_KEEP = 100;
+const DRAFT_ID = /^[A-Za-z0-9-]{1,64}$/;
 
 function send(ws: WebSocket, msg: ServerMsg): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -57,6 +61,7 @@ export class Hub {
   private changedTimer?: NodeJS.Timeout;
   private pinger: NodeJS.Timeout;
   private alive = new WeakSet<WebSocket>();
+  private deniedLogged = new Map<string, number>();
 
   constructor(manager: SessionManager, leases: Leases, audit: Audit, uploads: Uploads) {
     this.manager = manager;
@@ -176,10 +181,11 @@ export class Hub {
       return;
     }
     const sessionId = "sessionId" in msg && typeof msg.sessionId === "string" ? msg.sessionId : undefined;
+    const draftId = msg.t === "new_session" && typeof msg.draftId === "string" && DRAFT_ID.test(msg.draftId) ? msg.draftId : undefined;
     try {
       await this.dispatch(msg, ws);
     } catch (e) {
-      send(ws, { t: "error", message: e instanceof Error ? e.message : String(e), sessionId });
+      send(ws, { t: "error", message: e instanceof Error ? e.message : String(e), sessionId, ...(draftId ? { draftId } : {}) });
     }
   }
 
@@ -214,19 +220,32 @@ export class Hub {
         this.changed();
         return;
       }
+      // The attachments are checked before the session is made, so a bad one starts nothing.
       case "new_session": {
-        const text = str(msg.text, MAX_TEXT);
+        const ids = msg.attachments === undefined ? [] : msg.attachments;
+        if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENTS) throw Error("invalid request");
+        const text = ids.length && msg.text === "" ? "" : str(msg.text, MAX_TEXT);
         if (msg.mode !== undefined && !PERMISSION_MODES.includes(msg.mode)) throw Error("invalid mode");
         if (msg.effort !== undefined && !EFFORTS.includes(msg.effort)) throw Error("invalid effort");
+        if (msg.ultracode !== undefined && typeof msg.ultracode !== "boolean") throw Error("invalid ultracode");
+        if (msg.draftId !== undefined && (typeof msg.draftId !== "string" || !DRAFT_ID.test(msg.draftId))) throw Error("invalid request");
+        const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
         const s = await m.create(str(msg.cwd, 4096), {
           model: msg.model === undefined ? undefined : str(msg.model),
           mode: msg.mode,
           effort: msg.effort,
+          ultracode: msg.ultracode === true,
         });
-        this.audit.log("new_session", { device, sessionId: s.id, cwd: s.cwd });
+        this.audit.log("new_session", {
+          device,
+          sessionId: s.id,
+          cwd: s.cwd,
+          ...(msg.ultracode ? { ultracode: true } : {}),
+          ...(ids.length ? { attachments: ids.length } : {}),
+        });
         this.remoteSends.set(s.id, Date.now());
-        s.send(text);
-        if (this.active) send(this.active, { t: "session_started", sessionId: s.id });
+        s.send(text, blocks);
+        if (this.active) send(this.active, { t: "session_started", sessionId: s.id, ...(msg.draftId ? { draftId: msg.draftId } : {}) });
         await this.setView(s.id);
         return;
       }
@@ -294,6 +313,10 @@ export class Hub {
       if (ws === this.active) send(ws, { t: "call_result", id, ...r });
     };
     try {
+      if (!("sessionId" in msg) && "cwd" in msg) {
+        reply({ ok: true, data: await this.folderCall(msg) });
+        return;
+      }
       const sessionId = sid(msg.sessionId);
       if (!CALL_OPS.includes(msg.op)) throw Error("unknown request");
       const args = msg.args && typeof msg.args === "object" && !Array.isArray(msg.args) ? msg.args : {};
@@ -313,6 +336,32 @@ export class Hub {
     } catch (e) {
       reply({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }
+  }
+
+  // A call about a folder no session runs in yet goes only to a folder a new session may start in. A listing
+  // made for it is recorded, and so is a refusal; the queries are not.
+  private async folderCall(msg: Extract<ClientMsg, { t: "call"; cwd: string }>): Promise<unknown> {
+    if (!FOLDER_OPS.includes(msg.op)) throw Error("unknown request");
+    const cwd = str(msg.cwd, 4096);
+    const args = msg.args && typeof msg.args === "object" && !Array.isArray(msg.args) ? msg.args : {};
+    let dir: string;
+    try {
+      dir = await this.manager.resolveFolder(cwd);
+    } catch (e) {
+      this.folderDenied(cwd);
+      throw e;
+    }
+    const device = this.device;
+    return this.manager.folderCall(dir, msg.op, args, (files) => this.audit.log("folder_index", { device, cwd: dir, files }));
+  }
+
+  private folderDenied(cwd: string): void {
+    const now = Date.now();
+    if (now - (this.deniedLogged.get(cwd) ?? 0) < DENIED_LOG_MS) return;
+    this.deniedLogged.delete(cwd);
+    this.deniedLogged.set(cwd, now);
+    for (const old of [...this.deniedLogged.keys()].slice(0, -DENIED_KEEP)) this.deniedLogged.delete(old);
+    this.audit.log("folder_denied", { device: this.device, cwd });
   }
 
   // Each view change gets a number; work for an older view is dropped when it finishes. A session

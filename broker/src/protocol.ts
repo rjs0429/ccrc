@@ -31,7 +31,8 @@ export interface ToolResult {
   truncated: boolean;
 }
 
-export type NoteCode = "interrupted" | "compacted" | "command" | "error" | "unsent";
+// "ultracode": Ultracode was asked for at the start but Claude Code could not turn it on.
+export type NoteCode = "interrupted" | "compacted" | "command" | "error" | "unsent" | "ultracode";
 
 // One hunk of a file change as Claude Code reports it; each line starts with " ", "-" or "+".
 export interface Hunk {
@@ -214,6 +215,9 @@ export interface CallMap {
 }
 export type CallOp = keyof CallMap;
 export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume", "output_style", "set_output_style", "unqueue"];
+// The calls the new-session screen makes about a folder before any session runs in it.
+export type FolderOp = "files" | "commands" | "usage";
+export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage"];
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {
@@ -306,6 +310,8 @@ export interface ModelOption {
   label: string;
   description?: string;
   efforts?: EffortName[];
+  // Whether Claude Code offered Ultracode with this model in an earlier session; absent when not known.
+  ultracode?: boolean;
 }
 
 export interface LiveState {
@@ -339,7 +345,18 @@ export type ClientMsg =
   | { t: "view"; sessionId: string | null; focus?: string }
   // attachments: ids from POST /api/upload, sent before the text as Claude Code content blocks.
   | { t: "send"; sessionId: string; text: string; attachments?: string[] }
-  | { t: "new_session"; cwd: string; text: string; model?: string; mode?: PermissionModeName; effort?: EffortName }
+  // draftId: the phone's name for the start, returned with session_started or an error about it.
+  | {
+      t: "new_session";
+      cwd: string;
+      text: string;
+      model?: string;
+      mode?: PermissionModeName;
+      effort?: EffortName;
+      ultracode?: boolean;
+      attachments?: string[];
+      draftId?: string;
+    }
   | { t: "answer"; sessionId: string; requestId: string; answer: Answer }
   | { t: "interrupt"; sessionId: string }
   | { t: "set_mode"; sessionId: string; mode: PermissionModeName }
@@ -348,6 +365,7 @@ export type ClientMsg =
   | { t: "set_ultracode"; sessionId: string; on: boolean }
   | { t: "release"; sessionId: string }
   | { t: "call"; id: number; sessionId: string; op: CallOp; args?: Record<string, unknown> }
+  | { t: "call"; id: number; cwd: string; op: FolderOp; args?: Record<string, unknown> }
   // Whether the page is in front, so the broker knows when to notify instead.
   | { t: "visibility"; visible: boolean }
   | { t: "ping" };
@@ -369,8 +387,8 @@ export type ServerMsg =
   | { t: "pending_add"; sessionId: string; request: PendingRequest }
   | { t: "pending_remove"; sessionId: string; requestId: string }
   | { t: "state"; sessionId: string; state: LiveState }
-  | { t: "session_started"; sessionId: string }
+  | { t: "session_started"; sessionId: string; draftId?: string }
   | { t: "sessions_changed" }
-  | { t: "error"; message: string; sessionId?: string }
+  | { t: "error"; message: string; sessionId?: string; draftId?: string }
   | { t: "call_result"; id: number; ok: boolean; data?: unknown; error?: string }
   | { t: "pong" };

@@ -12,6 +12,8 @@
 // "/status" the same way with text only; "/help" as a command headless Claude Code cannot open, with no name; get_usage fails while the working folder holds a file named .fake-no-usage.
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
 // FAKE_REQUESTS=<file> gets a line with its arguments and environment and then one per control request or user message it receives.
+// get_settings reports a --model starting with "claude-" as the model; one naming "no-ultracode" does not offer Ultracode, which
+// --settings {"ultracode":true} asks for.
 // --version prints a version and exits.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -28,6 +30,17 @@ const value = (name) => {
     if (args[i].startsWith(name + "=")) return args[i].slice(name.length + 1);
   }
 };
+const flagSettings = (() => {
+  const v = value("--settings");
+  try {
+    return v ? JSON.parse(v.trim().startsWith("{") ? v : fs.readFileSync(v, "utf8")) : {};
+  } catch {
+    return {};
+  }
+})();
+const modelArg = value("--model") ?? "";
+const appliedModel = modelArg.startsWith("claude-") ? modelArg : "claude-haiku-5-5";
+const ultracodeAvailable = !modelArg.includes("no-ultracode");
 const sid = value("--session-id") || (args.includes("--fork-session") ? undefined : value("--resume")) || randomUUID();
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const record = (m) => process.env.FAKE_REQUESTS && fs.appendFileSync(process.env.FAKE_REQUESTS, JSON.stringify(m) + "\n");
@@ -67,7 +80,8 @@ function handle(m) {
   if (m.type === "user") {
     const content = m.message.content;
     const text = typeof content === "string" ? content : content.map((c) => c.text).join("");
-    record({ user: text });
+    const blocks = Array.isArray(content) ? content.filter((c) => c.type !== "text").map((c) => c.type) : [];
+    record({ user: text, ...(blocks.length ? { blocks } : {}) });
     if (holding) {
       queue.push(m);
       if (m.uuid) lifecycle(m.uuid, "queued");
@@ -219,7 +233,14 @@ function handle(m) {
         ? {
             effective: { env: { SECRET_TOKEN: "s3cret" }, hooks: { Stop: [{ command: "hook-cmd" }] }, ...(style ? { outputStyle: style } : {}) },
             sources: [{ source: "userSettings", settings: { env: { SECRET_TOKEN: "s3cret" } } }],
-            applied: { model: "claude-haiku-5-5", effort: "medium", advisor: { secret: "s3cret" }, ultracode: false, ultracodeRequested: false, ultracodeAvailable: true },
+            applied: {
+              model: appliedModel,
+              effort: "medium",
+              advisor: { secret: "s3cret" },
+              ultracode: flagSettings.ultracode === true && ultracodeAvailable,
+              ultracodeRequested: flagSettings.ultracode === true,
+              ultracodeAvailable,
+            },
           }
         : m.request.subtype === "get_usage"
           ? {
