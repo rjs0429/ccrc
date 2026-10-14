@@ -137,7 +137,8 @@ function declined(text: string): ToolReply | undefined {
 
 function plan(text: string, isError: boolean, output: Rec | undefined): ToolReply | undefined {
   if (isError) {
-    const feedback = (REASON.exec(text)?.[1] ?? (text.startsWith(REJECTED) || text === KEEP_PLANNING || text.startsWith("<tool_use_error>") ? "" : text)).trim();
+    if (text.startsWith("<tool_use_error>")) return undefined;
+    const feedback = (REASON.exec(text)?.[1] ?? (text.startsWith(REJECTED) || text === KEEP_PLANNING ? "" : text)).trim();
     return feedback ? { kind: "kept_planning", feedback: clip(feedback, ANSWER_LIMIT) } : { kind: "kept_planning" };
   }
   if (!text.startsWith(APPROVED)) return undefined;

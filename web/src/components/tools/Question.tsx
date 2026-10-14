@@ -29,14 +29,14 @@ function questionsOf(input: Input): Question[] {
   });
 }
 
-// The options an answer names and any typed text. Several choices come joined with ", ", and a label may hold
-// ", " itself, so the longest label that fits is taken first.
+// The options an answer names and any typed text. Choices and typed text, even after a single choice, come joined
+// with ", ", and a label may hold ", " itself, so the longest label that fits is taken first.
 function picks(q: Question, answer: string): { picked: string[]; other?: string } {
   const labels = q.options.map((o) => o.label);
-  if (!q.multiSelect) return labels.includes(answer) ? { picked: [answer] } : { picked: [], other: answer };
+  if (labels.includes(answer)) return { picked: [answer] };
   const picked: string[] = [];
   let rest = answer;
-  for (;;) {
+  while (q.multiSelect || !picked.length) {
     const label = labels.filter((l) => rest === l || rest.startsWith(`${l}, `)).sort((a, b) => b.length - a.length)[0];
     if (label === undefined) break;
     picked.push(label);
@@ -51,7 +51,7 @@ function Preview({ text, open: initial = false }: { text: string; open?: boolean
   const [open, setOpen] = useState(initial);
   return (
     <div className="mt-1.5">
-      <button onClick={() => setOpen(!open)} className="flex items-center gap-0.5 text-xs font-medium text-accent">
+      <button onClick={() => setOpen(!open)} className="-my-1.5 -ml-2 flex items-center gap-0.5 px-2 py-1.5 text-xs font-medium text-accent">
         미리보기
         <Icon.chevronDown className={`size-3.5 transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>

@@ -120,6 +120,7 @@ test("a plan's outcome: approved, approved as edited, kept planning with or with
     { kind: "kept_planning", feedback: "split step 2" },
   );
   assert.deepEqual(plan("[Request interrupted by user for tool use]", true), { kind: "interrupted" });
+  assert.equal(plan("<tool_use_error>You are not in plan mode.</tool_use_error>", true), undefined);
   assert.equal(plan("Your plan has been submitted to the team lead for approval."), undefined);
 });
 

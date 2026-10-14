@@ -82,7 +82,7 @@ export function ToolInput({ name, input, reply }: { name: string; input: unknown
   return (
     <div className="space-y-1.5" data-tool-view={name}>
       <div className="flex justify-end">
-        <button onClick={() => setRaw(!raw)} className="text-xs font-medium text-accent" data-raw-toggle>
+        <button onClick={() => setRaw(!raw)} className="-my-1.5 -mr-2 px-2 py-1.5 text-xs font-medium text-accent" data-raw-toggle>
           {raw ? "보기" : "원문"}
         </button>
       </div>
