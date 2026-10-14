@@ -10,6 +10,8 @@ import { Icon, Spinner } from "./ui.tsx";
 export const BIG_IMAGE_BYTES = 1024 * 1024;
 const SERVED = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// A message sent while Claude works reaches the transcript only when it is delivered, which can take
+// minutes, so a thumbnail in view keeps retrying at the last interval.
 const RETRY_MS = [2000, 5000, 15_000, 30_000, 60_000];
 // Thumbnails load while within this distance of the visible part of the conversation and are let go beyond it.
 const NEAR_MARGIN = "600px 0px";
@@ -63,8 +65,8 @@ function Thumb({ shown, index, onOpen }: { shown: Shown; index: number; onOpen: 
   const big = !local && shown.size > BIG_IMAGE_BYTES && !(src && opened.has(src));
 
   useEffect(() => {
-    if (!failed || failed > RETRY_MS.length) return;
-    const t = setTimeout(() => setRetry(failed), RETRY_MS[failed - 1]);
+    if (!failed) return;
+    const t = setTimeout(() => setRetry(failed), RETRY_MS[Math.min(failed, RETRY_MS.length) - 1]);
     return () => clearTimeout(t);
   }, [failed]);
 
