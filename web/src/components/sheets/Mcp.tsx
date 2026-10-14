@@ -59,7 +59,7 @@ function ServerRow(props: { server: McpServerInfo; working: boolean; locked: boo
         )}
         {working && <Spinner className="size-4 text-muted" />}
       </div>
-      {error && <div className="mt-1.5 text-xs break-words text-danger">{error}</div>}
+      {error && error !== server.error && <div className="mt-1.5 text-xs break-words text-danger">{error}</div>}
     </div>
   );
 }
@@ -87,11 +87,15 @@ export function McpSheet({ sessionId, onClose }: SheetProps) {
     };
   }, [sessionId, round]);
 
+  // A change that fails can still change the server (one that cannot start is left on, as failed).
   const act = (server: string, run: () => Promise<McpServerInfo[]>) => {
     setWorking(server);
     setFailed(undefined);
     run()
-      .then(setServers, (e: Error) => setFailed({ server, text: errorText(e.message) }))
+      .then(setServers, (e: Error) => {
+        setFailed({ server, text: errorText(e.message) });
+        setRound((r) => r + 1);
+      })
       .finally(() => setWorking(undefined));
   };
 
