@@ -552,8 +552,6 @@ export abstract class SessionCore extends EventEmitter {
     }
     for (const item of this.builder.add(m)) this.emit("item", item);
     if (m.type === "user" && m.isReplay === true && typeof m.uuid === "string") this.dequeue(m.uuid);
-    // Nothing is left in Claude Code's queue, so what it said it held has been taken in or dropped.
-    if (m.type === "result" && m.queued_turn_count === 0) for (const id of [...this.held]) this.dequeue(id);
   }
 
   protected onInit(): void {}

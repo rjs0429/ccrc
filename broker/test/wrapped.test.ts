@@ -797,7 +797,7 @@ test("a queued message sent from here is taken back with cancel_async_message", 
   assert.equal(s.builder.items.length, 0, "nothing lands in the conversation");
 });
 
-test("Claude Code dropping a message or finishing with an empty queue clears it", async () => {
+test("Claude Code dropping a message clears it, and a message still held stays queued across a result", async () => {
   const { s, wrapper } = await session();
   s.send("one");
   s.send("two");
@@ -807,8 +807,13 @@ test("Claude Code dropping a message or finishing with an empty queue clears it"
   wrapper.out(lifecycle(two, "queued"));
   wrapper.out(lifecycle(one, "refused"));
   await until(() => s.state().queued?.length === 2, "a refused message leaves the queue");
+  // Claude Code 2.1.296 reports queued_turn_count 0 while a message it holds waits for the next turn.
   wrapper.out({ type: "result", subtype: "success", is_error: false, session_id: SID, queued_turn_count: 0 });
-  await until(() => s.state().queued?.length === 1, "what Claude Code held is gone once it has none left");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(s.state().queued?.map((q) => q.id), [two, three]);
+  wrapper.out(lifecycle(two, "started"));
+  await until(() => s.state().queued?.length === 1, "the held message lands when Claude Code takes it in");
+  assert.deepEqual(s.builder.items.map((i) => i.id), [two]);
   assert.equal(s.state().queued![0].id, three, "one it has not seen yet stays");
   const closed = new Promise((r) => s.once("closed", r));
   s.end("vscode_closed");
