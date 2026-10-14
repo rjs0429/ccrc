@@ -1,6 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const MAX_FILES = 20_000;
 const MAX_DEPTH = 8;
@@ -40,9 +43,21 @@ function listing(cwd: string): Listing {
   return l;
 }
 
-// The files git knows in the folder (tracked and not ignored), or a bounded walk outside git.
+// The files git knows in the folder (tracked and not ignored), or a bounded walk outside git. A repository
+// counts only when its work tree holds the folder, as its config may place the work tree anywhere.
 export async function listFiles(cwd: string): Promise<string[]> {
-  return (await gitFiles(cwd)) ?? walk(cwd);
+  return ((await inWorkTree(cwd)) ? await gitFiles(cwd) : undefined) ?? walk(cwd);
+}
+
+async function inWorkTree(cwd: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-c", "core.fsmonitor=false", "-C", cwd, "rev-parse", "--show-toplevel"], { timeout: GIT_TIMEOUT_MS });
+    const top = stdout.trim();
+    const rel = path.relative(top, await fs.promises.realpath(cwd));
+    return top !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+  } catch {
+    return false;
+  }
 }
 
 function gitFiles(cwd: string): Promise<string[] | undefined> {
