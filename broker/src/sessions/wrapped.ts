@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { elicitInfo } from "../elicit.ts";
 import type { Link } from "../link/server.ts";
-import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
+  ELICIT_MS,
   MCP_CHANGE_MS,
   READ_MS,
   SessionCore,
@@ -12,6 +14,7 @@ import {
   rewindResult,
   type ContentBlock,
   type Decision,
+  type ElicitAnswer,
 } from "./core.ts";
 import { fileContents, type FileContents } from "./file-read.ts";
 import type { RawMessage } from "./items.ts";
@@ -22,6 +25,7 @@ type Held = { from: "out" | "in" | "settled"; v: unknown };
 
 // The extension's own MCP server inside Claude Code; the extension leaves it out of its server list too.
 const HOST_SERVER = "claude-vscode";
+const ELICIT_SEEN_MAX = 100;
 
 const obj = (v: unknown): Obj => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -29,13 +33,18 @@ const str = (v: unknown): string | undefined => (typeof v === "string" ? v : und
 // A conversation that runs in VS Code and is reached through the wrapper between VS Code and Claude Code.
 // Remote input goes in as the same messages VS Code sends. Permission prompts show on both sides and the
 // wrapper keeps whichever answer comes first; dialogs show remotely but only VS Code answers them. MCP input
-// requests are not shown: the extension declines them itself as soon as they arrive.
+// requests, which the extension would decline unseen, are answered here: the wrapper holds one back from VS Code
+// and the session takes it while a phone can be reached, or passes it on to VS Code.
 export class WrappedSession extends SessionCore {
   readonly kind = "attached";
   readonly host = "VS Code";
   readonly link: Link;
   private toolUse = new Map<string, string>();
   private backlog: Held[] | null = [];
+  private elicitSeen = new Map<string, ElicitInfo>();
+  private elicitTimers = new Map<string, NodeJS.Timeout>();
+  reachable: () => boolean = () => false;
+  elicitMs = ELICIT_MS;
 
   constructor(link: Link, id: string, cwd: string, title?: string) {
     super(id, cwd, [], title);
@@ -63,6 +72,7 @@ export class WrappedSession extends SessionCore {
   }
 
   onOut(m: Obj): void {
+    if (m.type === "control_request" && obj(m.request).subtype === "elicitation") return this.noteElicitation(m);
     if (this.hold("out", m)) return;
     if (m.type === "control_request") this.onRequest(m);
     else if (m.type === "control_cancel_request") this.drop(m.request_id);
@@ -85,7 +95,37 @@ export class WrappedSession extends SessionCore {
     if (!this.hold("settled", requestId)) this.drop(requestId);
   }
 
+  // The wrapper holds an MCP input request back from VS Code until told what to do with it.
+  onHeld(requestId: unknown): void {
+    if (typeof requestId !== "string") return;
+    const info = this.elicitSeen.get(requestId);
+    this.elicitSeen.delete(requestId);
+    if (!info || this.closed || info.unsupported || !this.reachable()) {
+      this.link.send({ t: "pass", id: requestId });
+      return;
+    }
+    this.link.send({ t: "take", id: requestId });
+    const timer = setTimeout(() => this.expire(requestId), this.elicitMs);
+    timer.unref();
+    this.elicitTimers.set(requestId, timer);
+    this.ask({ requestId, kind: "elicitation", toolName: info.server, input: {}, elicitation: info });
+  }
+
+  // A request the wrapper no longer holds went to VS Code; one whose answer the wrapper refused is cancelled
+  // rather than left waiting.
+  onRejected(requestId: unknown, reason: unknown): void {
+    if (typeof requestId !== "string") return;
+    if (reason === "not held" && this.elicitTimers.has(requestId)) this.drop(requestId);
+    else if (reason === "invalid answer") this.settleElicitation(requestId, { action: "cancel" });
+  }
+
+  // Input requests taken but not answered go back to VS Code while Claude Code still runs.
   end(reason: string): void {
+    for (const [id, timer] of this.elicitTimers) {
+      clearTimeout(timer);
+      this.link.send({ t: "pass", id });
+    }
+    this.elicitTimers.clear();
     this.finish(reason);
   }
 
@@ -214,9 +254,44 @@ export class WrappedSession extends SessionCore {
     await this.link.request({ subtype: "update_settings", source: "localSettings", settings: { outputStyle: style } });
   }
 
+  protected settleElicitation(requestId: string, answer: ElicitAnswer): void {
+    clearTimeout(this.elicitTimers.get(requestId));
+    this.elicitTimers.delete(requestId);
+    this.link.send({ t: "to_cli", m: { type: "control_response", response: { subtype: "success", request_id: requestId, response: answer } } });
+  }
+
+  private expire(requestId: string): void {
+    if (!this.pending.has(requestId)) return;
+    this.settleElicitation(requestId, { action: "cancel" });
+    this.unask(requestId);
+  }
+
+  private noteElicitation(m: Obj): void {
+    const id = m.request_id;
+    const r = obj(m.request);
+    if (typeof id !== "string" || this.pending.has(id)) return;
+    this.elicitSeen.set(
+      id,
+      elicitInfo({
+        serverName: str(r.mcp_server_name) ?? "",
+        message: str(r.message) ?? "",
+        mode: r.mode === "url" ? "url" : "form",
+        url: str(r.url),
+        requestedSchema: r.requested_schema as Record<string, unknown> | undefined,
+        title: str(r.title),
+        displayName: str(r.display_name),
+        description: str(r.description),
+      }),
+    );
+    if (this.elicitSeen.size > ELICIT_SEEN_MAX) this.elicitSeen.delete(this.elicitSeen.keys().next().value!);
+  }
+
   private drop(requestId: unknown): void {
     if (typeof requestId !== "string") return;
     this.toolUse.delete(requestId);
+    this.elicitSeen.delete(requestId);
+    clearTimeout(this.elicitTimers.get(requestId));
+    this.elicitTimers.delete(requestId);
     this.unask(requestId);
   }
 

@@ -96,6 +96,10 @@ export class Hub {
     }
   }
 
+  get connected(): boolean {
+    return Boolean(this.active);
+  }
+
   // Whether the remote user has this session in front of them right now.
   isWatching(sessionId: string): boolean {
     return Boolean(this.active) && this.visible && this.viewing === sessionId;

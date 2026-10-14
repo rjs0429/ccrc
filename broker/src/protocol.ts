@@ -330,12 +330,18 @@ export type ClientMsg =
   | { t: "visibility"; visible: boolean }
   | { t: "ping" };
 
+// Items a snapshot leaves out between a far-back focused part and the latest items, which start at `before`.
+export interface SnapshotGap {
+  before: string;
+  skipped: number;
+}
+
 export type ServerMsg =
   | { t: "ready" }
   | { t: "window_conflict" }
   | { t: "window_taken" }
   | { t: "lease_revoked"; reason: string }
-  | { t: "snapshot"; sessionId: string; items: DisplayItem[]; pending: PendingRequest[]; state: LiveState; hasMore: boolean }
+  | { t: "snapshot"; sessionId: string; items: DisplayItem[]; pending: PendingRequest[]; state: LiveState; hasMore: boolean; gap?: SnapshotGap }
   | { t: "item"; sessionId: string; item: DisplayItem }
   | { t: "stream"; sessionId: string; text: string; thinking: boolean }
   | { t: "pending_add"; sessionId: string; request: PendingRequest }

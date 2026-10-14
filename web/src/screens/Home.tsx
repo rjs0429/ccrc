@@ -5,7 +5,7 @@ import { ApiError, api } from "../api.ts";
 import { Icon, Spinner } from "../components/ui.tsx";
 import { UpdateBanner } from "../components/UpdateBanner.tsx";
 import { baseName, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
-import { loggedOut, navigate, openAt, refreshSessions, toast, useApp } from "../state.ts";
+import { loggedOut, navigate, openAt, refreshSessions, useApp } from "../state.ts";
 
 type Filter = "all" | "running" | "waiting";
 const PAGE = 80;
@@ -38,8 +38,7 @@ function Marked({ text, marks }: { text: string; marks: Mark[] }) {
 }
 
 function openSnippet(sessionId: string, sn: SearchSnippet): void {
-  if (sn.earlier) toast("이전 대화를 요약하기 전의 메시지라 대화 화면에는 없습니다");
-  openAt(sessionId, sn.earlier ? undefined : sn.itemId);
+  openAt(sessionId, sn.itemId, sn.earlier);
 }
 
 function SearchRow({ r }: { r: SearchResult }) {

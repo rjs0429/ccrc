@@ -69,7 +69,7 @@ function field(key: string, p: unknown, required: boolean): ElicitField | undefi
       type: "string",
       ...(p.format ? { format: p.format as ElicitFormat } : {}),
       ...(minLength !== undefined ? { minLength } : {}),
-      ...(maxLength !== undefined ? { maxLength } : {}),
+      ...(maxLength !== undefined ? { maxLength: Math.min(maxLength, STRING_MAX) } : {}),
       ...(typeof p.default === "string" && p.default.length <= STRING_MAX ? { default: p.default } : {}),
     };
   }

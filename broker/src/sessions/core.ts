@@ -49,6 +49,8 @@ const PLAN_DECISIONS = new Set<unknown>(["auto", "acceptEdits", "default", "keep
 // and turning on or reconnecting an MCP server waits for the server to connect.
 export const CONTEXT_MS = 60_000;
 export const MCP_CHANGE_MS = 45_000;
+// An MCP server's input request left unanswered this long is cancelled.
+export const ELICIT_MS = 15 * 60_000;
 // A file of up to 10MB travels base64-encoded in one line.
 export const READ_MS = 30_000;
 

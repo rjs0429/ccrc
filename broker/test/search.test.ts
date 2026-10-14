@@ -309,16 +309,64 @@ test("the route needs a session, checks the query and keeps it out of the log", 
   await app.close();
 });
 
-test("a snapshot reaches back to a focused item within a bound", async () => {
+test("a snapshot reaches back to a focused item within a bound, and brings a far one with the items around it", async () => {
   const { tail } = await import("../src/sessions/manager.ts");
   const items = Array.from({ length: 3000 }, (_, i) => ({ kind: "user" as const, id: `i${i}`, text: "" }));
   const ids = (r: { items: { id: string }[] }) => [r.items[0].id, r.items.length];
   assert.deepEqual(ids(tail(items)), ["i2600", 400]);
   assert.deepEqual(ids(tail(items, "i2000")), ["i1980", 1020]);
   assert.deepEqual(ids(tail(items, "i2900")), ["i2600", 400]);
-  assert.deepEqual(ids(tail(items, "i100")), ["i2600", 400]);
+  const far = tail(items, "i100");
+  assert.deepEqual([far.items[0].id, far.items[219].id, far.items[220].id, far.items.length, far.hasMore], ["i80", "i299", "i2600", 620, true]);
+  assert.deepEqual(far.gap, { before: "i2600", skipped: 2600 - 300 });
+  assert.equal(tail(items, "i2000").gap, undefined);
+  const first = tail(items, "i0");
+  assert.deepEqual([first.items[0].id, first.items.length, first.hasMore, first.gap?.skipped], ["i0", 600, false, 2400]);
   assert.deepEqual(ids(tail(items, "missing")), ["i2600", 400]);
   assert.equal(tail(items, "i2000").hasMore, true);
   assert.deepEqual(ids(tail(items.slice(0, 50), "i10")), ["i0", 50]);
   assert.equal(tail(items.slice(0, 50), "i10").hasMore, false);
+});
+
+test("a message off the current conversation opens with the text of its own branch", async () => {
+  const id = sid();
+  const r = (uuid: string, parentUuid: string | null, type: "user" | "assistant", text: string, minute: number) =>
+    row(id, type, type === "user" ? text : [{ type: "text", text }], { uuid, parentUuid }, minute);
+  write(id, [
+    r("u1", null, "user", "plan the export", 1),
+    r("a1", "u1", "assistant", "here is a plan", 2),
+    r("u2-old", "a1", "user", "use csv", 3),
+    r("a2-old", "u2-old", "assistant", "csv it is", 4),
+    r("u3-old", "a2-old", "user", "add a header row", 5),
+    r("u2-new", "a1", "user", "use parquet", 6),
+    r("a2-new", "u2-new", "assistant", "parquet it is", 7),
+  ]);
+  const app = Fastify();
+  const deps = {
+    manager: { list: async () => [summary(id, "", 1)] },
+    requireAuth: async (req: { headers: Record<string, unknown> }, reply: { code: (n: number) => { send: (b: unknown) => unknown } }) => {
+      if (req.headers.authorization !== "ok") return reply.code(401).send({ error: "unauthorized" });
+    },
+  };
+  await registerSearch(app, deps as never);
+  const post = (payload: unknown, auth = "ok") => app.inject({ method: "POST", url: "/api/thread", headers: { authorization: auth }, payload: payload as object });
+  const shape = (t: { messages: { id: string; shared?: boolean }[]; focus: string; rewound: boolean }) => ({
+    ids: t.messages.map((m) => `${m.shared ? "=" : ""}${m.id}`),
+    focus: t.focus,
+    rewound: t.rewound,
+  });
+
+  const old = await post({ sessionId: id, itemId: "u3-old" });
+  assert.equal(old.statusCode, 200);
+  assert.deepEqual(shape(old.json()), { ids: ["=u1", "=a1:0", "u2-old", "a2-old:0", "u3-old"], focus: "u3-old", rewound: true });
+  assert.equal(old.json().messages[3].text, "csv it is");
+  assert.deepEqual(shape((await post({ sessionId: id, itemId: "a2-old:0" })).json()), { ids: ["=u1", "=a1:0", "u2-old", "a2-old:0", "u3-old"], focus: "a2-old:0", rewound: true });
+  assert.deepEqual(shape((await post({ sessionId: id, itemId: "u2-new" })).json()), { ids: ["=u1", "=a1:0", "=u2-new", "=a2-new:0"], focus: "u2-new", rewound: false });
+
+  assert.equal((await post({ sessionId: id, itemId: "u3-old" }, "no")).statusCode, 401);
+  assert.equal((await post({ sessionId: "../x", itemId: "u3-old" })).statusCode, 400);
+  assert.equal((await post({ sessionId: id, itemId: "x".repeat(129) })).statusCode, 400);
+  assert.equal((await post({ sessionId: id, itemId: "missing" })).statusCode, 404);
+  assert.equal((await post({ sessionId: sid(), itemId: "u3-old" })).statusCode, 404);
+  await app.close();
 });

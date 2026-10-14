@@ -51,6 +51,10 @@ export class Push {
     this.log = opts.log ?? ((line) => console.error(line));
   }
 
+  get subscribed(): boolean {
+    return this.store.list().length > 0;
+  }
+
   publicKey(): string {
     return this.store.vapid.publicKey;
   }

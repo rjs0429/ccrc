@@ -21,6 +21,7 @@ import {
   type PermissionModeName,
   type ServerMsg,
   type SessionSummary,
+  type SnapshotGap,
   type StartSettings,
   type UsageInfo,
 } from "../protocol.ts";
@@ -38,6 +39,7 @@ const CATALOG_MS = 3000;
 const EXACT_KEEP = 500;
 const SNAPSHOT_ITEMS = 400;
 const FOCUS_BEFORE = 20;
+const FOCUS_AFTER = 200;
 const FOCUS_ITEMS_MAX = 1500;
 const SWEEP_MS = 60_000;
 const WATCH_INTERVAL_MS = 2000;
@@ -62,17 +64,24 @@ export interface Snapshot {
   pending: PendingRequest[];
   state: LiveState;
   hasMore: boolean;
+  gap?: SnapshotGap;
 }
 
 function titleOf(info: SDKSessionInfo): string {
   return info.customTitle || info.summary || info.firstPrompt || "";
 }
 
-// The latest items, reaching back to the focused item when that stays within a bound.
-export function tail(items: DisplayItem[], focus?: string): { items: DisplayItem[]; hasMore: boolean } {
+// The latest items, reaching back to the focused item when that stays within a bound; a focused item further
+// back comes with the items around it, and the ones between that part and the latest are left out.
+export function tail(items: DisplayItem[], focus?: string): { items: DisplayItem[]; hasMore: boolean; gap?: SnapshotGap } {
+  const latest = Math.max(0, items.length - SNAPSHOT_ITEMS);
   const at = focus ? items.findIndex((i) => i.id === focus) : -1;
-  const from = at >= 0 && items.length - at <= FOCUS_ITEMS_MAX ? Math.min(Math.max(0, at - FOCUS_BEFORE), items.length - SNAPSHOT_ITEMS) : items.length - SNAPSHOT_ITEMS;
-  return { items: items.slice(Math.max(0, from)), hasMore: from > 0 };
+  if (at < 0 || at >= latest) return { items: items.slice(latest), hasMore: latest > 0 };
+  const from = Math.max(0, at - FOCUS_BEFORE);
+  if (items.length - at <= FOCUS_ITEMS_MAX) return { items: items.slice(from), hasMore: from > 0 };
+  const to = Math.min(at + FOCUS_AFTER, latest);
+  const gap = latest > to ? { gap: { before: items[latest].id, skipped: latest - to } } : {};
+  return { items: [...items.slice(from, to), ...items.slice(latest)], hasMore: from > 0, ...gap };
 }
 
 function within(dir: string, root: string): boolean {
@@ -133,6 +142,9 @@ export class SessionManager extends EventEmitter {
   private exact = new Map<string, { size: number; model: string }>();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string) => Promise<UsageInfo> = probeUsage;
+  // Whether a phone can be reached now (connected or subscribed to notifications), so a VS Code session's MCP
+  // input request is better answered there than declined by VS Code.
+  remoteReachable: () => boolean = () => false;
   // Where the model list comes from before any session reported one: (cwd, Claude Code path).
   modelProbe: (cwd: string, claudePath?: string) => Promise<ModelInfo[]> = probeModels;
   // Where a model's context window comes from when no session reported it: (cwd, model, Claude Code path).
@@ -594,12 +606,13 @@ export class SessionManager extends EventEmitter {
   attachLink(link: Link): void {
     let session: WrappedSession | undefined;
     let claiming = false;
-    let early: { from: "out" | "in" | "settled"; v: unknown }[] = [];
+    let early: { from: "out" | "in" | "settled" | "held"; v: unknown }[] = [];
     const bind = (id: string) => {
       if (session?.id === id || !link.usable) return;
       session?.end("switched");
       const cwd = link.hello?.cwd ?? "";
       const s = new WrappedSession(link, id, cwd);
+      s.reachable = () => this.remoteReachable();
       session = s;
       const prev = this.wrapped.get(id);
       this.wrapped.set(id, s);
@@ -608,6 +621,7 @@ export class SessionManager extends EventEmitter {
       for (const h of early) {
         if (h.from === "out") s.onOut(h.v as Record<string, unknown>);
         else if (h.from === "in") s.onIn(h.v as Record<string, unknown>);
+        else if (h.from === "held") s.onHeld(h.v);
         else s.onSettled(h.v);
       }
       early = [];
@@ -620,7 +634,7 @@ export class SessionManager extends EventEmitter {
           if (this.current(s)) this.emit("attached", id);
         });
     };
-    const keep = (from: "out" | "in" | "settled", v: unknown) => {
+    const keep = (from: "out" | "in" | "settled" | "held", v: unknown) => {
       if (early.length < EARLY_LINES_MAX) early.push({ from, v });
     };
     link.on("hello", (h: Hello) => {
@@ -647,6 +661,8 @@ export class SessionManager extends EventEmitter {
     link.on("out", (m: Record<string, unknown>) => (session ? session.onOut(m) : keep("out", m)));
     link.on("in", (m: Record<string, unknown>) => (session ? session.onIn(m) : keep("in", m)));
     link.on("settled", (id: unknown) => (session ? session.onSettled(id) : keep("settled", id)));
+    link.on("held", (id: unknown) => (session ? session.onHeld(id) : keep("held", id)));
+    link.on("rejected", (id: unknown, reason: unknown) => session?.onRejected(id, reason));
     link.on("exit", () => session?.end("vscode_closed"));
     link.on("close", () => session?.end("vscode_closed"));
   }

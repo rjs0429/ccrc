@@ -17,6 +17,7 @@ import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, 
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
+  ELICIT_MS,
   MCP_CHANGE_MS,
   READ_MS,
   SessionCore,
@@ -37,8 +38,6 @@ const REQUEST_MS = 15_000;
 const LATER_WAIT_MS = 20_000;
 // A process started for one question still has to start up and sign in.
 const PROBE_MS = 45_000;
-// An MCP server's input request left unanswered this long is cancelled.
-const ELICIT_MS = 15 * 60_000;
 
 type Requester = { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
 

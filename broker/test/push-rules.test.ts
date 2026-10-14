@@ -79,6 +79,18 @@ test("a VS Code request waits for the device's delay and is dropped when answere
   notifier.close();
 });
 
+test("an MCP input request on a VS Code session, which only the phone answers, is notified at once", async () => {
+  const { manager, sent, notifier } = setup({ vscodeDelaySec: 30 });
+  manager.state({ state: "attached", busy: true });
+  manager.ask("r1", "elicitation", "demo");
+  await sleep(30);
+  assert.deepEqual(
+    sent.map((s) => s.payload.body),
+    ["입력 요청"],
+  );
+  notifier.close();
+});
+
 test("a VS Code session's kind is known even when its first event is the request", async () => {
   const { manager, sent, notifier } = setup({ vscodeDelaySec: 30 });
   manager.sessions = [];

@@ -21,8 +21,8 @@ const USER = Buffer.from('"type":"user"');
 const APPLIED = Buffer.from('"applied":');
 const RATE_LIMITS = Buffer.from('"rate_limits"');
 const STYLES = Buffer.from('"available_output_styles"');
-// The broker sees the conversation, these requests from Claude Code (only can_use_tool may be answered
-// remotely), the answer to VS Code's initialize, the applied part of its get_settings answers, and these
+// The broker sees the conversation, these requests from Claude Code (can_use_tool, and an elicitation the
+// broker took, may be answered remotely), the answer to VS Code's initialize, the applied part of its get_settings answers, and these
 // settings changes from VS Code; other control traffic between VS Code and Claude Code stays between them.
 const SHOWN = new Set(["can_use_tool", "elicitation", "request_user_dialog"]);
 const HOST_SETTINGS = new Set(["set_model", "set_permission_mode", "apply_flag_settings"]);
@@ -58,6 +58,14 @@ const SETTLED_KEEP = 500;
 const ASKED_KEEP = 100;
 const LINK_BUFFER_MAX = 16 * 1024 * 1024;
 const RELEASE_WAIT_MS = 9000;
+// How long an MCP input request waits for the broker to take it before VS Code gets it.
+const ELICIT_TAKE_MS = 5000;
+const ELICIT_ACTIONS = new Set<unknown>(["accept", "decline", "cancel"]);
+const ELICIT_FIELDS_MAX = 50;
+const ELICIT_KEY_MAX = 200;
+const ELICIT_TEXT_MAX = 10_000;
+const ELICIT_ITEMS_MAX = 200;
+const ELICIT_ITEM_MAX = 1000;
 
 export interface RelayOptions {
   claudePath: string;
@@ -79,6 +87,7 @@ export interface RelayOptions {
   // Whether another process holds a session, and how long a resuming launch waits for it to let go.
   heldElsewhere?: (sessionId: string) => boolean;
   releaseWaitMs?: number;
+  elicitTakeMs?: number;
 }
 
 export function argValue(args: string[], name: string): string | undefined {
@@ -146,6 +155,26 @@ export function allowedReadFile(req: Record<string, unknown>): boolean {
 
 const plainObj = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+function elicitValue(v: unknown): boolean {
+  // The broker counts characters, which may take two UTF-16 units each.
+  if (typeof v === "string") return v.length <= 2 * ELICIT_TEXT_MAX;
+  if (typeof v === "number") return Number.isFinite(v);
+  if (typeof v === "boolean") return true;
+  return Array.isArray(v) && v.length <= ELICIT_ITEMS_MAX && v.every((x) => typeof x === "string" && x.length <= ELICIT_ITEM_MAX);
+}
+
+// The answer to an MCP input request: an action, and with accept the filled-in values, nothing else.
+export function elicitAnswer(r: unknown): { action: string; content?: Record<string, unknown> } | undefined {
+  const a = plainObj(r);
+  if (!ELICIT_ACTIONS.has(a.action)) return undefined;
+  if (a.content === undefined) return { action: a.action as string };
+  const c = a.content;
+  if (a.action !== "accept" || typeof c !== "object" || c === null || Array.isArray(c)) return undefined;
+  const entries = Object.entries(c);
+  if (entries.length > ELICIT_FIELDS_MAX || !entries.every(([k, v]) => k.length <= ELICIT_KEY_MAX && elicitValue(v))) return undefined;
+  return { action: "accept", content: Object.fromEntries(entries) };
+}
 
 function usageWindow(v: unknown, label?: unknown): Record<string, unknown> {
   const w = plainObj(v);
@@ -238,6 +267,8 @@ function askFor(map: Map<string, string>, id: string, subtype: string): void {
 // Sits between VS Code (hostIn/hostOut) and the Claude Code process it asked for. Every line passes
 // through unchanged and a copy goes to the broker, which may add user messages, its own control
 // requests and answers to open permission prompts. Whichever side answers a prompt first wins.
+// An MCP input request, which VS Code declines unseen, waits for the broker instead while one is connected;
+// it reaches VS Code when the broker passes it, does not take it in time, or goes away.
 // Without a broker the relay keeps working and reconnects in the background.
 // Emits "exit" (code, signal) once Claude Code has ended and its output has been passed on.
 export class Relay extends EventEmitter {
@@ -247,6 +278,7 @@ export class Relay extends EventEmitter {
   private hostEnded = false;
   private hostGone = false;
   private open = new Map<string, { subtype: string; line: Buffer }>();
+  private held = new Map<string, { line: Buffer; taken: boolean; timer?: NodeJS.Timeout }>();
   private settled = new Map<string, Party>();
   // Requests whose answers go on reduced: VS Code's get_settings to the broker as well, the broker's
   // get_settings and get_usage only to it.
@@ -413,6 +445,8 @@ export class Relay extends EventEmitter {
   private fromChild(line: Buffer): void {
     let msg: Record<string, unknown> | undefined;
     let shared = true;
+    let held = false;
+    let withdrawn = false;
     if (line.includes(CONTROL)) {
       msg = parseLine(line);
       const id = msg?.type === "control_response" ? (msg.response as Record<string, unknown> | undefined)?.request_id : msg?.request_id;
@@ -450,16 +484,50 @@ export class Relay extends EventEmitter {
         const subtype = (msg.request as Record<string, unknown> | undefined)?.subtype;
         shared = typeof id === "string" && typeof subtype === "string" && SHOWN.has(subtype);
         if (shared) this.open.set(id as string, { subtype: subtype as string, line });
+        held = shared && subtype === "elicitation" && this.hold(id as string, line);
       } else if (msg?.type === "control_cancel_request" && typeof id === "string" && this.open.delete(id)) {
+        withdrawn = this.unhold(id);
         this.settle(id, "cli");
       }
     }
-    this.toHost(line);
+    if (!held && !withdrawn) this.toHost(line);
     this.noteTurn(line, msg);
     if (line.includes(STATUS)) this.noteStatus(line, msg);
     if (!shared) return;
     this.noteState(line, msg);
     this.copy("out", line);
+    if (held) this.send({ t: "held", id: msg!.request_id as string });
+  }
+
+  private hold(id: string, line: Buffer): boolean {
+    if (!this.link || this.link.destroyed) return false;
+    const timer = setTimeout(() => this.release(id, "the broker did not take it"), this.o.elicitTakeMs ?? ELICIT_TAKE_MS);
+    this.held.set(id, { line, taken: false, timer });
+    return true;
+  }
+
+  private unhold(id: string): boolean {
+    const h = this.held.get(id);
+    if (!h) return false;
+    clearTimeout(h.timer);
+    this.held.delete(id);
+    return true;
+  }
+
+  private release(id: string, why: string): void {
+    const h = this.held.get(id);
+    if (!h) return;
+    this.unhold(id);
+    this.o.log(`MCP input request ${id} goes to VS Code: ${why}`);
+    this.toHost(h.line);
+  }
+
+  private decide(t: "take" | "pass", id: unknown): void {
+    const h = typeof id === "string" ? this.held.get(id) : undefined;
+    if (!h) return this.send({ t: "rejected", ...(typeof id === "string" ? { id } : {}), reason: "not held" });
+    if (t === "pass") return this.release(id as string, "the broker passed it");
+    h.taken = true;
+    clearTimeout(h.timer);
   }
 
   // A turn runs from its init line or the user message that opens it until its result.
@@ -544,7 +612,17 @@ export class Relay extends EventEmitter {
         this.send({ t: "dropped", id, from: "remote", by });
         return;
       }
-      if (this.open.get(id)?.subtype !== "can_use_tool") return reject("not answerable", id);
+      const subtype = this.open.get(id)?.subtype;
+      if (subtype === "elicitation" && this.held.get(id)?.taken) {
+        const answer = response?.subtype === "success" ? elicitAnswer(response.response) : undefined;
+        if (!answer) return reject("invalid answer", id);
+        this.unhold(id);
+        this.open.delete(id);
+        this.toChild(Buffer.from(JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: id, response: answer } })));
+        this.settle(id, "remote");
+        return;
+      }
+      if (subtype !== "can_use_tool") return reject("not answerable", id);
       const updates = (response?.response as Record<string, unknown> | undefined)?.updatedPermissions;
       if (Array.isArray(updates) && updates.some((u) => (u as Record<string, unknown> | null)?.mode === "bypassPermissions")) {
         return reject("mode not allowed", id);
@@ -650,6 +728,7 @@ export class Relay extends EventEmitter {
       if (this.link === sock) {
         this.link = undefined;
         this.o.log("broker connection closed");
+        for (const id of [...this.held.keys()]) this.release(id, "the broker went away");
       }
       this.gate?.open();
       this.retryLater();
@@ -679,6 +758,7 @@ export class Relay extends EventEmitter {
         this.gate?.open();
       } else if (f.t === "claim_wait") this.gate?.wait(Math.max(0, Number(f.ms) || 0));
       else if (f.t === "to_cli" && f.m && typeof f.m === "object") this.inject(f.m);
+      else if (f.t === "take" || f.t === "pass") this.decide(f.t, f.id);
     } catch (e) {
       this.o.log(`broker frame failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -688,6 +768,8 @@ export class Relay extends EventEmitter {
     if (this.finished) return;
     this.finished = true;
     clearTimeout(this.retryTimer);
+    for (const h of this.held.values()) clearTimeout(h.timer);
+    this.held.clear();
     this.gate?.open();
     this.o.log(`claude exited code=${code} signal=${signal}`);
     this.send({ t: "exit", code, signal });

@@ -1,6 +1,6 @@
 // Stands in for Claude Code in relay tests. Reads stream-json lines and answers in a fixed way:
 // a user message is replayed and answered; "ASK" opens a permission prompt; "CANCEL" opens one and
-// withdraws it; "MCP" sends VS Code an MCP request; "BIG" answers with a very long line; "HOLD" leaves
+// withdraws it; "ELICIT" asks for MCP input and "ELICIT_CANCEL" withdraws that shortly after; "MCP" sends VS Code an MCP request; "BIG" answers with a very long line; "HOLD" leaves
 // the turn running. Its init line reports whether it was asked to continue a cut-off turn. Control
 // requests get a success response, and each control_response it receives is reported back as
 // {"type":"answered"}. FAKE_BURST=1 writes a long line and an error result at start and exits at once;
@@ -128,6 +128,13 @@ function handle(m) {
       out({ type: "control_request", request_id: "mcp-1", request: { subtype: "mcp_message", server_name: "claude-vscode", message: { method: "x" } } });
       return;
     }
+    if (text === "ELICIT" || text === "ELICIT_CANCEL") {
+      const request_id = `elicit-${++asks}`;
+      const requested_schema = { type: "object", properties: { name: { type: "string", title: "Name" } }, required: ["name"] };
+      out({ type: "control_request", request_id, request: { subtype: "elicitation", mcp_server_name: "demo", message: "Who are you?", mode: "form", requested_schema } });
+      if (text === "ELICIT_CANCEL") setTimeout(() => out({ type: "control_cancel_request", request_id }), 300);
+      return;
+    }
     if (text === "ASK" || text === "CANCEL") {
       const request_id = `perm-${++asks}`;
       out({ type: "control_request", request_id, request: { subtype: "can_use_tool", tool_name: "Write", input: { file_path: "x.txt" }, tool_use_id: `toolu_${asks}` } });
@@ -201,6 +208,7 @@ function handle(m) {
     return;
   }
   if (m.type === "control_response") {
-    out({ type: "answered", request_id: m.response.request_id, behavior: m.response.response?.behavior });
+    const r = m.response.response;
+    out({ type: "answered", request_id: m.response.request_id, behavior: r?.behavior, ...(r?.action ? { action: r.action, content: r.content, keys: Object.keys(r) } : {}) });
   }
 }

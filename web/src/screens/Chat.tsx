@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, ModelOption } from "../../../broker/src/protocol.ts";
 import { ItemView, StreamPreview, shownItems } from "../components/Items.tsx";
@@ -14,11 +14,13 @@ import { McpSheet } from "../components/sheets/Mcp.tsx";
 import { OutputStyleSheet, outputStyleLabel } from "../components/sheets/OutputStyle.tsx";
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
 import { TasksSheet } from "../components/sheets/Tasks.tsx";
+import { ThreadSheet, type ShownThread } from "../components/sheets/Thread.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { baseName, closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
+import { api } from "../api.ts";
 import { call, focusDone, navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
 
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
@@ -52,6 +54,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [awaited, setAwaited] = useState<Awaited>();
   const [file, setFile] = useState<FileTarget | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const [thread, setThread] = useState<ShownThread | null>(null);
   const [starting, setStarting] = useState(false);
   const [sentStart, setSentStart] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -68,6 +71,15 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const cannotStart = folderMissing ? `작업 폴더가 없어 이 세션을 시작할 수 없습니다: ${shortPath(cwd)}` : undefined;
   const title = sessionTitle({ title: st?.title || summary?.title || "" });
   const items = useMemo(() => shownItems(chat?.items ?? []), [chat?.items]);
+  // The first shown item of the latest part, when a far-back search hit left items out before it.
+  const gapAt = useMemo(() => {
+    const gap = chat?.gap;
+    const all = chat?.items ?? [];
+    const start = gap ? all.findIndex((i) => i.id === gap.before) : -1;
+    if (start < 0) return undefined;
+    const latest = new Set(all.slice(start).map((i) => i.id));
+    return items.find((i) => latest.has(i.id))?.id;
+  }, [chat?.gap, chat?.items, items]);
 
   const sendText = (text: string, attachments: string[] = []) => {
     stick.current = true;
@@ -145,18 +157,22 @@ export function Chat({ sessionId }: { sessionId: string }) {
   }, [chat?.items, chat?.stream?.text, chat?.pending.length, chat?.loaded]);
 
   const focus = chat?.loaded ? chat.focus : undefined;
+  const focusEarlier = chat?.focusEarlier;
   useLayoutEffect(() => {
     if (!focus) return;
     focusDone(sessionId);
     const el = listRef.current?.querySelector(`[data-item="${CSS.escape(focus)}"]`);
     if (!el) {
-      toast("찾은 메시지가 지금 대화에 없습니다");
+      api.thread(sessionId, focus).then(
+        (t) => setThread({ ...t, ...(focusEarlier ? { earlier: true } : {}) }),
+        () => toast("찾은 메시지가 지금 대화에 없습니다"),
+      );
       return;
     }
     stick.current = false;
     el.scrollIntoView({ block: "center" });
     setFlash(focus);
-  }, [focus, sessionId]);
+  }, [focus, focusEarlier, sessionId]);
 
   useEffect(() => {
     if (!flash) return;
@@ -220,13 +236,21 @@ export function Chat({ sessionId }: { sessionId: string }) {
               )}
               {chat?.hasMore && <div className="text-center text-xs text-muted">이전 대화는 생략했습니다</div>}
               {items.map((item) => (
-                <div
-                  key={item.id}
-                  data-item={item.id}
-                  className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
-                >
-                  <ItemView item={item} running={busy} />
-                </div>
+                <Fragment key={item.id}>
+                  {item.id === gapAt && (
+                    <div className="flex items-center gap-3 text-xs text-muted" data-gap>
+                      <span className="h-px flex-1 bg-line" />
+                      중간 대화 {chat?.gap?.skipped}개 항목은 생략했습니다
+                      <span className="h-px flex-1 bg-line" />
+                    </div>
+                  )}
+                  <div
+                    data-item={item.id}
+                    className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
+                  >
+                    <ItemView item={item} running={busy} />
+                  </div>
+                </Fragment>
               ))}
               {chat?.stream && <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />}
               {busy && !chat?.stream && !chat?.pending.length && (
@@ -325,6 +349,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           <FileViewer sessionId={sessionId} cwd={cwd} target={file} onClose={() => setFile(null)} />
         </Suspense>
       )}
+      {thread && <ThreadSheet thread={thread} onClose={() => setThread(null)} />}
       {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "tasks" && <TasksSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "context" && (

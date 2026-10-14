@@ -84,7 +84,8 @@ export class Notifier {
   }
 
   // VS Code sessions wait the device's delay so an answer at the laptop comes first; requests of broker-run
-  // sessions go out almost at once. A request the user is looking at is notified once they look away.
+  // sessions and MCP input requests, which only the phone answers, go out almost at once. A request the
+  // user is looking at is notified once they look away.
   private async onPending(sessionId: string, request: PendingRequest): Promise<void> {
     if (!this.d.subscriptions().length) return;
     const key = `${sessionId} ${request.id}`;
@@ -101,7 +102,7 @@ export class Notifier {
       this.d.deliver(sub, this.payload(sessionId, request.kind, title, tool), "high");
     };
     for (const sub of this.d.subscriptions()) {
-      const wait = attached ? sub.prefs.vscodeDelaySec * this.d.timing.secondMs : this.d.timing.ownedMs;
+      const wait = attached && request.kind !== "elicitation" ? sub.prefs.vscodeDelaySec * this.d.timing.secondMs : this.d.timing.ownedMs;
       this.arm(key, wait, () => notify(sub.endpoint));
     }
   }
