@@ -147,8 +147,11 @@ let socket: WebSocket | undefined;
 let retry = 0;
 let retryTimer: number | undefined;
 
-export function send(msg: ClientMsg): void {
-  if (socket?.readyState === WebSocket.OPEN && state.conn === "ready") socket.send(JSON.stringify(msg));
+// Whether the message went out; nothing is kept for a later connection.
+export function send(msg: ClientMsg): boolean {
+  if (socket?.readyState !== WebSocket.OPEN || state.conn !== "ready") return false;
+  socket.send(JSON.stringify(msg));
+  return true;
 }
 
 const CALL_TIMEOUT_MS = 30_000;
