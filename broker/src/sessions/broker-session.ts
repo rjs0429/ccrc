@@ -77,6 +77,7 @@ export class BrokerSession extends SessionCore {
         settingSources: ["user", "project", "local"],
         systemPrompt: { type: "preset", preset: "claude_code" },
         includePartialMessages: true,
+        forwardSubagentText: true,
         allowDangerouslySkipPermissions: false,
         enableFileCheckpointing: true,
         extraArgs: { "replay-user-messages": null },

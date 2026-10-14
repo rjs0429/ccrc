@@ -26,15 +26,24 @@ export function transcriptPath(sessionId: string, cwd?: string): string | undefi
   return undefined;
 }
 
-// The SDK's session reader resolves the conversation chain but drops timestamps; take them from the file.
-async function timestamps(file: string): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+interface Row {
+  timestamp?: string;
+  toolUseResult?: unknown;
+}
+
+// The SDK's session reader resolves the conversation chain but drops timestamps and structured tool
+// output; take them from the file. Only the outputs items are built from (file patches, subagent totals)
+// are kept.
+async function rows(file: string): Promise<Map<string, Row>> {
+  const map = new Map<string, Row>();
   const text = await fs.promises.readFile(file, "utf8");
   for (const line of text.split("\n")) {
     if (!line.includes('"timestamp"')) continue;
     try {
-      const e = JSON.parse(line) as { uuid?: string; timestamp?: string };
-      if (e.uuid && e.timestamp) map.set(e.uuid, e.timestamp);
+      const e = JSON.parse(line) as Row & { uuid?: string };
+      const out = e.toolUseResult;
+      const used = out !== null && typeof out === "object" && ("structuredPatch" in out || "totalToolUseCount" in out);
+      if (e.uuid) map.set(e.uuid, { timestamp: e.timestamp, ...(used ? { toolUseResult: out } : {}) });
     } catch {}
   }
   return map;
@@ -42,11 +51,14 @@ async function timestamps(file: string): Promise<Map<string, string>> {
 
 export async function loadHistory(sessionId: string, cwd: string): Promise<DisplayItem[]> {
   const file = transcriptPath(sessionId, cwd);
-  const [messages, times] = await Promise.all([
+  const [messages, extra] = await Promise.all([
     getSessionMessages(sessionId, { includeSystemMessages: true }),
-    file ? timestamps(file) : Promise.resolve(new Map<string, string>()),
+    file ? rows(file) : Promise.resolve(new Map<string, Row>()),
   ]);
   const builder = new ItemBuilder(cwd);
-  for (const m of messages) builder.add(m as unknown as RawMessage, times.get(m.uuid));
+  for (const m of messages) {
+    const row = extra.get(m.uuid);
+    builder.add({ ...(m as unknown as RawMessage), toolUseResult: row?.toolUseResult }, row?.timestamp);
+  }
   return builder.items;
 }

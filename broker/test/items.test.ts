@@ -88,3 +88,241 @@ test("tool summaries name the target", () => {
   assert.equal(summarizeTool("AskUserQuestion", { questions: [{ question: "Which one?" }] }, cwd), "Which one?");
   assert.equal(summarizeTool("mcp__x__y", { q: "first\nsecond" }, cwd), "first");
 });
+
+// An Edit call and its result as Claude Code 2.1.296 reports them.
+const EDIT_USE = {
+  type: "assistant",
+  uuid: "a1",
+  message: {
+    content: [
+      { type: "tool_use", id: "toolu_edit", name: "Edit", input: { file_path: `${cwd}/edit_me.txt`, old_string: "line two", new_string: "line 2" } },
+    ],
+  },
+};
+const EDIT_OUTPUT = {
+  filePath: `${cwd}/edit_me.txt`,
+  oldString: "line two",
+  newString: "line 2",
+  originalFile: "line one\nline two\nline three\n",
+  structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, lines: [" line one", "-line two", "+line 2", " line three"] }],
+  userModified: false,
+  replaceAll: false,
+};
+const EDIT_RESULT = {
+  type: "user",
+  uuid: "u2",
+  message: { content: [{ type: "tool_result", tool_use_id: "toolu_edit", content: "The file has been updated successfully." }] },
+};
+
+function toolItem(b: ItemBuilder, id: string) {
+  const item = b.items.find((i) => i.id === id);
+  assert.ok(item?.kind === "tool", `tool item ${id}`);
+  return item;
+}
+
+test("an edit takes its file and patch from the live tool_use_result", () => {
+  const b = new ItemBuilder(cwd);
+  b.add(EDIT_USE);
+  const [item] = b.add({ ...EDIT_RESULT, tool_use_result: EDIT_OUTPUT });
+  assert.equal(item.id, "toolu_edit");
+  const tool = toolItem(b, "toolu_edit");
+  assert.equal(tool.file, `${cwd}/edit_me.txt`);
+  assert.deepEqual(tool.patch, EDIT_OUTPUT.structuredPatch);
+  assert.equal(tool.patchCut, undefined);
+  assert.equal(b.items.length, 1);
+});
+
+test("a transcript row's toolUseResult gives the same patch", () => {
+  const live = new ItemBuilder(cwd);
+  live.add(EDIT_USE);
+  live.add({ ...EDIT_RESULT, tool_use_result: EDIT_OUTPUT });
+  const loaded = new ItemBuilder(cwd);
+  loaded.add(EDIT_USE);
+  loaded.add({ ...EDIT_RESULT, toolUseResult: EDIT_OUTPUT });
+  assert.deepEqual(loaded.items, live.items);
+});
+
+test("a failed or held edit has no patch", () => {
+  const b = new ItemBuilder(cwd);
+  b.add(EDIT_USE);
+  const failed = { ...EDIT_RESULT, message: { content: [{ ...EDIT_RESULT.message.content[0], is_error: true }] } };
+  b.add({ ...failed, tool_use_result: "Error: String to replace not found in file." });
+  assert.equal(toolItem(b, "toolu_edit").patch, undefined);
+  b.add({ ...EDIT_RESULT, tool_use_result: { ...EDIT_OUTPUT, staged: true } });
+  assert.equal(toolItem(b, "toolu_edit").patch, undefined);
+});
+
+test("a newly written file becomes one added hunk", () => {
+  const b = new ItemBuilder(cwd);
+  const input = { file_path: `${cwd}/new.md`, content: "# Title\n\nBody\n" };
+  b.add({ type: "assistant", uuid: "a1", message: { content: [{ type: "tool_use", id: "toolu_w", name: "Write", input }] } });
+  b.add({
+    type: "user",
+    uuid: "u2",
+    message: { content: [{ type: "tool_result", tool_use_id: "toolu_w", content: "File created successfully" }] },
+    toolUseResult: { type: "create", filePath: `${cwd}/new.md`, content: "# Title\n\nBody\n", structuredPatch: [], originalFile: null },
+  });
+  const tool = toolItem(b, "toolu_w");
+  assert.equal(tool.file, `${cwd}/new.md`);
+  assert.deepEqual(tool.patch, [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 3, lines: ["+# Title", "+", "+Body"] }]);
+});
+
+test("a long patch keeps its first lines, clips long ones, and counts what it left out", () => {
+  const b = new ItemBuilder(cwd);
+  const first = Array.from({ length: 700 }, (_, n) => `+line ${n}`);
+  const second = [`+${"x".repeat(2000)}`, ...Array.from({ length: 199 }, (_, n) => `+more ${n}`)];
+  const third = ["-gone", "+here"];
+  b.add({
+    type: "user",
+    uuid: "u1",
+    message: { content: [{ type: "tool_result", tool_use_id: "toolu_big", content: "ok" }] },
+    tool_use_result: {
+      type: "update",
+      filePath: `${cwd}/big.txt`,
+      structuredPatch: [
+        { oldStart: 1, oldLines: 0, newStart: 1, newLines: 700, lines: first },
+        { oldStart: 10, oldLines: 0, newStart: 710, newLines: 200, lines: second },
+        { oldStart: 50, oldLines: 1, newStart: 950, newLines: 1, lines: third },
+      ],
+    },
+  });
+  const tool = toolItem(b, "toolu_big");
+  assert.equal(tool.patch?.length, 2);
+  assert.equal(tool.patch?.reduce((n, h) => n + h.lines.length, 0), 800);
+  assert.deepEqual(tool.patch?.[1].lines.slice(1, 2), ["+more 0"]);
+  assert.equal(tool.patch?.[1].newLines, 200, "hunk headers keep their full counts");
+  assert.ok(tool.patch![1].lines[0].length < 600 && tool.patch![1].lines[0].endsWith("…"));
+  assert.equal(tool.patchCut, 102);
+});
+
+test("attached documents are listed by name on the user item", () => {
+  const b = new ItemBuilder(cwd);
+  b.add({
+    type: "user",
+    uuid: "u1",
+    message: {
+      content: [
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "" } },
+        { type: "document", title: "notes.txt", source: { type: "text", media_type: "text/plain", data: "hi" } },
+        { type: "text", text: "Look at these" },
+      ],
+    },
+  });
+  const pdf = { type: "document", title: "spec.pdf", source: { type: "base64", media_type: "application/pdf", data: "" } };
+  b.add({ type: "user", uuid: "u2", message: { content: [pdf] } });
+  assert.deepEqual(
+    b.items.map((i) => i.kind === "user" && [i.text, i.images, i.files]),
+    [
+      ["Look at these", 1, ["notes.txt"]],
+      ["", undefined, ["spec.pdf"]],
+    ],
+  );
+});
+
+function agentTurn(b: ItemBuilder) {
+  b.add({ type: "user", uuid: "u1", message: { content: "Survey the repo" } });
+  b.add({
+    type: "assistant",
+    uuid: "a1",
+    message: {
+      content: [{ type: "tool_use", id: "toolu_agent", name: "Agent", input: { description: "Survey files", prompt: "List the files", subagent_type: "Explore" } }],
+    },
+  });
+}
+
+const subTool = (id: string, name: string, input: unknown) => ({
+  type: "assistant",
+  uuid: `s-${id}`,
+  parent_tool_use_id: "toolu_agent",
+  message: { content: [{ type: "tool_use", id, name, input }] },
+});
+
+test("a subagent's work folds into the Agent call that started it", () => {
+  const b = new ItemBuilder(cwd);
+  agentTurn(b);
+  const before = b.items.map((i) => i.id);
+  for (let n = 1; n <= 7; n++) {
+    const [parent] = b.add(subTool(`toolu_s${n}`, "Read", { file_path: `${cwd}/src/f${n}.ts` }));
+    assert.equal(parent.id, "toolu_agent", "the updated Agent item is returned for live clients");
+    b.add({
+      type: "user",
+      uuid: `r-${n}`,
+      parent_tool_use_id: "toolu_agent",
+      message: { content: [{ type: "tool_result", tool_use_id: `toolu_s${n}`, content: "..." }] },
+      tool_use_result: { type: "text", file: { filePath: `${cwd}/src/f${n}.ts` } },
+    });
+  }
+  const long = `Found ${"many ".repeat(80)}files`;
+  const [withText] = b.add({ type: "assistant", uuid: "s-text", parent_tool_use_id: "toolu_agent", message: { content: [{ type: "text", text: long }] } });
+  assert.deepEqual(
+    b.items.map((i) => i.id),
+    before,
+    "subagent messages make no top-level items",
+  );
+  const sub = toolItem(b, "toolu_agent").sub;
+  assert.equal(withText.kind === "tool" && withText.sub, sub);
+  assert.equal(sub?.tools, 7);
+  assert.deepEqual(
+    sub?.recent.map((r) => `${r.name} ${r.summary}`),
+    ["Read src/f3.ts", "Read src/f4.ts", "Read src/f5.ts", "Read src/f6.ts", "Read src/f7.ts"],
+  );
+  assert.equal(sub?.text?.length, 201);
+  assert.ok(sub?.text?.startsWith("Found many") && sub.text.endsWith("…"));
+});
+
+test("a nested subagent counts toward the outer call and a repeated call is counted once", () => {
+  const b = new ItemBuilder(cwd);
+  agentTurn(b);
+  b.add(subTool("toolu_inner", "Agent", { description: "Look deeper" }));
+  b.add({ ...subTool("toolu_deep", "Grep", { pattern: "TODO" }), parent_tool_use_id: "toolu_inner" });
+  b.add({ ...subTool("toolu_deep", "Grep", { pattern: "TODO" }), parent_tool_use_id: "toolu_inner" });
+  assert.equal(b.add({ ...subTool("toolu_x", "Read", {}), parent_tool_use_id: "toolu_unknown" }).length, 0);
+  const sub = toolItem(b, "toolu_agent").sub;
+  assert.equal(sub?.tools, 2);
+  assert.deepEqual(
+    sub?.recent.map((r) => r.name),
+    ["Agent", "Grep"],
+  );
+  assert.equal(b.items.length, 2);
+});
+
+test("seeing a tool call again keeps what its result and subagent added", () => {
+  const b = new ItemBuilder(cwd);
+  b.add(EDIT_USE);
+  b.add({ ...EDIT_RESULT, tool_use_result: EDIT_OUTPUT });
+  b.add({ ...EDIT_USE, timestamp: "2026-10-14T02:11:48.240Z" });
+  const edit = toolItem(b, "toolu_edit");
+  assert.equal(edit.ts, "2026-10-14T02:11:48.240Z");
+  assert.ok(edit.result && edit.patch && edit.file);
+  agentTurn(b);
+  b.add(subTool("toolu_s1", "Bash", { command: "ls", description: "List files" }));
+  agentTurn(b);
+  assert.deepEqual(toolItem(b, "toolu_agent").sub, { tools: 1, recent: [{ name: "Bash", summary: "List files" }] });
+});
+
+test("task events and the final result raise the subagent's tool count", () => {
+  const b = new ItemBuilder(cwd);
+  agentTurn(b);
+  b.add(subTool("toolu_s1", "Read", { file_path: `${cwd}/a.ts` }));
+  const [progress] = b.add({ type: "system", subtype: "task_progress", tool_use_id: "toolu_agent", usage: { tool_uses: 4 } });
+  assert.equal(progress.kind === "tool" && progress.sub?.tools, 4);
+  assert.equal(b.add({ type: "system", subtype: "task_progress", tool_use_id: "toolu_agent", usage: { tool_uses: 3 } }).length, 0);
+  b.add({
+    type: "user",
+    uuid: "u2",
+    message: { content: [{ type: "tool_result", tool_use_id: "toolu_agent", content: [{ type: "text", text: "Done." }] }] },
+    tool_use_result: { status: "completed", agentId: "a1", totalToolUseCount: 9, content: [{ type: "text", text: "Done." }] },
+  });
+  const tool = toolItem(b, "toolu_agent");
+  assert.equal(tool.sub?.tools, 9);
+  assert.deepEqual(
+    tool.sub?.recent.map((r) => r.summary),
+    ["a.ts"],
+  );
+  assert.equal(tool.result?.text, "Done.");
+});
+
+test("task tool summaries name the task", () => {
+  assert.equal(summarizeTool("TaskCreate", { subject: "Run tests", description: "All of them" }, cwd), "Run tests");
+  assert.equal(summarizeTool("TaskUpdate", { taskId: "2", status: "completed" }, cwd), "#2 completed");
+});
