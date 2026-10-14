@@ -28,6 +28,7 @@ import {
   type ElicitAnswer,
 } from "./core.ts";
 import type { ContextWindow } from "./context-gauge.ts";
+import { sessionEnv } from "./entrypoint.ts";
 import { fileContents, type FileContents } from "./file-read.ts";
 import type { RawMessage } from "./items.ts";
 import { contextDetail, usageAnswer } from "./reports.ts";
@@ -128,6 +129,7 @@ export class BrokerSession extends SessionCore {
         allowDangerouslySkipPermissions: false,
         enableFileCheckpointing: true,
         extraArgs: { "replay-user-messages": null },
+        env: sessionEnv(),
         canUseTool: this.canUseTool,
         onElicitation: this.onElicitation,
         stderr: () => {},
