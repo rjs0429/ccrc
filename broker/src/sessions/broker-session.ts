@@ -64,12 +64,26 @@ class InputQueue {
   private queue: SDKUserMessage[] = [];
   private wake?: () => void;
   private closed = false;
+  private given = 0;
   // Nothing goes out before this settles.
   held: Promise<void> = Promise.resolve();
 
   push(m: SDKUserMessage): void {
     this.queue.push(m);
     this.wake?.();
+  }
+
+  // Takes back a message not yet given to Claude Code.
+  remove(uuid: string): boolean {
+    const i = this.queue.findIndex((m) => m.uuid === uuid);
+    if (i < 0) return false;
+    this.queue.splice(i, 1);
+    return true;
+  }
+
+  // Nothing has gone to Claude Code yet and nothing waits to.
+  get untouched(): boolean {
+    return !this.given && !this.queue.length;
   }
 
   close(): void {
@@ -80,7 +94,10 @@ class InputQueue {
   async *messages(): AsyncGenerator<SDKUserMessage> {
     await this.held;
     for (;;) {
-      while (this.queue.length) yield this.queue.shift()!;
+      while (this.queue.length) {
+        this.given++;
+        yield this.queue.shift()!;
+      }
       if (this.closed) return;
       await new Promise<void>((resolve) => (this.wake = resolve));
       this.wake = undefined;
@@ -233,6 +250,10 @@ export class BrokerSession extends SessionCore {
   }
 
   protected async cancelQueued(messageId: string): Promise<boolean> {
+    if (this.input.remove(messageId)) {
+      if (this.input.untouched) this.busy = false;
+      return true;
+    }
     return (await this.request({ subtype: "cancel_async_message", message_uuid: messageId })).response?.cancelled === true;
   }
 

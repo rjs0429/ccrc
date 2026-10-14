@@ -67,3 +67,26 @@ test("owned sessions refuse what the session did not report", async () => {
   await assert.rejects(s.rewind(MSG, false), /session is busy/);
   assert.deepEqual(calls, [["mcpServerStatus"]]);
 });
+
+test("a message still waiting in the broker is taken back here without asking Claude Code", async () => {
+  const { s } = owned();
+  const asked: unknown[] = [];
+  Object.assign((s as unknown as { q: object }).q, { request: async (r: unknown) => (asked.push(r), { response: { cancelled: true } }) });
+  const input = (s as unknown as { input: { messages(): AsyncGenerator<{ uuid: string }> } }).input.messages();
+  s.send("first");
+  const [first] = [...s.queue.keys()];
+  await s.unqueue(first);
+  assert.equal(s.queue.size, 0);
+  assert.equal(s.busy, false, "nothing went to Claude Code, so nothing runs");
+  assert.deepEqual(asked, []);
+
+  s.send("second");
+  const [second] = [...s.queue.keys()];
+  assert.equal((await input.next()).value?.uuid, second, "the taken-back message is never given");
+  s.send("third");
+  const third = [...s.queue.keys()].find((id) => id !== second)!;
+  await s.unqueue(third);
+  assert.equal(s.busy, true, "the message Claude Code has still runs");
+  await s.unqueue(second);
+  assert.deepEqual(asked, [{ subtype: "cancel_async_message", message_uuid: second }], "only a message Claude Code has is cancelled there");
+});
