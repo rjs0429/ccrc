@@ -115,7 +115,10 @@ export class BrokerSession extends SessionCore {
     this.done = this.consume(this.q);
     this.q
       .initializationResult()
-      .then(() => this.refreshApplied())
+      .then((r) => {
+        this.adoptStyles(r.output_style, r.available_output_styles);
+        this.refreshApplied();
+      })
       .catch(() => {});
   }
 
@@ -260,8 +263,16 @@ export class BrokerSession extends SessionCore {
     return timed(q.request({ subtype: "read_file", path, max_bytes: maxBytes, encoding }), READ_MS).then((r) => fileContents(r.response));
   }
 
+  // Reduced to what the wrapper passes on for a VS Code session.
   protected async readApplied(): Promise<Record<string, unknown>> {
-    return (await this.request({ subtype: "get_settings" })).response ?? {};
+    const [r, init] = await Promise.all([this.request({ subtype: "get_settings" }), this.query().initializationResult()]);
+    const settings = r.response ?? {};
+    const style = (settings.effective as Record<string, unknown> | undefined)?.outputStyle;
+    return { applied: settings.applied, ...(typeof style === "string" ? { outputStyle: style } : {}), outputStyles: init.available_output_styles };
+  }
+
+  protected async writeOutputStyle(style: string): Promise<void> {
+    await timed(this.query().updateSettings("localSettings", { outputStyle: style }), REQUEST_MS);
   }
 
   // A control request the SDK sends but does not declare.

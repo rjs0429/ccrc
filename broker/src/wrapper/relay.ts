@@ -19,6 +19,7 @@ const RESULT = Buffer.from('"type":"result"');
 const USER = Buffer.from('"type":"user"');
 const APPLIED = Buffer.from('"applied":');
 const RATE_LIMITS = Buffer.from('"rate_limits"');
+const STYLES = Buffer.from('"available_output_styles"');
 // The broker sees the conversation, these requests from Claude Code (only can_use_tool may be answered
 // remotely), the answer to VS Code's initialize, the applied part of its get_settings answers, and these
 // settings changes from VS Code; other control traffic between VS Code and Claude Code stays between them.
@@ -31,6 +32,7 @@ const REMOTE_REQUESTS = new Set([
   "set_permission_mode",
   "apply_flag_settings",
   "get_settings",
+  "update_settings",
   "get_context_usage",
   "get_usage",
   "mcp_status",
@@ -41,9 +43,11 @@ const REMOTE_REQUESTS = new Set([
   "read_file",
 ]);
 const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
-// The only part of a get_settings answer that leaves the wrapper: what the next request runs with.
-// The merged settings and their sources carry env values and hooks and stay between VS Code and Claude Code.
+// The only parts of a get_settings answer that leave the wrapper: what the next request runs with and the
+// output style. The merged settings and their sources carry env values and hooks and stay between VS Code and Claude Code.
 const APPLIED_KEYS = ["model", "effort", "ultracode", "ultracodeAvailable"];
+const STYLE_NAME_MAX = 200;
+const STYLES_MAX = 100;
 // The only parts of a get_usage answer that leave the wrapper: the plan's limit windows and the session totals.
 const USAGE_WINDOWS = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"];
 const SESSION_TOTALS = ["total_cost_usd", "total_duration_ms", "total_api_duration_ms", "total_lines_added", "total_lines_removed"];
@@ -102,6 +106,24 @@ export function allowedFlagSettings(settings: unknown): boolean {
   );
 }
 
+const UPDATE_KEYS = new Set(["subtype", "source", "settings"]);
+
+// update_settings only sets the output style for the project, to one of the styles Claude Code listed.
+export function allowedUpdateSettings(req: Record<string, unknown>, styles: readonly string[] | undefined): boolean {
+  const settings = req.settings;
+  if (!Object.keys(req).every((k) => UPDATE_KEYS.has(k)) || req.source !== "localSettings") return false;
+  if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return false;
+  const keys = Object.keys(settings);
+  const style = (settings as Record<string, unknown>).outputStyle;
+  return keys.length === 1 && keys[0] === "outputStyle" && typeof style === "string" && Boolean(styles?.includes(style));
+}
+
+// The style names of an initialize or reload_output_styles answer.
+export function styleNames(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v.filter((n): n is string => typeof n === "string" && n !== "" && n.length <= STYLE_NAME_MAX).slice(0, STYLES_MAX);
+}
+
 const READ_FILE_KEYS = new Set(["subtype", "path", "max_bytes", "encoding"]);
 const READ_FILE_MAX_BYTES = 10_000_000;
 
@@ -139,16 +161,23 @@ function reply(r: Record<string, unknown>, response: () => Record<string, unknow
   return Buffer.from(JSON.stringify({ type: "control_response", response: out }));
 }
 
-// A get_settings answer reduced to the applied model, effort and ultracode state.
-export function appliedAnswer(msg: Record<string, unknown>): Buffer {
-  const r = (msg.response ?? {}) as Record<string, unknown>;
-  const a = (((r.response ?? {}) as Record<string, unknown>).applied ?? {}) as Record<string, unknown>;
+// A get_settings answer reduced to the applied model, effort and ultracode state and the effective output
+// style, with the style names Claude Code last listed.
+export function appliedAnswer(msg: Record<string, unknown>, styles?: readonly string[]): Buffer {
+  const r = plainObj(msg.response);
+  const answer = plainObj(r.response);
+  const a = plainObj(answer.applied);
   const applied: Record<string, unknown> = {};
   for (const k of APPLIED_KEYS) {
     const v = a[k];
     if (typeof v === "string" || typeof v === "boolean" || v === null) applied[k] = v;
   }
-  return reply(r, () => ({ applied }));
+  const style = plainObj(answer.effective).outputStyle;
+  return reply(r, () => ({
+    applied,
+    ...(typeof style === "string" && style.length <= STYLE_NAME_MAX ? { outputStyle: style } : {}),
+    ...(styles ? { outputStyles: [...styles] } : {}),
+  }));
 }
 
 // A get_usage answer reduced to the limit windows and the session totals.
@@ -220,6 +249,8 @@ export class Relay extends EventEmitter {
   // get_settings and get_usage only to it.
   private hostAsked = new Set<string>();
   private remoteAsked = new Map<string, string>();
+  // The output styles Claude Code last listed, which the broker may switch the project to.
+  private styles?: string[];
   private state = new Map<string, { seq: number; t: "out" | "in"; line: Buffer }>();
   private seq = 0;
   private sessionId?: string;
@@ -385,12 +416,21 @@ export class Relay extends EventEmitter {
           const asked = this.remoteAsked.get(id);
           this.remoteAsked.delete(id);
           const usage = asked === "get_usage" || (!asked && line.includes(RATE_LIMITS));
-          this.copy("reply", usage ? usageAnswer(msg) : asked || line.includes(APPLIED) ? appliedAnswer(msg) : line);
+          const out =
+            asked === "update_settings"
+              ? reply(plainObj(msg.response), () => ({}))
+              : usage
+                ? usageAnswer(msg)
+                : asked || line.includes(APPLIED)
+                  ? appliedAnswer(msg, this.styles)
+                  : line;
+          this.copy("reply", out);
           return;
         }
+        if (line.includes(STYLES)) this.styles = styleNames(plainObj(plainObj(msg?.response).response).available_output_styles) ?? this.styles;
         if (typeof id === "string" && this.hostAsked.delete(id)) {
           this.toHost(line);
-          const answer = appliedAnswer(msg);
+          const answer = appliedAnswer(msg, this.styles);
           if (msg.response && (msg.response as Record<string, unknown>).subtype === "success") {
             this.remember("applied", "out", answer);
             this.copy("out", answer);
@@ -465,7 +505,10 @@ export class Relay extends EventEmitter {
       if (req.subtype === "set_permission_mode" && req.mode === "bypassPermissions") return reject("mode not allowed", m.request_id);
       if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
       if (req.subtype === "read_file" && !allowedReadFile(req)) return reject("invalid request", m.request_id);
-      if (req.subtype === "get_settings" || req.subtype === "get_usage") askFor(this.remoteAsked, m.request_id, req.subtype);
+      if (req.subtype === "update_settings" && !allowedUpdateSettings(req, this.styles)) return reject("setting not allowed", m.request_id);
+      if (req.subtype === "get_settings" || req.subtype === "get_usage" || req.subtype === "update_settings") {
+        askFor(this.remoteAsked, m.request_id, req.subtype);
+      }
       this.toChild(Buffer.from(JSON.stringify(m)));
       return;
     }

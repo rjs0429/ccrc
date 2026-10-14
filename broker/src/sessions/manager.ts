@@ -308,6 +308,10 @@ export class SessionManager extends EventEmitter {
       case "stop_task":
         await this.get(sessionId).stopTask(String(args.taskId));
         return {};
+      case "output_style":
+        return this.get(sessionId).outputStyleInfo();
+      case "set_output_style":
+        return this.get(sessionId).setOutputStyle(String(args.style));
     }
   }
 

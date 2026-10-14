@@ -8,6 +8,7 @@ import {
   type EffortName,
   type LiveState,
   type McpServerInfo,
+  type OutputStyleInfo,
   type PendingKind,
   type PendingRequest,
   type PermissionModeName,
@@ -24,6 +25,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NAME_MAX = 200;
 const TEXT_MAX = 1000;
 const FILES_MAX = 500;
+const STYLES_MAX = 100;
 const TASK_KEEP_MS = 5 * 60_000;
 const TASK_EVENTS = new Set(["task_started", "task_progress", "task_updated", "task_notification"]);
 const TASK_STATUS = new Map<unknown, TaskInfo["status"]>([
@@ -151,6 +153,7 @@ export abstract class SessionCore extends EventEmitter {
   effort?: string;
   ultracode?: boolean;
   ultracodeAvailable?: boolean;
+  outputStyles?: string[];
   contextPercent?: number;
   costUsd?: number;
   lastActivity = Date.now();
@@ -160,6 +163,9 @@ export abstract class SessionCore extends EventEmitter {
   private ended = false;
   private appliedSeen = false;
   private appliedOff = false;
+  // The output style from the settings, and the one Claude Code last announced, which holds when no setting names one.
+  private settingsStyle?: string;
+  private initStyle?: string;
   private taskTimers = new Map<string, NodeJS.Timeout>();
   private streamText = "";
   private streamThinking = false;
@@ -195,6 +201,7 @@ export abstract class SessionCore extends EventEmitter {
       permissionMode: this.permissionMode,
       effort: this.effort,
       ...(this.ultracodeAvailable !== undefined ? { ultracode: this.ultracode === true, ultracodeAvailable: this.ultracodeAvailable } : {}),
+      ...(this.outputStyle !== undefined ? { outputStyle: this.outputStyle } : {}),
       contextPercent: this.contextPercent,
       costUsd: this.costUsd,
       closedReason: this.closedReason,
@@ -228,6 +235,31 @@ export abstract class SessionCore extends EventEmitter {
   }
 
   stopTask(_taskId: string): Promise<void> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  get outputStyle(): string | undefined {
+    return this.settingsStyle ?? this.initStyle;
+  }
+
+  async outputStyleInfo(): Promise<OutputStyleInfo> {
+    this.ensureOpen();
+    this.adoptSettings(await this.readApplied());
+    if (!this.outputStyles?.length) throw Error("output styles are not available for this session");
+    return { current: this.outputStyle ?? "default", available: this.outputStyles };
+  }
+
+  // Saved for the project as VS Code saves it (.claude/settings.local.json); Claude Code applies it from the next turn.
+  async setOutputStyle(style: string): Promise<OutputStyleInfo> {
+    const { available } = await this.outputStyleInfo();
+    if (!available.includes(style)) throw Error("unknown output style");
+    await this.writeOutputStyle(style);
+    this.settingsStyle = style;
+    this.touch();
+    return this.outputStyleInfo();
+  }
+
+  protected writeOutputStyle(_style: string): Promise<void> {
     return Promise.reject(Error("not available for this session"));
   }
 
@@ -390,6 +422,7 @@ export abstract class SessionCore extends EventEmitter {
         if (typeof m.model === "string" && !this.appliedSeen) this.model = m.model;
         if (typeof m.permissionMode === "string") this.permissionMode = m.permissionMode;
         if (typeof m.effort === "string" && !this.appliedSeen) this.effort = m.effort;
+        this.adoptStyles(m.output_style);
         this.emit("state");
         this.onInit();
         this.refreshApplied();
@@ -426,7 +459,8 @@ export abstract class SessionCore extends EventEmitter {
 
   protected onInit(): void {}
 
-  // Claude Code's get_settings answer; a process type that can ask overrides this.
+  // Claude Code's get_settings answer reduced to `applied`, the effective `outputStyle` and the style names
+  // (`outputStyles`); a process type that can ask overrides this.
   protected readApplied(): Promise<Record<string, unknown>> {
     return Promise.reject(Error("not available for this session"));
   }
@@ -435,10 +469,27 @@ export abstract class SessionCore extends EventEmitter {
   protected refreshApplied(): void {
     if (this.appliedOff || this.closed) return;
     this.readApplied()
-      .then((r) => this.adoptApplied(r.applied))
+      .then((r) => this.adoptSettings(r))
       .catch((e: unknown) => {
         if (/not allowed|not available/.test(e instanceof Error ? e.message : "")) this.appliedOff = true;
       });
+  }
+
+  protected adoptSettings(r: Record<string, unknown>): void {
+    const before = this.outputStyle;
+    if (Array.isArray(r.outputStyles)) this.adoptStyles(undefined, r.outputStyles);
+    if (typeof r.outputStyle === "string" && r.outputStyle) this.settingsStyle = r.outputStyle;
+    else if ("applied" in r && !("outputStyle" in r)) this.settingsStyle = undefined;
+    if (this.outputStyle !== before) this.emit("state");
+    this.adoptApplied(r.applied);
+  }
+
+  // The current style and the style names from an init message or an initialize answer.
+  protected adoptStyles(current: unknown, names?: unknown): void {
+    const before = this.outputStyle;
+    if (typeof current === "string" && current && current.length <= NAME_MAX) this.initStyle = current;
+    if (Array.isArray(names)) this.outputStyles = names.filter((n): n is string => typeof n === "string" && n !== "" && n.length <= NAME_MAX).slice(0, STYLES_MAX);
+    if (this.outputStyle !== before) this.emit("state");
   }
 
   protected adoptApplied(v: unknown): void {

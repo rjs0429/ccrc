@@ -10,6 +10,7 @@ import { ChangesSheet } from "../components/sheets/Changes.tsx";
 import { CommandResultSheet, StoppedSheet } from "../components/sheets/Command.tsx";
 import { ContextSheet } from "../components/sheets/Context.tsx";
 import { McpSheet } from "../components/sheets/Mcp.tsx";
+import { OutputStyleSheet, outputStyleLabel } from "../components/sheets/OutputStyle.tsx";
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
 import { TasksSheet } from "../components/sheets/Tasks.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
@@ -25,7 +26,7 @@ const NEAR_BOTTOM_PX = 160;
 const NO_MODELS: ModelOption[] = [];
 // How long a command sent from here may take before its sheet says it gave no result, once the session is idle.
 const RESULT_LATE_MS = 15_000;
-type SheetName = "changes" | "context" | "mcp" | "rewind" | "tasks" | "usage";
+type SheetName = "changes" | "context" | "mcp" | "outputStyle" | "rewind" | "tasks" | "usage";
 type CommandItem = Extract<DisplayItem, { kind: "command" }>;
 // A dialog command sent from here: its result shows in a sheet once a new result of that command arrives.
 interface Awaited {
@@ -222,6 +223,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
               <Choice label="백그라운드 작업" hint="서브에이전트·백그라운드 명령" onClick={() => (setSheet("tasks"), setMenu(false))} />
               <Choice label="Context 사용량" onClick={() => (setSheet("context"), setMenu(false))} />
               <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
+              <Choice
+                label="출력 스타일"
+                hint={st?.outputStyle ? outputStyleLabel(st.outputStyle) : "응답 방식을 고릅니다"}
+                onClick={() => (setSheet("outputStyle"), setMenu(false))}
+              />
               <Choice label="파일 되돌리기" hint="보낸 메시지 시점으로 파일을 되돌립니다" onClick={() => (setSheet("rewind"), setMenu(false))} />
             </>
           )}
@@ -265,6 +271,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {stopped && <StoppedSheet sessionId={sessionId} title={commandSheet(stopped)?.title ?? `/${stopped}`} onClose={() => setStopped(null)} />}
       {awaited && <CommandResultSheet title={awaited.title} item={result} late={awaited.late && !busy} onClose={() => setAwaited(undefined)} />}
       {sheet === "mcp" && <McpSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "outputStyle" && <OutputStyleSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "rewind" && <RewindSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
     </div>
   );

@@ -6,7 +6,16 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { after, test } from "node:test";
 import { LineSplitter, parseLine } from "../src/link/lines.ts";
-import { Relay, allowedFlagSettings, appliedAnswer, launchSession, usageAnswer, type RelayOptions } from "../src/wrapper/relay.ts";
+import {
+  Relay,
+  allowedFlagSettings,
+  allowedUpdateSettings,
+  appliedAnswer,
+  launchSession,
+  styleNames,
+  usageAnswer,
+  type RelayOptions,
+} from "../src/wrapper/relay.ts";
 import { TurnStore } from "../src/wrapper/turns.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -470,6 +479,83 @@ test("a get_settings answer is reduced to plain applied values, and an error kee
   assert.deepEqual(err, { type: "control_response", response: { subtype: "error", request_id: "r", error: "nope" } });
 });
 
+test("update_settings from the broker only sets the project's output style to a listed style", () => {
+  const styles = ["default", "Explanatory", "my style"];
+  const req = (r: Msg) => ({ subtype: "update_settings", ...r });
+  for (const style of styles) assert.ok(allowedUpdateSettings(req({ source: "localSettings", settings: { outputStyle: style } }), styles), style);
+  const bad: Msg[] = [
+    { source: "localSettings", settings: { outputStyle: "Unlisted" } },
+    { source: "localSettings", settings: { outputStyle: "default", model: "opus" } },
+    { source: "localSettings", settings: { permissions: { allow: ["Bash"] } } },
+    { source: "localSettings", settings: { hooks: {} } },
+    { source: "localSettings", settings: { outputStyle: 1 } },
+    { source: "localSettings", settings: {} },
+    { source: "localSettings", settings: null },
+    { source: "localSettings", settings: ["outputStyle"] },
+    { source: "localSettings" },
+    { source: "userSettings", settings: { outputStyle: "default" } },
+    { source: "userSettings", settings: { effortLevel: "high" } },
+    { source: "projectSettings", settings: { outputStyle: "default" } },
+    { source: "localSettings", settings: { outputStyle: "default" }, extra: true },
+  ];
+  for (const b of bad) assert.ok(!allowedUpdateSettings(req(b), styles), JSON.stringify(b));
+  assert.ok(!allowedUpdateSettings(req({ source: "localSettings", settings: { outputStyle: "default" } }), undefined), "no list yet");
+});
+
+test("style names keep plain non-empty strings", () => {
+  assert.deepEqual(styleNames(["default", "", 3, null, "x".repeat(201), "Learning"]), ["default", "Learning"]);
+  assert.equal(styleNames("default"), undefined);
+  assert.equal(styleNames(Array.from({ length: 150 }, (_, i) => `s${i}`))?.length, 100);
+});
+
+test("a get_settings answer passes on the effective output style and the listed styles, nothing else of the settings", () => {
+  const msg = {
+    type: "control_response",
+    response: {
+      subtype: "success",
+      request_id: "r",
+      response: { applied: { effort: "low" }, effective: { outputStyle: "Explanatory", env: { A: "s3cret" }, hooks: {} }, sources: [{ settings: { outputStyle: "x" } }] },
+    },
+  };
+  const out = JSON.parse(appliedAnswer(msg, ["default", "Explanatory"]).toString());
+  assert.deepEqual(out.response.response, { applied: { effort: "low" }, outputStyle: "Explanatory", outputStyles: ["default", "Explanatory"] });
+  const odd = JSON.parse(
+    appliedAnswer({ type: "control_response", response: { subtype: "success", request_id: "r", response: { applied: {}, effective: { outputStyle: { x: 1 } } } } }).toString(),
+  );
+  assert.deepEqual(odd.response.response, { applied: {} });
+});
+
+test("the broker sets the output style through the wrapper once Claude Code has listed the styles", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
+  const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
+  const set = (id: string, outputStyle: unknown, source = "localSettings") => request(id, { subtype: "update_settings", source, settings: { outputStyle } });
+  set("ccrc-early", "Explanatory");
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-early" && f.reason === "setting not allowed", "refused before the list is known");
+  t.write({ type: "control_request", request_id: "init-1", request: { subtype: "initialize" } });
+  await t.host.wait((m) => m.type === "control_response" && (m.response as Msg).request_id === "init-1", "initialize answered");
+  set("ccrc-unknown", "Pirate");
+  set("ccrc-user", "Explanatory", "userSettings");
+  request("ccrc-more", { subtype: "update_settings", source: "localSettings", settings: { outputStyle: "Explanatory", permissions: { allow: ["Bash(*)"] } } });
+  for (const id of ["ccrc-unknown", "ccrc-user", "ccrc-more"]) {
+    await t.broker.frames.wait((f) => f.t === "rejected" && f.id === id && f.reason === "setting not allowed", id);
+  }
+  set("ccrc-ok", "Explanatory");
+  const f = await t.broker.frames.wait(replied("ccrc-ok"), "style set");
+  assert.deepEqual(((f.m as Msg).response as Msg).response, {});
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(t.dir, ".claude/settings.local.json"), "utf8")), { outputStyle: "Explanatory" });
+  request("ccrc-gs", { subtype: "get_settings" });
+  const g = await t.broker.frames.wait(replied("ccrc-gs"), "settings read");
+  assert.deepEqual(((g.m as Msg).response as Msg).response, {
+    applied: { model: "claude-haiku-5-5", effort: "medium", ultracode: false, ultracodeAvailable: true },
+    outputStyle: "Explanatory",
+    outputStyles: ["default", "Proactive", "Concise", "Explanatory", "Learning"],
+  });
+  assert.ok(!JSON.stringify(t.broker.frames.items).includes("s3cret"));
+  assert.ok(!t.host.has((m) => m.type === "control_response" && String((m.response as Msg).request_id).startsWith("ccrc-")), "VS Code sees none of the answers");
+});
+
 test("the session controls reach Claude Code; MCP setup, settings and conversation rewind do not", async () => {
   const t = await setup();
   await t.broker.frames.wait((f) => f.t === "hello", "hello");
@@ -493,7 +579,6 @@ test("the session controls reach Claude Code; MCP setup, settings and conversati
     "rewind_conversation",
     "background_tasks",
     "get_task_output",
-    "update_settings",
     "initialize",
   ];
   for (const subtype of refused) request(`ccrc-no-${subtype}`, { subtype });

@@ -618,3 +618,35 @@ test("only a running task of this session can be stopped", async () => {
   assert.equal(s.tasks.size, 0);
   await assert.rejects(s.contextDetail(), /session closed/);
 });
+
+test("the output style follows VS Code's answers and is set only to a listed style", async () => {
+  const { s, wrapper } = await session();
+  const seen: Msg[] = [];
+  let effective: string | undefined;
+  wrapper.autoReply((r) => {
+    seen.push(r);
+    if (r.subtype === "update_settings") effective = (r.settings as Msg).outputStyle as string;
+    return r.subtype === "get_settings" ? { applied: {}, ...(effective ? { outputStyle: effective } : {}), outputStyles: ["default", "Explanatory", "Mine"] } : {};
+  });
+  wrapper.out({
+    type: "control_response",
+    response: { subtype: "success", request_id: "init", response: { models: [], commands: [], output_style: "default", available_output_styles: ["default", "Explanatory"] } },
+  });
+  for (let i = 0; i < 50 && !s.outputStyles; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(s.state().outputStyle, "default");
+  assert.deepEqual(await s.outputStyleInfo(), { current: "default", available: ["default", "Explanatory", "Mine"] });
+  await assert.rejects(s.setOutputStyle("Pirate"), /unknown output style/);
+  assert.ok(!seen.some((r) => r.subtype === "update_settings"), "an unlisted style is not sent");
+  assert.deepEqual(await s.setOutputStyle("Mine"), { current: "Mine", available: ["default", "Explanatory", "Mine"] });
+  assert.deepEqual(
+    seen.filter((r) => r.subtype === "update_settings"),
+    [{ subtype: "update_settings", source: "localSettings", settings: { outputStyle: "Mine" } }],
+  );
+  assert.equal(s.state().outputStyle, "Mine");
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "vs-2", response: { applied: {}, outputStyle: "Explanatory" } } });
+  for (let i = 0; i < 50 && s.outputStyle !== "Explanatory"; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(s.state().outputStyle, "Explanatory", "a change made in VS Code shows");
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "vs-3", response: { applied: {} } } });
+  for (let i = 0; i < 50 && s.outputStyle !== "default"; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(s.state().outputStyle, "default", "with no style in the settings the announced one holds");
+});

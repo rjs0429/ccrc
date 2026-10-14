@@ -126,6 +126,12 @@ export interface RewindResult {
   deletions?: number;
 }
 
+// The session's output style and the styles it can switch to, built-in and custom, as Claude Code lists them.
+export interface OutputStyleInfo {
+  current: string;
+  available: string[];
+}
+
 // Requests the web client makes about one session and their answers ("call" / "call_result").
 export interface CallMap {
   context: { args: Record<string, never>; data: ContextDetail };
@@ -139,9 +145,11 @@ export interface CallMap {
   files: { args: { query: string }; data: string[] };
   // Starts the session's Claude Code process here without sending anything.
   resume: { args: Record<string, never>; data: Record<string, never> };
+  output_style: { args: Record<string, never>; data: OutputStyleInfo };
+  set_output_style: { args: { style: string }; data: OutputStyleInfo };
 }
 export type CallOp = keyof CallMap;
-export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume"];
+export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume", "output_style", "set_output_style"];
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {
@@ -214,6 +222,7 @@ export interface LiveState {
   effort?: string;
   ultracode?: boolean;
   ultracodeAvailable?: boolean;
+  outputStyle?: string;
   contextPercent?: number;
   costUsd?: number;
   closedReason?: string;
