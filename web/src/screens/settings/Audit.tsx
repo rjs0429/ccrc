@@ -11,7 +11,7 @@ const EVENT_LABEL: Record<string, string> = {
   login: "로그인",
   login_failed: "로그인 실패",
   logout: "로그아웃",
-  lease_revoked: "로그인 끝남",
+  lease_revoked: "로그인 해제됨",
   password_changed: "비밀번호 바꿈",
   window_taken: "다른 창으로 옮김",
   device_denied: "허용되지 않은 기기",
@@ -26,7 +26,7 @@ const EVENT_LABEL: Record<string, string> = {
   release: "원격 실행 끝냄",
   attach: "VS Code 세션 연결",
   handoff: "VS Code로 넘김",
-  upload: "파일 올림",
+  upload: "파일 첨부",
   file_read: "파일 열람",
   call: "세션 작업",
   claude_settings: "Claude Code 설정 바꿈",
@@ -51,6 +51,8 @@ const READ_OUTCOME: Record<string, string> = {
   too_large: "너무 큼",
   invalid: "잘못된 링크",
   failed: "실패",
+  ticket_invalid: "잘못된 임시 링크",
+  ticket_expired: "만료된 임시 링크",
 };
 
 const WORD: Record<string, string> = {
@@ -90,7 +92,7 @@ function detail(e: AuditEntry): string {
     case "claude_settings":
       return Array.isArray(e.keys) ? e.keys.join(", ") : "";
     case "file_read":
-      return [typeof e.path === "string" ? baseName(e.path) : "", named(e.outcome, READ_OUTCOME)].filter(Boolean).join(" · ");
+      return [typeof e.path === "string" ? baseName(e.path) : "", e.ticket && e.outcome === "ok" ? "임시 링크" : "", named(e.outcome, READ_OUTCOME)].filter(Boolean).join(" · ");
     case "new_session":
       return typeof e.cwd === "string" ? baseName(e.cwd) : "";
     case "login_failed":
@@ -146,7 +148,7 @@ export function AuditSection() {
 
   return (
     <section className="space-y-2">
-      <SectionTitle>감사 로그</SectionTitle>
+      <SectionTitle>활동 기록</SectionTitle>
       <div className="overflow-hidden rounded-xl bg-surface">
         {entries && entries.length > 0 && (
           <ul className="divide-y divide-line">

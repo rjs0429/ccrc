@@ -166,6 +166,7 @@ export abstract class SessionCore extends EventEmitter {
   // The output style from the settings, and the one Claude Code last announced, which holds when no setting names one.
   private settingsStyle?: string;
   private initStyle?: string;
+  private appliedRefused = false;
   private taskTimers = new Map<string, NodeJS.Timeout>();
   private streamText = "";
   private streamThinking = false;
@@ -202,6 +203,7 @@ export abstract class SessionCore extends EventEmitter {
       effort: this.effort,
       ...(this.ultracodeAvailable !== undefined ? { ultracode: this.ultracode === true, ultracodeAvailable: this.ultracodeAvailable } : {}),
       ...(this.outputStyle !== undefined ? { outputStyle: this.outputStyle } : {}),
+      ...(this.appliedRefused && this.ultracodeAvailable === undefined ? { appliedUnknown: true } : {}),
       contextPercent: this.contextPercent,
       costUsd: this.costUsd,
       closedReason: this.closedReason,
@@ -471,7 +473,12 @@ export abstract class SessionCore extends EventEmitter {
     this.readApplied()
       .then((r) => this.adoptSettings(r))
       .catch((e: unknown) => {
-        if (/not allowed|not available/.test(e instanceof Error ? e.message : "")) this.appliedOff = true;
+        const message = e instanceof Error ? e.message : "";
+        if (/not allowed|not available/.test(message)) this.appliedOff = true;
+        if (/request not allowed/.test(message) && !this.appliedRefused) {
+          this.appliedRefused = true;
+          this.emit("state");
+        }
       });
   }
 

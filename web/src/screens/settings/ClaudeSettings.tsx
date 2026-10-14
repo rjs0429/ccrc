@@ -24,7 +24,7 @@ const LABEL: Record<string, string> = {
   model: "모델",
   "permissions.defaultMode": "기본 권한 모드",
   "permissions.allow": "허용 규칙",
-  "permissions.ask": "확인 규칙",
+  "permissions.ask": "묻기 규칙",
   "permissions.deny": "거부 규칙",
   "permissions.additionalDirectories": "추가 폴더",
   effortLevel: "Effort",

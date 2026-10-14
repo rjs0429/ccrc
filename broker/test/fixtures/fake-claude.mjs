@@ -101,6 +101,10 @@ function handle(m) {
     }
     out({ ...m, session_id: sid, uuid: m.uuid ?? randomUUID(), isReplay: true });
     if (text === "HOLD") return;
+    if (text === "COMPACTING") {
+      out({ type: "system", subtype: "status", status: "compacting", session_id: sid });
+      return;
+    }
     if (text === "MCP") {
       out({ type: "control_request", request_id: "mcp-1", request: { subtype: "mcp_message", server_name: "claude-vscode", message: { method: "x" } } });
       return;

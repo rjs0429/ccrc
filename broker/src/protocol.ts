@@ -223,6 +223,8 @@ export interface LiveState {
   ultracode?: boolean;
   ultracodeAvailable?: boolean;
   outputStyle?: string;
+  // The VS Code wrapper is too old to report the applied model, effort and ultracode state.
+  appliedUnknown?: boolean;
   contextPercent?: number;
   costUsd?: number;
   closedReason?: string;

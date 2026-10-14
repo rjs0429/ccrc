@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import path from "node:path";
@@ -42,6 +43,8 @@ const REMOTE_REQUESTS = new Set([
   "stop_task",
   "read_file",
 ]);
+// Broker requests after which VS Code is told to read the applied settings again.
+const SETTINGS_CHANGES = new Set(["set_model", "apply_flag_settings"]);
 const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
 // The only parts of a get_settings answer that leave the wrapper: what the next request runs with and the
 // output style. The merged settings and their sources carry env values and hooks and stay between VS Code and Claude Code.
@@ -267,6 +270,8 @@ export class Relay extends EventEmitter {
   private finished = false;
   private childPaused = false;
   private hostPaused = false;
+  private hostReady = false;
+  private cliStatus: string | null = null;
 
   constructor(o: RelayOptions) {
     super();
@@ -416,15 +421,17 @@ export class Relay extends EventEmitter {
           const asked = this.remoteAsked.get(id);
           this.remoteAsked.delete(id);
           const usage = asked === "get_usage" || (!asked && line.includes(RATE_LIMITS));
+          const reduced = asked === "get_usage" || asked === "get_settings";
           const out =
             asked === "update_settings"
               ? reply(plainObj(msg.response), () => ({}))
               : usage
                 ? usageAnswer(msg)
-                : asked || line.includes(APPLIED)
+                : reduced || line.includes(APPLIED)
                   ? appliedAnswer(msg, this.styles)
                   : line;
           this.copy("reply", out);
+          if (asked && SETTINGS_CHANGES.has(asked) && (msg.response as Record<string, unknown> | undefined)?.subtype === "success") this.refreshHost();
           return;
         }
         if (line.includes(STYLES)) this.styles = styleNames(plainObj(plainObj(msg?.response).response).available_output_styles) ?? this.styles;
@@ -438,6 +445,7 @@ export class Relay extends EventEmitter {
           return;
         }
         shared = line.includes(MODELS) && !line.includes(APPLIED);
+        if (shared) this.hostReady = true;
       } else if (msg?.type === "control_request") {
         const subtype = (msg.request as Record<string, unknown> | undefined)?.subtype;
         shared = typeof id === "string" && typeof subtype === "string" && SHOWN.has(subtype);
@@ -448,6 +456,7 @@ export class Relay extends EventEmitter {
     }
     this.toHost(line);
     this.noteTurn(line, msg);
+    if (line.includes(STATUS)) this.noteStatus(line, msg);
     if (!shared) return;
     this.noteState(line, msg);
     this.copy("out", line);
@@ -468,6 +477,20 @@ export class Relay extends EventEmitter {
       const m = parsed ?? parseLine(line);
       if (m?.type === "user" || (m?.type === "system" && m.subtype === "init")) this.running = true;
     }
+  }
+
+  private noteStatus(line: Buffer, parsed?: Record<string, unknown>): void {
+    const m = parsed ?? parseLine(line);
+    if (m?.type === "system" && m.subtype === "status") this.cliStatus = typeof m.status === "string" ? m.status : null;
+  }
+
+  // VS Code reads the applied effort and ultracode state again on the status line its extension sends when
+  // Claude Code connects; Claude Code itself sends nothing that does so after a remote change. The line carries
+  // Claude Code's current status and no permission mode, so nothing else on VS Code's side changes.
+  private refreshHost(): void {
+    if (!this.hostReady) return;
+    const line = { type: "system", subtype: "status", status: this.cliStatus, connectSnapshot: true, uuid: randomUUID(), ...(this.sessionId ? { session_id: this.sessionId } : {}) };
+    this.toHost(Buffer.from(JSON.stringify(line)));
   }
 
   private noteState(line: Buffer, parsed?: Record<string, unknown>): void {
@@ -506,7 +529,7 @@ export class Relay extends EventEmitter {
       if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
       if (req.subtype === "read_file" && !allowedReadFile(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "update_settings" && !allowedUpdateSettings(req, this.styles)) return reject("setting not allowed", m.request_id);
-      if (req.subtype === "get_settings" || req.subtype === "get_usage" || req.subtype === "update_settings") {
+      if (req.subtype === "get_settings" || req.subtype === "get_usage" || req.subtype === "update_settings" || SETTINGS_CHANGES.has(req.subtype)) {
         askFor(this.remoteAsked, m.request_id, req.subtype);
       }
       this.toChild(Buffer.from(JSON.stringify(m)));
