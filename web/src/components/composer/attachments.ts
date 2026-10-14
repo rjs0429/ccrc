@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { UploadInfo } from "../../../../broker/src/protocol.ts";
+import type { UploadInfo, UserAttachment } from "../../../../broker/src/protocol.ts";
 import { ApiError, api } from "../../api.ts";
 import { loggedOut, toast } from "../../state.ts";
 
@@ -11,6 +11,7 @@ export interface Attachment {
   kind: Kind;
   // Object URL of the image as it is sent.
   thumb?: string;
+  image?: Blob;
   progress: number;
   uploaded?: UploadInfo;
 }
@@ -73,11 +74,28 @@ export function removeAttachment(sessionId: string, key: number): void {
   set(sessionId, list.filter((a) => a.key !== key));
 }
 
-// Empties the list of a message that went out; its image previews pass to the caller, one per attachment.
-export function takeAttachments(sessionId: string): (string | undefined)[] {
+// An image as it was sent, with its object URL and name.
+export type SentImage = { url: string; blob: Blob; name: string } | undefined;
+
+// Empties the list of a message that went out; its images pass to the caller, one entry per attachment.
+export function takeAttachments(sessionId: string): SentImage[] {
   const list = lists.get(sessionId) ?? [];
   set(sessionId, []);
-  return list.map((a) => a.thumb);
+  return list.map((a) => (a.thumb && a.image ? { url: a.thumb, blob: a.image, name: a.name } : undefined));
+}
+
+// Attaches again the files of a message taken back, from the images kept of it (in attachment order); answers
+// how many could not be, such as documents or a message sent from another device.
+export function reattach(sessionId: string, attachments: UserAttachment[], images: SentImage[]): number {
+  const files: File[] = [];
+  attachments.forEach((a, i) => {
+    const image = images[i];
+    if (!image) return;
+    URL.revokeObjectURL(image.url);
+    files.push(new File([image.blob], image.name, { type: image.blob.type || a.mediaType }));
+  });
+  addFiles(sessionId, files);
+  return attachments.length - files.length;
 }
 
 function kindOf(file: File): Kind | undefined {
@@ -130,7 +148,7 @@ async function upload(sessionId: string, a: Attachment, file: File, signal: Abor
     if (signal.aborted) return;
     if (blob !== file) name = `${name.replace(/\.[^.]*$/, "") || "image"}.jpg`;
     if (blob.size > LIMITS[a.kind]) throw new ApiError(413, {});
-    patch(sessionId, a.key, { name, ...(a.kind === "image" ? { thumb: URL.createObjectURL(blob) } : {}) });
+    patch(sessionId, a.key, { name, ...(a.kind === "image" ? { thumb: URL.createObjectURL(blob), image: blob } : {}) });
     const uploaded = await api.upload(blob, name, (progress) => patch(sessionId, a.key, { progress }), signal);
     patch(sessionId, a.key, { uploaded, name: uploaded.name, kind: uploaded.kind, progress: 1 });
   } catch (e) {

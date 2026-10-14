@@ -1,20 +1,21 @@
 import type { DisplayItem, QueuedMessage } from "../../broker/src/protocol.ts";
+import type { SentImage } from "./components/composer/attachments.ts";
 
-// The images of a message sent from here, as object URLs in attachment order (none for a document),
+// The images of a message sent from here, with their object URLs in attachment order (none for a document),
 // shown on its item until the broker's copy takes over.
 interface Waiting {
   sessionId: string;
   text: string;
-  urls: (string | undefined)[];
+  urls: SentImage[];
   at: number;
 }
 
 const WAIT_MS = 120_000;
 const KEEP_URLS = 20;
 const waiting: Waiting[] = [];
-const bound = new Map<string, (string | undefined)[]>();
+const bound = new Map<string, SentImage[]>();
 
-const revoke = (urls: (string | undefined)[]) => urls.forEach((u) => u && URL.revokeObjectURL(u));
+const revoke = (urls: SentImage[]) => urls.forEach((u) => u && URL.revokeObjectURL(u.url));
 
 function prune(now: number): void {
   for (let i = waiting.length - 1; i >= 0; i--) if (now - waiting[i].at > WAIT_MS) revoke(waiting.splice(i, 1)[0].urls);
@@ -27,7 +28,7 @@ function prune(now: number): void {
   }
 }
 
-export function rememberSent(sessionId: string, text: string, urls: (string | undefined)[]): void {
+export function rememberSent(sessionId: string, text: string, urls: SentImage[]): void {
   if (!urls.some(Boolean)) return;
   waiting.push({ sessionId, text, urls, at: Date.now() });
   prune(Date.now());
@@ -43,6 +44,13 @@ export function bindSent(sessionId: string, item: DisplayItem | QueuedMessage): 
   prune(Date.now());
 }
 
+// Hands over the images of a message taken back; the caller revokes their URLs.
+export function takeSent(itemId: string): SentImage[] {
+  const urls = bound.get(itemId) ?? [];
+  bound.delete(itemId);
+  return urls;
+}
+
 export function sentPreview(itemId: string, index: number): string | undefined {
-  return bound.get(itemId)?.[index];
+  return bound.get(itemId)?.[index]?.url;
 }

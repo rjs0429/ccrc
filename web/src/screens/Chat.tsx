@@ -1,8 +1,9 @@
 import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
-import type { DisplayItem, ModelOption } from "../../../broker/src/protocol.ts";
+import type { DisplayItem, ModelOption, QueuedMessage } from "../../../broker/src/protocol.ts";
 import { ItemView, QueuedItem, StreamPreview, shownItems } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
+import { reattach } from "../components/composer/attachments.ts";
 import { commandSheet } from "../components/commandSheets.ts";
 import { PendingCard } from "../components/Pending.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
@@ -21,7 +22,8 @@ import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { baseName, closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
-import { call, focusDone, navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
+import { call, composerInsert, focusDone, navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
+import { takeSent } from "../sentPreviews.ts";
 
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
@@ -86,10 +88,16 @@ export function Chat({ sessionId }: { sessionId: string }) {
     return (st?.queued ?? []).filter((q) => !shown.has(q.id));
   }, [chat?.items, st?.queued]);
   const [taking, setTaking] = useState<string | null>(null);
-  const takeBack = (messageId: string) => {
+  // A message taken back returns to the composer with its text and the photos sent from this device.
+  const takeBack = (q: QueuedMessage) => {
     if (taking) return;
-    setTaking(messageId);
-    call(sessionId, "unqueue", { messageId })
+    setTaking(q.id);
+    call(sessionId, "unqueue", { messageId: q.id })
+      .then(() => {
+        if (q.text) composerInsert(q.text);
+        const lost = reattach(sessionId, q.attachments ?? [], takeSent(q.id));
+        if (lost) toast(`첨부 ${lost}개는 다시 골라 주세요`);
+      })
       .catch((e: Error) => toast(errorText(e.message)))
       .finally(() => setTaking(null));
   };
@@ -278,7 +286,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
                   message={q}
                   host={host}
                   taking={taking === q.id}
-                  onTakeBack={q.from === "remote" && controllable ? () => takeBack(q.id) : undefined}
+                  onTakeBack={q.from === "remote" && controllable ? () => takeBack(q) : undefined}
                 />
               ))}
               {chat?.pending.map((p) => (
