@@ -23,7 +23,18 @@ const USER = Buffer.from('"type":"user"');
 const SHOWN = new Set(["can_use_tool", "elicitation", "request_user_dialog"]);
 const HOST_SETTINGS = new Set(["set_model", "set_permission_mode", "apply_flag_settings"]);
 // Control requests the broker may send.
-const REMOTE_REQUESTS = new Set(["interrupt", "set_model", "set_permission_mode", "apply_flag_settings", "get_context_usage"]);
+const REMOTE_REQUESTS = new Set([
+  "interrupt",
+  "set_model",
+  "set_permission_mode",
+  "apply_flag_settings",
+  "get_context_usage",
+  "mcp_status",
+  "mcp_toggle",
+  "mcp_reconnect",
+  "rewind_files",
+  "stop_task",
+]);
 const SETTLED_KEEP = 500;
 const LINK_BUFFER_MAX = 16 * 1024 * 1024;
 const RELEASE_WAIT_MS = 9000;
