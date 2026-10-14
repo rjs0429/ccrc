@@ -41,11 +41,20 @@ function saveDraft(sessionId: string | undefined, text: string): void {
 }
 
 // A direct tap on the file input itself, so iOS opens its picker for this row.
-function AttachOption({ icon, label, onFiles, ...input }: { icon: React.ReactNode; label: string; onFiles: (files: File[]) => void } & React.InputHTMLAttributes<HTMLInputElement>) {
+function AttachOption({
+  icon,
+  label,
+  hint,
+  onFiles,
+  ...input
+}: { icon: React.ReactNode; label: string; hint?: string; onFiles: (files: File[]) => void } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="relative flex w-full cursor-pointer items-center gap-3 overflow-hidden rounded-xl px-3 py-3 text-[15px] hover:bg-surface-2">
       <span className="text-muted">{icon}</span>
-      {label}
+      <span className="min-w-0">
+        {label}
+        {hint && <span className="block text-xs text-muted">{hint}</span>}
+      </span>
       <input
         type="file"
         aria-label={label}
@@ -339,7 +348,8 @@ export function Composer({
       {sheet === "attach" && sessionId && (
         <Sheet title="첨부" onClose={() => setSheet(null)}>
           {[
-            { key: "photos", icon: <Icon.image />, label: "사진 보관함", accept: IMAGE_ACCEPT, multiple: true },
+            // iOS answers an image input without capture with its own menu: library, camera or files.
+            { key: "photos", icon: <Icon.image />, label: "사진", hint: "보관함·촬영·파일 중에서 고릅니다", accept: IMAGE_ACCEPT, multiple: true },
             { key: "camera", icon: <Icon.camera />, label: "카메라", accept: IMAGE_ACCEPT, capture: "environment" as const },
             { key: "files", icon: <Icon.file />, label: "파일", accept: DOCUMENT_ACCEPT, multiple: true },
           ].map(({ key, ...o }) => (
