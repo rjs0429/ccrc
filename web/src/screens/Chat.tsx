@@ -28,6 +28,7 @@ import { takeSent } from "../sentPreviews.ts";
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
 const NEAR_BOTTOM_PX = 160;
+const gapBelow = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight;
 const FLASH_MS = 2500;
 const NO_MODELS: ModelOption[] = [];
 // How long a command sent from here may take before its sheet says it gave no result, once the session is idle.
@@ -41,6 +42,25 @@ interface Awaited {
   name: string;
   before: Set<string>;
   late: boolean;
+}
+
+// Hangs from the top edge of the to-do panel and composer, so it floats just above them whatever their height.
+function JumpButton({ unseen, onClick }: { unseen: boolean; onClick: () => void }) {
+  return (
+    <div className="relative h-0 tiny:hidden">
+      <button
+        onClick={onClick}
+        onMouseDown={(e) => e.preventDefault()}
+        aria-label="맨 아래로"
+        className="group absolute bottom-2 left-1/2 z-10 flex size-11 -translate-x-1/2 items-center justify-center"
+      >
+        <span className="relative flex size-9 items-center justify-center rounded-full border border-line bg-surface text-fg shadow-md group-active:bg-surface-2">
+          <Icon.arrowDown className="size-[18px]" />
+          {unseen && <span className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-accent ring-2 ring-bg" title="새 내용이 있습니다" data-unseen />}
+        </span>
+      </button>
+    </div>
+  );
 }
 
 export function Chat({ sessionId }: { sessionId: string }) {
@@ -61,6 +81,36 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [sentStart, setSentStart] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  // A smooth scroll to the bottom from the jump button, until it lands or the user touches the list; a touch
+  // stops it where it is, since browsers do not all cancel a smooth scroll for one.
+  const glide = useRef(false);
+  // The list's height when the user left the bottom: anything taller has arrived since.
+  const seen = useRef(0);
+  const [away, setAway] = useState(false);
+  const [unseen, setUnseen] = useState(false);
+
+  // The list follows new content while it sticks to the bottom; the jump button shows while it does not.
+  const follow = (on: boolean) => {
+    stick.current = on;
+    setAway(!on);
+    if (on) setUnseen(false);
+    else seen.current = listRef.current?.scrollHeight ?? 0;
+  };
+
+  const jump = () => {
+    const el = listRef.current;
+    if (!el) return;
+    glide.current = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    follow(true);
+    el.scrollTo({ top: el.scrollHeight, behavior: glide.current ? "smooth" : "auto" });
+  };
+
+  const endGlide = () => {
+    const el = listRef.current;
+    if (!glide.current || !el) return;
+    glide.current = false;
+    el.scrollTo({ top: el.scrollTop });
+  };
 
   const st = chat?.state;
   const kind = st?.state ?? summary?.state ?? "inactive";
@@ -103,10 +153,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
   };
 
   const sendText = (text: string, attachments: string[] = []) => {
-    stick.current = true;
     const c = attachments.length ? undefined : parseCommand(text);
     const before = new Set((chat?.items ?? []).filter((i) => i.kind === "command").map((i) => i.id));
     const ok = send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
+    if (ok) follow(true);
     if (ok && c && isDialogCommand(c.name)) setAwaited({ title: text.trim(), name: commandName(c.name), before, late: false });
     if (ok && deferred) setSentStart(true);
     return ok;
@@ -174,8 +224,22 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   useLayoutEffect(() => {
     const el = listRef.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    if (!stick.current) {
+      if (el.scrollHeight > seen.current) setUnseen(true);
+    } else if (glide.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    else el.scrollTop = el.scrollHeight;
   }, [chat?.items, chat?.stream?.text, chat?.pending.length, chat?.loaded, queued.length]);
+
+  // Resizing the list (rotation, a taller composer or to-do panel) keeps it at the bottom while it follows.
+  useEffect(() => {
+    const el = listRef.current!;
+    const resized = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    });
+    resized.observe(el);
+    return () => resized.disconnect();
+  }, []);
 
   const focus = chat?.loaded ? chat.focus : undefined;
   const focusEarlier = chat?.focusEarlier;
@@ -190,8 +254,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
       );
       return;
     }
-    stick.current = false;
     el.scrollIntoView({ block: "center" });
+    follow(gapBelow(listRef.current!) < NEAR_BOTTOM_PX);
     setFlash(focus);
   }, [focus, focusEarlier, sessionId]);
 
@@ -242,9 +306,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
       <div
         ref={listRef}
         onScroll={(e) => {
-          const el = e.currentTarget;
-          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+          const gap = gapBelow(e.currentTarget);
+          if (gap < 2) glide.current = false;
+          const near = gap < NEAR_BOTTOM_PX;
+          if (near !== stick.current && (near || !glide.current)) follow(near);
         }}
+        onPointerDown={endGlide}
+        onWheel={endGlide}
         className="flex-1 overflow-y-auto overscroll-contain px-safe-0"
         data-scroll-root
       >
@@ -320,6 +388,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         </FileLinks.Provider>
       </div>
 
+      {away && <JumpButton unseen={unseen} onClick={jump} />}
       {chat?.loaded && <TodoPanel items={chat.items} />}
 
       <Composer
