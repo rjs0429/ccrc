@@ -46,6 +46,7 @@ export class Hub {
   private tokens = new WeakMap<WebSocket, string>();
   private viewing: string | null = null;
   private viewSeq = 0;
+  private focus?: string;
   private unwatch?: () => void;
   // Items last sent for the viewed session, by id, as JSON.
   private shown = new Map<string, string>();
@@ -182,7 +183,8 @@ export class Hub {
         if (this.active) send(this.active, { t: "pong" });
         return;
       case "view":
-        await this.setView(msg.sessionId === null ? null : sid(msg.sessionId));
+        if (msg.focus !== undefined) str(msg.focus, 128);
+        await this.setView(msg.sessionId === null ? null : sid(msg.sessionId), msg.focus);
         return;
       case "visibility":
         this.visible = msg.visible === true;
@@ -297,15 +299,16 @@ export class Hub {
 
   // Each view change gets a number; work for an older view is dropped when it finishes. A session
   // without a process the broker drives is followed through its transcript.
-  private async setView(sessionId: string | null): Promise<void> {
+  private async setView(sessionId: string | null, focus?: string): Promise<void> {
     const seq = ++this.viewSeq;
+    if (focus || sessionId !== this.viewing) this.focus = focus;
     this.unwatch?.();
     this.unwatch = undefined;
     this.viewing = sessionId;
     this.manager.setViewed(sessionId);
     if (!sessionId) return;
     const controlled = this.manager.isControlled(sessionId);
-    const snap = await this.manager.snapshot(sessionId);
+    const snap = await this.manager.snapshot(sessionId, this.focus);
     if (seq !== this.viewSeq || !this.active) return;
     if (!controlled && this.manager.isControlled(sessionId)) return;
     this.shown = new Map(snap.items.map((i) => [i.id, JSON.stringify(i)]));
@@ -315,7 +318,7 @@ export class Hub {
 
   // Sends only the items that changed since the last snapshot; a rewritten history gets a new snapshot.
   private async pushChanges(sessionId: string, seq: number): Promise<void> {
-    const snap = await this.manager.snapshot(sessionId);
+    const snap = await this.manager.snapshot(sessionId, this.focus);
     if (seq !== this.viewSeq || !this.active || this.manager.isControlled(sessionId)) return;
     const before = [...this.shown.keys()];
     const start = before.indexOf(snap.items[0]?.id ?? "");

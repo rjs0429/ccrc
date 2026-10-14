@@ -5,7 +5,7 @@ import { getSessionMessages } from "@anthropic-ai/claude-agent-sdk";
 import type { DisplayItem } from "../protocol.ts";
 import { ItemBuilder, type RawMessage } from "./items.ts";
 
-const PROJECTS = path.join(os.homedir(), ".claude", "projects");
+export const PROJECTS = path.join(os.homedir(), ".claude", "projects");
 const TRAILING_COMMANDS = 50;
 
 export function projectDirName(cwd: string): string {

@@ -30,11 +30,13 @@ class FakeManager extends EventEmitter {
   controlled = false;
   delay = 0;
   watchers = 0;
+  focuses: (string | undefined)[] = [];
   setViewed(): void {}
   isControlled(): boolean {
     return this.controlled;
   }
-  async snapshot(sessionId: string): Promise<Snapshot> {
+  async snapshot(sessionId: string, focus?: string): Promise<Snapshot> {
+    this.focuses.push(focus);
     const state = this.controlled ? "attached" : "inactive";
     await new Promise((r) => setTimeout(r, this.delay));
     return { items: [], pending: [], hasMore: false, state: { sessionId, cwd: "/", state, busy: false } };
@@ -132,5 +134,22 @@ test("an output style change is written to the audit log; a missing style name i
       [4, false],
     ],
   );
+  hub.close();
+});
+
+test("a focused view keeps its focus while the same session is shown again", async () => {
+  const { manager, hub, ws, view } = setup();
+  const B = "7c2d1b90-3e4f-4a5b-8c6d-9e0f1a2b3c4d";
+  ws.emit("message", JSON.stringify({ t: "view", sessionId: A, focus: "u1" }));
+  await sleep(20);
+  view(A);
+  manager.emit("attached", A);
+  await sleep(20);
+  view(B);
+  await sleep(20);
+  ws.emit("message", JSON.stringify({ t: "view", sessionId: A, focus: 5 }));
+  await sleep(20);
+  assert.deepEqual(manager.focuses, ["u1", "u1", "u1", undefined]);
+  assert.ok(ws.sent.some((m) => m.t === "error"));
   hub.close();
 });

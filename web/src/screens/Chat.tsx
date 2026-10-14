@@ -18,11 +18,12 @@ import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { FileLinks } from "../components/fileLinks.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { baseName, closedText, hostLabel, sessionTitle } from "../labels.ts";
-import { navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
+import { focusDone, navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
 
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
 const NEAR_BOTTOM_PX = 160;
+const FLASH_MS = 2500;
 const NO_MODELS: ModelOption[] = [];
 // How long a command sent from here may take before its sheet says it gave no result, once the session is idle.
 const RESULT_LATE_MS = 15_000;
@@ -48,6 +49,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [composerSheet, setComposerSheet] = useState<{ name: "model" | "effort"; at: number }>();
   const [awaited, setAwaited] = useState<Awaited>();
   const [file, setFile] = useState<FileTarget | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -118,6 +120,26 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [chat?.items, chat?.stream?.text, chat?.pending.length, chat?.loaded]);
 
+  const focus = chat?.loaded ? chat.focus : undefined;
+  useLayoutEffect(() => {
+    if (!focus) return;
+    focusDone(sessionId);
+    const el = listRef.current?.querySelector(`[data-item="${CSS.escape(focus)}"]`);
+    if (!el) {
+      toast("찾은 메시지가 지금 대화에 없습니다");
+      return;
+    }
+    stick.current = false;
+    el.scrollIntoView({ block: "center" });
+    setFlash(focus);
+  }, [focus, sessionId]);
+
+  useEffect(() => {
+    if (!flash) return;
+    const timer = setTimeout(() => setFlash(null), FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [flash]);
+
   const status =
     kind === "owned"
       ? busy
@@ -169,7 +191,15 @@ export function Chat({ sessionId }: { sessionId: string }) {
               </div>
             )}
             {chat?.hasMore && <div className="text-center text-xs text-muted">이전 대화는 생략했습니다</div>}
-            {items.map((item) => <ItemView key={item.id} item={item} running={busy} />)}
+            {items.map((item) => (
+              <div
+                key={item.id}
+                data-item={item.id}
+                className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
+              >
+                <ItemView item={item} running={busy} />
+              </div>
+            ))}
             {chat?.stream && <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />}
             {busy && !chat?.stream && !chat?.pending.length && (
               <div className="flex items-center gap-2 text-sm text-muted">
