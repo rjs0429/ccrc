@@ -214,7 +214,7 @@ export class SessionManager extends EventEmitter {
       if (!folders.has(dir)) folders.set(dir, isFolder(dir));
       return folders.get(dir);
     };
-    const missing = (sessionId: string, cwd: string) => !exists(cwd) && !exists(resumeIn(cwd, movedTo(sessionId, cwd), infos));
+    const missing = (sessionId: string, cwd: string) => !exists(resumeIn(cwd, movedTo(sessionId, cwd), infos));
     const out: SessionSummary[] = infos.map((info) => {
       const s = this.controlled(info.sessionId);
       if (s) return summary(s, info);
@@ -313,7 +313,7 @@ export class SessionManager extends EventEmitter {
       ...(ended ? { closedReason: ended.reason } : {}),
       ...(context ? { context } : {}),
       ...(start ? { start } : {}),
-      ...(l || isFolder(cwd) || isFolder(await this.resumeFolder(sessionId, cwd)) ? {} : { folderMissing: true }),
+      ...(l || isFolder(await this.resumeFolder(sessionId, cwd)) ? {} : { folderMissing: true }),
     };
   }
 

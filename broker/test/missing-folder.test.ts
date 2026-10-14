@@ -27,6 +27,7 @@ const HERE = "9b2c3d4e-5f60-4b7c-8d9e-0f1a2b3c4d5e";
 const FILE = "7c3d4e5f-6071-4c8d-9eaf-1a2b3c4d5e6f";
 const MOVED = "6d4e5f60-7182-4d9e-8fb0-2b3c4d5e6f70";
 const VANISH = "5e5f6071-8293-4eaf-9fc1-3c4d5e6f7081";
+const STRAY = "4f60718a-93a4-4fb0-8fd2-4d5e6f708192";
 const gone = path.join(home, "gone");
 const vanish = path.join(home, "vanish");
 const here = path.join(home, "here");
@@ -48,6 +49,7 @@ writeTranscript(GONE, gone);
 writeTranscript(HERE, here);
 writeTranscript(FILE, file);
 writeTranscript(MOVED, path.join(home, "renamed"), here);
+writeTranscript(STRAY, here, gone);
 fs.mkdirSync(vanish);
 writeTranscript(VANISH, vanish);
 
@@ -123,6 +125,15 @@ test("a moved transcript whose recorded folder is gone resumes in the folder it 
   manager.windowProbe = async () => undefined;
   assert.equal((await manager.list()).find((s) => s.id === MOVED)?.folderMissing, undefined);
   assert.equal((await manager.snapshot(MOVED)).state.folderMissing, undefined);
+  await manager.closeAll();
+});
+
+test("a moved transcript whose folder it was moved to is gone is flagged even though its recorded folder exists", async () => {
+  const manager = new SessionManager(config);
+  manager.windowProbe = async () => undefined;
+  assert.equal((await manager.list()).find((s) => s.id === STRAY)?.folderMissing, true);
+  assert.equal((await manager.snapshot(STRAY)).state.folderMissing, true);
+  await assert.rejects(manager.call(STRAY, "resume", {}), { message: `working folder is missing: ${gone}` });
   await manager.closeAll();
 });
 
