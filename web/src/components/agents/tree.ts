@@ -52,6 +52,9 @@ export interface AgentMap {
 
 const AGENT_TOOLS = new Set(["Agent", "Task"]);
 const LAUNCHED = /^(Async agent launched|Workflow launched in background)/;
+// Claude Code hands a subagent's report back under a notice, every report line indented by two spaces, and
+// follows it at column zero with the agent id and usage.
+const HANDBACK = /^\[Subagent hand-back\][^\n]*\n/;
 const RANK: Record<NodeStatus, number> = { waiting: 0, running: 1, failed: 2, completed: 3, stopped: 3, unknown: 4 };
 
 const kindOf = (t: TaskInfo) => t.kind ?? t.type;
@@ -74,10 +77,17 @@ function itemStatus(item: ToolItem, busy: boolean): NodeStatus {
   return "unknown";
 }
 
+function answerOf(text: string): string {
+  if (!HANDBACK.test(text)) return text;
+  const lines = text.replace(HANDBACK, "").split("\n");
+  const end = lines.findIndex((l) => l && !l.startsWith("  "));
+  return (end < 0 ? lines : lines.slice(0, end)).map((l) => l.slice(2)).join("\n").trim();
+}
+
 function fromItem(item: ToolItem | undefined, workflow: boolean) {
   const input = inputOf(item);
   const script = str(input.script);
-  const result = item?.result && !item.result.isError && !LAUNCHED.test(item.result.text) ? item.result.text : undefined;
+  const result = item?.result && !item.result.isError && !LAUNCHED.test(item.result.text) ? answerOf(item.result.text) : undefined;
   return {
     name: workflow ? (script ? workflowMeta(script, "name") : undefined) || str(input.name) : undefined,
     title: (workflow && script ? workflowMeta(script, "description") : undefined) || str(input.description) || item?.summary || "",

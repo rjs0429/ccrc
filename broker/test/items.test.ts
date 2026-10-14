@@ -493,6 +493,15 @@ test("a workflow's end notice gives its agent counts", () => {
   });
 });
 
+test("a background shell's end notice leaves its Bash call as it was", () => {
+  const b = new ItemBuilder(cwd);
+  b.add({ type: "assistant", uuid: "a1", message: { content: [{ type: "tool_use", id: "toolu_sh", name: "Bash", input: { command: "npm run dev", run_in_background: true } }] } });
+  b.add({ type: "user", uuid: "u1", message: { content: [{ type: "tool_result", tool_use_id: "toolu_sh", content: "Command running in background with ID: b1" }] } });
+  const notice = "<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>toolu_sh</tool-use-id>\n<output-file>/tmp/b1.output</output-file>\n<status>completed</status>\n<summary>Background command done</summary>\n</task-notification>";
+  assert.equal(b.add({ type: "user", uuid: "u2", message: { content: notice } }).length, 0);
+  assert.equal(toolItem(b, "toolu_sh").sub, undefined);
+});
+
 test("task tool summaries name the task", () => {
   assert.equal(summarizeTool("TaskCreate", { subject: "Run tests", description: "All of them" }, cwd), "Run tests");
   assert.equal(summarizeTool("TaskUpdate", { taskId: "2", status: "completed" }, cwd), "#2 completed");

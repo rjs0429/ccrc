@@ -218,3 +218,27 @@ test("the list keeps at most sixty tasks, running ones first", () => {
   );
   b.clear();
 });
+
+test("a task whose start was missed is a subagent or a workflow by its progress, and a shell stays a shell", () => {
+  const { b } = book();
+  b.on({ subtype: "task_progress", task_id: "a1", description: "Read files", subagent_type: "general-purpose", usage: { total_tokens: 1, tool_uses: 1, duration_ms: 10 } });
+  const wf = PROBE.b.find((m) => m.subtype === "task_progress" && Array.isArray(m.workflow_progress))!;
+  b.on({ ...wf, task_id: "w1" });
+  b.on({ subtype: "task_progress", task_id: "s1", description: "npm test", usage: { total_tokens: 0, tool_uses: 0, duration_ms: 10 } });
+  assert.deepEqual(
+    ["a1", "w1", "s1"].map((id) => b.get(id)?.kind),
+    ["local_agent", "local_workflow", undefined],
+  );
+  b.clear();
+});
+
+test("an end whose summary only repeats the task's name keeps no summary", () => {
+  const { b } = book();
+  b.on({ subtype: "task_started", task_id: "s1", description: "Sleep in the background", task_type: "local_agent", is_backgrounded: true });
+  b.on({ subtype: "task_notification", task_id: "s1", status: "stopped", summary: "Sleep in the background" });
+  assert.deepEqual([b.get("s1")?.status, b.get("s1")?.summary], ["stopped", undefined]);
+  b.on({ subtype: "task_started", task_id: "s2", description: "Check", task_type: "local_agent" });
+  b.on({ subtype: "task_notification", task_id: "s2", status: "failed", summary: "Check failed: no network" });
+  assert.equal(b.get("s2")?.summary, "Check failed: no network");
+  b.clear();
+});

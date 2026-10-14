@@ -229,6 +229,8 @@ export class TaskBook {
         i.workflow = wf.info;
         e.agentStarts = wf.starts;
       }
+      // Progress carries no task_type: a task whose start was missed is a workflow by its progress, a subagent by its type.
+      if (!i.kind && (wf || i.agentType)) i.kind = wf ? "local_workflow" : "local_agent";
     } else if (m.subtype === "task_updated") {
       const patch = isObj(m.patch) ? m.patch : {};
       const status = STATUS.get(patch.status);
@@ -239,7 +241,8 @@ export class TaskBook {
     } else if (m.subtype === "task_notification") {
       this.end(e, STATUS.get(m.status) ?? "completed", now);
       this.set(i, "toolUseId", i.toolUseId ?? text(m.tool_use_id, NAME_MAX));
-      this.set(i, "summary", text(m.summary, NOTE_MAX) ?? i.summary);
+      const summary = text(m.summary, NOTE_MAX);
+      if (summary && summary !== i.description.slice(0, NOTE_MAX)) i.summary = summary;
       this.counts(i, usage);
       e.ms = num(usage.duration_ms) ?? e.ms;
     }

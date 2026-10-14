@@ -161,3 +161,10 @@ test("a running node's time counts on from the broker's measure", () => {
     mock.timers.reset();
   }
 });
+
+test("a subagent's result is its report without Claude Code's hand-back notice, indent, id and usage", () => {
+  const { tasks, items, pending } = replay("a");
+  const outer = agentMap({ tasks, items, pending, busy: false }).nodes.find((n) => n.task?.id === "a095e9cb1491eec1a")!;
+  assert.equal(outer.result?.startsWith("The nested subagent is launched but has not finished"), true, outer.result);
+  assert.equal(outer.result?.endsWith("too large to read directly."), true, outer.result);
+});

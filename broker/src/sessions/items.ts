@@ -11,6 +11,8 @@ const PATCH_LINES = 800;
 const PATCH_LINE_LIMIT = 500;
 const SUB_RECENT = 5;
 const SUB_TEXT_LIMIT = 200;
+// The calls whose end notices tell how a subagent or workflow ended; a background shell's notice tells nothing more.
+const NOTICE_OWNERS = new Set(["Agent", "Task", "Workflow"]);
 const COMMAND_TEXT_LIMIT = 8000;
 const COMMAND_NAME_LIMIT = 100;
 const ENDED = new Map<string, NonNullable<SubagentActivity["ended"]>["status"]>([
@@ -436,7 +438,7 @@ export class ItemBuilder {
     const owner = this.tool(tag("tool-use-id"));
     const status = ENDED.get(tag("status"));
     const tools = count("tool_uses");
-    if (!owner || (tools === undefined && !status)) return undefined;
+    if (!owner || !NOTICE_OWNERS.has(owner.name) || (tools === undefined && !status)) return undefined;
     const prev = owner.sub ?? { tools: 0, recent: [] };
     const answer = tag("result");
     const tokens = count("subagent_tokens") ?? count("total_tokens");
