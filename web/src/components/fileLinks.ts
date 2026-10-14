@@ -4,6 +4,9 @@ import { defaultUrlTransform } from "react-markdown";
 // Opens a link to a file of the session in the viewer; where it is absent, links just navigate.
 export const FileLinks = createContext<((href: string) => void) | null>(null);
 
+// The session's folders, under which a path in a tool's input is taken for a file even without an extension.
+export const FileRoots = createContext<readonly string[]>([]);
+
 // Turns an image source in Markdown into the URL to load it from; where it is absent, sources load as they are.
 export const FileImages = createContext<((src: string) => string) | null>(null);
 

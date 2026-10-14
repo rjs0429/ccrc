@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { listSessions, type ModelInfo, type SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import type { Audit } from "../audit.ts";
+import { claudeSettingsFile } from "../claude-settings.ts";
 import { paths, writeFileAtomic, type Config } from "../config.ts";
 import type { Hello } from "../link/protocol.ts";
 import type { Link } from "../link/server.ts";
@@ -25,14 +26,16 @@ import {
 } from "../protocol.ts";
 import { BrokerSession, probeModels, probeUsage, probeWindow, type StartOptions } from "./broker-session.ts";
 import { lastCommands, rememberCommands } from "./commands.ts";
-import { ContextWindows, gauge, lastUsage, type ContextWindow } from "./context-gauge.ts";
+import { ContextWindows, exactModel, gauge, lastModelId, lastUsage, widened, type ContextWindow } from "./context-gauge.ts";
 import type { ContentBlock, SessionCore } from "./core.ts";
 import { searchFiles } from "./files.ts";
 import { lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
 import { liveProcesses } from "./live.ts";
+import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { WrappedSession } from "./wrapped.ts";
 
 const CATALOG_MS = 3000;
+const EXACT_KEEP = 500;
 const SNAPSHOT_ITEMS = 400;
 const FOCUS_BEFORE = 20;
 const FOCUS_ITEMS_MAX = 1500;
@@ -47,7 +50,6 @@ const ENDED_KEEP_MS = 10 * 60_000;
 const USAGE_KEEP_MS = 30_000;
 // A model whose window could not be asked is asked again after this long.
 const PROBE_RETRY_MS = 60_000;
-const MODEL_NAME = /^[A-Za-z0-9][\w.:[\]\/@-]{0,99}$/;
 
 export interface ManagerTiming {
   handoffTurnMs: number;
@@ -125,9 +127,10 @@ export class SessionManager extends EventEmitter {
   private timing: ManagerTiming;
   private accountUsage?: { at: number; value: Promise<UsageInfo> };
   // What sessions without a process start with when the broker next starts them.
-  private starts = new Map<string, StartSettings>();
+  private starts = new StartStore(path.join(paths.stateDir, "start-settings.json"));
   private windows = new ContextWindows(path.join(paths.stateDir, "context-windows.json"));
   private probing = new Map<string, Promise<ContextWindow | undefined>>();
+  private exact = new Map<string, { size: number; model: string }>();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string) => Promise<UsageInfo> = probeUsage;
   // Where the model list comes from before any session reported one: (cwd, Claude Code path).
@@ -307,15 +310,35 @@ export class SessionManager extends EventEmitter {
     this.emit("event", sessionId, { t: "state", sessionId, state: await this.idleState(sessionId, info.cwd, titleOf(info)) });
   }
 
-  // The context the transcript last reports against the window its model runs with: the window this session
-  // or model last reported, or else one asked of Claude Code once per model, with `found` called when it comes.
+  // The exact model a transcript ran, kept per transcript and size: a stopped session's file is read again only when it grows.
+  private async exactModel(file: string, answered: string): Promise<string> {
+    const size = (await fs.promises.stat(file).catch(() => undefined))?.size ?? -1;
+    const key = `${file}\n${answered}`;
+    const known = this.exact.get(key);
+    if (known && known.size === size) return known.model;
+    const recorded = await lastModelId(file).catch(() => undefined);
+    const model = exactModel(answered, recorded, recorded ? undefined : settingsModel());
+    this.exact.delete(key);
+    this.exact.set(key, { size, model });
+    for (const old of [...this.exact.keys()].slice(0, -EXACT_KEEP)) this.exact.delete(old);
+    return model;
+  }
+
+  // The context the transcript last reports against the window its model runs with, the 1M one when the transcript,
+  // the settings or the context's size show it: the window this session or model last reported, or else one asked
+  // of Claude Code once per model, with `found` called when it comes.
   private async lastGauge(sessionId: string, cwd: string, found: () => void): Promise<ContextGauge | undefined> {
     const file = transcriptPath(sessionId, cwd);
     const used = file ? await lastUsage(file).catch(() => undefined) : undefined;
     if (!used) return undefined;
-    const w = this.windows.get(sessionId, used.model);
+    let model = file && used.model ? await this.exactModel(file, used.model) : used.model;
+    let w = this.windows.get(sessionId, model);
+    const wider = w && model ? widened(model, used.tokens, w) : undefined;
+    if (wider) {
+      model = wider;
+      w = this.windows.get(sessionId, model);
+    }
     if (w) return gauge(used.tokens, w, true);
-    const model = used.model;
     if (!model) return undefined;
     let asked = this.probing.get(model);
     if (!asked) {
@@ -704,6 +727,16 @@ function startOptions(start?: StartSettings): Partial<StartOptions> {
   if (!start) return {};
   const later = start.effort || start.ultracode ? { effort: start.effort, ultracode: start.ultracode } : undefined;
   return { model: start.model, mode: start.mode, ...(later ? { later } : {}) };
+}
+
+// The model the user's settings start Claude Code with.
+function settingsModel(): string | undefined {
+  try {
+    const v = (JSON.parse(fs.readFileSync(claudeSettingsFile(), "utf8")) as { model?: unknown }).model;
+    return typeof v === "string" ? v : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const modelsFile = () => path.join(paths.stateDir, "models.json");

@@ -13,8 +13,11 @@ import { LinkServer } from "./link/server.ts";
 import { Push } from "./push/index.ts";
 import { buildServer } from "./server.ts";
 import { SessionManager } from "./sessions/manager.ts";
+import { SessionSearch } from "./sessions/search.ts";
 import { Store } from "./store.ts";
 import { Uploads } from "./uploads.ts";
+
+const WARM_DELAY_MS = 5000;
 
 const USAGE = `usage: ccrc <command>
   serve    run the broker
@@ -47,8 +50,12 @@ async function serve(): Promise<void> {
     if (hadLease && !store.state.lease) leases.emit("revoked", "logout");
   });
 
-  const app = await buildServer({ store, leases, gate, audit, manager, hub, uploads, push, doctor, webDir: paths.webDir, logLevel: process.env.CCRC_LOG_LEVEL });
+  const search = new SessionSearch();
+  const app = await buildServer({ store, leases, gate, audit, manager, hub, uploads, push, doctor, search, webDir: paths.webDir, logLevel: process.env.CCRC_LOG_LEVEL });
   await app.listen({ host: config.host, port: config.port });
+  // The first search after a start finds the transcripts already read.
+  const warm = async () => search.prewarm(await manager.list());
+  setTimeout(() => void warm().catch(() => undefined), WARM_DELAY_MS).unref();
 
   let stopping = false;
   const stop = async () => {

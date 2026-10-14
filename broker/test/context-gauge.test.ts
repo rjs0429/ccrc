@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { ContextWindows, gauge, gaugeOf, lastUsage } from "../src/sessions/context-gauge.ts";
+import { ContextWindows, exactModel, gauge, gaugeOf, lastModelId, lastUsage, widened } from "../src/sessions/context-gauge.ts";
 import { contextDetail } from "../src/sessions/reports.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -105,4 +105,40 @@ test("a context count keeps its memory files and agents, largest first, from eit
   assert.deepEqual(result.agents, [{ name: "a", tokens: 3 }]);
   const none = contextDetail({ totalTokens: 1, maxTokens: 10, memoryFiles: [], agents: [] });
   assert.equal("memoryFiles" in none || "agents" in none, false);
+});
+
+const modelRow = (modelId: string, extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ type: "attachment", isSidechain: false, attachment: { type: "model", identity: { modelId, marketingName: "M" }, text: "t" }, ...extra });
+const answer = (model: string) => JSON.stringify({ type: "assistant", isSidechain: false, message: { model, usage: { input_tokens: 10, output_tokens: 1 } } });
+
+test("the exact model comes from the transcript's newest model record of the main conversation", async () => {
+  const dir = tempDir();
+  const write = (name: string, lines: string[]) => {
+    const f = path.join(dir, name);
+    fs.writeFileSync(f, lines.join("\n") + "\n");
+    return f;
+  };
+  assert.equal(await lastModelId(write("a.jsonl", [modelRow("claude-a-1"), answer("claude-a-1"), modelRow("claude-a-1[1m]"), answer("claude-a-1")])), "claude-a-1[1m]");
+  assert.equal(await lastModelId(write("b.jsonl", [modelRow("claude-a-1[1m]"), modelRow("claude-a-1", { isSidechain: true }), answer("claude-a-1")])), "claude-a-1[1m]");
+  assert.equal(await lastModelId(write("c.jsonl", [answer("claude-a-1")])), undefined);
+  const filler = answer("claude-a-1").replace("usage", `pad":"${"x".repeat(4000)}","usage`);
+  const big = write("d.jsonl", [modelRow("claude-a-1[1m]"), ...Array.from({ length: 3000 }, () => filler)]);
+  assert.ok(fs.statSync(big).size > 8 * 1024 * 1024);
+  assert.equal(await lastModelId(big), "claude-a-1[1m]", "a session's first record is found at the start of a long transcript");
+  const mid = write("e.jsonl", [...Array.from({ length: 500 }, () => filler), modelRow("claude-a-2[1m]"), ...Array.from({ length: 1250 }, () => filler)]);
+  assert.equal(await lastModelId(mid), "claude-a-2[1m]", "a record up to 8 MB before the end is found");
+});
+
+test("a stopped session's model takes the 1M window only on evidence", () => {
+  assert.equal(exactModel("claude-opus-9", "claude-opus-9[1m]", undefined), "claude-opus-9[1m]");
+  assert.equal(exactModel("claude-opus-9", "claude-opus-9", "opus[1m]"), "claude-opus-9", "the transcript's record wins over settings");
+  assert.equal(exactModel("claude-opus-9", "claude-sonnet-9[1m]", undefined), "claude-opus-9", "a record of another model says nothing");
+  assert.equal(exactModel("claude-opus-9", undefined, "opus[1m]"), "claude-opus-9[1m]");
+  assert.equal(exactModel("claude-opus-9", undefined, "claude-opus-9[1m]"), "claude-opus-9[1m]");
+  assert.equal(exactModel("claude-opus-9", undefined, "sonnet[1m]"), "claude-opus-9");
+  assert.equal(exactModel("claude-opus-9", undefined, "opus"), "claude-opus-9");
+  assert.equal(exactModel("claude-opus-9", undefined, undefined), "claude-opus-9");
+  assert.equal(widened("claude-opus-9", 300_000, { max: 200_000 }), "claude-opus-9[1m]");
+  assert.equal(widened("claude-opus-9", 100_000, { max: 200_000 }), undefined);
+  assert.equal(widened("claude-opus-9[1m]", 1_300_000, { max: 1_000_000 }), undefined);
 });

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import { Writable } from "node:stream";
 import { Audit } from "../src/audit.ts";
 import { setCredentials } from "../src/auth.ts";
 import { DeviceGate } from "../src/devices.ts";
@@ -8,7 +9,7 @@ import type { Hub } from "../src/hub.ts";
 import { Doctor } from "../src/doctor.ts";
 import { Leases } from "../src/lease.ts";
 import { Push } from "../src/push/index.ts";
-import { buildServer } from "../src/server.ts";
+import { buildServer, loggedUrl } from "../src/server.ts";
 import { Uploads } from "../src/uploads.ts";
 import type { SessionManager } from "../src/sessions/manager.ts";
 import { tempDir, tempStore } from "./helpers.ts";
@@ -16,7 +17,7 @@ import { tempDir, tempStore } from "./helpers.ts";
 const ORIGIN = { origin: "http://localhost:80" };
 const status = async () => ({ Peer: { a: { DNSName: "phone.example.ts.net.", TailscaleIPs: ["100.64.0.2"] } } });
 
-async function setup() {
+async function setup(log?: { stream: NodeJS.WritableStream }) {
   const store = tempStore();
   const leases = new Leases(store, 60);
   const manager = { list: async () => [], folders: async () => [], models: [] } as unknown as SessionManager;
@@ -32,7 +33,8 @@ async function setup() {
     push: new Push(tempDir()),
     doctor: new Doctor(),
     webDir: tempDir(),
-    logLevel: "silent",
+    logLevel: log ? "info" : "silent",
+    logStream: log?.stream,
   });
   return { app, store, leases };
 }
@@ -98,4 +100,26 @@ test("logout ends the login", async () => {
   const cookie = cookieOf(res);
   assert.equal((await app.inject({ method: "POST", url: "/api/logout", headers: { ...ORIGIN, cookie } })).statusCode, 200);
   assert.equal((await app.inject({ method: "GET", url: "/api/sessions", headers: { cookie } })).statusCode, 401);
+});
+
+test("request logs hide the token of a file ticket", async () => {
+  const lines: string[] = [];
+  const stream = new Writable({
+    write(chunk, _enc, done) {
+      lines.push(String(chunk));
+      done();
+    },
+  });
+  const { app } = await setup({ stream });
+  const token = "Zk3v9QxY2b7LmN4pR8sT1uW6yA0cE5gH-iJ_oKqMnBd";
+  assert.equal((await app.inject({ method: "GET", url: `/api/file-ticket/${token}?download=1` })).statusCode, 401);
+  await app.inject({ method: "GET", url: "/api/me" });
+  const log = lines.join("");
+  assert.ok(lines.length >= 2);
+  assert.ok(!log.includes(token), "the token is not logged");
+  assert.match(log, /"url":"\/api\/file-ticket\/\[redacted\]\?download=1"/);
+  assert.match(log, /"url":"\/api\/me"/);
+  assert.equal(loggedUrl(`/api/file-ticket/${token}`), "/api/file-ticket/[redacted]");
+  assert.equal(loggedUrl("/api/sessions/x/file/ticket"), "/api/sessions/x/file/ticket");
+  await app.close();
 });

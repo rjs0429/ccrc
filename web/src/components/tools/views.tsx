@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { ToolReply } from "../../../../broker/src/protocol.ts";
 import { workflowMeta } from "../../../../broker/src/tools.ts";
 import { Icon } from "../ui.tsx";
-import { Chip, Code, Field, FileCard, FileLink, Fields, Folded, Pre, Rest, record, str, Value, type Input } from "./parts.tsx";
+import { Chip, Code, Field, FileCard, FileLink, Fields, Folded, PathValue, Pre, Rest, record, str, Value, type Input } from "./parts.tsx";
 
 function Mono({ children }: { children: string }) {
   return <span className="font-mono text-[13px] break-all">{children}</span>;
@@ -65,7 +65,7 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
           </Field>
           {str(i.path) && (
             <Field label="위치">
-              <FileLink path={str(i.path)} />
+              <PathValue path={str(i.path)} />
             </Field>
           )}
           <Rest input={i} skip={["pattern", "path"]} />
@@ -79,7 +79,7 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
           </Field>
           {str(i.path) && (
             <Field label="위치">
-              <FileLink path={str(i.path)} />
+              <PathValue path={str(i.path)} />
             </Field>
           )}
           {str(i.glob) && (

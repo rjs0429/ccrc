@@ -259,6 +259,25 @@ test("a search past its time budget answers on titles and reads the rest afterwa
   assert.equal(second.total, 2);
 });
 
+test("warming reads transcripts newest first ahead of any search and stops at the kept total", async () => {
+  const ids = [sid(), sid(), sid()];
+  const files = ids.map((id, i) => write(id, [row(id, "user", `mike warm ${i} ${"x".repeat(300)}`)]));
+  const list = ids.map((id, i) => summary(id, "other", i + 1));
+  const s = new SessionSearch({ budgetMs: -1, warmGapMs: 5 });
+  await s.prewarm(list);
+  assert.equal(s.stats.transcripts, 3);
+  const r = await s.search("mike", list);
+  assert.equal(r.pending, 0, "nothing is left for after the search");
+  assert.equal(r.total, 3);
+
+  const room = fs.statSync(files[2]).size + fs.statSync(files[1]).size + 10;
+  const small = new SessionSearch({ budgetMs: -1, warmGapMs: 0, totalChars: room });
+  await small.prewarm(list);
+  assert.equal(small.stats.transcripts, 2, "warming pushes nothing out of the index");
+  const kept = await small.search("mike", list);
+  assert.deepEqual(kept.results.map((x) => x.id).sort(), [ids[1], ids[2]].sort(), "the newest are read first");
+});
+
 test("the route needs a session, checks the query and keeps it out of the log", async () => {
   const id = sid();
   write(id, [row(id, "user", "secretword in a message")]);
