@@ -6,7 +6,9 @@ export const FileLinks = createContext<((href: string) => void) | null>(null);
 
 export const isWebLink = (href: string): boolean => /^(https?:|mailto:|tel:)/i.test(href);
 
-// Markdown keeps file:// links and "name.ext:42" links, which its URL check would take for unknown schemes.
+// Markdown keeps file:// links and "name.ext:42" links, which its URL check would take for unknown schemes;
+// the latter become ./ paths so that no scheme survives.
 export function urlTransform(url: string): string {
-  return /^file:/i.test(url) || /^[^/?#:]+:\d+(?::\d+)?(?:-\d+)?(?:[?#]|$)/.test(url) ? url : defaultUrlTransform(url);
+  if (/^file:/i.test(url)) return url;
+  return /^[^/?#:]+:\d+(?::\d+)?(?:-\d+)?(?:[?#]|$)/.test(url) ? `./${url}` : defaultUrlTransform(url);
 }

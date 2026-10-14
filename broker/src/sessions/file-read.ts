@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { claudeSettingsFile } from "../claude-settings.ts";
 import { paths } from "../config.ts";
 import type { FileKind } from "../protocol.ts";
 import { indexedFiles } from "./files.ts";
@@ -165,7 +166,7 @@ const SECRET_NAMES = new Set([
   ".dockercfg",
   ".vault-token",
 ]);
-const SECRET_PATTERNS = [/^\.env(\..*)?$/, /\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$/, /^id_(rsa|dsa|ecdsa|ed25519)(_sk)?$/, /^ssh_host_.*_key$/];
+const SECRET_PATTERNS = [/^\.claude\.json(\..*)?$/, /^\.env(\..*)?$/, /\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$/, /^id_(rsa|dsa|ecdsa|ed25519)(_sk)?$/, /^ssh_host_.*_key$/];
 const SECRET_SUBPATHS = ["/.config/gcloud/", "/.config/gh/hosts.yml"];
 
 // Files that hold keys or tokens, and ccrc's own state, are never shown, wherever they lie.
@@ -176,6 +177,10 @@ export function isSecretPath(p: string): boolean {
   if (segs.slice(0, -1).some((s) => SECRET_DIRS.has(s))) return true;
   if (SECRET_NAMES.has(name) || SECRET_PATTERNS.some((r) => r.test(name))) return true;
   if (SECRET_SUBPATHS.some((s) => `${lower}/`.includes(s))) return true;
+  if (segs[0] === "proc") return true;
+  // The user's Claude Code settings hold env values the settings screen hides.
+  const claudeDirs = [path.join(os.homedir(), ".claude"), path.dirname(claudeSettingsFile())].map((d) => d.toLowerCase());
+  if (/^settings(\.local)?\.json$/.test(name) && claudeDirs.includes(path.dirname(lower))) return true;
   return [paths.configDir, paths.stateDir].some((d) => inside(path.resolve(p), d));
 }
 

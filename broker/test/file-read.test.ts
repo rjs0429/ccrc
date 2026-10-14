@@ -115,10 +115,14 @@ test("secret files are refused even inside the working directory", async () => {
     "/p/.pypirc",
     `${home}/.claude/.credentials.json`,
     `${home}/.config/gh/hosts.yml`,
+    `${home}/.claude.json`,
+    `${home}/.claude/settings.json`,
+    `${home}/.claude/settings.local.json`,
+    "/proc/self/environ",
   ]) {
     assert.ok(isSecretPath(p), p);
   }
-  for (const p of ["/p/README.md", "/p/env.ts", "/p/id_ed25519.pub", "/p/keys.ts", "/p/src/.envrc.md"]) assert.ok(!isSecretPath(p), p);
+  for (const p of ["/p/README.md", "/p/.claude/settings.json", `${home}/.claude/plans/a.md`, "/p/env.ts", "/p/id_ed25519.pub", "/p/keys.ts", "/p/src/.envrc.md"]) assert.ok(!isSecretPath(p), p);
   const proj = tree({ ".env": "TOKEN=1", "keys/deploy.pem": "-----BEGIN" });
   assert.equal(await code(readDirect(path.join(proj, ".env"), [proj], 100)), "denied");
   fs.symlinkSync(path.join(proj, ".env"), path.join(proj, "env.txt"));
@@ -248,4 +252,25 @@ test("a live session's Claude Code reads the file and its refusal stands", async
   assert.deepEqual(asked[0], [path.join(proj, "a.md"), 1_000_000, "utf-8"]);
   const b = await get(`/api/sessions/s1/file?href=b.md`);
   assert.deepEqual([b.statusCode, b.json().error], [403, "denied"]);
+});
+
+test("a file outside the working directories is refused whatever its size", async () => {
+  const proj = tree({ "a.md": "x" });
+  const outside = tree({});
+  for (const f of [path.join(outside, "big.zip"), path.join(outside, "big.png"), path.join(proj, "big.zip")]) {
+    fs.writeFileSync(f, "");
+    fs.truncateSync(f, 10_000_001);
+  }
+  const { get } = await server({ start: proj });
+  assert.equal((await get(`/api/sessions/s1/file?href=${encodeURIComponent(path.join(outside, "big.zip"))}`)).statusCode, 403);
+  assert.equal((await get(`/api/sessions/s1/file/raw?path=${encodeURIComponent(path.join(outside, "big.png"))}`)).statusCode, 403);
+  assert.equal((await get(`/api/sessions/s1/file?href=big.zip`)).statusCode, 413);
+});
+
+test("a wrapper that predates read_file leaves the reading to the broker", async () => {
+  const proj = tree({ "a.md": "local" });
+  const core = { readFile: () => Promise.reject(Error("rejected by the wrapper: request not allowed")) };
+  const { get } = await server({ start: proj, core: core as unknown as SessionCore });
+  const a = await get(`/api/sessions/s1/file?href=a.md`);
+  assert.deepEqual([a.json().text, a.json().via], ["local", "broker"]);
 });

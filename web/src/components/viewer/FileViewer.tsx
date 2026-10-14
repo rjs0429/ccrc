@@ -165,7 +165,12 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
     setRaw(false);
     const q = new URLSearchParams({ href: current.href, ...(current.base ? { base: current.base } : {}) });
     request<FileView>("GET", `/api/sessions/${encodeURIComponent(sessionId)}/file?${q}`)
-      .then((view) => live && setLoaded({ view }))
+      .then((view) => {
+        if (!live) return;
+        setLoaded({ view });
+        // Line numbers belong to the source, so a link to a line opens it.
+        setRaw(view.line !== undefined);
+      })
       .catch((e: unknown) => {
         if (!live) return;
         const body = e instanceof ApiError ? e.body : {};

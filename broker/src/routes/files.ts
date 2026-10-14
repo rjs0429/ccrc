@@ -17,6 +17,7 @@ import {
   readDirect,
   readFailure,
   resolveLink,
+  scopedPath,
   servedType,
   type ReadErrorCode,
 } from "../sessions/file-read.ts";
@@ -28,6 +29,7 @@ const RAW_CSP = "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-
 const PDF_CSP = "default-src 'none'; object-src 'self'; img-src 'self' data: blob:; style-src 'unsafe-inline'; frame-ancestors 'self'";
 const STATUS: Record<ReadErrorCode, number> = { invalid: 400, not_found: 404, denied: 403, too_large: 413, failed: 502 };
 const LOGGED_PATH_MAX = 1024;
+const OLD_WRAPPER = "rejected by the wrapper: request not allowed";
 
 interface Access {
   // Working directories the broker enforces when it reads a file itself.
@@ -58,15 +60,23 @@ async function readFile(a: Access, abs: string, max: number, binary: boolean): P
   const real = await fs.promises.realpath(abs).catch(() => abs);
   if (isSecretPath(abs) || isSecretPath(real)) throw new ReadError("denied", `read denied: ${abs}`);
   const live = a.session?.readFile(abs, max, binary ? "base64" : "utf-8");
-  if (live) {
-    const r = await live.catch((e: unknown) => {
-      throw readFailure(e);
-    });
+  // A wrapper older than read_file refuses it; the broker then reads within the working directories.
+  const r = await live?.catch((e: unknown) => {
+    if (e instanceof Error && e.message === OLD_WRAPPER) return undefined;
+    throw readFailure(e);
+  });
+  if (r) {
     if (r.absPath && isSecretPath(r.absPath)) throw new ReadError("denied", `read denied: ${abs}`);
     return { data: Buffer.from(r.contents, r.base64 ? "base64" : "utf8"), truncated: r.truncated, via: "claude" };
   }
-  const r = await readDirect(abs, a.roots, max);
-  return { data: r.data, truncated: r.truncated, via: "broker" };
+  const d = await readDirect(abs, a.roots, max);
+  return { data: d.data, truncated: d.truncated, via: "broker" };
+}
+
+// A file outside the working directories is refused whatever its size, so a size never shows it exists.
+async function tooLarge(a: Access, abs: string): Promise<ReadError> {
+  await scopedPath(abs, a.roots);
+  return new ReadError("too_large");
 }
 
 function fail(reply: FastifyReply, e: unknown): FastifyReply {
@@ -112,7 +122,7 @@ export async function registerFiles(app: FastifyInstance, d: RouteDeps): Promise
       let kind = kindOf(abs);
       const binary = kind === "image" || kind === "pdf" || kind === "binary";
       try {
-        if (binary && size > MAX_BINARY_BYTES) throw new ReadError("too_large");
+        if (binary && size > MAX_BINARY_BYTES) throw await tooLarge(a, abs);
         const r = await readFile(a, abs, binary ? 1 : MAX_TEXT_BYTES, binary);
         let text = binary ? undefined : r.data.toString("utf8");
         if (text !== undefined && looksBinary(text)) {
@@ -163,7 +173,7 @@ export async function registerFiles(app: FastifyInstance, d: RouteDeps): Promise
       try {
         const size = await sizeOf(p);
         if (size === undefined) throw new ReadError(a.roots.some((r) => inside(p, r)) ? "not_found" : "denied");
-        if (size > MAX_BINARY_BYTES) throw new ReadError("too_large");
+        if (size > MAX_BINARY_BYTES) throw await tooLarge(a, p);
         const r = await readFile(a, p, MAX_BINARY_BYTES, true);
         log("ok", r.via);
         const type = servedType(p);
