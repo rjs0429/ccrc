@@ -115,9 +115,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
         controllable={controllable}
         disabledReason={disabledReason}
         placeholder="Claude에게 메시지"
-        onSend={(text) => {
+        onSend={(text, attachments) => {
           stick.current = true;
-          send({ t: "send", sessionId, text });
+          send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
         }}
         onStop={() => send({ t: "interrupt", sessionId })}
         onMode={(mode) => send({ t: "set_mode", sessionId, mode })}
