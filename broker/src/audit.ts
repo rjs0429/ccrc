@@ -29,7 +29,7 @@ export type AuditEvent =
 
 // Records who did what; message text and tool input are not recorded.
 export class Audit {
-  private file: string;
+  readonly file: string;
 
   constructor(file = paths.auditFile) {
     this.file = file;

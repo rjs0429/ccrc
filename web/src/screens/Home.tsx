@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SessionSummary } from "../../../broker/src/protocol.ts";
 import { Icon, Spinner } from "../components/ui.tsx";
+import { UpdateBanner } from "../components/UpdateBanner.tsx";
 import { baseName, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
 import { navigate, refreshSessions, useApp } from "../state.ts";
 
@@ -104,6 +105,7 @@ export function Home() {
           ))}
         </div>
       </header>
+      <UpdateBanner />
 
       <main className="flex-1 overflow-y-auto">
         {!sessions && (

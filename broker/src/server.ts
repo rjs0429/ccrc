@@ -6,6 +6,7 @@ import websocket from "@fastify/websocket";
 import fastifyStatic from "@fastify/static";
 import type { Audit } from "./audit.ts";
 import { checkCredentials, setCredentials } from "./auth.ts";
+import type { ClaudeSettings } from "./claude-settings.ts";
 import type { DeviceGate } from "./devices.ts";
 import type { Doctor } from "./doctor.ts";
 import type { Hub } from "./hub.ts";
@@ -50,6 +51,8 @@ export interface ServerDeps {
   uploads: Uploads;
   push: Push;
   doctor: Doctor;
+  // Claude Code's settings file; ~/.claude/settings.json unless given.
+  claudeSettings?: ClaudeSettings;
   webDir: string;
   logLevel?: string;
 }
