@@ -151,3 +151,13 @@ test("at most eight folder listings are held at once, and session searches hide 
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(made.length, 11, "a dropped listing is made again");
 });
+
+test("a home folder's token files are not offered for '@'", async () => {
+  const d = path.join(home, "homelike");
+  for (const f of [".codex/auth.json", ".envrc", "prod.env", ".cargo/credentials.toml", ".config/rclone/rclone.conf", ".local/share/keyrings/login.keyring", "infra/terraform.tfstate", "notes.md"]) {
+    fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true });
+    fs.writeFileSync(path.join(d, f), "x");
+  }
+  for (const q of ["codex/auth", "envrc", "prod", "credentials", "rclone", "keyring", "tfstate"]) assert.deepEqual(await searchFiles(d, q), [], q);
+  assert.deepEqual(await searchFiles(d, "notes"), ["notes.md"]);
+});

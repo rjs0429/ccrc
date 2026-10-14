@@ -15,7 +15,7 @@ import { ATTACH_ACCEPT, MAX_MESSAGE_BYTES, NEW_SESSION_SCOPE, addFiles, takeAtta
 import { afterKeyboard } from "./composer/picker.ts";
 import { Suggestions, type SuggestRow } from "./composer/Suggestions.tsx";
 import { commandQuery, mentionAt, mentionText, rankCommands, useCommands, useFileSuggestions, type SuggestTarget } from "./composer/suggest.ts";
-import { Choice, Icon, Sheet } from "./ui.tsx";
+import { Choice, Icon, Sheet, Spinner } from "./ui.tsx";
 
 const MODES: PermissionModeName[] = ["default", "acceptEdits", "plan", "auto"];
 const MAX_INPUT_PX = 168;
@@ -163,7 +163,9 @@ export function Composer({
   const offered = findModel(models, starts)?.ultracode;
   const ultracodeShown = draft ? offered === true || ultracode : deferred ? offered !== false || ultracode : state?.ultracodeAvailable === true;
   const uploading = attachments.some((a) => !a.uploaded);
-  const canSend = !uploading && !(draft && starting) && (text.trim() !== "" || attachments.length > 0);
+  // While a new session starts, its first message stays as it was sent.
+  const locked = Boolean(draft && starting);
+  const canSend = !uploading && !locked && (text.trim() !== "" || attachments.length > 0);
 
   const draftCwd = draft?.cwd;
   const target = useMemo<SuggestTarget | undefined>(() => (sessionId ? { sessionId } : draftCwd ? { cwd: draftCwd } : undefined), [sessionId, draftCwd]);
@@ -180,7 +182,7 @@ export function Composer({
             .slice(0, MAX_COMMAND_ROWS)
             .map((c) => ({ key: c.name, label: `/${c.name}`, hint: c.argumentHint, detail: c.description }))
         : [];
-  const shown = rows.length > 0;
+  const shown = rows.length > 0 && !locked;
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -237,7 +239,7 @@ export function Composer({
   // paperclip settles; otherwise it opens within the tap.
   const attach = () => {
     const input = fileRef.current;
-    if (!input || picking.current) return;
+    if (!input || picking.current || locked) return;
     const keyboard = document.documentElement.hasAttribute("data-keyboard");
     ref.current?.blur();
     if (!keyboard) return input.click();
@@ -321,11 +323,12 @@ export function Composer({
       <div className="relative mx-auto max-w-3xl">
         {shown && <Suggestions rows={rows} active={active} onPick={pick} />}
         <div className="rounded-2xl border border-line bg-surface px-3 pt-2.5 pb-1.5 focus-within:border-accent short:pt-1.5 short:pb-1">
-          {scope && <AttachmentChips scope={scope} items={attachments} />}
+          {scope && <AttachmentChips scope={scope} items={attachments} locked={locked} />}
           <textarea
             ref={ref}
             value={text}
             rows={1}
+            readOnly={locked}
             enterKeyHint={enterToSend ? "send" : "enter"}
             placeholder={busy ? "대기열에 추가할 메시지…" : placeholder}
             onChange={(e) => {
@@ -349,7 +352,8 @@ export function Composer({
                   <button
                     aria-label="파일 첨부"
                     onClick={attach}
-                    className="flex size-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2"
+                    disabled={locked}
+                    className="flex size-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2 disabled:opacity-50"
                   >
                     <Icon.paperclip className="size-[18px]" />
                   </button>
@@ -360,6 +364,7 @@ export function Composer({
                     accept={ATTACH_ACCEPT}
                     tabIndex={-1}
                     aria-hidden
+                    disabled={locked}
                     onChange={(e) => {
                       const picked = [...(e.target.files ?? [])];
                       e.target.value = "";
@@ -396,10 +401,11 @@ export function Composer({
               <button
                 onClick={submit}
                 disabled={!canSend}
-                aria-label={draft ? "시작" : "보내기"}
-                className="flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30"
+                aria-label={locked ? "시작하는 중" : draft ? "시작" : "보내기"}
+                data-starting={locked || undefined}
+                className={`flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-white ${locked ? "" : "disabled:opacity-30"}`}
               >
-                <Icon.send className="size-5" />
+                {locked ? <Spinner className="size-5" /> : <Icon.send className="size-5" />}
               </button>
             </div>
           </div>

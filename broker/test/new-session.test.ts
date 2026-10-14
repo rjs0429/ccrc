@@ -96,7 +96,7 @@ function setup(t: { after: (fn: () => unknown) => void }) {
     await manager.closeAll();
   });
   const started = () => ws.sent.find((m): m is Extract<ServerMsg, { t: "session_started" }> => m.t === "session_started");
-  return { manager, uploads, ws, say, logged, started };
+  return { manager, hub, uploads, ws, say, logged, started };
 }
 
 test("a new session asked to start with Ultracode gets it as a flag setting, with effort as an option, and its first message waits for nothing", async (t) => {
@@ -182,6 +182,29 @@ test("a first message with an attachment that is gone starts nothing and names t
   assert.equal(started(), undefined);
   assert.equal((await manager.list()).length, before);
   assert.ok(!recorded().some((r) => r.args), "no Claude Code was started");
+});
+
+test("a start asked for again with the same draftId after a reconnect starts nothing new and names the first session", async (t) => {
+  const { manager, hub, ws, say, logged } = setup(t);
+  const before = (await manager.list()).length;
+  say({ t: "new_session", cwd, text: "only once", draftId: "d-3" });
+  ws.readyState = 3;
+  ws.emit("close");
+  const ws2 = new FakeSocket();
+  hub.attach(ws2 as never, "phone", "token");
+  ws2.emit("message", JSON.stringify({ t: "new_session", cwd, text: "only once", draftId: "d-3" }));
+  const s = await until(() => ws2.sent.find((m): m is Extract<ServerMsg, { t: "session_started" }> => m.t === "session_started"), "session_started");
+  assert.equal(s.draftId, "d-3");
+  await until(() => recorded().some((r) => r.user === "only once"), "first message");
+  ws2.emit("message", JSON.stringify({ t: "new_session", cwd, text: "only once", draftId: "d-3" }));
+  await until(() => ws2.sent.filter((m) => m.t === "session_started").length === 2, "second answer");
+  await sleep(200);
+  assert.ok(ws2.sent.filter((m) => m.t === "session_started").every((m) => m.sessionId === s.sessionId));
+  assert.equal(recorded().filter((r) => r.user === "only once").length, 1, "the first message went once");
+  assert.equal(recorded().filter((r) => r.args).length, 1, "one Claude Code was started");
+  assert.equal(logged.filter(([e]) => e === "new_session").length, 1);
+  assert.equal((await manager.list()).length, before + 1);
+  ws2.emit("message", JSON.stringify({ t: "view", sessionId: null }));
 });
 
 test("a new session's fields are checked", async (t) => {

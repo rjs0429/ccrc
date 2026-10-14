@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ModelOption, TaskInfo, WorkflowAgent, WorkflowAgentState } from "../../../../broker/src/protocol.ts";
 import { duration, errorText, modelLabel, taskKindLabel } from "../../labels.ts";
 import { call, useApp } from "../../state.ts";
@@ -428,6 +428,8 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
   const [failed, setFailed] = useState<{ id: string; text: string }>();
   const [now, setNow] = useState(Date.now());
   const last = useRef<{ node?: AgentNode; task?: TaskInfo }>({});
+  const detailRef = useRef<HTMLDivElement>(null);
+  const listScroll = useRef(0);
   const clock: Clock = { now, stateAt: chat?.stateAt };
 
   const ticking = map.nodes.some(live) || map.background.some((t) => t.status === "running");
@@ -476,8 +478,20 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
       gone = true;
     }
   }
-  const open = (n: AgentNode) => setSelected({ key: n.key, itemId: n.itemId });
+  const panel = () => detailRef.current?.closest<HTMLElement>('[role="dialog"]');
+  const show = (sel: Selected) => {
+    if (!selected) listScroll.current = panel()?.scrollTop ?? 0;
+    setSelected(sel);
+  };
+  const open = (n: AgentNode) => show({ key: n.key, itemId: n.itemId });
   const back = () => setSelected(null);
+  // A card opens at its top, with its way back in view; going back finds the map where it was left.
+  const selectedKey = selected ? `${selected.key}|${selected.itemId ?? ""}` : "";
+  useLayoutEffect(() => {
+    const p = panel();
+    if (detailRef.current) detailRef.current.scrollTop = 0;
+    if (p) p.scrollTop = selectedKey ? 0 : listScroll.current;
+  }, [selectedKey]);
   const mainStatus = (chat?.pending ?? []).some((p) => !p.agentId) ? "권한 대기" : busy ? "작업 중" : "쉬는 중";
   const past = map.past.slice(0, pastLimit);
   const detailProps = {
@@ -523,7 +537,7 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
                     stopping={stopping.has(t.id)}
                     error={failed?.id === t.id && !selected ? failed.text : undefined}
                     onStop={controllable ? () => stop(t.id) : undefined}
-                    onOpen={() => setSelected({ key: `t:${t.id}`, task: t.id })}
+                    onOpen={() => show({ key: `t:${t.id}`, task: t.id })}
                   />
                 ))}
               </div>
@@ -554,7 +568,7 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
           )}
           {controllable && <div className="mt-4 px-1 text-xs text-muted">입력창의 중지는 지금 턴만 멈춥니다. 백그라운드 에이전트는 여기서 하나씩 멈춥니다.</div>}
         </div>
-        <div className={`${selected ? "" : "hidden sm:block"} sm:col-span-7 sm:max-h-[calc(var(--vv-height,100dvh)-7rem)] sm:overflow-y-auto sm:overscroll-contain sm:border-l sm:border-line sm:pl-4`} data-map-detail>
+        <div className={`${selected ? "" : "hidden sm:block"} sm:col-span-7 sm:max-h-[calc(var(--vv-height,100dvh)-7rem)] sm:overflow-y-auto sm:overscroll-contain sm:border-l sm:border-line sm:pl-4`} data-map-detail ref={detailRef}>
           {node ? (
             <AgentDetail
               {...detailProps}

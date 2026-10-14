@@ -176,6 +176,11 @@ export function NewSession() {
             <div className="truncate text-xs text-muted" data-new-folder>
               {cwd ? `${baseName(cwd)} · ${shortPath(cwd)}` : "폴더를 고르세요"}
             </div>
+            {starting && (
+              <div className="flex items-center gap-1.5 text-xs text-accent" data-start-note>
+                <Spinner className="size-3" /> 시작하는 중…
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -206,11 +211,6 @@ export function NewSession() {
             ))}
             {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">폴더가 없습니다</div>}
           </div>
-          {starting && (
-            <div className="mt-4 flex items-center justify-center gap-2 text-sm text-muted" data-starting>
-              <Spinner className="size-3.5" /> 시작하는 중…
-            </div>
-          )}
         </div>
       </main>
 

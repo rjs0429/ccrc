@@ -240,8 +240,13 @@ function ask(msg: (id: number) => ClientMsg, ms: number): Promise<unknown> {
 }
 
 const START_WAIT_MS = 60_000;
-// The new session being started from here, by the draftId the broker answers with, and its first message.
-let startingSent: { id: string; text: string; timer: number } | undefined;
+type NewSessionMsg = Extract<ClientMsg, { t: "new_session" }>;
+type Start = { id: string; msg: NewSessionMsg };
+// The new session being started from here, by the draftId the broker answers with. It outlasts a reconnect,
+// which asks for it again; the broker starts a draftId once. The last one that went unanswered is kept, so a late
+// answer still clears its draft and starting the same draft again names the same start.
+let startingSent: (Start & { timer: number }) | undefined;
+let unanswered: Start | undefined;
 let draftStarted: ((sessionId: string, text: string) => void) | undefined;
 
 // Called when the new session asked for from here has started, before the chat opens.
@@ -255,14 +260,24 @@ function startDone(): void {
   setState({ starting: undefined });
 }
 
+function startTimedOut(): void {
+  unanswered = startingSent;
+  startDone();
+}
+
+const sameStart = (a: NewSessionMsg, b: NewSessionMsg) => JSON.stringify({ ...a, draftId: "" }) === JSON.stringify({ ...b, draftId: "" });
+
 // Starts a new session; false when it could not be asked for. session_started or an error with the same
 // draftId ends the wait.
-export function startNewSession(msg: Omit<Extract<ClientMsg, { t: "new_session" }>, "draftId">): boolean {
+export function startNewSession(start: Omit<NewSessionMsg, "draftId">): boolean {
   if (state.starting) return false;
-  const id = `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  if (!send({ ...msg, draftId: id })) return false;
-  startingSent = { id, text: msg.text, timer: window.setTimeout(startDone, START_WAIT_MS) };
-  setState({ starting: id });
+  const fresh = `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const msg: NewSessionMsg = { ...start, draftId: fresh };
+  if (unanswered && sameStart(unanswered.msg, msg)) msg.draftId = unanswered.id;
+  if (!send(msg)) return false;
+  unanswered = undefined;
+  startingSent = { id: msg.draftId!, msg, timer: window.setTimeout(startTimedOut, START_WAIT_MS) };
+  setState({ starting: msg.draftId });
   return true;
 }
 
@@ -292,7 +307,6 @@ export function connect(): void {
   ws.onclose = (e) => {
     if (ws !== socket) return;
     settleCalls();
-    if (startingSent) startDone();
     if (e.code === 4001) return loggedOut(state.loggedOutReason ?? "expired");
     if (e.code === 4000) return setState({ conn: "taken" });
     setState({ conn: "offline" });
@@ -328,6 +342,7 @@ function onServer(msg: ServerMsg): void {
       setState({ conn: "ready" });
       send({ t: "visibility", visible: document.visibilityState === "visible" });
       send(viewMsg());
+      if (startingSent) send(startingSent.msg);
       return;
     case "window_conflict":
       setState({ conn: "conflict" });
@@ -360,19 +375,23 @@ function onServer(msg: ServerMsg): void {
       updateChat(msg.sessionId, () => ({ state: msg.state, stateAt: Date.now() }));
       if (!state.options?.models.length) void refreshOptions();
       return;
-    case "session_started":
-      if (msg.draftId && msg.draftId === startingSent?.id) {
-        draftStarted?.(msg.sessionId, startingSent.text);
-        startDone();
+    case "session_started": {
+      const started = msg.draftId ? [startingSent, unanswered].find((d) => d?.id === msg.draftId) : undefined;
+      if (started) {
+        draftStarted?.(msg.sessionId, started.msg.text);
+        if (started === unanswered) unanswered = undefined;
+        else startDone();
       }
       setState({ chat: { sessionId: msg.sessionId, loaded: false, items: [], pending: [], hasMore: false } });
       navigate({ name: "chat", sessionId: msg.sessionId });
       return;
+    }
     case "sessions_changed":
       void refreshSessions();
       return;
     case "error":
       if (msg.draftId && msg.draftId === startingSent?.id) startDone();
+      if (msg.draftId && msg.draftId === unanswered?.id) unanswered = undefined;
       toast(msg.message);
       return;
     case "call_result": {

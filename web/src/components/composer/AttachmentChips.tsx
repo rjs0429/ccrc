@@ -2,7 +2,7 @@ import { sizeText } from "../../labels.ts";
 import { Icon, Spinner } from "../ui.tsx";
 import { removeAttachment, type Attachment } from "./attachments.ts";
 
-export function AttachmentChips({ scope, items }: { scope: string; items: Attachment[] }) {
+export function AttachmentChips({ scope, items, locked }: { scope: string; items: Attachment[]; locked?: boolean }) {
   if (!items.length) return null;
   return (
     <div className="-mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1">
@@ -28,9 +28,11 @@ export function AttachmentChips({ scope, items }: { scope: string; items: Attach
               )}
             </span>
           </span>
-          <button onClick={() => removeAttachment(scope, a.key)} aria-label="첨부 빼기" className="shrink-0 rounded-md p-1 text-muted">
-            <Icon.x className="size-3.5" />
-          </button>
+          {!locked && (
+            <button onClick={() => removeAttachment(scope, a.key)} aria-label="첨부 빼기" className="shrink-0 rounded-md p-1 text-muted">
+              <Icon.x className="size-3.5" />
+            </button>
+          )}
         </div>
       ))}
     </div>

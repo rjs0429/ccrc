@@ -8,7 +8,7 @@ export function inside(p: string, root: string): boolean {
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 }
 
-const SECRET_DIRS = new Set([".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".password-store", ".gcloud"]);
+const SECRET_DIRS = new Set([".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".password-store", ".gcloud", ".codex", ".terraform.d"]);
 const SECRET_NAMES = new Set([
   ".netrc",
   "_netrc",
@@ -24,8 +24,27 @@ const SECRET_NAMES = new Set([
   ".dockercfg",
   ".vault-token",
 ]);
-const SECRET_PATTERNS = [/^\.claude\.json(\..*)?$/, /^\.env(\..*)?$/, /\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$/, /^id_(rsa|dsa|ecdsa|ed25519)(_sk)?$/, /^ssh_host_.*_key$/];
-const SECRET_SUBPATHS = ["/.config/gcloud/", "/.config/gh/hosts.yml"];
+const SECRET_PATTERNS = [
+  /^\.claude\.json(\..*)?$/,
+  /^\.env(\..*)?$/,
+  /^\.envrc$/,
+  /\.env$/,
+  /\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$/,
+  /^id_(rsa|dsa|ecdsa|ed25519)(_sk)?$/,
+  /^ssh_host_.*_key$/,
+  /^credentials(\.toml)?$/,
+  /\.tfstate(\.backup)?$/,
+  /\.tfvars(\.json)?$/,
+];
+const SECRET_SUBPATHS = [
+  "/.config/gcloud/",
+  "/.config/gh/hosts.yml",
+  "/.config/hub/",
+  "/.config/github-copilot/",
+  "/.config/rclone/rclone.conf/",
+  "/.cargo/credentials",
+  "/.local/share/keyrings/",
+];
 
 // Files that hold keys or tokens, and ccrc's own state, are never shown, wherever they lie.
 export function isSecretPath(p: string): boolean {

@@ -17,6 +17,8 @@ const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind",
 const DENIED_LOG_MS = 60_000;
 const DENIED_KEEP = 100;
 const DRAFT_ID = /^[A-Za-z0-9-]{1,64}$/;
+// A start asked for again with the same draftId in this long gets the session already started.
+const DRAFT_KEEP_MS = 10 * 60_000;
 
 function send(ws: WebSocket, msg: ServerMsg): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -62,6 +64,7 @@ export class Hub {
   private pinger: NodeJS.Timeout;
   private alive = new WeakSet<WebSocket>();
   private deniedLogged = new Map<string, number>();
+  private drafts = new Map<string, { at: number; started: Promise<string> }>();
 
   constructor(manager: SessionManager, leases: Leases, audit: Audit, uploads: Uploads) {
     this.manager = manager;
@@ -189,6 +192,26 @@ export class Hub {
     }
   }
 
+  private async startSession(msg: Extract<ClientMsg, { t: "new_session" }>, ids: string[], text: string, device: string): Promise<string> {
+    const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
+    const s = await this.manager.create(str(msg.cwd, 4096), {
+      model: msg.model === undefined ? undefined : str(msg.model),
+      mode: msg.mode,
+      effort: msg.effort,
+      ultracode: msg.ultracode === true,
+    });
+    this.audit.log("new_session", {
+      device,
+      sessionId: s.id,
+      cwd: s.cwd,
+      ...(msg.ultracode ? { ultracode: true } : {}),
+      ...(ids.length ? { attachments: ids.length } : {}),
+    });
+    this.remoteSends.set(s.id, Date.now());
+    s.send(text, blocks);
+    return s.id;
+  }
+
   private async dispatch(msg: ClientMsg, ws: WebSocket): Promise<void> {
     const m = this.manager;
     const device = this.device;
@@ -229,24 +252,21 @@ export class Hub {
         if (msg.effort !== undefined && !EFFORTS.includes(msg.effort)) throw Error("invalid effort");
         if (msg.ultracode !== undefined && typeof msg.ultracode !== "boolean") throw Error("invalid ultracode");
         if (msg.draftId !== undefined && (typeof msg.draftId !== "string" || !DRAFT_ID.test(msg.draftId))) throw Error("invalid request");
-        const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
-        const s = await m.create(str(msg.cwd, 4096), {
-          model: msg.model === undefined ? undefined : str(msg.model),
-          mode: msg.mode,
-          effort: msg.effort,
-          ultracode: msg.ultracode === true,
-        });
-        this.audit.log("new_session", {
-          device,
-          sessionId: s.id,
-          cwd: s.cwd,
-          ...(msg.ultracode ? { ultracode: true } : {}),
-          ...(ids.length ? { attachments: ids.length } : {}),
-        });
-        this.remoteSends.set(s.id, Date.now());
-        s.send(text, blocks);
-        if (this.active) send(this.active, { t: "session_started", sessionId: s.id, ...(msg.draftId ? { draftId: msg.draftId } : {}) });
-        await this.setView(s.id);
+        const draftId = msg.draftId;
+        const now = Date.now();
+        for (const [k, d] of this.drafts) if (now - d.at > DRAFT_KEEP_MS) this.drafts.delete(k);
+        // The phone asks again after a reconnect; the start it already asked for is not run twice.
+        let started = draftId ? this.drafts.get(draftId)?.started : undefined;
+        if (!started) {
+          started = this.startSession(msg, ids, text, device);
+          if (draftId) {
+            this.drafts.set(draftId, { at: now, started });
+            started.catch(() => this.drafts.delete(draftId));
+          }
+        }
+        const id = await started;
+        if (this.active) send(this.active, { t: "session_started", sessionId: id, ...(draftId ? { draftId } : {}) });
+        await this.setView(id);
         return;
       }
       case "answer": {

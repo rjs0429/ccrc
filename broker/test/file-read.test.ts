@@ -119,10 +119,24 @@ test("secret files are refused even inside the working directory", async () => {
     `${home}/.claude/settings.json`,
     `${home}/.claude/settings.local.json`,
     "/proc/self/environ",
+    `${home}/.codex/auth.json`,
+    "/p/.envrc",
+    "/p/prod.env",
+    "/p/deploy/staging.env",
+    `${home}/.cargo/credentials.toml`,
+    `${home}/.cargo/credentials`,
+    `${home}/.config/rclone/rclone.conf`,
+    `${home}/.terraform.d/credentials.tfrc.json`,
+    "/p/infra/terraform.tfstate",
+    "/p/infra/terraform.tfstate.backup",
+    "/p/infra/prod.tfvars",
+    `${home}/.config/hub`,
+    `${home}/.config/github-copilot/apps.json`,
+    `${home}/.local/share/keyrings/login.keyring`,
   ]) {
     assert.ok(isSecretPath(p), p);
   }
-  for (const p of ["/p/README.md", "/p/.claude/settings.json", `${home}/.claude/plans/a.md`, "/p/env.ts", "/p/id_ed25519.pub", "/p/keys.ts", "/p/src/.envrc.md"]) assert.ok(!isSecretPath(p), p);
+  for (const p of ["/p/README.md", "/p/.claude/settings.json", `${home}/.claude/plans/a.md`, "/p/env.ts", "/p/id_ed25519.pub", "/p/keys.ts", "/p/src/.envrc.md", "/p/src/env.ts", "/p/environment.md", `${home}/.config/hubble/x.yml`, "/p/main.tf"]) assert.ok(!isSecretPath(p), p);
   const proj = tree({ ".env": "TOKEN=1", "keys/deploy.pem": "-----BEGIN" });
   assert.equal(await code(readDirect(path.join(proj, ".env"), [proj], 100)), "denied");
   fs.symlinkSync(path.join(proj, ".env"), path.join(proj, "env.txt"));
