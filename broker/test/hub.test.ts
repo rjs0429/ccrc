@@ -43,6 +43,10 @@ class FakeManager extends EventEmitter {
     this.watchers++;
     return () => this.watchers--;
   }
+  async call(_sessionId: string, op: string): Promise<unknown> {
+    await new Promise((r) => setTimeout(r, this.delay));
+    return op;
+  }
 }
 
 function setup() {
@@ -87,5 +91,19 @@ test("leaving and reopening a view quickly leaves one transcript watch", async (
   view(null);
   await sleep(10);
   assert.equal(manager.watchers, 0);
+  hub.close();
+});
+
+test("a call is answered to the window that made it, not to one that took over since", async () => {
+  const { manager, hub, ws } = setup();
+  manager.delay = 50;
+  ws.emit("message", JSON.stringify({ t: "call", id: 1, sessionId: A, op: "context", args: {} }));
+  const other = new FakeSocket();
+  hub.attach(other as never, "laptop", "token2");
+  other.emit("message", JSON.stringify({ t: "take_window" }));
+  other.emit("message", JSON.stringify({ t: "call", id: 1, sessionId: A, op: "files", args: {} }));
+  await sleep(150);
+  assert.deepEqual(other.sent.filter((m) => m.t === "call_result"), [{ t: "call_result", id: 1, ok: true, data: "files" }]);
+  assert.deepEqual(ws.sent.filter((m) => m.t === "call_result"), []);
   hub.close();
 });

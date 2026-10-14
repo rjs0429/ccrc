@@ -38,12 +38,12 @@ export interface AppState {
 }
 
 type Listener = () => void;
+// Server messages only fill a chat that exists, so a chat route always has one.
+function emptyChat(route: Route): Chat | undefined {
+  return route.name === "chat" ? { sessionId: route.sessionId, loaded: false, items: [], pending: [], hasMore: false } : undefined;
+}
 const startRoute = parseRoute();
-let state: AppState = {
-  route: startRoute,
-  conn: "idle",
-  chat: startRoute.name === "chat" ? { sessionId: startRoute.sessionId, loaded: false, items: [], pending: [], hasMore: false } : undefined,
-};
+let state: AppState = { route: startRoute, conn: "idle", chat: emptyChat(startRoute) };
 const listeners = new Set<Listener>();
 
 export function getState(): AppState {
@@ -140,15 +140,18 @@ export function startSession(): void {
 export function loggedOut(reason: string): void {
   socket?.close();
   socket = undefined;
-  setState((s) => ({ me: s.me ? { ...s.me, loggedIn: false } : s.me, conn: "idle", loggedOutReason: reason, chat: undefined }));
+  setState((s) => ({ me: s.me ? { ...s.me, loggedIn: false } : s.me, conn: "idle", loggedOutReason: reason, chat: emptyChat(s.route) }));
 }
 
 let socket: WebSocket | undefined;
 let retry = 0;
 let retryTimer: number | undefined;
 
-export function send(msg: ClientMsg): void {
-  if (socket?.readyState === WebSocket.OPEN && state.conn === "ready") socket.send(JSON.stringify(msg));
+// Whether the message went out; nothing is kept for a later connection.
+export function send(msg: ClientMsg): boolean {
+  if (socket?.readyState !== WebSocket.OPEN || state.conn !== "ready") return false;
+  socket.send(JSON.stringify(msg));
+  return true;
 }
 
 const CALL_TIMEOUT_MS = 30_000;

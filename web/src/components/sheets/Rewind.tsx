@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DisplayItem, RewindResult } from "../../../../broker/src/protocol.ts";
 import { clock, errorText, shortPath } from "../../labels.ts";
 import { call, useApp } from "../../state.ts";
@@ -90,6 +90,11 @@ export function RewindSheet({ sessionId, onClose }: SheetProps) {
         setConfirm(false);
       });
   };
+
+  // A turn can change more files, so the preview is taken again when one ends.
+  useEffect(() => {
+    if (!busy && selected && !applied && !applying) pick(selected);
+  }, [busy]);
 
   const changed = preview?.result?.canRewind ? (preview.result.filesChanged?.length ?? 0) : 0;
 

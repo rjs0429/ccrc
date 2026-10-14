@@ -167,13 +167,13 @@ export class Hub {
     }
     const sessionId = "sessionId" in msg && typeof msg.sessionId === "string" ? msg.sessionId : undefined;
     try {
-      await this.dispatch(msg);
+      await this.dispatch(msg, ws);
     } catch (e) {
       send(ws, { t: "error", message: e instanceof Error ? e.message : String(e), sessionId });
     }
   }
 
-  private async dispatch(msg: ClientMsg): Promise<void> {
+  private async dispatch(msg: ClientMsg, ws: WebSocket): Promise<void> {
     const m = this.manager;
     const device = this.device;
     switch (msg.t) {
@@ -187,7 +187,7 @@ export class Hub {
         this.visible = msg.visible === true;
         return;
       case "call":
-        await this.call(msg);
+        await this.call(msg, ws);
         return;
       case "send": {
         const id = sid(msg.sessionId);
@@ -252,12 +252,13 @@ export class Hub {
     }
   }
 
-  // A call answers with call_result whether it succeeds or not.
-  private async call(msg: Extract<ClientMsg, { t: "call" }>): Promise<void> {
+  // A call answers with call_result whether it succeeds or not, to the window that asked: call ids are
+  // numbered per page, so another window may be waiting on the same id.
+  private async call(msg: Extract<ClientMsg, { t: "call" }>, ws: WebSocket): Promise<void> {
     const id = msg.id;
     if (typeof id !== "number") throw Error("invalid request");
     const reply = (r: { ok: boolean; data?: unknown; error?: string }) => {
-      if (this.active) send(this.active, { t: "call_result", id, ...r });
+      if (ws === this.active) send(ws, { t: "call_result", id, ...r });
     };
     try {
       const sessionId = sid(msg.sessionId);

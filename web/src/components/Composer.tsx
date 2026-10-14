@@ -63,8 +63,8 @@ interface Props {
   controllable: boolean;
   disabledReason?: string;
   placeholder: string;
-  // attachments: upload ids, in the order they were added.
-  onSend: (text: string, attachments: string[]) => void;
+  // attachments: upload ids, in the order they were added. Returns whether the message went out.
+  onSend: (text: string, attachments: string[]) => boolean;
   onStop: () => void;
   onMode: (mode: PermissionModeName) => void;
   onModel: (model: string) => void;
@@ -148,7 +148,7 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
     if (!canSend || disabledReason) return;
     const total = attachments.reduce((n, a) => n + (a.uploaded?.size ?? 0), 0);
     if (total > MAX_MESSAGE_BYTES) return toast("attachments too large");
-    onSend(text.trim(), attachments.map((a) => a.uploaded!.id));
+    if (!onSend(text.trim(), attachments.map((a) => a.uploaded!.id))) return toast("not connected");
     setText("");
     setDismissed(false);
     if (sessionId) clearAttachments(sessionId);

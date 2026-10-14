@@ -119,7 +119,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         placeholder="Claude에게 메시지"
         onSend={(text, attachments) => {
           stick.current = true;
-          send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
+          return send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
         }}
         onStop={() => send({ t: "interrupt", sessionId })}
         onMode={(mode) => send({ t: "set_mode", sessionId, mode })}
