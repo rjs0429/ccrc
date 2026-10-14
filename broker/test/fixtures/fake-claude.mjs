@@ -11,7 +11,7 @@
 // "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data, and
 // "/status" the same way with text only; "/help" as a command headless Claude Code cannot open, with no name; get_usage fails while the working folder holds a file named .fake-no-usage.
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
-// FAKE_REQUESTS=<file> gets a line with its arguments and then one per control request or user message it receives.
+// FAKE_REQUESTS=<file> gets a line with its arguments and environment and then one per control request or user message it receives.
 // --version prints a version and exits.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -31,7 +31,8 @@ const value = (name) => {
 const sid = value("--session-id") || (args.includes("--fork-session") ? undefined : value("--resume")) || randomUUID();
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const record = (m) => process.env.FAKE_REQUESTS && fs.appendFileSync(process.env.FAKE_REQUESTS, JSON.stringify(m) + "\n");
-record({ args });
+const { CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP, CLAUDE_CODE_ARTIFACT, CLAUDE_CODE_SEND_FEEDBACK } = process.env;
+record({ args, env: { CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP, CLAUDE_CODE_ARTIFACT, CLAUDE_CODE_SEND_FEEDBACK } });
 let asks = 0;
 let holding = false;
 const queue = [];

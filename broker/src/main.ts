@@ -12,6 +12,7 @@ import { linkSocketPath } from "./link/protocol.ts";
 import { LinkServer } from "./link/server.ts";
 import { Push } from "./push/index.ts";
 import { buildServer } from "./server.ts";
+import { retagTranscripts } from "./sessions/entrypoint.ts";
 import { SessionManager } from "./sessions/manager.ts";
 import { SessionSearch } from "./sessions/search.ts";
 import { Store } from "./store.ts";
@@ -30,6 +31,7 @@ async function serve(): Promise<void> {
   const store = new Store();
   const leases = new Leases(store, config.leaseIdleMinutes);
   const audit = new Audit();
+  for (const r of retagTranscripts()) console.log(`ccrc: ${r.file} now lists in VS Code (original in ${r.backup})`);
   const manager = new SessionManager(config, audit);
   const uploads = new Uploads(path.join(paths.stateDir, "uploads"));
   const hub = new Hub(manager, leases, audit, uploads);
