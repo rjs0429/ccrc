@@ -67,13 +67,17 @@ function SearchRow({ r }: { r: SearchResult }) {
   );
 }
 
-function useSearch(q: string): { found?: SearchResponse; busy: boolean } {
-  const [found, setFound] = useState<SearchResponse | undefined>(q === lastSearch.q ? lastSearch.found : undefined);
+// Results stay on screen while a new query is typed; a failed request clears those of another query.
+function useSearch(q: string): { found?: SearchResponse; busy: boolean; failed: boolean; retry: () => void } {
+  const [found, setFound] = useState<{ q: string; r: SearchResponse } | undefined>(q === lastSearch.q && lastSearch.found ? { q, r: lastSearch.found } : undefined);
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const seq = useRef(0);
   useEffect(() => {
     const query = q.trim();
     const n = ++seq.current;
+    setFailed(false);
     if (!query) {
       setFound(undefined);
       setBusy(false);
@@ -86,19 +90,22 @@ function useSearch(q: string): { found?: SearchResponse; busy: boolean } {
       try {
         const r = await api.search(query);
         if (n !== seq.current) return;
-        setFound(r);
+        setFound({ q, r });
         lastSearch = { q, found: r };
         if (r.pending && tries > 0) timer = window.setTimeout(() => void run(tries - 1), PENDING_RETRY_MS);
       } catch (e) {
-        if (n === seq.current && e instanceof ApiError && e.status === 401) loggedOut("expired");
+        if (n !== seq.current) return;
+        if (e instanceof ApiError && e.status === 401) return loggedOut("expired");
+        setFailed(true);
+        setFound((f) => (f?.q === q ? f : undefined));
       } finally {
         if (n === seq.current) setBusy(false);
       }
     };
     timer = window.setTimeout(() => void run(20), lastSearch.q === q && lastSearch.found ? 0 : SEARCH_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [q]);
-  return { found, busy };
+  }, [q, attempt]);
+  return { found: found?.r, busy, failed, retry: () => setAttempt((a) => a + 1) };
 }
 
 function status(s: SessionSummary): { text: string; dot: string } {
@@ -144,7 +151,7 @@ export function Home() {
   const [limit, setLimit] = useState(PAGE);
   const [q, setQ] = useState(lastSearch.q);
   const searching = Boolean(q.trim());
-  const { found, busy } = useSearch(q);
+  const { found, busy, failed, retry } = useSearch(q);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -236,6 +243,14 @@ export function Home() {
         {searching && (
           <>
             {found && found.pending > 0 && <div className="px-4 pt-2.5 text-xs text-muted">대화 기록을 읽는 중… 남은 세션 {found.pending}개</div>}
+            {failed && (
+              <div className="flex items-center justify-center gap-3 px-4 py-6 text-sm text-muted" data-search-failed>
+                검색하지 못했습니다
+                <button onClick={retry} className="min-h-11 rounded-lg bg-surface px-4 font-medium text-accent">
+                  다시 시도
+                </button>
+              </div>
+            )}
             {found?.results.map((r) => <SearchRow key={r.id} r={r} />)}
             {found && !found.results.length && !found.pending && <div className="px-4 py-10 text-center text-sm text-muted">일치하는 세션이 없습니다</div>}
             {found && found.total > found.results.length && (
