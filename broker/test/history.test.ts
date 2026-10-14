@@ -230,6 +230,6 @@ test("a message queued during a turn loads where Claude Code took it in, as the 
   const shown = items[2];
   assert.equal(shown.kind, "user");
   assert.equal(shown.kind === "user" && shown.text, "Also, end your reply with the word banana.");
-  assert.equal(shown.kind === "user" && shown.images, 1);
+  assert.deepEqual(shown.kind === "user" && shown.attachments, [{ kind: "image", mediaType: "image/png", size: 8 }]);
   assert.equal(shown.ts, "2026-10-14T12:24:09.793Z", "it keeps the time it was sent");
 });

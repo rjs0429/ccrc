@@ -8,29 +8,22 @@ import { Markdown } from "./Markdown.tsx";
 import { ContextView } from "./sheets/Context.tsx";
 import { UsageView } from "./sheets/Usage.tsx";
 import { ToolInput, ToolOutput } from "./ToolInput.tsx";
+import { UserAttachments } from "./UserAttachments.tsx";
 import { Folded } from "./tools/parts.tsx";
 import { Icon, Spinner } from "./ui.tsx";
 
-function attachedText(images?: number, files?: string[]): string {
-  return [images ? `이미지 ${images}개` : "", ...(files ?? []).map((f) => f || "문서")].filter(Boolean).join(" · ");
-}
-
-function UserItem({ text, ts, images, files }: { text: string; ts?: string; images?: number; files?: string[] }) {
-  const attached = attachedText(images, files);
+function UserItem({ item }: { item: Extract<DisplayItem, { kind: "user" }> }) {
   return (
-    <div className="flex flex-col items-end">
-      <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap">
-        {text}
-        {attached && <div className={`text-xs text-muted ${text ? "mt-1" : ""}`}>{attached}</div>}
-      </div>
-      {ts && <div className="mt-1 text-[11px] text-muted">{clock(ts)}</div>}
+    <div className="flex flex-col items-end gap-1.5">
+      {item.attachments && <UserAttachments messageId={item.id} list={item.attachments} />}
+      {item.text && <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap">{item.text}</div>}
+      {item.ts && <div className="-mt-0.5 text-[11px] text-muted">{clock(item.ts)}</div>}
     </div>
   );
 }
 
 // A message Claude Code has not taken in yet. One sent from here can be taken back.
 export function QueuedItem({ message, host, onTakeBack, taking }: { message: QueuedMessage; host: string; onTakeBack?: () => void; taking?: boolean }) {
-  const attached = attachedText(message.images, message.files);
   return (
     <div className="flex flex-col items-end" data-queued={message.id}>
       <div className="flex max-w-[88%] items-center gap-1">
@@ -39,9 +32,13 @@ export function QueuedItem({ message, host, onTakeBack, taking }: { message: Que
             <Icon.x className="size-4" />
           </button>
         )}
-        <div className="min-w-0 rounded-2xl rounded-br-md border border-dashed border-line bg-surface-2/60 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-muted">
-          {message.text}
-          {attached && <div className={`text-xs break-all ${message.text ? "mt-1" : ""}`}>{attached}</div>}
+        <div className="flex min-w-0 flex-col items-end gap-1.5">
+          {message.attachments && <UserAttachments messageId={message.id} list={message.attachments} waiting />}
+          {message.text && (
+            <div className="min-w-0 rounded-2xl rounded-br-md border border-dashed border-line bg-surface-2/60 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-muted">
+              {message.text}
+            </div>
+          )}
         </div>
       </div>
       <div className="mt-1 text-[11px] text-muted">
@@ -191,7 +188,7 @@ export function shownItems(all: DisplayItem[]): DisplayItem[] {
 export const ItemView = memo(function ItemView({ item, running }: { item: DisplayItem; running: boolean }) {
   switch (item.kind) {
     case "user":
-      return <UserItem text={item.text} ts={item.ts} images={item.images} files={item.files} />;
+      return <UserItem item={item} />;
     case "assistant":
       return <Markdown text={item.text} className="text-[15px]" />;
     case "thinking":

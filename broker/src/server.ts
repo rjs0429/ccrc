@@ -13,6 +13,7 @@ import type { Hub } from "./hub.ts";
 import type { Leases } from "./lease.ts";
 import { PERMISSION_MODES } from "./protocol.ts";
 import type { Push } from "./push/index.ts";
+import { registerAttachments } from "./routes/attachments.ts";
 import { registerAudit } from "./routes/audit.ts";
 import { registerClaudeSettings } from "./routes/claude-settings.ts";
 import { registerFiles } from "./routes/files.ts";
@@ -188,6 +189,7 @@ export async function buildServer(d: ServerDeps) {
   await registerAudit(app, routes);
   await registerHealth(app, routes);
   await registerFiles(app, routes);
+  await registerAttachments(app, routes);
   await registerSearch(app, routes, d.search);
 
   app.get("/ws", { websocket: true }, (socket, req) => {

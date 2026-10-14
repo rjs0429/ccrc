@@ -13,7 +13,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EXCERPT_MAX = 80;
 
 function excerpt(m: UserItem): string {
-  const line = m.text.split("\n").find((l) => l.trim())?.trim() || (m.images ? `이미지 ${m.images}개` : m.files?.join(", ")) || "(내용 없음)";
+  const images = m.attachments?.filter((a) => a.kind === "image").length ?? 0;
+  const docs = m.attachments?.filter((a) => a.kind === "document").map((a) => a.name || "문서") ?? [];
+  const line = m.text.split("\n").find((l) => l.trim())?.trim() || (images ? `이미지 ${images}개` : docs.join(", ")) || "(내용 없음)";
   return line.length > EXCERPT_MAX ? `${line.slice(0, EXCERPT_MAX)}…` : line;
 }
 

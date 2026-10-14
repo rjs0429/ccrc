@@ -68,9 +68,17 @@ export type ToolReply =
   | { kind: "approved"; plan?: string }
   | { kind: "kept_planning"; feedback?: string };
 
+// An image or document attached to a user message, without its data; size in bytes, 0 when unknown.
+// GET /api/sessions/:id/messages/:messageId/attachments/:index serves the images.
+export interface UserAttachment {
+  kind: "image" | "document";
+  mediaType: string;
+  size: number;
+  name?: string;
+}
+
 export type DisplayItem =
-  // files: names of attached documents.
-  | { kind: "user"; id: string; ts?: string; text: string; images?: number; files?: string[] }
+  | { kind: "user"; id: string; ts?: string; text: string; attachments?: UserAttachment[] }
   | { kind: "assistant"; id: string; ts?: string; text: string }
   | { kind: "thinking"; id: string; ts?: string; text: string }
   // file and patch: the file a tool changed and how, when Claude Code reports it; patchCut: patch lines
@@ -107,8 +115,7 @@ export interface QueuedMessage {
   id: string;
   ts: string;
   text: string;
-  images?: number;
-  files?: string[];
+  attachments?: UserAttachment[];
   from: "remote" | "host";
 }
 

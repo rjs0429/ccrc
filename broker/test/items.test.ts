@@ -303,28 +303,40 @@ test("a long patch keeps its first lines, clips long ones, and counts what it le
   assert.equal(tool.patchCut, 102);
 });
 
-test("attached documents are listed by name on the user item", () => {
+test("a user item lists its images and documents without their data", () => {
   const b = new ItemBuilder(cwd);
+  const png = Buffer.from("\x89PNG\r\n\x1a\n-pixels").toString("base64");
   b.add({
     type: "user",
     uuid: "u1",
     message: {
       content: [
-        { type: "image", source: { type: "base64", media_type: "image/png", data: "" } },
-        { type: "document", title: "notes.txt", source: { type: "text", media_type: "text/plain", data: "hi" } },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
+        { type: "document", title: "노트.txt", source: { type: "text", media_type: "text/plain", data: "안녕" } },
         { type: "text", text: "Look at these" },
       ],
     },
   });
-  const pdf = { type: "document", title: "spec.pdf", source: { type: "base64", media_type: "application/pdf", data: "" } };
+  const pdf = { type: "document", title: "spec.pdf", source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" } };
   b.add({ type: "user", uuid: "u2", message: { content: [pdf] } });
+  b.add({ type: "user", uuid: "u3", message: { content: [{ type: "image", source: { type: "url", url: "https://example.com/a.png" } }] } });
   assert.deepEqual(
-    b.items.map((i) => i.kind === "user" && [i.text, i.images, i.files]),
+    b.items.map((i) => i.kind === "user" && [i.text, i.attachments]),
     [
-      ["Look at these", 1, ["notes.txt"]],
-      ["", undefined, ["spec.pdf"]],
+      [
+        "Look at these",
+        [
+          { kind: "image", mediaType: "image/png", size: 16 },
+          { kind: "document", mediaType: "text/plain", size: 6, name: "노트.txt" },
+        ],
+      ],
+      ["", [{ kind: "document", mediaType: "application/pdf", size: 5, name: "spec.pdf" }]],
+      ["", [{ kind: "image", mediaType: "", size: 0 }]],
     ],
   );
+  assert.ok(!JSON.stringify(b.items).includes(png), "no image data travels with the items");
+  b.add({ type: "user", uuid: "u4", message: { content: "plain" } });
+  assert.equal(b.items.at(-1)?.kind === "user" && "attachments" in b.items.at(-1)!, false);
 });
 
 function agentTurn(b: ItemBuilder) {

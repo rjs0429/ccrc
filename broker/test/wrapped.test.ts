@@ -4,7 +4,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { LineSplitter, parseLine } from "../src/link/lines.ts";
 import { LinkServer, type Link } from "../src/link/server.ts";
-import type { Answer, PendingRequest } from "../src/protocol.ts";
+import type { Answer, DisplayItem, PendingRequest } from "../src/protocol.ts";
 import { WrappedSession } from "../src/sessions/wrapped.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -251,6 +251,27 @@ test("remote input goes in as a VS Code user message and shows at once as queued
   assert.deepEqual(m.origin, { kind: "human" });
   assert.deepEqual(m.message, { role: "user", content: [{ type: "text", text: "hello from the phone" }] });
   assert.equal(s.busy, true);
+});
+
+test("a message with attachments lists them while queued and on its item, sent from here or echoed from VS Code", async () => {
+  const { s, wrapper, next } = await session();
+  const png = { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } };
+  const txt = { type: "document", title: "a.txt", source: { type: "text", media_type: "text/plain", data: "abc" } };
+  const listed = [
+    { kind: "image", mediaType: "image/png", size: 8 },
+    { kind: "document", mediaType: "text/plain", size: 3, name: "a.txt" },
+  ];
+  s.send("see", [png, txt]);
+  const [queued] = s.state().queued ?? [];
+  assert.deepEqual(queued?.attachments, listed);
+  const sent = next("item");
+  wrapper.out({ type: "command_lifecycle", command_uuid: queued.id, state: "started", uuid: "lc-started", session_id: SID });
+  const [item] = (await sent) as [DisplayItem];
+  assert.deepEqual(item.kind === "user" && [item.id, item.attachments], [queued.id, listed]);
+  const echoed = next("item");
+  wrapper.out({ type: "user", uuid: "8f9a0b1c-0000-4000-8000-000000000001", message: { role: "user", content: [png, { type: "text", text: "from VS Code" }] } });
+  const [vs] = (await echoed) as [DisplayItem];
+  assert.deepEqual(vs.kind === "user" && [vs.text, vs.attachments], ["from VS Code", [{ kind: "image", mediaType: "image/png", size: 8 }]]);
 });
 
 test("control requests resolve with Claude Code's reply and fail on errors", async () => {
@@ -893,7 +914,7 @@ test("messages from VS Code show as queued at once, in Claude Code's order with 
       ["vs-1", "host"],
     ],
   );
-  assert.equal(s.state().queued![1].images, 1);
+  assert.deepEqual(s.state().queued![1].attachments, [{ kind: "image", mediaType: "", size: 0 }]);
   // Claude Code got VS Code's line first.
   wrapper.out(lifecycle("vs-1", "queued"));
   await until(() => s.state().queued![0].id === "vs-1", "Claude Code's order wins");

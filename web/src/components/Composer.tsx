@@ -3,12 +3,13 @@ import type { EffortName, LiveState, ModelOption, PermissionModeName } from "../
 import { MODE_HINT, MODE_LABEL, baseName, effortLabel, effortLevels, findModel, modelLabel } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
 import { usePrefs } from "../prefs.ts";
+import { rememberSent } from "../sentPreviews.ts";
 import { toast, useApp } from "../state.ts";
 import { isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import { bareCommandSheet } from "./commandSheets.ts";
 import { ContextRing } from "./ContextRing.tsx";
 import { AttachmentChips } from "./composer/AttachmentChips.tsx";
-import { ATTACH_ACCEPT, MAX_MESSAGE_BYTES, addFiles, clearAttachments, useAttachments } from "./composer/attachments.ts";
+import { ATTACH_ACCEPT, MAX_MESSAGE_BYTES, addFiles, takeAttachments, useAttachments } from "./composer/attachments.ts";
 import { afterKeyboard } from "./composer/picker.ts";
 import { Suggestions, type SuggestRow } from "./composer/Suggestions.tsx";
 import { commandQuery, mentionAt, mentionText, rankCommands, useCommands, useFileSuggestions } from "./composer/suggest.ts";
@@ -235,7 +236,7 @@ export function Composer({
     if (!attachments.length && isDialogCommand(parseCommand(text)?.name)) ref.current?.blur();
     setText("");
     setDismissed(false);
-    if (sessionId) clearAttachments(sessionId);
+    if (sessionId) rememberSent(sessionId, text.trim(), takeAttachments(sessionId));
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

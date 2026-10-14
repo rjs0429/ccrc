@@ -327,9 +327,9 @@ export abstract class SessionCore extends EventEmitter {
   // reads it: at the start of a turn, or after a tool result when it arrives mid-turn.
   protected enqueue(id: string, content: unknown, from: QueuedMessage["from"], ts = new Date().toISOString()): void {
     if (this.closed || this.queue.has(id) || this.builder.has(id)) return;
-    const { text, images, files } = typedContent(content);
-    if (!text && !images && !files.length) return;
-    this.queue.set(id, { id, ts, text, ...(images ? { images } : {}), ...(files.length ? { files } : {}), from });
+    const { text, attachments } = typedContent(content);
+    if (!text && !attachments.length) return;
+    this.queue.set(id, { id, ts, text, ...(attachments.length ? { attachments } : {}), from });
     if (this.queue.size > QUEUE_MAX) this.dequeue(this.queue.keys().next().value!);
     this.emit("state");
   }
@@ -361,7 +361,7 @@ export abstract class SessionCore extends EventEmitter {
   private deliver(id: string): void {
     const q = this.queue.get(id);
     if (!q) return;
-    this.emit("item", this.builder.userText(q.id, q.text, q.ts, q.images, q.files));
+    this.emit("item", this.builder.userText(q.id, q.text, q.ts, q.attachments));
     this.dequeue(id);
   }
 

@@ -11,6 +11,7 @@ import type {
   SnapshotGap,
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, type Me, type Options } from "./api.ts";
+import { bindSent } from "./sentPreviews.ts";
 
 export type SettingsPage = "claude" | "alerts" | "account" | "status";
 export type SettingsPart = "permissions";
@@ -296,9 +297,11 @@ function onServer(msg: ServerMsg): void {
       setState({ loggedOutReason: msg.reason });
       return;
     case "snapshot":
+      for (const item of [...msg.items, ...(msg.state.queued ?? [])]) bindSent(msg.sessionId, item);
       updateChat(msg.sessionId, () => ({ loaded: true, items: msg.items, pending: msg.pending, state: msg.state, hasMore: msg.hasMore, gap: msg.gap, stream: undefined }));
       return;
     case "item":
+      bindSent(msg.sessionId, msg.item);
       updateChat(msg.sessionId, (c) => ({ items: upsert(c.items, msg.item) }));
       return;
     case "stream":
@@ -311,6 +314,7 @@ function onServer(msg: ServerMsg): void {
       updateChat(msg.sessionId, (c) => ({ pending: c.pending.filter((p) => p.id !== msg.requestId) }));
       return;
     case "state":
+      for (const q of msg.state.queued ?? []) bindSent(msg.sessionId, q);
       updateChat(msg.sessionId, () => ({ state: msg.state }));
       if (!state.options?.models.length) void refreshOptions();
       return;

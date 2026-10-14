@@ -3,6 +3,7 @@ import path from "node:path";
 import { isUtf8 } from "node:buffer";
 import { randomBytes } from "node:crypto";
 import { ensureDir } from "./config.ts";
+import { imageType } from "./sessions/attachments.ts";
 import type { ContentBlock } from "./sessions/core.ts";
 import type { UploadInfo } from "./protocol.ts";
 
@@ -47,15 +48,6 @@ interface Stored {
   mediaType: string;
   size: number;
   at: number;
-}
-
-function imageType(b: Buffer): string | undefined {
-  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
-  if (b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
-  const head = b.subarray(0, 12).toString("latin1");
-  if (head.startsWith("GIF87a") || head.startsWith("GIF89a")) return "image/gif";
-  if (head.startsWith("RIFF") && head.slice(8) === "WEBP") return "image/webp";
-  return undefined;
 }
 
 function isText(data: Buffer, name: string, ext: string, mime: string): boolean {

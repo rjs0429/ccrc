@@ -73,9 +73,11 @@ export function removeAttachment(sessionId: string, key: number): void {
   set(sessionId, list.filter((a) => a.key !== key));
 }
 
-export function clearAttachments(sessionId: string): void {
-  (lists.get(sessionId) ?? []).forEach(drop);
+// Empties the list of a message that went out; its image previews pass to the caller, one per attachment.
+export function takeAttachments(sessionId: string): (string | undefined)[] {
+  const list = lists.get(sessionId) ?? [];
   set(sessionId, []);
+  return list.map((a) => a.thumb);
 }
 
 function kindOf(file: File): Kind | undefined {
