@@ -107,3 +107,30 @@ test("a call is answered to the window that made it, not to one that took over s
   assert.deepEqual(ws.sent.filter((m) => m.t === "call_result"), []);
   hub.close();
 });
+
+test("an output style change is written to the audit log; a missing style name is refused first", async () => {
+  const manager = new FakeManager();
+  const leases = Object.assign(new EventEmitter(), { validate: () => true }) as unknown as Leases;
+  const logged: [string, Record<string, unknown>][] = [];
+  const audit = { log: (event: string, detail: Record<string, unknown>) => logged.push([event, detail]) } as unknown as Audit;
+  const hub = new Hub(manager as unknown as SessionManager, leases, audit, new Uploads(tempDir()));
+  const ws = new FakeSocket();
+  hub.attach(ws as never, "phone", "token");
+  ws.emit("message", JSON.stringify({ t: "call", id: 1, sessionId: A, op: "output_style", args: {} }));
+  ws.emit("message", JSON.stringify({ t: "call", id: 2, sessionId: A, op: "set_output_style", args: { style: "Explanatory" } }));
+  ws.emit("message", JSON.stringify({ t: "call", id: 3, sessionId: A, op: "set_output_style", args: { style: "x".repeat(300) } }));
+  ws.emit("message", JSON.stringify({ t: "call", id: 4, sessionId: A, op: "set_output_style", args: {} }));
+  await sleep(50);
+  assert.deepEqual(logged, [["call", { device: "phone", sessionId: A, op: "set_output_style", style: "Explanatory" }]]);
+  const results = ws.sent.filter((m) => m.t === "call_result");
+  assert.deepEqual(
+    results.map((r) => [r.id, r.ok]).sort((x, y) => Number(x[0]) - Number(y[0])),
+    [
+      [1, true],
+      [2, true],
+      [3, false],
+      [4, false],
+    ],
+  );
+  hub.close();
+});

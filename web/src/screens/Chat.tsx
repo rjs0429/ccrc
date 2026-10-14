@@ -7,6 +7,7 @@ import { TodoPanel } from "../components/TodoPanel.tsx";
 import { ChangesSheet } from "../components/sheets/Changes.tsx";
 import { ContextSheet } from "../components/sheets/Context.tsx";
 import { McpSheet } from "../components/sheets/Mcp.tsx";
+import { OutputStyleSheet, outputStyleLabel } from "../components/sheets/OutputStyle.tsx";
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
 import { TasksSheet } from "../components/sheets/Tasks.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
@@ -20,9 +21,16 @@ const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
 const NEAR_BOTTOM_PX = 160;
 const NO_MODELS: ModelOption[] = [];
-type SheetName = "changes" | "context" | "mcp" | "rewind" | "tasks" | "usage";
+type SheetName = "changes" | "context" | "mcp" | "outputStyle" | "rewind" | "tasks" | "usage";
 // "/" commands that open a sheet when picked from the list, as VS Code opens its dialogs.
-const COMMAND_SHEETS: Record<string, SheetName> = { context: "context", mcp: "mcp", usage: "usage", cost: "usage", stats: "usage" };
+const COMMAND_SHEETS: Record<string, SheetName> = {
+  context: "context",
+  mcp: "mcp",
+  usage: "usage",
+  cost: "usage",
+  stats: "usage",
+  "output-style": "outputStyle",
+};
 
 export function Chat({ sessionId }: { sessionId: string }) {
   const chat = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat : undefined));
@@ -171,6 +179,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
               <Choice label="백그라운드 작업" hint="서브에이전트·백그라운드 명령" onClick={() => (setSheet("tasks"), setMenu(false))} />
               <Choice label="Context 사용량" onClick={() => (setSheet("context"), setMenu(false))} />
               <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
+              <Choice
+                label="출력 스타일"
+                hint={st?.outputStyle ? outputStyleLabel(st.outputStyle) : "응답 방식을 고릅니다"}
+                onClick={() => (setSheet("outputStyle"), setMenu(false))}
+              />
               <Choice label="파일 되돌리기" hint="보낸 메시지 시점으로 파일을 되돌립니다" onClick={() => (setSheet("rewind"), setMenu(false))} />
             </>
           )}
@@ -208,6 +221,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         />
       )}
       {sheet === "mcp" && <McpSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "outputStyle" && <OutputStyleSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "rewind" && <RewindSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
     </div>
   );

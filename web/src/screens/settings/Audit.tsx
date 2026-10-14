@@ -40,6 +40,7 @@ const CALL_LABEL: Record<string, string> = {
   mcp_reconnect: "MCP 다시 연결",
   rewind: "파일 되돌리기",
   stop_task: "작업 중지",
+  set_output_style: "출력 스타일 바꿈",
 };
 
 const READ_OUTCOME: Record<string, string> = {
@@ -85,7 +86,7 @@ function detail(e: AuditEntry): string {
     case "answer":
       return named(e.decision, WORD, MODE_LABEL);
     case "call":
-      return [named(e.op, CALL_LABEL), named(e.server)].filter(Boolean).join(" · ");
+      return [named(e.op, CALL_LABEL), named(e.server), named(e.style)].filter(Boolean).join(" · ");
     case "claude_settings":
       return Array.isArray(e.keys) ? e.keys.join(", ") : "";
     case "file_read":

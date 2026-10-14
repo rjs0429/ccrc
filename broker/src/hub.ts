@@ -11,7 +11,7 @@ const CHANGED_DEBOUNCE_MS = 300;
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const MAX_ATTACHMENTS = 10;
 // Calls that change something are recorded in the audit log.
-const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task"]);
+const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "set_output_style"]);
 
 function send(ws: WebSocket, msg: ServerMsg): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -269,9 +269,10 @@ export class Hub {
       const sessionId = sid(msg.sessionId);
       if (!CALL_OPS.includes(msg.op)) throw Error("unknown request");
       const args = msg.args && typeof msg.args === "object" && !Array.isArray(msg.args) ? msg.args : {};
+      if (msg.op === "set_output_style") str(args.style);
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
         const detail = Object.fromEntries(
-          Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
+          Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
         );
         this.audit.log("call", { device: this.device, sessionId, op: msg.op, ...detail });
       }

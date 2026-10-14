@@ -210,6 +210,11 @@ export class WrappedSession extends SessionCore {
     return this.link.request({ subtype: "get_settings" });
   }
 
+  protected async writeOutputStyle(style: string): Promise<void> {
+    this.ensureOpen();
+    await this.link.request({ subtype: "update_settings", source: "localSettings", settings: { outputStyle: style } });
+  }
+
   private drop(requestId: unknown): void {
     if (typeof requestId !== "string") return;
     this.toolUse.delete(requestId);
@@ -240,10 +245,11 @@ export class WrappedSession extends SessionCore {
     });
   }
 
-  // The answer to VS Code's initialize carries the model and command lists and the current mode; the
-  // wrapper passes on the applied part of VS Code's get_settings answers.
+  // The answer to VS Code's initialize carries the model, command and output style lists and the current
+  // mode; the wrapper passes on the applied part and the output style of VS Code's get_settings answers.
   private onResponse(r: Obj): void {
-    if (r.applied) this.adoptApplied(r.applied);
+    if (r.applied) this.adoptSettings(r);
+    if (Array.isArray(r.available_output_styles)) this.adoptStyles(r.output_style, r.available_output_styles);
     if (Array.isArray(r.models)) {
       this.emit("models", r.models);
       this.refreshApplied();

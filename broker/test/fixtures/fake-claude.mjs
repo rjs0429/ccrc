@@ -7,7 +7,8 @@
 // FAKE_LINGER_MS keeps it running that long after its input ends.
 // The answer to initialize lists models and commands; FAKE_NO_INIT=1 leaves initialize unanswered.
 // "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data;
-// get_usage fails while the working folder holds a file named .fake-no-usage.
+// get_usage fails while the working folder holds a file named .fake-no-usage. The output style starts from
+// .claude/settings.local.json and update_settings writes it there.
 // --version prints a version and exits.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -27,8 +28,14 @@ const value = (name) => {
 const sid = value("--session-id") || (args.includes("--fork-session") ? undefined : value("--resume")) || randomUUID();
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 let asks = 0;
+const STYLES = ["default", "Proactive", "Concise", "Explanatory", "Learning"];
+const LOCAL_SETTINGS = ".claude/settings.local.json";
+let style;
+try {
+  style = JSON.parse(fs.readFileSync(LOCAL_SETTINGS, "utf8")).outputStyle;
+} catch {}
 
-out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: "default", args, continueTurn: process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN ?? null });
+out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: "default", output_style: style ?? "default", args, continueTurn: process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN ?? null });
 if (process.env.FAKE_BURST) {
   out({ type: "user", session_id: sid, message: { content: [{ type: "tool_result", content: "y".repeat(3_000_000) }] } });
   process.stdout.write(JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, session_id: sid }) + "\n", () => process.exit(1));
@@ -121,11 +128,16 @@ function handle(m) {
       out({ type: "control_response", response: { subtype: "error", request_id: m.request_id, error: "usage unavailable" } });
       return;
     }
+    if (m.request.subtype === "update_settings" && typeof m.request.settings?.outputStyle === "string") {
+      style = m.request.settings.outputStyle;
+      fs.mkdirSync(".claude", { recursive: true });
+      fs.writeFileSync(LOCAL_SETTINGS, JSON.stringify({ outputStyle: style }));
+    }
     const extra = init
-      ? { models: [{ value: "default", displayName: "Default" }], commands: [{ name: "compact", description: "Compact the conversation", argumentHint: "" }], current_permission_mode: "default" }
+      ? { models: [{ value: "default", displayName: "Default" }], commands: [{ name: "compact", description: "Compact the conversation", argumentHint: "" }], current_permission_mode: "default", output_style: style ?? "default", available_output_styles: STYLES }
       : m.request.subtype === "get_settings"
         ? {
-            effective: { env: { SECRET_TOKEN: "s3cret" }, hooks: { Stop: [{ command: "hook-cmd" }] } },
+            effective: { env: { SECRET_TOKEN: "s3cret" }, hooks: { Stop: [{ command: "hook-cmd" }] }, ...(style ? { outputStyle: style } : {}) },
             sources: [{ source: "userSettings", settings: { env: { SECRET_TOKEN: "s3cret" } } }],
             applied: { model: "claude-haiku-5-5", effort: "medium", advisor: { secret: "s3cret" }, ultracode: false, ultracodeRequested: false, ultracodeAvailable: true },
           }
