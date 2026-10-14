@@ -52,7 +52,8 @@ export type DisplayItem =
   | { kind: "user"; id: string; ts?: string; text: string; images?: number; files?: string[] }
   | { kind: "assistant"; id: string; ts?: string; text: string }
   | { kind: "thinking"; id: string; ts?: string; text: string }
-  // file and patch: the file a tool changed and how, when Claude Code reports it.
+  // file and patch: the file a tool changed and how, when Claude Code reports it; patchCut: patch lines
+  // left out to keep the item small.
   | {
       kind: "tool";
       id: string;
@@ -63,6 +64,7 @@ export type DisplayItem =
       result?: ToolResult;
       file?: string;
       patch?: Hunk[];
+      patchCut?: number;
       sub?: SubagentActivity;
     }
   | { kind: "note"; id: string; ts?: string; code: NoteCode; text?: string };

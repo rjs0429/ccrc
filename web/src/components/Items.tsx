@@ -1,16 +1,19 @@
 import { memo, useState } from "react";
-import type { DisplayItem } from "../../../broker/src/protocol.ts";
+import type { DisplayItem, SubagentActivity } from "../../../broker/src/protocol.ts";
 import { clock, noteText } from "../labels.ts";
+import { useApp } from "../state.ts";
+import { DiffView, PatchStats } from "./diff/DiffView.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { ToolInput, ToolOutput } from "./ToolInput.tsx";
 import { Icon, Spinner } from "./ui.tsx";
 
-function UserItem({ text, ts, images }: { text: string; ts?: string; images?: number }) {
+function UserItem({ text, ts, images, files }: { text: string; ts?: string; images?: number; files?: string[] }) {
+  const attached = [images ? `이미지 ${images}개` : "", ...(files ?? []).map((f) => f || "문서")].filter(Boolean).join(" · ");
   return (
     <div className="flex flex-col items-end">
       <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words">
         {text}
-        {images ? <div className="mt-1 text-xs text-muted">이미지 {images}개</div> : null}
+        {attached && <div className={`text-xs break-all text-muted ${text ? "mt-1" : ""}`}>{attached}</div>}
       </div>
       {ts && <div className="mt-1 text-[11px] text-muted">{clock(ts)}</div>}
     </div>
@@ -30,31 +33,58 @@ function Thinking({ text }: { text: string }) {
   );
 }
 
+function SubActivity({ sub }: { sub: SubagentActivity }) {
+  return (
+    <div className="space-y-1 border-t border-line px-3 py-2">
+      <div className="text-xs text-muted">도구 {sub.tools}회</div>
+      {sub.recent.map((r, n) => (
+        <div key={n} className="truncate font-mono text-[12px] text-muted">
+          <span className="text-fg">{r.name}</span> {r.summary}
+        </div>
+      ))}
+      {sub.text && <div className="line-clamp-3 text-[13px] break-words whitespace-pre-wrap text-muted">{sub.text}</div>}
+    </div>
+  );
+}
+
 function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool" }>; running: boolean }) {
   const [open, setOpen] = useState(false);
-  const status = item.result ? (
-    item.result.isError ? (
-      <Icon.x className="size-4 text-danger" />
+  // A call that went on in the background is still running after its result arrived.
+  const background = useApp((s) => Boolean(s.chat?.state?.tasks?.some((t) => t.toolUseId === item.id && t.status === "running")));
+  const active = background || (!item.result && running);
+  const status =
+    item.result && !background ? (
+      item.result.isError ? (
+        <Icon.x className="size-4 text-danger" />
+      ) : (
+        <Icon.check className="size-4 text-ok" />
+      )
+    ) : active ? (
+      <Spinner className="size-4 text-muted" />
     ) : (
-      <Icon.check className="size-4 text-ok" />
-    )
-  ) : running ? (
-    <Spinner className="size-4 text-muted" />
-  ) : (
-    <span className="size-4" />
-  );
+      <span className="size-4" />
+    );
   return (
     <div className="rounded-xl border border-line bg-surface">
       <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 px-3 py-2 text-left">
         {status}
         <span className="shrink-0 text-sm font-medium">{item.name || "도구"}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted">{item.summary}</span>
+        {item.patch && <PatchStats hunks={item.patch} />}
+        {item.sub && !active && !open && <span className="shrink-0 text-xs text-muted">도구 {item.sub.tools}회</span>}
         <Icon.chevronDown className={`size-4 shrink-0 text-muted transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
+      {item.sub && (active || open) && <SubActivity sub={item.sub} />}
       {open && (
         <div className="space-y-2 border-t border-line px-3 py-2.5">
-          {item.input != null && <ToolInput name={item.name} input={item.input} />}
-          {item.result && <ToolOutput text={item.result.text + (item.result.truncated ? "\n…" : "")} isError={item.result.isError} />}
+          {item.patch ? (
+            <DiffView hunks={item.patch} cut={item.patchCut} />
+          ) : (
+            item.input != null && <ToolInput name={item.name} input={item.input} />
+          )}
+          {item.result && (!item.patch || item.result.isError) && (
+            <ToolOutput text={item.result.text + (item.result.truncated ? "\n…" : "")} isError={item.result.isError} />
+          )}
         </div>
       )}
     </div>
@@ -64,7 +94,7 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
 export const ItemView = memo(function ItemView({ item, running }: { item: DisplayItem; running: boolean }) {
   switch (item.kind) {
     case "user":
-      return <UserItem text={item.text} ts={item.ts} images={item.images} />;
+      return <UserItem text={item.text} ts={item.ts} images={item.images} files={item.files} />;
     case "assistant":
       return <Markdown text={item.text} className="text-[15px]" />;
     case "thinking":
