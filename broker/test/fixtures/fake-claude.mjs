@@ -6,8 +6,8 @@
 // {"type":"answered"}. FAKE_BURST=1 writes a long line and an error result at start and exits at once;
 // FAKE_LINGER_MS keeps it running that long after its input ends.
 // The answer to initialize lists models and commands; FAKE_NO_INIT=1 leaves initialize unanswered.
-// "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data;
-// get_usage fails while the working folder holds a file named .fake-no-usage.
+// "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data, and
+// "/status" the same way with text only; get_usage fails while the working folder holds a file named .fake-no-usage.
 // --version prints a version and exits.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -51,6 +51,22 @@ function handle(m) {
   if (m.type === "user") {
     const content = m.message.content;
     const text = typeof content === "string" ? content : content.map((c) => c.text).join("");
+    if (text === "/status") {
+      const shown = "Version: 2.1.296 (fake)\nModel: fake-model";
+      out({
+        type: "assistant",
+        session_id: sid,
+        uuid: randomUUID(),
+        parent_tool_use_id: null,
+        message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: shown }] },
+        local_command_source: `<local-command-stdout>${shown}</local-command-stdout>`,
+        local_command_run: { command: "status", args: "" },
+      });
+      const replay = "<command-name>/status</command-name>\n<command-message>status</command-message>\n<command-args></command-args>";
+      out({ type: "user", session_id: sid, uuid: m.uuid ?? randomUUID(), isReplay: true, message: { role: "user", content: replay } });
+      out({ type: "result", subtype: "success", session_id: sid, is_error: false, result: shown, num_turns: 0, local_command: "status", total_cost_usd: 0 });
+      return;
+    }
     if (text === "/usage") {
       const shown = "Current session: 32% used\nCurrent week (all models): 91% used";
       out({

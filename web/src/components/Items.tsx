@@ -1,4 +1,5 @@
 import { memo, useState } from "react";
+import { hideDialogCommands } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, SubagentActivity } from "../../../broker/src/protocol.ts";
 import { clock, noteText } from "../labels.ts";
 import { useApp } from "../state.ts";
@@ -115,7 +116,35 @@ function Folded({ text, mono }: { text: string; mono?: boolean }) {
   );
 }
 
+// Command output is written line by line; Markdown would join adjacent lines, so they become hard breaks
+// outside code fences and tables.
+function keepLines(text: string): string {
+  const fence = (l: string) => /^\s*(```|~~~)/.test(l);
+  const plain = (l?: string) => l !== undefined && l.trim() !== "" && !l.trimStart().startsWith("|") && !fence(l);
+  let fenced = false;
+  const lines = text.split("\n");
+  return lines
+    .map((line, i) => {
+      if (fence(line)) fenced = !fenced;
+      return !fenced && plain(line) && plain(lines[i + 1]) ? `${line}  ` : line;
+    })
+    .join("\n");
+}
+
 // A local command's result: /usage and /context drawn from their data, any other output as text.
+export function CommandBody({ item, more }: { item: CommandResult; more?: boolean }) {
+  return (
+    <>
+      {item.usage ? <UsageView usage={item.usage} /> : item.context ? <ContextView detail={item.context} full={more} /> : <Folded text={keepLines(item.text)} />}
+      {item.usage && more && (
+        <div className="mt-3 border-t border-line pt-2">
+          <Folded text={item.text} mono />
+        </div>
+      )}
+    </>
+  );
+}
+
 function CommandCard({ item }: { item: CommandResult }) {
   const [more, setMore] = useState(false);
   const head = item.name ? `/${item.name}${item.args ? ` ${item.args}` : ""}` : "명령 출력";
@@ -130,18 +159,7 @@ function CommandCard({ item }: { item: CommandResult }) {
         )}
       </div>
       <div className="px-3 pb-3 pt-1">
-        {item.usage ? (
-          <UsageView usage={item.usage} />
-        ) : item.context ? (
-          <ContextView detail={item.context} full={more} />
-        ) : (
-          <Folded text={item.text} />
-        )}
-        {item.usage && more && (
-          <div className="mt-3 border-t border-line pt-2">
-            <Folded text={item.text} mono />
-          </div>
-        )}
+        <CommandBody item={item} more={more} />
       </div>
     </div>
   );
@@ -150,8 +168,10 @@ function CommandCard({ item }: { item: CommandResult }) {
 const USAGE_NAMES = new Set(["usage", "cost", "stats"]);
 const commandOf = (item?: DisplayItem) => (item?.kind === "command" && item.name ? (USAGE_NAMES.has(item.name) ? "usage" : item.name) : undefined);
 
-// The "/name" line next to the card of the same command says nothing the card's head does not.
-export function shownItems(items: DisplayItem[]): DisplayItem[] {
+// Dialog commands show only in sheets. The "/name" line next to the card of the same command says nothing
+// the card's head does not.
+export function shownItems(all: DisplayItem[]): DisplayItem[] {
+  const items = hideDialogCommands(all);
   return items.filter((item, i) => {
     if (item.kind !== "note" || item.code !== "command") return true;
     let name = /^\/(\S+)/.exec(item.text ?? "")?.[1];

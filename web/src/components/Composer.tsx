@@ -4,8 +4,10 @@ import { MODE_HINT, MODE_LABEL, baseName, effortLabel, findModel, modelLabel } f
 import { Switch } from "../screens/settings/common.tsx";
 import { usePrefs } from "../prefs.ts";
 import { toast, useApp } from "../state.ts";
+import { isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
+import { bareCommandSheet } from "./commandSheets.ts";
 import { AttachmentChips } from "./composer/AttachmentChips.tsx";
-import { ACCEPT, MAX_MESSAGE_BYTES, addFiles, clearAttachments, useAttachments } from "./composer/attachments.ts";
+import { DOCUMENT_ACCEPT, IMAGE_ACCEPT, MAX_MESSAGE_BYTES, addFiles, clearAttachments, useAttachments } from "./composer/attachments.ts";
 import { Suggestions, type SuggestRow } from "./composer/Suggestions.tsx";
 import { commandQuery, mentionAt, mentionText, rankCommands, useCommands, useFileSuggestions } from "./composer/suggest.ts";
 import { Choice, Icon, Sheet } from "./ui.tsx";
@@ -36,6 +38,27 @@ function saveDraft(sessionId: string | undefined, text: string): void {
   } catch {}
 }
 
+// A direct tap on the file input itself, so iOS opens its picker for this row.
+function AttachOption({ icon, label, onFiles, ...input }: { icon: React.ReactNode; label: string; onFiles: (files: File[]) => void } & React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <label className="relative flex w-full cursor-pointer items-center gap-3 overflow-hidden rounded-xl px-3 py-3 text-[15px] hover:bg-surface-2">
+      <span className="text-muted">{icon}</span>
+      {label}
+      <input
+        type="file"
+        aria-label={label}
+        {...input}
+        onChange={(e) => {
+          const picked = [...(e.target.files ?? [])];
+          e.target.value = "";
+          if (picked.length) onFiles(picked);
+        }}
+        className="absolute inset-0 size-full cursor-pointer opacity-0"
+      />
+    </label>
+  );
+}
+
 function Chip({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
   return (
     <button
@@ -63,16 +86,18 @@ interface Props {
   onModel: (model: string) => void;
   onEffort: (effort: EffortName) => void;
   onUltracode: (on: boolean) => void;
-  // A "/" command picked from the list that opens a screen here instead of being sent; true when it did.
+  // A bare "/" command, picked from the list or sent, that opens a screen here instead; true when it did.
   onCommand?: (name: string) => boolean;
+  // Opens the model or effort sheet when `at` changes.
+  openSheet?: { name: "model" | "effort"; at: number };
 }
 
-export function Composer({ sessionId, state, models, controllable, disabledReason, placeholder, onSend, onStop, onMode, onModel, onEffort, onUltracode, onCommand }: Props) {
+export function Composer({ sessionId, state, models, controllable, disabledReason, placeholder, onSend, onStop, onMode, onModel, onEffort, onUltracode, onCommand, openSheet }: Props) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
-  const [sheet, setSheet] = useState<"mode" | "model" | "effort" | null>(null);
+  const [sheet, setSheet] = useState<"mode" | "model" | "effort" | "attach" | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const nextCaret = useRef<number | null>(null);
   const { enterToSend } = usePrefs();
@@ -132,8 +157,15 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
   // A sheet opened from the list takes the screen, so the keyboard goes down with the text.
   const opened = () => {
     setText("");
+    setDismissed(false);
     ref.current?.blur();
   };
+
+  useEffect(() => {
+    if (!openSheet || !controllable) return;
+    ref.current?.blur();
+    setSheet(openSheet.name);
+  }, [openSheet?.at]);
 
   const pick = (i: number) => {
     const row = rows[i];
@@ -141,9 +173,6 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
     if (mention) {
       const added = `${mentionText(row.key)} `;
       edit(text.slice(0, mention.start) + added + text.slice(mention.end), mention.start + added.length);
-    } else if (controllable && row.key === "model") {
-      opened();
-      setSheet("model");
     } else if (onCommand?.(row.key)) {
       opened();
     } else {
@@ -153,9 +182,12 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
 
   const submit = () => {
     if (!canSend || disabledReason) return;
+    const bare = attachments.length ? undefined : bareCommandSheet(text);
+    if (bare && onCommand?.(bare)) return opened();
     const total = attachments.reduce((n, a) => n + (a.uploaded?.size ?? 0), 0);
     if (total > MAX_MESSAGE_BYTES) return toast("attachments too large");
     if (!onSend(text.trim(), attachments.map((a) => a.uploaded!.id))) return toast("not connected");
+    if (!attachments.length && isDialogCommand(parseCommand(text)?.name)) ref.current?.blur();
     setText("");
     setDismissed(false);
     if (sessionId) clearAttachments(sessionId);
@@ -214,27 +246,17 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
         <div className="mt-1 flex items-center gap-1">
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
             {sessionId && (
-              // The file input itself takes the tap, so iOS anchors its menu to the paperclip; holding
-              // the textarea's focus keeps the page from moving while the menu opens.
-              <label
+              // The keyboard goes down first, so the sheet and any picker menu open on a page that stays put.
+              <button
                 aria-label="파일 첨부"
-                onMouseDown={(e) => e.preventDefault()}
-                className="relative flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg text-muted hover:bg-surface-2"
+                onClick={() => {
+                  ref.current?.blur();
+                  setSheet("attach");
+                }}
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-2"
               >
                 <Icon.paperclip className="size-[18px]" />
-                <input
-                  type="file"
-                  multiple
-                  accept={ACCEPT}
-                  aria-label="파일 첨부"
-                  onChange={(e) => {
-                    const picked = [...(e.target.files ?? [])];
-                    e.target.value = "";
-                    if (picked.length) addFiles(sessionId, picked);
-                  }}
-                  className="absolute inset-0 size-full cursor-pointer opacity-0"
-                />
-              </label>
+              </button>
             )}
             <Chip disabled={!controllable} onClick={() => setSheet("model")}>
               {modelLabel(models, state?.model)}
@@ -269,6 +291,25 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
         </div>
       </div>
 
+      {sheet === "attach" && sessionId && (
+        <Sheet title="첨부" onClose={() => setSheet(null)}>
+          {[
+            { key: "photos", icon: <Icon.image />, label: "사진 보관함", accept: IMAGE_ACCEPT, multiple: true },
+            { key: "camera", icon: <Icon.camera />, label: "카메라", accept: IMAGE_ACCEPT, capture: "environment" as const },
+            { key: "files", icon: <Icon.file />, label: "파일", accept: DOCUMENT_ACCEPT, multiple: true },
+          ].map(({ key, ...o }) => (
+            <AttachOption
+              key={key}
+              data-attach={key}
+              {...o}
+              onFiles={(files) => {
+                addFiles(sessionId, files);
+                setSheet(null);
+              }}
+            />
+          ))}
+        </Sheet>
+      )}
       {sheet === "mode" && (
         <Sheet title="권한 모드" onClose={() => setSheet(null)}>
           {MODES.map((m) => (

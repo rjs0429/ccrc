@@ -11,7 +11,7 @@ const CHANGED_DEBOUNCE_MS = 300;
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const MAX_ATTACHMENTS = 10;
 // Calls that change something are recorded in the audit log.
-const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task"]);
+const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "resume"]);
 
 function send(ws: WebSocket, msg: ServerMsg): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -275,7 +275,12 @@ export class Hub {
         );
         this.audit.log("call", { device: this.device, sessionId, op: msg.op, ...detail });
       }
-      reply({ ok: true, data: await this.manager.call(sessionId, msg.op, args) });
+      const data = await this.manager.call(sessionId, msg.op, args);
+      if (msg.op === "resume") {
+        if (this.viewing === sessionId) await this.setView(sessionId);
+        this.changed();
+      }
+      reply({ ok: true, data });
     } catch (e) {
       reply({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }

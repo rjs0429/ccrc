@@ -137,9 +137,11 @@ export interface CallMap {
   stop_task: { args: { taskId: string }; data: Record<string, never> };
   commands: { args: Record<string, never>; data: CommandInfo[] };
   files: { args: { query: string }; data: string[] };
+  // Starts the session's Claude Code process here without sending anything.
+  resume: { args: Record<string, never>; data: Record<string, never> };
 }
 export type CallOp = keyof CallMap;
-export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files"];
+export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume"];
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {
