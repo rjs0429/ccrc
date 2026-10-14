@@ -491,6 +491,7 @@ test("context details ask for the full count and map Claude Code's answer", asyn
       { name: "Free space", tokens: 938439, kind: "free" },
       { name: "Old CLI row", tokens: 5, kind: "deferred" },
     ],
+    memoryFiles: [{ path: "/home/u/CLAUDE.md", tokens: 10 }],
   });
   assert.equal(s.state().context?.percent, 3);
 });

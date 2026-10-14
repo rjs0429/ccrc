@@ -80,6 +80,18 @@ function within(dir: string, root: string): boolean {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Claude Code starts in the session's working folder, so a session whose folder is gone cannot start.
+function isFolder(dir: string): boolean {
+  try {
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// A probe loads no project settings, so any folder serves when the session's is gone.
+const probeDir = (cwd: string): string => (isFolder(cwd) ? cwd : os.homedir());
+
 // Owns the broker's Claude Code processes, tracks the VS Code ones reached through wrappers, and
 // answers questions about every session on the machine.
 // Emits "event" (sessionId, ServerMsg) for one session, "changed" when the session list changed, and
@@ -167,6 +179,11 @@ export class SessionManager extends EventEmitter {
       busy: s.busy,
       pendingCount: s.pending.size || undefined,
     });
+    const folders = new Map<string, boolean>();
+    const missing = (cwd: string) => {
+      if (!folders.has(cwd)) folders.set(cwd, !isFolder(cwd));
+      return folders.get(cwd);
+    };
     const out: SessionSummary[] = infos.map((info) => {
       const s = this.controlled(info.sessionId);
       if (s) return summary(s, info);
@@ -182,6 +199,7 @@ export class SessionManager extends EventEmitter {
         host: l?.host,
         liveStatus: l?.status,
         busy: l?.status === "busy",
+        ...(!l && info.cwd && missing(info.cwd) ? { folderMissing: true } : {}),
       };
     });
     const listed = new Set(out.map((o) => o.id));
@@ -210,7 +228,7 @@ export class SessionManager extends EventEmitter {
   async modelList(): Promise<ModelOption[]> {
     if (!this.models.length) {
       this.modelsAsked ??= this.folders()
-        .then((dirs) => this.modelProbe(dirs[0] ?? os.homedir(), this.cfg.claudePath))
+        .then((dirs) => this.modelProbe(probeDir(dirs[0] ?? os.homedir()), this.cfg.claudePath))
         .then(
           (list) => {
             if (!this.models.length) this.setModels(list);
@@ -264,6 +282,7 @@ export class SessionManager extends EventEmitter {
       ...(ended ? { closedReason: ended.reason } : {}),
       ...(context ? { context } : {}),
       ...(start ? { start } : {}),
+      ...(l || isFolder(cwd) ? {} : { folderMissing: true }),
     };
   }
 
@@ -290,7 +309,7 @@ export class SessionManager extends EventEmitter {
         setTimeout(() => this.probing.get(model) === asked && this.probing.delete(model), this.timing.probeRetryMs).unref();
         return undefined;
       };
-      asked = this.windowProbe(cwd, model, this.cfg.claudePath).then((w) => {
+      asked = this.windowProbe(probeDir(cwd), model, this.cfg.claudePath).then((w) => {
         if (!w) return forget();
         this.windows.learn(model, w);
         return w;
@@ -338,6 +357,7 @@ export class SessionManager extends EventEmitter {
       const info = await this.info(sessionId);
       if (!info?.cwd) throw Error("unknown session");
       const cwd = await this.resumeFolder(sessionId, info.cwd);
+      if (!isFolder(cwd)) throw Error(`working folder is missing: ${cwd}`);
       const history = await loadHistory(sessionId, cwd);
       const now = this.controlled(sessionId);
       if (now) return now;
@@ -450,7 +470,7 @@ export class SessionManager extends EventEmitter {
         return { limits: (await s.usage()).limits };
       } catch {}
     }
-    return this.usageProbe(cwd, this.cfg.claudePath);
+    return this.usageProbe(probeDir(cwd), this.cfg.claudePath);
   }
 
   // What reading a linked file needs: the folder the session started in, the one it last worked in,

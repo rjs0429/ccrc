@@ -1,6 +1,13 @@
-import type { ContextDetail } from "../../../../broker/src/protocol.ts";
-import { modelLabel } from "../../labels.ts";
-import { useApp } from "../../state.ts";
+import { useEffect, useState } from "react";
+import type { ContextDetail, ContextGauge, LiveState, SessionState } from "../../../../broker/src/protocol.ts";
+import { errorText, modelLabel, shortPath } from "../../labels.ts";
+import { call, useApp } from "../../state.ts";
+import { compactLeft } from "../ContextRing.tsx";
+import { Sheet } from "../ui.tsx";
+import { Failed, SmallButton, Waiting } from "./parts.tsx";
+
+// The broker gives Claude Code up to a minute to count every category.
+export const DETAIL_WAIT_MS = 75_000;
 
 type Category = ContextDetail["categories"][number];
 
@@ -87,7 +94,25 @@ export function ContextView({ detail, full }: { detail: ContextDetail; full?: bo
   );
 }
 
-// The categories of a context count in groups: in use, room left, loaded only when needed.
+function Named({ name, title, rows }: { name: string; title: string; rows?: { name: string; tokens: number }[] }) {
+  if (!rows?.length) return null;
+  return (
+    <section className="mt-4" data-context-list={name}>
+      <div className="px-1 text-xs font-semibold text-muted">{title}</div>
+      <div className="mt-1.5 overflow-hidden rounded-xl border border-line">
+        {rows.map((r, i) => (
+          <div key={`${r.name}-${i}`} className="flex items-baseline gap-2.5 border-b border-line px-3 py-2 last:border-0">
+            <span className="min-w-0 flex-1 text-[14px] break-all">{r.name}</span>
+            <span className="shrink-0 text-[13px] text-muted tabular-nums">{tokens(r.tokens)}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// The categories of a context count in groups (in use, room left, loaded only when needed), then the memory
+// files and agents in it.
 export function ContextGroups({ detail }: { detail: ContextDetail }) {
   const max = detail.maxTokens || 1;
   const byKind = (kind: string) => detail.categories.filter((c) => c.kind === kind);
@@ -96,6 +121,94 @@ export function ContextGroups({ detail }: { detail: ContextDetail }) {
       <Group title="사용 중" rows={byKind("used")} max={max} />
       <Group title="남은 공간" hint="Autocompact buffer는 Auto-compact가 대화를 요약할 때 쓰려고 남겨 둔 자리입니다" rows={[...byKind("buffer"), ...byKind("free")]} max={max} />
       <Group title="필요할 때만 불러옴" hint="쓸 때만 Context에 올라오는 도구라 지금은 자리를 차지하지 않습니다" rows={byKind("deferred")} />
+      <Named name="memory" title="메모리 파일" rows={detail.memoryFiles?.map((f) => ({ name: shortPath(f.path), tokens: f.tokens }))} />
+      <Named name="agents" title="사용자 에이전트" rows={detail.agents} />
     </>
+  );
+}
+
+// How far auto-compact is, in words; undefined when the gauge cannot say.
+export function compactLeftText(g?: ContextGauge): string | undefined {
+  const left = g ? compactLeft(g) : undefined;
+  return left !== undefined ? `Auto-compact까지 ${left}% 남음` : g && !g.last ? "Auto-compact 꺼짐" : undefined;
+}
+
+interface SheetArgs {
+  sessionId: string;
+  state?: LiveState;
+  kind: SessionState;
+  starting: boolean;
+  // Why the session cannot start here, when it cannot.
+  cannotStart?: string;
+  onClose: () => void;
+  onStart: () => void;
+}
+
+// What /context opens: the whole count, categories, memory files and agents. A session without a process
+// shows the share last recorded until it is started from here.
+export function ContextSheet({ sessionId, state, kind, starting, cannotStart, onClose, onStart }: SheetArgs) {
+  const controllable = kind === "owned" || kind === "attached";
+  const [detail, setDetail] = useState<ContextDetail>();
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(false);
+  const [round, setRound] = useState(0);
+
+  useEffect(() => {
+    if (!controllable) return;
+    let live = true;
+    setLoading(true);
+    setError(undefined);
+    call(sessionId, "context", {}, DETAIL_WAIT_MS)
+      .then(
+        (d) => live && setDetail(d),
+        (e: Error) => live && setError(errorText(e.message)),
+      )
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [sessionId, controllable, round]);
+
+  const g: ContextGauge | undefined = detail
+    ? { percent: Math.round(detail.percentage), tokens: detail.totalTokens, max: detail.maxTokens, ...(detail.autoCompactAt ? { autoCompactAt: detail.autoCompactAt } : {}) }
+    : state?.context;
+  const shown: ContextDetail | undefined = detail ?? (g && { percentage: g.percent, totalTokens: g.tokens, maxTokens: g.max, categories: [] });
+  const leftText = compactLeftText(g);
+
+  return (
+    <Sheet title="Context" onClose={onClose}>
+      <div data-context-sheet>
+        {shown ? <ContextView detail={shown} /> : !loading && <div className="px-1 text-sm text-muted">아직 Context 사용량을 알 수 없습니다</div>}
+        {leftText && (
+          <div className="mt-2 px-1 text-sm" data-compact-left>
+            {leftText}
+          </div>
+        )}
+        {!detail && g?.last && <div className="mt-1 px-1 text-xs text-muted">마지막 기록 기준입니다</div>}
+        {detail && (
+          <div data-context-groups>
+            <ContextGroups detail={detail} />
+          </div>
+        )}
+        {loading && <Waiting text="분류별로 세는 중입니다. 1분까지 걸릴 수 있습니다" />}
+        {error && !loading && <Failed text={error} onRetry={() => setRound((r) => r + 1)} />}
+        {detail && !loading && (
+          <div className="mt-4 flex justify-end">
+            <SmallButton onClick={() => setRound((r) => r + 1)}>다시 계산</SmallButton>
+          </div>
+        )}
+        {kind === "inactive" && (
+          <div className="mt-3 px-1">
+            {cannotStart ? (
+              <div className="text-xs text-muted">{cannotStart}</div>
+            ) : (
+              <SmallButton tall disabled={starting} onClick={onStart}>
+                {starting ? "시작하는 중…" : "세션을 시작하고 자세히 보기"}
+              </SmallButton>
+            )}
+          </div>
+        )}
+      </div>
+    </Sheet>
   );
 }

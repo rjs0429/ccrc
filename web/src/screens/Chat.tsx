@@ -8,6 +8,7 @@ import { PendingCard } from "../components/Pending.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
 import { ChangesSheet } from "../components/sheets/Changes.tsx";
 import { CommandResultSheet, StoppedSheet } from "../components/sheets/Command.tsx";
+import { ContextSheet } from "../components/sheets/Context.tsx";
 import { ContextUsageSheet } from "../components/sheets/ContextUsage.tsx";
 import { McpSheet } from "../components/sheets/Mcp.tsx";
 import { OutputStyleSheet, outputStyleLabel } from "../components/sheets/OutputStyle.tsx";
@@ -17,7 +18,7 @@ import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { FileLinks } from "../components/fileLinks.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
-import { baseName, closedText, errorText, hostLabel, sessionTitle } from "../labels.ts";
+import { baseName, closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
 import { call, focusDone, navigate, openSettingsFrom, send, toast, useApp } from "../state.ts";
 
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
@@ -28,7 +29,7 @@ const NO_MODELS: ModelOption[] = [];
 // How long a command sent from here may take before its sheet says it gave no result, once the session is idle.
 const RESULT_LATE_MS = 15_000;
 const RESUME_WAIT_MS = 60_000;
-type SheetName = "changes" | "context" | "mcp" | "outputStyle" | "rewind" | "tasks" | "usage";
+type SheetName = "changes" | "context" | "contextUsage" | "mcp" | "outputStyle" | "rewind" | "tasks" | "usage";
 type CommandItem = Extract<DisplayItem, { kind: "command" }>;
 // A dialog command sent from here: its result shows in a sheet once a new result of that command arrives.
 interface Awaited {
@@ -60,9 +61,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const kind = st?.state ?? summary?.state ?? "inactive";
   const controllable = kind === "owned" || kind === "attached";
   const deferred = kind === "inactive";
+  const folderMissing = deferred && Boolean(st ? st.folderMissing : summary?.folderMissing);
   const host = hostLabel(st?.host ?? summary?.host);
   const busy = Boolean(st?.busy);
   const cwd = st?.cwd ?? summary?.cwd ?? "";
+  const cannotStart = folderMissing ? `작업 폴더가 없어 이 세션을 시작할 수 없습니다: ${shortPath(cwd)}` : undefined;
   const title = sessionTitle({ title: st?.title || summary?.title || "" });
   const items = useMemo(() => shownItems(chat?.items ?? []), [chat?.items]);
 
@@ -86,7 +89,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   // Starts the session's Claude Code process here without sending anything.
   const startNow = () => {
-    if (starting) return;
+    if (starting || folderMissing) return;
     setStarting(true);
     call(sessionId, "resume", {}, RESUME_WAIT_MS)
       .catch((e: Error) => toast(errorText(e.message)))
@@ -171,8 +174,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
           : `${host} 연결됨`
         : kind === "live"
           ? `${host}에서 열림`
-          : "꺼져 있음";
-  const disabledReason = kind === "live" ? `${host}에서 열려 있어 지금은 보기만 할 수 있습니다.` : undefined;
+          : folderMissing
+            ? "폴더 없음"
+            : "꺼져 있음";
+  const disabledReason =
+    kind === "live" ? `${host}에서 열려 있어 지금은 보기만 할 수 있습니다.` : folderMissing ? "작업 폴더가 없어 보기만 할 수 있습니다." : undefined;
 
   return (
     <div className="flex h-dvh flex-col">
@@ -236,12 +242,20 @@ export function Chat({ sessionId }: { sessionId: string }) {
               />
             ))}
             {chat?.loaded && kind === "inactive" && (
-              <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted" data-stopped-note>
-                {closedText(st?.closedReason)}메시지를 보내면 이 세션을 원격에서 이어서 실행합니다. 아래 칩에서 고른 모델·권한 모드·Effort는 여기서 시작할 때
-                적용됩니다.
-                <button onClick={startNow} disabled={starting} className="mx-auto mt-2 block min-h-11 rounded-lg bg-surface px-5 py-2.5 font-medium text-accent disabled:opacity-50">
-                  {starting ? "시작하는 중…" : "지금 시작"}
-                </button>
+              <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-stopped-note={folderMissing ? "folder-missing" : ""}>
+                {folderMissing ? (
+                  <p className="min-w-0 flex-1 break-keep">
+                    작업 폴더가 없어 이 세션을 시작할 수 없습니다.
+                    <span className="mt-0.5 block text-xs break-all">{shortPath(cwd)}</span>
+                  </p>
+                ) : (
+                  <>
+                    <p className="min-w-0 flex-1 break-keep text-balance">{closedText(st?.closedReason) || "꺼져 있는 세션입니다. "}메시지를 보내면 이어서 실행합니다.</p>
+                    <button onClick={startNow} disabled={starting} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent disabled:opacity-50">
+                      {starting ? "시작하는 중…" : "지금 시작"}
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -267,7 +281,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onModel={(model) => send({ t: "set_model", sessionId, model })}
         onEffort={(effort) => send({ t: "set_effort", sessionId, effort })}
         onUltracode={(on) => send({ t: "set_ultracode", sessionId, on })}
-        onContext={() => setSheet("context")}
+        onContext={() => setSheet("contextUsage")}
       />
 
       {menu && (
@@ -275,7 +289,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
           <Choice label="새로고침" onClick={() => (send({ t: "view", sessionId }), setMenu(false))} />
           <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
-          <Choice label="Context와 사용량" hint="Context, 요금제 사용량, Compact" onClick={() => (setSheet("context"), setMenu(false))} />
+          <Choice label="Context와 사용량" hint="Context, 요금제 사용량, Compact" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
           {controllable && (
             <>
               <Choice label="백그라운드 작업" hint="서브에이전트·백그라운드 명령" onClick={() => (setSheet("tasks"), setMenu(false))} />
@@ -311,11 +325,15 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "tasks" && <TasksSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "context" && (
+        <ContextSheet sessionId={sessionId} state={st} kind={kind} starting={starting} cannotStart={cannotStart} onClose={() => setSheet(null)} onStart={startNow} />
+      )}
+      {sheet === "contextUsage" && (
         <ContextUsageSheet
           sessionId={sessionId}
           state={st}
           kind={kind}
           starting={starting}
+          cannotStart={cannotStart}
           onClose={() => setSheet(null)}
           onStart={startNow}
           onCompact={(text) => {
