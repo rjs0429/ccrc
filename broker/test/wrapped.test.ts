@@ -4,7 +4,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { LineSplitter, parseLine } from "../src/link/lines.ts";
 import { LinkServer, type Link } from "../src/link/server.ts";
-import type { PendingRequest } from "../src/protocol.ts";
+import type { Answer, PendingRequest } from "../src/protocol.ts";
 import { WrappedSession } from "../src/sessions/wrapped.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -368,6 +368,24 @@ test("a plan approved to auto after VS Code already answered reports the loss", 
   await added;
   await assert.rejects(s.answer("plan3", { kind: "plan", decision: "auto" }), /no longer pending/);
   assert.ok(!wrapper.frames.some((x) => x.t === "to_cli" && (x.m as Msg).type === "control_response"), "no answer sent");
+});
+
+test("approving a plan never switches to a mode the remote side may not pick", async () => {
+  const { s, wrapper, next } = await session();
+  const added = next("pending_add");
+  wrapper.out({
+    type: "control_request",
+    request_id: "plan4",
+    request: { subtype: "can_use_tool", tool_name: "ExitPlanMode", input: { plan: "x" }, tool_use_id: "toolu_p4", requires_user_interaction: true },
+  });
+  await added;
+  for (const decision of ["bypassPermissions", "dontAsk", "plan"]) {
+    await assert.rejects(s.answer("plan4", { kind: "plan", decision } as unknown as Answer), /invalid answer/, decision);
+  }
+  await s.answer("plan4", { kind: "plan", decision: "default" });
+  const f = await wrapper.wait((x) => x.t === "to_cli" && (x.m as Msg).type === "control_response", "plan answer");
+  assert.deepEqual((((f.m as Msg).response as Msg).response as Msg).updatedPermissions, [{ type: "setMode", mode: "default", destination: "session" }]);
+  assert.equal(s.permissionMode, "default");
 });
 
 test("a queued turn shows as running from its init until its result", async () => {
