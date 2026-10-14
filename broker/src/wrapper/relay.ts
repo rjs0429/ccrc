@@ -165,7 +165,7 @@ export class Relay extends EventEmitter {
       await this.gate.opened;
       this.o.log(`claim ${this.claim} took ${Date.now() - t0}ms`);
       if (!this.claimSettled) await this.awaitRelease(this.claim!);
-      const extra = this.fork || this.finished || !this.o.hostPid ? undefined : await this.o.turns?.continueEnv(this.claim!, this.o.hostPid);
+      const extra = this.fork || this.finished || !this.o.hostPid ? undefined : await this.continueEnv(this.claim!, this.o.hostPid);
       if (extra) {
         this.o.log("continuing the turn VS Code left unfinished");
         env = { ...env, ...extra };
@@ -190,6 +190,16 @@ export class Relay extends EventEmitter {
       this.o.log("VS Code left during a turn");
     } catch (e) {
       this.o.log(`cannot note the unfinished turn: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // A note that cannot be read or updated continues nothing, and Claude Code starts all the same.
+  private async continueEnv(sessionId: string, hostPid: number): Promise<Record<string, string> | undefined> {
+    try {
+      return await this.o.turns?.continueEnv(sessionId, hostPid);
+    } catch (e) {
+      this.o.log(`cannot use the note of an unfinished turn: ${e instanceof Error ? e.message : String(e)}`);
+      return undefined;
     }
   }
 
@@ -293,7 +303,12 @@ export class Relay extends EventEmitter {
     if (line.includes(RESULT)) {
       if ((parsed ?? parseLine(line))?.type !== "result") return;
       this.running = false;
-      if (!this.hostLeft && this.sessionId) this.o.turns?.completed(this.sessionId);
+      if (this.hostLeft || !this.sessionId) return;
+      try {
+        this.o.turns?.completed(this.sessionId);
+      } catch (e) {
+        this.o.log(`cannot clear the note of a finished turn: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } else if (!this.running && (line.includes(INIT) || line.includes(USER))) {
       const m = parsed ?? parseLine(line);
       if (m?.type === "user" || (m?.type === "system" && m.subtype === "init")) this.running = true;
