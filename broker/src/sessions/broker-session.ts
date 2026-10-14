@@ -3,11 +3,13 @@ import {
   query,
   type CanUseTool,
   type ModelInfo,
+  type OnElicitation,
   type PermissionResult,
   type PermissionUpdate,
   type Query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { elicitInfo } from "../elicit.ts";
 import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
 import { rememberCommands } from "./commands.ts";
 import {
@@ -20,6 +22,7 @@ import {
   rewindResult,
   type ContentBlock,
   type Decision,
+  type ElicitAnswer,
 } from "./core.ts";
 import { fileContents, type FileContents } from "./file-read.ts";
 import type { RawMessage } from "./items.ts";
@@ -29,6 +32,8 @@ const CLOSE_WAIT_MS = 10_000;
 const REQUEST_MS = 15_000;
 // A process started for one question still has to start up and sign in.
 const PROBE_MS = 45_000;
+// An MCP server's input request left unanswered this long is cancelled.
+const ELICIT_MS = 15 * 60_000;
 
 type Requester = { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
 
@@ -84,6 +89,8 @@ export class BrokerSession extends SessionCore {
   private done: Promise<void> = Promise.resolve();
   private modelsRequested = false;
   private resolvers = new Map<string, (result: PermissionResult) => void>();
+  private elicits = new Map<string, (result: ElicitAnswer) => void>();
+  elicitMs = ELICIT_MS;
 
   constructor(id: string, cwd: string, history: DisplayItem[] = [], title?: string) {
     super(id, cwd, history, title);
@@ -109,6 +116,7 @@ export class BrokerSession extends SessionCore {
         enableFileCheckpointing: true,
         extraArgs: { "replay-user-messages": null },
         canUseTool: this.canUseTool,
+        onElicitation: this.onElicitation,
         stderr: () => {},
       },
     });
@@ -139,8 +147,10 @@ export class BrokerSession extends SessionCore {
     this.touch();
   }
 
+  // An input request belongs to the turn, so it ends with it.
   async interrupt(): Promise<void> {
     await this.query().interrupt();
+    for (const id of [...this.elicits.keys()]) this.endElicitation(id);
   }
 
   async setModel(model: string): Promise<void> {
@@ -212,6 +222,10 @@ export class BrokerSession extends SessionCore {
     this.closed = true;
     this.closedReason = reason;
     for (const id of [...this.pending.keys()]) {
+      if (this.elicits.has(id)) {
+        this.endElicitation(id);
+        continue;
+      }
       this.unask(id);
       this.settle(id, { behavior: "deny", message: "The session was closed.", interrupt: true });
     }
@@ -229,6 +243,19 @@ export class BrokerSession extends SessionCore {
     const resolve = this.resolvers.get(requestId);
     this.resolvers.delete(requestId);
     resolve?.(decision as PermissionResult);
+  }
+
+  protected settleElicitation(requestId: string, answer: ElicitAnswer): void {
+    const resolve = this.elicits.get(requestId);
+    if (!resolve) throw Error("request is no longer pending");
+    this.elicits.delete(requestId);
+    resolve(answer);
+  }
+
+  private endElicitation(requestId: string): void {
+    this.elicits.get(requestId)?.({ action: "cancel" });
+    this.elicits.delete(requestId);
+    this.unask(requestId);
   }
 
   protected refreshContext(): void {
@@ -308,6 +335,20 @@ export class BrokerSession extends SessionCore {
         },
         { once: true },
       );
+    });
+
+  private onElicitation: OnElicitation = (request, opts) =>
+    new Promise((resolve) => {
+      const id = opts.requestId;
+      const timer = setTimeout(() => this.endElicitation(id), this.elicitMs);
+      timer.unref();
+      this.elicits.set(id, (answer) => {
+        clearTimeout(timer);
+        resolve(answer);
+      });
+      opts.signal.addEventListener("abort", () => this.endElicitation(id), { once: true });
+      const elicitation = elicitInfo(request);
+      this.ask({ requestId: id, kind: "elicitation", toolName: elicitation.server, input: {}, elicitation });
     });
 
   private async consume(q: Query): Promise<void> {

@@ -6,6 +6,8 @@ import {
   type ContextDetail,
   type DisplayItem,
   type EffortName,
+  type ElicitInfo,
+  type ElicitValue,
   type LiveState,
   type McpServerInfo,
   type OutputStyleInfo,
@@ -16,6 +18,7 @@ import {
   type TaskInfo,
   type UsageInfo,
 } from "../protocol.ts";
+import { elicitResult } from "../elicit.ts";
 import type { FileContents } from "./file-read.ts";
 import { ItemBuilder, clipInput, type RawMessage } from "./items.ts";
 
@@ -57,6 +60,8 @@ export type Decision =
   | { behavior: "allow"; updatedInput: Record<string, unknown>; updatedPermissions?: unknown[] }
   | { behavior: "deny"; message: string; interrupt?: boolean };
 
+export type ElicitAnswer = { action: "accept" | "decline" | "cancel"; content?: Record<string, ElicitValue> };
+
 // A permission prompt or question from Claude Code, in the shape both transports can fill.
 export interface Ask {
   requestId: string;
@@ -70,6 +75,7 @@ export interface Ask {
   blockedPath?: string;
   suppressAlwaysAllowRule?: boolean;
   localOnly?: boolean;
+  elicitation?: ElicitInfo;
 }
 
 // A Claude Code message content block (image, document, ...), sent in front of the text of a user message.
@@ -317,7 +323,13 @@ export abstract class SessionCore extends EventEmitter {
     const entry = this.pending.get(requestId);
     if (!entry) throw Error("request is no longer pending");
     if (entry.request.localOnly) throw Error("this request can only be answered where the session is open");
-    if (entry.request.kind !== answer.kind) throw Error("answer does not match the request");
+    if (entry.request.kind !== answer?.kind) throw Error("answer does not match the request");
+    if (answer.kind === "elicitation") {
+      this.settleElicitation(requestId, elicitResult(entry.request.elicitation!, answer.action, answer.content));
+      this.unask(requestId);
+      this.touch();
+      return;
+    }
     if (answer.kind === "plan" && !PLAN_DECISIONS.has(answer.decision)) throw Error("invalid answer");
     let decision: Decision;
     if (answer.kind === "permission") {
@@ -348,6 +360,11 @@ export abstract class SessionCore extends EventEmitter {
     this.settle(requestId, decision);
     if (answer.kind === "plan" && answer.decision !== "keep_planning" && answer.decision !== "auto") this.permissionMode = answer.decision;
     this.touch();
+  }
+
+  // Sends the answer to an MCP server's input request; only a process type that asks for input overrides this.
+  protected settleElicitation(_requestId: string, _answer: ElicitAnswer): void {
+    throw Error("not available for this session");
   }
 
   protected ensureOpen(): void {
@@ -385,6 +402,7 @@ export abstract class SessionCore extends EventEmitter {
       suggestions: a.suggestions,
       allowAlways: Boolean(a.suggestions?.length) && !a.suppressAlwaysAllowRule,
       ...(a.localOnly && (kind === "permission" || kind === "dialog") ? { localOnly: true } : {}),
+      ...(kind === "elicitation" && a.elicitation ? { elicitation: a.elicitation } : {}),
     };
     this.pending.set(request.id, { request, input: a.input, suggestions: a.suggestions });
     this.emit("pending_add", request);

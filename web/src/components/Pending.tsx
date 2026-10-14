@@ -1,9 +1,11 @@
 import { useState } from "react";
-import type { Answer, PendingRequest } from "../../../broker/src/protocol.ts";
+import { fieldProblem, type FieldProblem } from "../../../broker/src/elicit.ts";
+import type { Answer, ElicitField, ElicitInfo, ElicitValue, PendingRequest } from "../../../broker/src/protocol.ts";
 import { allowAlwaysLabel, dialogLabel } from "../labels.ts";
+import { Switch } from "../screens/settings/common.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { ToolInput } from "./ToolInput.tsx";
-import { Button } from "./ui.tsx";
+import { Button, Icon } from "./ui.tsx";
 
 type Reply = (answer: Answer) => void;
 
@@ -14,9 +16,9 @@ interface QuestionInput {
   options?: { label: string; description?: string }[];
 }
 
-function Card({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
+function Card({ title, sub, children, ...rest }: { title: string; sub?: string; children: React.ReactNode; "data-elicitation"?: string }) {
   return (
-    <div className="rounded-2xl border border-accent/40 bg-surface p-3.5 shadow-sm">
+    <div className="rounded-2xl border border-accent/40 bg-surface p-3.5 shadow-sm" {...rest}>
       <div className="text-xs font-semibold tracking-wide text-accent">{title}</div>
       {sub && <div className="mt-0.5 text-[15px] font-medium break-all">{sub}</div>}
       <div className="mt-2.5 space-y-3">{children}</div>
@@ -142,9 +144,239 @@ function DialogCard({ request }: { request: PendingRequest }) {
   );
 }
 
+const PROBLEM: Record<FieldProblem, string> = {
+  required: "필수 항목입니다",
+  type: "값의 형식이 맞지 않습니다",
+  short: "너무 짧습니다",
+  long: "너무 깁니다",
+  format: "형식이 맞지 않습니다",
+  small: "허용 범위보다 작습니다",
+  large: "허용 범위보다 큽니다",
+  choice: "목록에 있는 값을 고르세요",
+  few: "더 골라야 합니다",
+  many: "너무 많이 골랐습니다",
+};
+
+const FORMAT_HINT = { email: "이메일 주소", uri: "URL", date: "날짜", "date-time": "날짜와 시각" };
+
+const INPUT = "w-full rounded-xl border border-line bg-bg px-3 py-2 text-[16px] outline-none focus:border-accent";
+
+// Form inputs hold text; numbers and date-times become what the schema asks for when the form is sent.
+type Draft = Record<string, string | boolean | string[]>;
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function localDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function draftOf(fields: ElicitField[]): Draft {
+  const d: Draft = {};
+  for (const f of fields) {
+    if (f.type === "boolean") d[f.key] = f.default ?? false;
+    else if (f.type === "multi") d[f.key] = f.default ?? [];
+    else if (f.type === "string" && f.format === "date-time" && f.default) d[f.key] = localDateTime(f.default);
+    else if (f.default !== undefined) d[f.key] = String(f.default);
+  }
+  return d;
+}
+
+function valueOf(f: ElicitField, v: string | boolean | string[] | undefined): ElicitValue | undefined {
+  if (Array.isArray(v) && !v.length) return undefined;
+  if (typeof v !== "string") return v;
+  if (v.trim() === "") return undefined;
+  if (f.type === "number" || f.type === "integer") return Number(v);
+  if (f.type === "string" && f.format === "date-time") {
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? v : d.toISOString().replace(/\.000Z$/, "Z");
+  }
+  return v;
+}
+
+function bounds(f: ElicitField): string | undefined {
+  const range = (lo?: number, hi?: number, unit = "") =>
+    lo !== undefined && hi !== undefined ? `${lo}–${hi}${unit}` : lo !== undefined ? `${lo}${unit} 이상` : hi !== undefined ? `${hi}${unit} 이하` : undefined;
+  if (f.type === "number" || f.type === "integer") return [f.type === "integer" ? "정수" : undefined, range(f.minimum, f.maximum)].filter(Boolean).join(", ") || undefined;
+  if (f.type === "string") return [f.format ? FORMAT_HINT[f.format] : undefined, range(f.minLength, f.maxLength, "자")].filter(Boolean).join(", ") || undefined;
+  if (f.type === "multi") return range(f.minItems, f.maxItems, "개");
+  return undefined;
+}
+
+function FieldInput({ field: f, value, onChange }: { field: ElicitField; value: Draft[string] | undefined; onChange: (v: Draft[string]) => void }) {
+  if (f.type === "boolean") {
+    return (
+      <button role="switch" aria-checked={value === true} aria-label={f.title ?? f.key} onClick={() => onChange(value !== true)} className="flex">
+        <Switch on={value === true} />
+      </button>
+    );
+  }
+  if (f.type === "choice" || f.type === "multi") {
+    const picked = f.type === "multi" ? (Array.isArray(value) ? value : []) : typeof value === "string" ? [value] : [];
+    const pick = (v: string) => {
+      if (f.type === "multi") onChange(picked.includes(v) ? picked.filter((x) => x !== v) : [...picked, v]);
+      else onChange(picked.includes(v) && !f.required ? "" : v);
+    };
+    return (
+      <div className="space-y-1.5">
+        {f.options.map((o) => {
+          const on = picked.includes(o.value);
+          return (
+            <button
+              key={o.value}
+              role={f.type === "multi" ? "checkbox" : "radio"}
+              aria-checked={on}
+              onClick={() => pick(o.value)}
+              className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-[15px] ${on ? "border-accent bg-accent-soft" : "border-line"}`}
+            >
+              <span className="min-w-0 break-words">{o.title}</span>
+              {on && <Icon.check className="size-4 shrink-0 text-accent" />}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+  const text = typeof value === "string" ? value : "";
+  if (f.type === "number" || f.type === "integer") {
+    return (
+      // iOS number pads have no minus key, so a field that allows negatives keeps the full keyboard.
+      <input
+        type="number"
+        inputMode={(f.minimum ?? -1) < 0 ? undefined : f.type === "integer" ? "numeric" : "decimal"}
+        step={f.type === "integer" ? 1 : "any"}
+        min={f.minimum}
+        max={f.maximum}
+        value={text}
+        onChange={(e) => onChange(e.target.value)}
+        className={INPUT}
+      />
+    );
+  }
+  if (f.type !== "string") return null;
+  const type = f.format ? { email: "email", uri: "url", date: "date", "date-time": "datetime-local" }[f.format] : "text";
+  if (type === "text" && (f.maxLength ?? Infinity) > 200) {
+    return <textarea value={text} rows={2} maxLength={f.maxLength} onChange={(e) => onChange(e.target.value)} className={`${INPUT} resize-y`} />;
+  }
+  return (
+    <input
+      type={type}
+      inputMode={type === "email" ? "email" : type === "url" ? "url" : undefined}
+      autoCapitalize={type === "text" ? undefined : "off"}
+      autoCorrect={type === "text" ? undefined : "off"}
+      maxLength={f.maxLength}
+      value={text}
+      onChange={(e) => onChange(e.target.value)}
+      className={INPUT}
+    />
+  );
+}
+
+function ElicitHead({ info }: { info: ElicitInfo }) {
+  return (
+    <>
+      {info.title && <div className="text-sm font-medium">{info.title}</div>}
+      {info.description && <div className="text-xs text-muted">{info.description}</div>}
+      {info.message && <div className="text-[15px] break-words whitespace-pre-wrap">{info.message}</div>}
+    </>
+  );
+}
+
+function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
+  const fields = info.fields ?? [];
+  const [draft, setDraft] = useState<Draft>(() => draftOf(fields));
+  const [errors, setErrors] = useState<Record<string, FieldProblem>>({});
+  const answer = (action: "accept" | "decline" | "cancel", content?: Record<string, ElicitValue>) =>
+    reply({ kind: "elicitation", action, ...(content ? { content } : {}) });
+  const submit = () => {
+    const content: Record<string, ElicitValue> = {};
+    const found: Record<string, FieldProblem> = {};
+    for (const f of fields) {
+      const v = valueOf(f, Object.hasOwn(draft, f.key) ? draft[f.key] : undefined);
+      const problem = fieldProblem(f, v);
+      if (problem) found[f.key] = problem;
+      else if (v !== undefined) content[f.key] = v;
+    }
+    setErrors(found);
+    if (!Object.keys(found).length) answer("accept", content);
+  };
+  const web = info.mode === "url" && info.url && /^https?:\/\//i.test(info.url) ? info.url : undefined;
+  return (
+    <Card title="입력 요청" sub={`MCP · ${info.server}`} data-elicitation={info.mode}>
+      <ElicitHead info={info} />
+      {info.mode === "url" ? (
+        <>
+          {info.url && <div className="rounded-xl bg-surface-2 px-3 py-2 font-mono text-xs break-all">{info.url}</div>}
+          {web ? (
+            <a href={web} target="_blank" rel="noopener noreferrer" className="block rounded-xl bg-accent px-3.5 py-2.5 text-center text-[15px] font-medium text-white">
+              열기
+            </a>
+          ) : (
+            <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted">이 주소는 휴대폰에서 열 수 없습니다.</div>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <Button disabled={!web} onClick={() => answer("accept")}>
+              완료
+            </Button>
+            <Button kind="danger" onClick={() => answer("cancel")}>
+              취소
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          {info.unsupported ? (
+            <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted">이 입력 양식은 휴대폰에서 채울 수 없습니다. 거절하거나 취소하세요.</div>
+          ) : (
+            fields.map((f) => {
+              const hint = bounds(f);
+              return (
+                <div key={f.key} data-field={f.key} className="space-y-1.5">
+                  <div className={f.type === "boolean" ? "flex items-center justify-between gap-3" : "space-y-1.5"}>
+                    <div className="min-w-0">
+                      <div className="text-[15px] font-medium break-words">
+                        {f.title ?? f.key}
+                        {f.required && <span className="ml-1 text-xs font-normal text-danger">필수</span>}
+                      </div>
+                      {f.description && <div className="text-xs text-muted">{f.description}</div>}
+                      {hint && <div className="text-xs text-muted">{hint}</div>}
+                    </div>
+                    <FieldInput
+                      field={f}
+                      value={Object.hasOwn(draft, f.key) ? draft[f.key] : undefined}
+                      onChange={(v) => {
+                        setDraft((d) => ({ ...d, [f.key]: v }));
+                        setErrors(({ [f.key]: _, ...rest }) => rest);
+                      }}
+                    />
+                  </div>
+                  {Object.hasOwn(errors, f.key) && <div className="text-xs text-danger">{PROBLEM[errors[f.key]]}</div>}
+                </div>
+              );
+            })
+          )}
+          <div className="grid grid-cols-3 gap-2">
+            <Button kind="primary" disabled={info.unsupported} onClick={submit}>
+              보내기
+            </Button>
+            <Button onClick={() => answer("decline")}>거절</Button>
+            <Button kind="danger" onClick={() => answer("cancel")}>
+              취소
+            </Button>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function PendingCard({ request, reply }: { request: PendingRequest; reply: Reply }) {
   if (request.kind === "question") return <QuestionCard request={request} reply={reply} />;
   if (request.kind === "plan") return <PlanCard request={request} reply={reply} />;
   if (request.kind === "dialog") return <DialogCard request={request} />;
+  if (request.kind === "elicitation" && request.elicitation) return <ElicitationCard info={request.elicitation} reply={reply} />;
   return <PermissionCard request={request} reply={reply} />;
 }

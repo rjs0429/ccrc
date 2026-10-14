@@ -31,6 +31,7 @@ const BODY: Record<PendingKind | "done", string> = {
   question: "질문이 있습니다",
   plan: "계획 승인 요청",
   dialog: "확인 요청",
+  elicitation: "입력 요청",
   done: "작업을 마쳤습니다",
 };
 
@@ -95,7 +96,7 @@ export class Notifier {
       if (this.hub.isWatching(sessionId)) return this.arm(key, this.d.timing.recheckMs, () => notify(endpoint));
       const sub = this.d.subscriptions().find((s) => s.endpoint === endpoint);
       if (!sub) return;
-      const tool = request.kind === "permission" && sub.prefs.details ? request.toolName : undefined;
+      const tool = (request.kind === "permission" || request.kind === "elicitation") && sub.prefs.details ? request.toolName : undefined;
       this.d.deliver(sub, this.payload(sessionId, request.kind, title, tool), "high");
     };
     for (const sub of this.d.subscriptions()) {
