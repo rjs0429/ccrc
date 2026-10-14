@@ -25,7 +25,7 @@ function Thinking({ text }: { text: string }) {
   return (
     <div>
       <button onClick={() => setOpen(!open)} className="flex items-center gap-1 text-sm text-muted">
-        <span>생각</span>
+        <span>Thinking</span>
         <Icon.chevronDown className={`size-4 transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
       {open && <div className="mt-1.5 border-l-2 border-line pl-3 text-sm text-muted whitespace-pre-wrap">{text}</div>}

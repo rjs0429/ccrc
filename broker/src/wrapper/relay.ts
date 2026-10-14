@@ -17,9 +17,10 @@ const STATE = Buffer.from('"subtype":"session_state_changed"');
 const MODELS = Buffer.from('"models":');
 const RESULT = Buffer.from('"type":"result"');
 const USER = Buffer.from('"type":"user"');
+const APPLIED = Buffer.from('"applied":');
 // The broker sees the conversation, these requests from Claude Code (only can_use_tool may be answered
-// remotely), the answer to VS Code's initialize, and these settings changes from VS Code; other control
-// traffic between VS Code and Claude Code stays between them.
+// remotely), the answer to VS Code's initialize, the applied part of its get_settings answers, and these
+// settings changes from VS Code; other control traffic between VS Code and Claude Code stays between them.
 const SHOWN = new Set(["can_use_tool", "elicitation", "request_user_dialog"]);
 const HOST_SETTINGS = new Set(["set_model", "set_permission_mode", "apply_flag_settings"]);
 // Control requests the broker may send.
@@ -28,6 +29,7 @@ const REMOTE_REQUESTS = new Set([
   "set_model",
   "set_permission_mode",
   "apply_flag_settings",
+  "get_settings",
   "get_context_usage",
   "mcp_status",
   "mcp_toggle",
@@ -35,7 +37,12 @@ const REMOTE_REQUESTS = new Set([
   "rewind_files",
   "stop_task",
 ]);
+const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
+// The only part of a get_settings answer that leaves the wrapper: what the next request runs with.
+// The merged settings and their sources carry env values and hooks and stay between VS Code and Claude Code.
+const APPLIED_KEYS = ["model", "effort", "ultracode", "ultracodeAvailable"];
 const SETTLED_KEEP = 500;
+const ASKED_KEEP = 100;
 const LINK_BUFFER_MAX = 16 * 1024 * 1024;
 const RELEASE_WAIT_MS = 9000;
 
@@ -79,6 +86,32 @@ export function launchSession(args: string[]): { sessionId?: string; claim?: str
   return {};
 }
 
+// Settings the broker may change for the session: effort and ultracode, nothing that persists.
+export function allowedFlagSettings(settings: unknown): boolean {
+  if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return false;
+  const entries = Object.entries(settings);
+  return (
+    entries.length > 0 &&
+    entries.every(([k, v]) => (k === "effortLevel" ? EFFORT_LEVELS.has(v as string) : k === "ultracode" && (v === true || v === false || v === null)))
+  );
+}
+
+// A get_settings answer reduced to the applied model, effort and ultracode state.
+export function appliedAnswer(msg: Record<string, unknown>): Buffer {
+  const r = (msg.response ?? {}) as Record<string, unknown>;
+  const a = (((r.response ?? {}) as Record<string, unknown>).applied ?? {}) as Record<string, unknown>;
+  const applied: Record<string, unknown> = {};
+  for (const k of APPLIED_KEYS) {
+    const v = a[k];
+    if (typeof v === "string" || typeof v === "boolean" || v === null) applied[k] = v;
+  }
+  const response =
+    r.subtype === "success"
+      ? { subtype: "success", request_id: r.request_id, response: { applied } }
+      : { subtype: "error", request_id: r.request_id, error: typeof r.error === "string" ? r.error : "request failed" };
+  return Buffer.from(JSON.stringify({ type: "control_response", response }));
+}
+
 class Gate {
   readonly opened: Promise<void>;
   isOpen = false;
@@ -105,6 +138,11 @@ class Gate {
   }
 }
 
+function ask(set: Set<string>, id: string): void {
+  set.add(id);
+  if (set.size > ASKED_KEEP) set.delete(set.values().next().value!);
+}
+
 // Sits between VS Code (hostIn/hostOut) and the Claude Code process it asked for. Every line passes
 // through unchanged and a copy goes to the broker, which may add user messages, its own control
 // requests and answers to open permission prompts. Whichever side answers a prompt first wins.
@@ -118,6 +156,9 @@ export class Relay extends EventEmitter {
   private hostGone = false;
   private open = new Map<string, { subtype: string; line: Buffer }>();
   private settled = new Map<string, Party>();
+  // get_settings requests whose answers go on reduced: VS Code's to the broker as well, the broker's only to it.
+  private hostAsked = new Set<string>();
+  private remoteAsked = new Set<string>();
   private state = new Map<string, { seq: number; t: "out" | "in"; line: Buffer }>();
   private seq = 0;
   private sessionId?: string;
@@ -263,7 +304,8 @@ export class Relay extends EventEmitter {
         }
       }
       const subtype = msg?.type === "control_request" ? (msg.request as Record<string, unknown> | undefined)?.subtype : undefined;
-      if (typeof subtype === "string" && HOST_SETTINGS.has(subtype)) {
+      if (subtype === "get_settings" && typeof msg?.request_id === "string") ask(this.hostAsked, msg.request_id);
+      else if (typeof subtype === "string" && HOST_SETTINGS.has(subtype)) {
         this.remember(`in:${subtype}`, "in", line);
         this.copy("in", line);
       }
@@ -279,10 +321,19 @@ export class Relay extends EventEmitter {
       const id = msg?.type === "control_response" ? (msg.response as Record<string, unknown> | undefined)?.request_id : msg?.request_id;
       if (msg?.type === "control_response") {
         if (typeof id === "string" && id.startsWith(REMOTE_PREFIX)) {
-          this.copy("reply", line);
+          this.copy("reply", this.remoteAsked.delete(id) || line.includes(APPLIED) ? appliedAnswer(msg) : line);
           return;
         }
-        shared = line.includes(MODELS);
+        if (typeof id === "string" && this.hostAsked.delete(id)) {
+          this.toHost(line);
+          const answer = appliedAnswer(msg);
+          if (msg.response && (msg.response as Record<string, unknown>).subtype === "success") {
+            this.remember("applied", "out", answer);
+            this.copy("out", answer);
+          }
+          return;
+        }
+        shared = line.includes(MODELS) && !line.includes(APPLIED);
       } else if (msg?.type === "control_request") {
         const subtype = (msg.request as Record<string, unknown> | undefined)?.subtype;
         shared = typeof id === "string" && typeof subtype === "string" && SHOWN.has(subtype);
@@ -348,10 +399,8 @@ export class Relay extends EventEmitter {
       if (typeof m.request_id !== "string" || !m.request_id.startsWith(REMOTE_PREFIX) || !req) return reject("invalid request", m.request_id);
       if (typeof req.subtype !== "string" || !REMOTE_REQUESTS.has(req.subtype)) return reject("request not allowed", m.request_id);
       if (req.subtype === "set_permission_mode" && req.mode === "bypassPermissions") return reject("mode not allowed", m.request_id);
-      const settings = req.subtype === "apply_flag_settings" ? req.settings : undefined;
-      if (settings !== undefined && (typeof settings !== "object" || settings === null || Object.keys(settings).some((k) => k !== "effortLevel"))) {
-        return reject("setting not allowed", m.request_id);
-      }
+      if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
+      if (req.subtype === "get_settings") ask(this.remoteAsked, m.request_id);
       this.toChild(Buffer.from(JSON.stringify(m)));
       return;
     }

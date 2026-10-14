@@ -115,13 +115,23 @@ export class WrappedSession extends SessionCore {
     await this.link.request({ subtype: "set_model", model });
     this.model = model;
     this.touch();
+    this.refreshApplied();
   }
 
   async setEffort(effort: EffortName): Promise<void> {
     this.ensureOpen();
-    await this.link.request({ subtype: "apply_flag_settings", settings: { effortLevel: effort } });
+    await this.link.request({ subtype: "apply_flag_settings", settings: this.effortSettings(effort) });
     this.effort = effort;
     this.touch();
+    this.refreshApplied();
+  }
+
+  async setUltracode(on: boolean): Promise<void> {
+    this.ensureOpen();
+    this.checkUltracode(on);
+    await this.link.request({ subtype: "apply_flag_settings", settings: { ultracode: on ? true : null } });
+    this.touch();
+    this.refreshApplied();
   }
 
   async contextDetail(): Promise<ContextDetail> {
@@ -184,6 +194,10 @@ export class WrappedSession extends SessionCore {
       .catch(() => {});
   }
 
+  protected readApplied(): Promise<Record<string, unknown>> {
+    return this.link.request({ subtype: "get_settings" });
+  }
+
   private drop(requestId: unknown): void {
     if (typeof requestId !== "string") return;
     this.toolUse.delete(requestId);
@@ -214,9 +228,14 @@ export class WrappedSession extends SessionCore {
     });
   }
 
-  // The answer to VS Code's initialize carries the model and command lists and the current mode.
+  // The answer to VS Code's initialize carries the model and command lists and the current mode; the
+  // wrapper passes on the applied part of VS Code's get_settings answers.
   private onResponse(r: Obj): void {
-    if (Array.isArray(r.models)) this.emit("models", r.models);
+    if (r.applied) this.adoptApplied(r.applied);
+    if (Array.isArray(r.models)) {
+      this.emit("models", r.models);
+      this.refreshApplied();
+    }
     if (Array.isArray(r.commands)) {
       this.commands = commandInfo(r.commands);
       rememberCommands(this.cwd, this.commands);

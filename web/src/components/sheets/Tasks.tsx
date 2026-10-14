@@ -68,7 +68,7 @@ export function TasksSheet({ sessionId, onClose }: SheetProps) {
   );
 
   return (
-    <Sheet title="실행 중 작업" onClose={onClose}>
+    <Sheet title="백그라운드 작업" onClose={onClose}>
       {running.length ? rows(running) : <div className="px-1 py-3 text-sm text-muted">실행 중인 작업이 없습니다</div>}
       {ended.length > 0 && (
         <section className="mt-4">

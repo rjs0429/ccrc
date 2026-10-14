@@ -107,6 +107,10 @@ export class BrokerSession extends SessionCore {
       },
     });
     this.done = this.consume(this.q);
+    this.q
+      .initializationResult()
+      .then(() => this.refreshApplied())
+      .catch(() => {});
   }
 
   send(text: string, blocks: ContentBlock[] = []): void {
@@ -134,12 +138,21 @@ export class BrokerSession extends SessionCore {
     await this.query().setModel(model);
     this.model = model;
     this.touch();
+    this.refreshApplied();
   }
 
   async setEffort(effort: EffortName): Promise<void> {
-    await this.query().applyFlagSettings({ effortLevel: effort });
+    await this.query().applyFlagSettings(this.effortSettings(effort));
     this.effort = effort;
     this.touch();
+    this.refreshApplied();
+  }
+
+  async setUltracode(on: boolean): Promise<void> {
+    this.checkUltracode(on);
+    await this.query().applyFlagSettings({ ultracode: on ? true : null });
+    this.touch();
+    this.refreshApplied();
   }
 
   async contextDetail(): Promise<ContextDetail> {
@@ -229,6 +242,12 @@ export class BrokerSession extends SessionCore {
         rememberCommands(this.cwd, this.commands);
       })
       .catch(() => {});
+  }
+
+  // The SDK sends get_settings but does not declare it.
+  protected async readApplied(): Promise<Record<string, unknown>> {
+    const q = this.query() as unknown as { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
+    return (await timed(q.request({ subtype: "get_settings" }), REQUEST_MS)).response ?? {};
   }
 
   private query(): Query {

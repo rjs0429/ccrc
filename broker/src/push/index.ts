@@ -18,7 +18,7 @@ export interface PushOptions {
 const TTL_SEC = 3600;
 const SEND_TIMEOUT_MS = 15_000;
 const MAX_RETRY_MS = 60_000;
-const TEST: PushPayload = { title: "ccrc", body: "시험 알림입니다", tag: "test", data: { url: "/#/settings" } };
+const TEST: PushPayload = { title: "ccrc", body: "테스트 알림입니다", tag: "test", data: { url: "/#/settings/alerts" } };
 
 interface Health {
   lastSent?: number;

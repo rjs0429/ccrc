@@ -1,23 +1,11 @@
 import { useMemo, useState } from "react";
 import type { EffortName, PermissionModeName } from "../../../broker/src/protocol.ts";
-import { Button, Choice, Icon, Sheet } from "../components/ui.tsx";
+import { Button, Choice, Icon, Row, Sheet } from "../components/ui.tsx";
 import { EFFORT_LABEL, MODE_HINT, MODE_LABEL, baseName, shortPath } from "../labels.ts";
 import { navigate, send, toast, useApp } from "../state.ts";
 
 const MODES: PermissionModeName[] = ["default", "acceptEdits", "plan", "auto"];
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
-
-function Row({ label, value, onClick }: { label: string; value: string; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className="flex w-full items-center justify-between border-b border-line px-1 py-3 text-left">
-      <span className="text-[15px]">{label}</span>
-      <span className="flex items-center gap-1 text-sm text-muted">
-        {value}
-        <Icon.chevronRight className="size-4" />
-      </span>
-    </button>
-  );
-}
 
 export function NewSession() {
   const options = useApp((s) => s.options);
@@ -88,7 +76,7 @@ export function NewSession() {
           <section>
             <Row label="모델" value={models.find((m) => m.value === model)?.label ?? "기본값"} onClick={() => setSheet("model")} />
             <Row label="권한 모드" value={mode ? MODE_LABEL[mode] : "기본값"} onClick={() => setSheet("mode")} />
-            <Row label="노력 수준" value={effort ? EFFORT_LABEL[effort] : "기본값"} onClick={() => setSheet("effort")} />
+            <Row label="Effort" value={effort ? EFFORT_LABEL[effort] : "Auto (모델 기본값)"} onClick={() => setSheet("effort")} />
           </section>
 
           <section>
@@ -125,7 +113,7 @@ export function NewSession() {
         </Sheet>
       )}
       {sheet === "effort" && (
-        <Sheet title="노력 수준" onClose={() => setSheet(null)}>
+        <Sheet title="Effort" onClose={() => setSheet(null)}>
           <Choice label="기본값" selected={!effort} onClick={() => (setEffort(undefined), setSheet(null))} />
           {EFFORTS.map((e) => (
             <Choice key={e} label={EFFORT_LABEL[e]} selected={effort === e} onClick={() => (setEffort(e), setSheet(null))} />

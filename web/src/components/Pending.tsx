@@ -124,11 +124,11 @@ function PlanCard({ request, reply }: { request: PendingRequest; reply: Reply })
       </div>
       <div className="grid gap-2">
         <Button kind="primary" onClick={() => reply({ kind: "plan", decision: "auto" })}>
-          승인 · 자동 모드로 진행
+          예, Auto 모드로 진행
         </Button>
-        <Button onClick={() => reply({ kind: "plan", decision: "acceptEdits" })}>승인 · 편집 자동 허용</Button>
-        <Button onClick={() => reply({ kind: "plan", decision: "default" })}>승인 · 편집마다 확인</Button>
-        <DenyBox placeholder="고칠 점 (선택)" label="계속 계획" onSend={(feedback) => reply({ kind: "plan", decision: "keep_planning", feedback })} />
+        <Button onClick={() => reply({ kind: "plan", decision: "acceptEdits" })}>예, 편집은 자동 허용</Button>
+        <Button onClick={() => reply({ kind: "plan", decision: "default" })}>예, 편집마다 직접 승인</Button>
+        <DenyBox placeholder="고칠 점 (선택)" label="아니요, 계속 계획하기" onSend={(feedback) => reply({ kind: "plan", decision: "keep_planning", feedback })} />
       </div>
     </Card>
   );

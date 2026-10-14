@@ -327,6 +327,10 @@ export class SessionManager extends EventEmitter {
     return this.get(sessionId).setEffort(effort);
   }
 
+  setUltracode(sessionId: string, on: boolean): Promise<void> {
+    return this.get(sessionId).setUltracode(on);
+  }
+
   async release(sessionId: string): Promise<void> {
     if (this.wrapped.has(sessionId)) throw Error("session runs in VS Code");
     await this.owned.get(sessionId)?.close("released");

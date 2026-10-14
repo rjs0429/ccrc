@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { EffortName, LiveState, ModelOption, PermissionModeName } from "../../../broker/src/protocol.ts";
-import { EFFORT_LABEL, MODE_HINT, MODE_LABEL, baseName } from "../labels.ts";
+import { MODE_HINT, MODE_LABEL, baseName, effortLabel, findModel, modelLabel } from "../labels.ts";
+import { Switch } from "../screens/settings/common.tsx";
 import { usePrefs } from "../prefs.ts";
 import { toast, useApp } from "../state.ts";
 import { AttachmentChips } from "./composer/AttachmentChips.tsx";
@@ -35,14 +36,6 @@ function saveDraft(sessionId: string | undefined, text: string): void {
   } catch {}
 }
 
-export function modelLabel(models: ModelOption[], model?: string): string {
-  if (!model) return "모델";
-  const known = models.find((m) => m.resolved === model || m.value === model);
-  if (known) return known.label;
-  const m = model.match(/^claude-([a-z]+)-(\d+)-(\d+)/);
-  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}` : model;
-}
-
 function Chip({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
   return (
     <button
@@ -69,23 +62,24 @@ interface Props {
   onMode: (mode: PermissionModeName) => void;
   onModel: (model: string) => void;
   onEffort: (effort: EffortName) => void;
+  onUltracode: (on: boolean) => void;
 }
 
-export function Composer({ sessionId, state, models, controllable, disabledReason, placeholder, onSend, onStop, onMode, onModel, onEffort }: Props) {
+export function Composer({ sessionId, state, models, controllable, disabledReason, placeholder, onSend, onStop, onMode, onModel, onEffort, onUltracode }: Props) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [sheet, setSheet] = useState<"mode" | "model" | "effort" | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
-  const picker = useRef<HTMLInputElement>(null);
   const nextCaret = useRef<number | null>(null);
   const { enterToSend } = usePrefs();
   const insert = useApp((s) => s.insert);
   const attachments = useAttachments(sessionId);
   const busy = Boolean(state?.busy);
-  const current = models.find((m) => m.resolved === state?.model || m.value === state?.model);
+  const current = findModel(models, state?.model);
   const efforts = current?.efforts?.length ? current.efforts : EFFORTS;
+  const hasEffort = !current || Boolean(current.efforts?.length) || Boolean(state?.effort);
   const uploading = attachments.some((a) => !a.uploaded);
   const canSend = !uploading && (text.trim() !== "" || attachments.length > 0);
 
@@ -207,13 +201,27 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
         <div className="mt-1 flex items-center gap-1">
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
             {sessionId && (
-              <button
-                onClick={() => picker.current?.click()}
+              // The file input itself takes the tap, so iOS anchors its menu to the paperclip; holding
+              // the textarea's focus keeps the page from moving while the menu opens.
+              <label
                 aria-label="파일 첨부"
-                className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-2"
+                onMouseDown={(e) => e.preventDefault()}
+                className="relative flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg text-muted hover:bg-surface-2"
               >
                 <Icon.paperclip className="size-[18px]" />
-              </button>
+                <input
+                  type="file"
+                  multiple
+                  accept={ACCEPT}
+                  aria-label="파일 첨부"
+                  onChange={(e) => {
+                    const picked = [...(e.target.files ?? [])];
+                    e.target.value = "";
+                    if (picked.length) addFiles(sessionId, picked);
+                  }}
+                  className="absolute inset-0 size-full cursor-pointer opacity-0"
+                />
+              </label>
             )}
             <Chip disabled={!controllable} onClick={() => setSheet("model")}>
               {modelLabel(models, state?.model)}
@@ -223,11 +231,14 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
               {MODE_LABEL[state?.permissionMode ?? ""] ?? "권한 모드"}
               <Icon.chevronDown className="size-3.5" />
             </Chip>
-            <Chip disabled={!controllable} onClick={() => setSheet("effort")}>
-              {state?.effort ? `노력 ${EFFORT_LABEL[state.effort] ?? state.effort}` : controllable ? "노력 기본" : "노력"}
-              <Icon.chevronDown className="size-3.5" />
-            </Chip>
-            {state?.contextPercent !== undefined && <span className="shrink-0 px-1 text-[12px] text-muted">문맥 {state.contextPercent}%</span>}
+            {hasEffort && (
+              <Chip disabled={!controllable} onClick={() => setSheet("effort")}>
+                {state?.effort || controllable ? `Effort ${effortLabel(state?.effort)}` : "Effort"}
+                {state?.ultracode && <span className="ml-1 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">Ultracode</span>}
+                <Icon.chevronDown className="size-3.5" />
+              </Chip>
+            )}
+            {state?.contextPercent !== undefined && <span className="shrink-0 px-1 text-[12px] text-muted">context {state.contextPercent}%</span>}
           </div>
           {busy && (
             <button onClick={onStop} aria-label="중지" className="flex size-9 items-center justify-center rounded-full bg-surface-2 text-fg">
@@ -244,20 +255,6 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
           </button>
         </div>
       </div>
-      {sessionId && (
-        <input
-          ref={picker}
-          type="file"
-          multiple
-          accept={ACCEPT}
-          hidden
-          onChange={(e) => {
-            const picked = [...(e.target.files ?? [])];
-            e.target.value = "";
-            if (picked.length) addFiles(sessionId, picked);
-          }}
-        />
-      )}
 
       {sheet === "mode" && (
         <Sheet title="권한 모드" onClose={() => setSheet(null)}>
@@ -275,10 +272,24 @@ export function Composer({ sessionId, state, models, controllable, disabledReaso
         </Sheet>
       )}
       {sheet === "effort" && (
-        <Sheet title="노력 수준" onClose={() => setSheet(null)}>
+        <Sheet title="Effort" onClose={() => setSheet(null)}>
           {efforts.map((e) => (
-            <Choice key={e} label={EFFORT_LABEL[e] ?? e} selected={state?.effort === e} onClick={() => (onEffort(e), setSheet(null))} />
+            <Choice key={e} label={effortLabel(e)} selected={state?.effort === e} onClick={() => (onEffort(e), setSheet(null))} />
           ))}
+          {state?.ultracodeAvailable && (
+            <button
+              role="switch"
+              aria-checked={state.ultracode === true}
+              onClick={() => onUltracode(!state.ultracode)}
+              className="mt-2 flex w-full items-center justify-between gap-3 rounded-xl border-t border-line px-3 py-2.5 text-left hover:bg-surface-2"
+            >
+              <span>
+                <span className="block text-[15px]">Ultracode</span>
+                <span className="block text-xs text-muted">모든 작업에 동적 워크플로를 씁니다 (이번 세션만)</span>
+              </span>
+              <Switch on={state.ultracode === true} />
+            </button>
+          )}
         </Sheet>
       )}
     </div>

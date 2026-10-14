@@ -125,7 +125,7 @@ export function NotificationsSection() {
         );
         setDevice(await loadDevice());
         if (error) throw error;
-        toast("시험 알림을 보냈습니다");
+        toast("테스트 알림을 보냈습니다");
       });
     body = (
       <>
@@ -166,7 +166,7 @@ export function NotificationsSection() {
         </div>
         <div className="flex gap-2">
           <Button className="flex-1" disabled={busy} onClick={test}>
-            시험 알림 보내기
+            테스트 알림 보내기
           </Button>
           <Button kind="danger" className="flex-1" disabled={busy} onClick={() => void run(async () => setDevice(await turnOff(device)))}>
             알림 끄기

@@ -48,7 +48,7 @@ export function App() {
       ) : route.name === "new" ? (
         <NewSession />
       ) : route.name === "settings" ? (
-        <Settings />
+        <Settings key={route.page ?? ""} page={route.page} />
       ) : (
         <Home />
       )}

@@ -261,6 +261,36 @@ test("control requests resolve with Claude Code's reply and fail on errors", asy
   await assert.rejects(s.setMode("bypassPermissions" as never), /not available remotely/);
 });
 
+test("model, effort and ultracode follow the applied settings, and effort changes keep ultracode on", async () => {
+  const { s, wrapper, next } = await session();
+  const seen: Msg[] = [];
+  let applied: Msg = { model: "claude-opus-5-5", effort: "xhigh", ultracode: true, ultracodeAvailable: true };
+  wrapper.autoReply((r) => (seen.push(r), r.subtype === "get_settings" ? { applied } : {}));
+  const st = next("state");
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "vs-1", response: { applied } } });
+  await st;
+  assert.equal(s.model, "claude-opus-5-5");
+  assert.equal(s.effort, "xhigh");
+  assert.equal(s.state().ultracode, true);
+  assert.equal(s.state().ultracodeAvailable, true);
+  await s.setEffort("high");
+  assert.deepEqual(seen.find((r) => r.subtype === "apply_flag_settings")?.settings, { effortLevel: "high", ultracode: true });
+  applied = { model: "claude-opus-5-5", effort: "high", ultracode: false, ultracodeAvailable: true };
+  await s.setUltracode(false);
+  for (let i = 0; i < 50 && s.state().ultracode; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(seen.filter((r) => r.subtype === "apply_flag_settings").at(-1)?.settings, { ultracode: null });
+  assert.equal(s.state().ultracode, false);
+  seen.length = 0;
+  await s.setEffort("low");
+  assert.deepEqual(seen.find((r) => r.subtype === "apply_flag_settings")?.settings, { effortLevel: "low" });
+  applied = { model: "claude-haiku-4-5", effort: null, ultracode: false, ultracodeAvailable: false };
+  await s.setModel("haiku");
+  for (let i = 0; i < 50 && (s.model as string) === "haiku"; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(s.model, "claude-haiku-4-5");
+  assert.equal(s.effort, undefined, "a model without effort levels has no effort");
+  await assert.rejects(s.setUltracode(true), /not available/);
+});
+
 test("turn state follows session_state_changed and result", async () => {
   const { s, wrapper, next } = await session();
   wrapper.autoReply((r) => (r.subtype === "get_context_usage" ? { percentage: 41.6 } : {}));

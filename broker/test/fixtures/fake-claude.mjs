@@ -69,7 +69,13 @@ function handle(m) {
     if (init && process.env.FAKE_NO_INIT) return;
     const extra = init
       ? { models: [{ value: "default", displayName: "Default" }], commands: [{ name: "compact", description: "Compact the conversation", argumentHint: "" }], current_permission_mode: "default" }
-      : {};
+      : m.request.subtype === "get_settings"
+        ? {
+            effective: { env: { SECRET_TOKEN: "s3cret" }, hooks: { Stop: [{ command: "hook-cmd" }] } },
+            sources: [{ source: "userSettings", settings: { env: { SECRET_TOKEN: "s3cret" } } }],
+            applied: { model: "claude-haiku-5-5", effort: "medium", advisor: { secret: "s3cret" }, ultracode: false, ultracodeRequested: false, ultracodeAvailable: true },
+          }
+        : {};
     out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { subtype: m.request.subtype, ...extra } } });
     if (m.request.subtype === "set_permission_mode") out({ type: "system", subtype: "status", permissionMode: m.request.mode, session_id: sid });
     return;

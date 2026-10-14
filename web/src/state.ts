@@ -11,7 +11,8 @@ import type {
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, type Me, type Options } from "./api.ts";
 
-export type Route = { name: "home" } | { name: "chat"; sessionId: string } | { name: "new" } | { name: "settings" };
+export type SettingsPage = "claude" | "alerts" | "account" | "status";
+export type Route = { name: "home" } | { name: "chat"; sessionId: string } | { name: "new" } | { name: "settings"; page?: SettingsPage };
 export type Conn = "idle" | "connecting" | "ready" | "conflict" | "taken" | "offline";
 
 export interface Chat {
@@ -78,11 +79,20 @@ function parseRoute(): Route {
   if (m) return { name: "chat", sessionId: m[1] };
   if (h === "/new") return { name: "new" };
   if (h === "/settings") return { name: "settings" };
+  const p = h.match(/^\/settings\/(claude|alerts|account|status)$/);
+  if (p) return { name: "settings", page: p[1] as SettingsPage };
   return { name: "home" };
 }
 
 export function navigate(route: Route): void {
-  const hash = route.name === "chat" ? `#/s/${route.sessionId}` : route.name === "home" ? "#/" : `#/${route.name}`;
+  const hash =
+    route.name === "chat"
+      ? `#/s/${route.sessionId}`
+      : route.name === "home"
+        ? "#/"
+        : route.name === "settings" && route.page
+          ? `#/settings/${route.page}`
+          : `#/${route.name}`;
   if (location.hash !== hash) location.hash = hash;
   else onRoute();
 }

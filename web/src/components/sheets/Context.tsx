@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ContextDetail } from "../../../../broker/src/protocol.ts";
-import { errorText } from "../../labels.ts";
+import { errorText, modelLabel } from "../../labels.ts";
 import { call, useApp } from "../../state.ts";
 import { Sheet } from "../ui.tsx";
 import { Failed, SmallButton, Waiting } from "./parts.tsx";
@@ -22,7 +22,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   "Memory files": "메모리 파일",
   Skills: "스킬",
   Messages: "대화",
-  "Autocompact buffer": "자동 요약 여유분",
+  "Autocompact buffer": "Autocompact buffer",
   "Compact buffer": "요약 여유분",
   "Free space": "빈 공간",
 };
@@ -92,10 +92,10 @@ export function ContextSheet({ sessionId, onClose }: SheetProps) {
   const max = detail?.maxTokens || 1;
   const byKind = (kind: string) => detail?.categories.filter((c) => c.kind === kind) ?? [];
   const reserved = byKind("buffer").reduce((n, c) => n + c.tokens, 0);
-  const model = detail?.model ? (models?.find((m) => m.resolved === detail.model || m.value === detail.model)?.label ?? detail.model) : undefined;
+  const model = detail?.model ? modelLabel(models ?? [], detail.model) : undefined;
 
   return (
-    <Sheet title="문맥 사용량" onClose={onClose}>
+    <Sheet title="Context 사용량" onClose={onClose}>
       {detail && (
         <>
           <div className="px-1">
@@ -112,15 +112,15 @@ export function ContextSheet({ sessionId, onClose }: SheetProps) {
             {model && <div className="mt-2 text-xs text-muted">모델 {model}</div>}
           </div>
           <Group title="사용 중" rows={byKind("used")} max={max} />
-          <Group title="비어 있음" hint="자동 요약 여유분은 대화를 요약할 때 쓰려고 비워 둔 자리입니다" rows={[...byKind("buffer"), ...byKind("free")]} max={max} />
-          <Group title="문맥 밖" hint="필요할 때만 불러오는 도구라 지금은 자리를 차지하지 않습니다" rows={byKind("deferred")} />
+          <Group title="남은 공간" hint="Autocompact buffer는 대화를 요약할 때 쓰려고 남겨 둔 자리입니다" rows={[...byKind("buffer"), ...byKind("free")]} max={max} />
+          <Group title="필요할 때만 불러옴" hint="쓸 때만 context에 올라오는 도구라 지금은 자리를 차지하지 않습니다" rows={byKind("deferred")} />
         </>
       )}
-      {loading && <Waiting text="문맥을 세는 중입니다. 1분까지 걸릴 수 있습니다" />}
+      {loading && <Waiting text="Context 사용량을 계산하는 중입니다. 1분까지 걸릴 수 있습니다" />}
       {error && !loading && <Failed text={error} onRetry={() => setRound((r) => r + 1)} />}
       {detail && !loading && (
         <div className="mt-4 flex justify-end">
-          <SmallButton onClick={() => setRound((r) => r + 1)}>다시 세기</SmallButton>
+          <SmallButton onClick={() => setRound((r) => r + 1)}>다시 계산</SmallButton>
         </div>
       )}
     </Sheet>

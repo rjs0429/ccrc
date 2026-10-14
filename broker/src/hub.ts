@@ -243,6 +243,11 @@ export class Hub {
         this.audit.log("set_effort", { device, sessionId: msg.sessionId, effort: msg.effort });
         await m.setEffort(sid(msg.sessionId), msg.effort);
         return;
+      case "set_ultracode":
+        if (typeof msg.on !== "boolean") throw Error("invalid ultracode");
+        this.audit.log("set_ultracode", { device, sessionId: msg.sessionId, on: msg.on });
+        await m.setUltracode(sid(msg.sessionId), msg.on);
+        return;
       case "release":
         this.audit.log("release", { device, sessionId: msg.sessionId });
         await m.release(sid(msg.sessionId));

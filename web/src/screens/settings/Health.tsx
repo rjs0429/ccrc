@@ -10,7 +10,7 @@ const CHECK_LABEL: Record<string, string> = {
   extension: "VS Code 확장",
   cli: "Claude Code 실행 파일",
   initialize: "초기화 응답",
-  context: "문맥 조회",
+  context: "context 조회",
   exit: "정상 종료",
 };
 
@@ -80,7 +80,7 @@ export function HealthSection() {
   const busy = checking || Boolean(info?.running);
   return (
     <section className="space-y-2">
-      <SectionTitle>업데이트 점검</SectionTitle>
+      <SectionTitle>호환성 점검</SectionTitle>
       {!info ? (
         <div className="flex justify-center rounded-xl bg-surface p-4 text-muted">
           <Spinner />

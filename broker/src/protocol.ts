@@ -172,6 +172,8 @@ export interface LiveState {
   model?: string;
   permissionMode?: string;
   effort?: string;
+  ultracode?: boolean;
+  ultracodeAvailable?: boolean;
   contextPercent?: number;
   costUsd?: number;
   closedReason?: string;
@@ -189,6 +191,7 @@ export type ClientMsg =
   | { t: "set_mode"; sessionId: string; mode: PermissionModeName }
   | { t: "set_model"; sessionId: string; model: string }
   | { t: "set_effort"; sessionId: string; effort: EffortName }
+  | { t: "set_ultracode"; sessionId: string; on: boolean }
   | { t: "release"; sessionId: string }
   | { t: "call"; id: number; sessionId: string; op: CallOp; args?: Record<string, unknown> }
   // Whether the page is in front, so the broker knows when to notify instead.

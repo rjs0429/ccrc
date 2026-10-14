@@ -27,12 +27,12 @@ const LABEL: Record<string, string> = {
   "permissions.ask": "확인 규칙",
   "permissions.deny": "거부 규칙",
   "permissions.additionalDirectories": "추가 폴더",
-  effortLevel: "노력 수준",
-  alwaysThinkingEnabled: "생각 켜기",
-  showThinkingSummaries: "생각 요약 보기",
+  effortLevel: "Effort",
+  alwaysThinkingEnabled: "Thinking",
+  showThinkingSummaries: "Thinking 요약 보기",
   language: "응답 언어",
   theme: "터미널 테마",
-  autoCompactEnabled: "자동 요약",
+  autoCompactEnabled: "Auto-compact",
   includeGitInstructions: "Git 작업 지침",
   respectGitignore: ".gitignore 따르기",
 };
@@ -42,9 +42,9 @@ const HINT: Record<string, string> = {
   "permissions.ask": "늘 묻습니다",
   "permissions.deny": "늘 거부합니다",
   "permissions.additionalDirectories": "작업 폴더 밖에서 다룰 수 있는 폴더입니다",
-  alwaysThinkingEnabled: "끄면 생각 없이 답합니다",
-  showThinkingSummaries: "생각 요약을 대화에 보여 줍니다",
-  autoCompactEnabled: "문맥이 차면 이전 대화를 요약합니다",
+  alwaysThinkingEnabled: "끄면 thinking 없이 답합니다",
+  showThinkingSummaries: "Thinking 요약을 대화에 보여 줍니다",
+  autoCompactEnabled: "context가 차면 이전 대화를 요약합니다",
   includeGitInstructions: "커밋·PR 작업 지침을 시스템 프롬프트에 넣습니다",
   respectGitignore: "파일 찾기에서 무시할 파일을 뺍니다",
 };
@@ -401,7 +401,7 @@ export function ClaudeSettingsSection() {
           ))}
           <div className="flex gap-2">
             <Button className="flex-1" disabled={!count} onClick={() => setDraft({ ...view.values })}>
-              되돌리기
+              변경 취소
             </Button>
             <Button kind="primary" className="flex-1" disabled={!count || CLAUDE_SETTING_FIELDS.some(badText)} onClick={() => setSheet("confirm")}>
               {count ? `저장 (${count})` : "저장"}

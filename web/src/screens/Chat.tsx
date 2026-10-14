@@ -131,6 +131,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onMode={(mode) => send({ t: "set_mode", sessionId, mode })}
         onModel={(model) => send({ t: "set_model", sessionId, model })}
         onEffort={(effort) => send({ t: "set_effort", sessionId, effort })}
+        onUltracode={(on) => send({ t: "set_ultracode", sessionId, on })}
       />
 
       {menu && (
@@ -140,8 +141,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
           <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
           {controllable && (
             <>
-              <Choice label="실행 중 작업" hint="서브에이전트·백그라운드 명령" onClick={() => (setSheet("tasks"), setMenu(false))} />
-              <Choice label="문맥 사용량" onClick={() => (setSheet("context"), setMenu(false))} />
+              <Choice label="백그라운드 작업" hint="서브에이전트·백그라운드 명령" onClick={() => (setSheet("tasks"), setMenu(false))} />
+              <Choice label="Context 사용량" onClick={() => (setSheet("context"), setMenu(false))} />
               <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
               <Choice label="파일 되돌리기" hint="보낸 메시지 시점으로 파일을 되돌립니다" onClick={() => (setSheet("rewind"), setMenu(false))} />
             </>

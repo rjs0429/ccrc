@@ -1,12 +1,12 @@
-import type { NoteCode, SessionSummary } from "../../broker/src/protocol.ts";
+import type { ModelOption, NoteCode, SessionSummary } from "../../broker/src/protocol.ts";
 
 export const MODE_LABEL: Record<string, string> = {
-  default: "수동 승인",
-  acceptEdits: "편집 자동 허용",
-  plan: "계획",
-  auto: "자동",
-  dontAsk: "묻지 않음",
-  bypassPermissions: "모든 권한 허용",
+  default: "Manual",
+  acceptEdits: "Edit automatically",
+  plan: "Plan",
+  auto: "Auto",
+  dontAsk: "Don't ask",
+  bypassPermissions: "Bypass permissions",
 };
 
 export const MODE_HINT: Record<string, string> = {
@@ -14,15 +14,39 @@ export const MODE_HINT: Record<string, string> = {
   acceptEdits: "파일 편집은 묻지 않고 허용합니다",
   plan: "파일을 바꾸지 않고 계획만 세웁니다",
   auto: "안전 검사를 거쳐 대부분 묻지 않고 실행합니다",
+  dontAsk: "승인이 필요한 동작은 묻지 않고 거부합니다",
 };
 
 export const EFFORT_LABEL: Record<string, string> = {
-  low: "낮음",
-  medium: "보통",
-  high: "높음",
-  xhigh: "매우 높음",
-  max: "최대",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
 };
+
+export function effortLabel(effort?: string): string {
+  return effort ? (EFFORT_LABEL[effort] ?? effort) : "Auto";
+}
+
+// Claude Code reports the resolved model id, which "default" shares with the model it stands for;
+// that model's own entry names it.
+export function findModel(models: ModelOption[], model?: string): ModelOption | undefined {
+  if (!model) return undefined;
+  return (
+    models.find((m) => m.value === model) ??
+    models.find((m) => m.value !== "default" && m.resolved === model) ??
+    models.find((m) => m.resolved === model)
+  );
+}
+
+export function modelLabel(models: ModelOption[], model?: string): string {
+  if (!model) return "모델";
+  const known = findModel(models, model);
+  if (known) return known.label;
+  const m = model.match(/^claude-([a-z]+)-(\d+)-(\d+)/);
+  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}${model.endsWith("[1m]") ? " (1M)" : ""}` : model;
+}
 
 const DESTINATION_LABEL: Record<string, string> = {
   session: "이번 세션",
@@ -36,9 +60,9 @@ export function hostLabel(host?: string): string {
 }
 
 const DIALOG_LABEL: Record<string, string> = {
-  refusal_fallback_prompt: "거절 응답 대체 확인",
-  fable_overage_consent_prompt: "사용량 초과 동의",
-  auto_mode_server_fallback: "자동 모드 대체 안내",
+  refusal_fallback_prompt: "다른 모델로 다시 시도할지 확인",
+  fable_overage_consent_prompt: "Fable 추가 사용량 동의",
+  auto_mode_server_fallback: "Auto 모드 분류기 과금 확인",
 };
 
 export function dialogLabel(kind: string): string {
@@ -135,7 +159,7 @@ export function allowAlwaysLabel(suggestions: unknown[] | undefined): string {
   for (const s of (suggestions ?? []) as Record<string, unknown>[]) {
     const where = DESTINATION_LABEL[String(s.destination)] ?? "";
     if (s.type === "setMode") {
-      parts.push(s.mode === "acceptEdits" ? `${where} 동안 편집 모두 허용` : `${where} 동안 ${MODE_LABEL[String(s.mode)] ?? s.mode}`);
+      parts.push(s.mode === "acceptEdits" ? `${where} 동안 편집 모두 허용` : `${where} 동안 ${MODE_LABEL[String(s.mode)] ?? s.mode} 모드`);
     } else if (s.type === "addRules" && Array.isArray(s.rules)) {
       const rules = (s.rules as { toolName?: string; ruleContent?: string }[]).map((r) => (r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName));
       parts.push(`${where}에서 항상 허용: ${rules.join(", ")}`);

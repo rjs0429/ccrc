@@ -91,6 +91,18 @@ export function Choice({ label, hint, selected, onClick }: { label: string; hint
   );
 }
 
+export function Row({ label, value, onClick }: { label: string; value?: string; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="flex w-full items-center justify-between border-b border-line px-1 py-3 text-left">
+      <span className="text-[15px]">{label}</span>
+      <span className="flex items-center gap-1 text-sm text-muted">
+        {value}
+        <Icon.chevronRight className="size-4" />
+      </span>
+    </button>
+  );
+}
+
 export function Notice({ title, body, action, onAction }: { title: string; body?: string; action: string; onAction: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg p-6">

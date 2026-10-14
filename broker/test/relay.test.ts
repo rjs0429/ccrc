@@ -6,7 +6,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { after, test } from "node:test";
 import { LineSplitter, parseLine } from "../src/link/lines.ts";
-import { Relay, launchSession, type RelayOptions } from "../src/wrapper/relay.ts";
+import { Relay, allowedFlagSettings, appliedAnswer, launchSession, type RelayOptions } from "../src/wrapper/relay.ts";
 import { TurnStore } from "../src/wrapper/turns.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -368,6 +368,83 @@ test("broker control requests are limited to the ones it needs", async () => {
   await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-b", "settings other than effort refused");
   t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-c", request: { subtype: "apply_flag_settings", settings: { effortLevel: "low" } } } });
   await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-c", "effort allowed");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-d", request: { subtype: "apply_flag_settings", settings: { effortLevel: "high", ultracode: true } } } });
+  await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-d", "effort with ultracode allowed");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-e", request: { subtype: "apply_flag_settings", settings: { ultracode: "yes" } } } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-e", "invalid ultracode value refused");
+});
+
+test("apply_flag_settings from the broker allows only effort and ultracode with valid values", () => {
+  for (const ok of [{ effortLevel: "low" }, { effortLevel: "max", ultracode: true }, { ultracode: true }, { ultracode: null }, { ultracode: false }]) {
+    assert.ok(allowedFlagSettings(ok), JSON.stringify(ok));
+  }
+  const bad: unknown[] = [
+    {},
+    null,
+    [],
+    "x",
+    { effortLevel: "ultracode" },
+    { effortLevel: "auto" },
+    { effortLevel: 3 },
+    { ultracode: "on" },
+    { model: "opus" },
+    { effortLevel: "low", model: "opus" },
+    { ultracode: true, env: { A: "1" } },
+  ];
+  for (const b of bad) assert.ok(!allowedFlagSettings(b), JSON.stringify(b));
+});
+
+test("only the applied part of VS Code's get_settings answers reaches the broker, and VS Code gets the whole answer", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.write({ type: "control_request", request_id: "gs-1", request: { subtype: "get_settings" } });
+  const whole = await t.host.wait((m) => m.type === "control_response" && (m.response as Msg).request_id === "gs-1", "VS Code's answer");
+  assert.ok(JSON.stringify(whole).includes("s3cret"), "VS Code sees the full answer");
+  const f = await t.broker.frames.wait(frameOut((m) => m.type === "control_response" && JSON.stringify(m).includes('"applied"')), "applied shared");
+  assert.deepEqual(((f.m as Msg).response as Msg).response, {
+    applied: { model: "claude-haiku-5-5", effort: "medium", ultracode: false, ultracodeAvailable: true },
+  });
+  t.user("hi");
+  await t.broker.frames.wait(frameOut((m) => m.type === "result"), "turn copied");
+  const seen = JSON.stringify(t.broker.frames.items);
+  assert.ok(!seen.includes("s3cret") && !seen.includes("hook-cmd") && !seen.includes("ultracodeRequested"), "effective, sources and the rest stay private");
+  assert.ok(!t.broker.frames.has((x) => x.t === "in"), "VS Code's get_settings request is not copied");
+});
+
+test("a reconnecting broker gets the last applied settings again", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.write({ type: "control_request", request_id: "gs-2", request: { subtype: "get_settings" } });
+  await t.broker.frames.wait(frameOut((m) => JSON.stringify(m).includes('"applied"')), "applied shared");
+  t.broker.frames = new Inbox();
+  t.broker.dropConnections();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello again");
+  const f = await t.broker.frames.wait(frameOut((m) => JSON.stringify(m).includes('"applied"')), "applied re-announced");
+  assert.ok(!JSON.stringify(f).includes("s3cret"));
+});
+
+test("the broker's get_settings is answered with the applied part only", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-gs", request: { subtype: "get_settings" } } });
+  const f = await t.broker.frames.wait((x) => x.t === "reply" && ((x.m as Msg).response as Msg).request_id === "ccrc-gs", "reply");
+  assert.deepEqual(((f.m as Msg).response as Msg).response, {
+    applied: { model: "claude-haiku-5-5", effort: "medium", ultracode: false, ultracodeAvailable: true },
+  });
+  assert.ok(!JSON.stringify(t.broker.frames.items).includes("s3cret"));
+  assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code does not see the broker's answer");
+});
+
+test("a get_settings answer is reduced to plain applied values, and an error keeps only its message", () => {
+  const ok = JSON.parse(
+    appliedAnswer({
+      type: "control_response",
+      response: { subtype: "success", request_id: "r", response: { applied: { model: { x: 1 }, effort: null, ultracode: true, extra: "y" }, effective: { env: {} } } },
+    }).toString(),
+  );
+  assert.deepEqual(ok, { type: "control_response", response: { subtype: "success", request_id: "r", response: { applied: { effort: null, ultracode: true } } } });
+  const err = JSON.parse(appliedAnswer({ type: "control_response", response: { subtype: "error", request_id: "r", error: "nope", pending: { env: {} } } }).toString());
+  assert.deepEqual(err, { type: "control_response", response: { subtype: "error", request_id: "r", error: "nope" } });
 });
 
 test("the session controls reach Claude Code; MCP setup, settings and conversation rewind do not", async () => {

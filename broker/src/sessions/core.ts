@@ -163,6 +163,8 @@ export abstract class SessionCore extends EventEmitter {
   model?: string;
   permissionMode?: string;
   effort?: string;
+  ultracode?: boolean;
+  ultracodeAvailable?: boolean;
   contextPercent?: number;
   costUsd?: number;
   lastActivity = Date.now();
@@ -170,6 +172,8 @@ export abstract class SessionCore extends EventEmitter {
   closedReason?: string;
 
   private ended = false;
+  private appliedSeen = false;
+  private appliedOff = false;
   private taskTimers = new Map<string, NodeJS.Timeout>();
   private streamText = "";
   private streamThinking = false;
@@ -188,6 +192,7 @@ export abstract class SessionCore extends EventEmitter {
   abstract interrupt(): Promise<void>;
   abstract setModel(model: string): Promise<void>;
   abstract setEffort(effort: EffortName): Promise<void>;
+  abstract setUltracode(on: boolean): Promise<void>;
   protected abstract applyMode(mode: PermissionModeName): Promise<void>;
   protected abstract settle(requestId: string, decision: Decision): void;
   protected abstract refreshContext(): void;
@@ -203,6 +208,7 @@ export abstract class SessionCore extends EventEmitter {
       model: this.model,
       permissionMode: this.permissionMode,
       effort: this.effort,
+      ...(this.ultracodeAvailable !== undefined ? { ultracode: this.ultracode === true, ultracodeAvailable: this.ultracodeAvailable } : {}),
       contextPercent: this.contextPercent,
       costUsd: this.costUsd,
       closedReason: this.closedReason,
@@ -385,11 +391,12 @@ export abstract class SessionCore extends EventEmitter {
     if (m.type === "system") {
       if (m.subtype === "init") {
         this.busy = true;
-        if (typeof m.model === "string") this.model = m.model;
+        if (typeof m.model === "string" && !this.appliedSeen) this.model = m.model;
         if (typeof m.permissionMode === "string") this.permissionMode = m.permissionMode;
-        if (typeof m.effort === "string") this.effort = m.effort;
+        if (typeof m.effort === "string" && !this.appliedSeen) this.effort = m.effort;
         this.emit("state");
         this.onInit();
+        this.refreshApplied();
         return;
       }
       if (m.subtype === "status") {
@@ -415,12 +422,49 @@ export abstract class SessionCore extends EventEmitter {
       if (typeof m.total_cost_usd === "number") this.costUsd = m.total_cost_usd;
       this.endStream();
       this.refreshContext();
+      this.refreshApplied();
       this.emit("state");
     }
     for (const item of this.builder.add(m)) this.emit("item", item);
   }
 
   protected onInit(): void {}
+
+  // Claude Code's get_settings answer; a process type that can ask overrides this.
+  protected readApplied(): Promise<Record<string, unknown>> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  // The model, effort and ultracode state the next request runs with, as Claude Code reports them.
+  protected refreshApplied(): void {
+    if (this.appliedOff || this.closed) return;
+    this.readApplied()
+      .then((r) => this.adoptApplied(r.applied))
+      .catch((e: unknown) => {
+        if (/not allowed|not available/.test(e instanceof Error ? e.message : "")) this.appliedOff = true;
+      });
+  }
+
+  protected adoptApplied(v: unknown): void {
+    if (v === null || typeof v !== "object") return;
+    const a = v as Record<string, unknown>;
+    const before = [this.model, this.effort, this.ultracode, this.ultracodeAvailable].join("|");
+    this.appliedSeen = true;
+    if (typeof a.model === "string" && a.model) this.model = a.model;
+    if ("effort" in a) this.effort = typeof a.effort === "string" ? a.effort : undefined;
+    if (typeof a.ultracode === "boolean") this.ultracode = a.ultracode;
+    if (typeof a.ultracodeAvailable === "boolean") this.ultracodeAvailable = a.ultracodeAvailable;
+    if ([this.model, this.effort, this.ultracode, this.ultracodeAvailable].join("|") !== before) this.emit("state");
+  }
+
+  // Changing effort without the ultracode key turns ultracode off, so it goes along while on.
+  protected effortSettings(effort: EffortName): { effortLevel: EffortName; ultracode?: true } {
+    return { effortLevel: effort, ...(this.ultracode ? { ultracode: true as const } : {}) };
+  }
+
+  protected checkUltracode(on: boolean): void {
+    if (on && this.ultracodeAvailable === false) throw Error("ultracode is not available for this session");
+  }
 
   // Subagents, shells and workflows as Claude Code reports them. A task_updated carries its changes in
   // `patch`; a task first seen through its progress counts as running. An ended task stays listed a while.

@@ -21,7 +21,8 @@ const EVENT_LABEL: Record<string, string> = {
   interrupt: "중지",
   set_mode: "권한 모드 바꿈",
   set_model: "모델 바꿈",
-  set_effort: "노력 수준 바꿈",
+  set_effort: "Effort 바꿈",
+  set_ultracode: "Ultracode 바꿈",
   release: "원격 실행 끝냄",
   attach: "VS Code 세션 연결",
   handoff: "VS Code로 넘김",
@@ -30,7 +31,7 @@ const EVENT_LABEL: Record<string, string> = {
   claude_settings: "Claude Code 설정 바꿈",
   push_subscribe: "알림 켬",
   push_unsubscribe: "알림 끔",
-  doctor: "업데이트 점검",
+  doctor: "호환성 점검",
 };
 
 const CALL_LABEL: Record<string, string> = {
@@ -44,7 +45,7 @@ const WORD: Record<string, string> = {
   allow: "허용",
   allow_always: "항상 허용",
   deny: "거부",
-  keep_planning: "계속 계획",
+  keep_planning: "아니요, 계속 계획하기",
   invalid: "비밀번호 틀림",
   locked: "잠김",
   taken_over: "다른 기기에서 로그인",
@@ -68,6 +69,8 @@ function detail(e: AuditEntry): string {
       return named(e.model);
     case "set_effort":
       return named(e.effort, EFFORT_LABEL);
+    case "set_ultracode":
+      return e.on ? "켬" : "끔";
     case "answer":
       return named(e.decision, WORD, MODE_LABEL);
     case "call":

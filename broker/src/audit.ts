@@ -17,6 +17,7 @@ export type AuditEvent =
   | "set_mode"
   | "set_model"
   | "set_effort"
+  | "set_ultracode"
   | "release"
   | "attach"
   | "handoff"

@@ -78,9 +78,9 @@ test("a notification reaches the push service encrypted for the subscription and
   assert.ok((vapid.claims.exp as number) <= Date.now() / 1000 + 24 * 3600);
   assert.deepEqual(JSON.parse(decrypt(r.body, browser.privateKey, browser.auth).toString()), {
     title: "ccrc",
-    body: "시험 알림입니다",
+    body: "테스트 알림입니다",
     tag: "test",
-    data: { url: "/#/settings" },
+    data: { url: "/#/settings/alerts" },
   });
   assert.equal(push.status(endpoint).lastSent !== undefined, true);
   assert.deepEqual(logs, []);
