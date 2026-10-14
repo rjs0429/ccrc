@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { fieldProblem, type FieldProblem } from "../../../broker/src/elicit.ts";
 import type { Answer, ElicitField, ElicitInfo, ElicitValue, PendingRequest } from "../../../broker/src/protocol.ts";
 import { allowAlwaysLabel, dialogLabel } from "../labels.ts";
@@ -291,6 +291,7 @@ function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
   const [errors, setErrors] = useState<Record<string, FieldProblem>>({});
   const answer = (action: "accept" | "decline" | "cancel", content?: Record<string, ElicitValue>) =>
     reply({ kind: "elicitation", action, ...(content ? { content } : {}) });
+  const buttons = useRef<HTMLDivElement>(null);
   const submit = () => {
     const content: Record<string, ElicitValue> = {};
     const found: Record<string, FieldProblem> = {};
@@ -301,7 +302,12 @@ function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
       else if (v !== undefined) content[f.key] = v;
     }
     setErrors(found);
-    if (!Object.keys(found).length) answer("accept", content);
+    const first = Object.keys(found)[0];
+    if (first === undefined) return answer("accept", content);
+    // The first field to fix may be screens above the button.
+    const field = buttons.current?.closest("[data-elicitation]")?.querySelector(`[data-field="${CSS.escape(first)}"]`);
+    field?.scrollIntoView({ block: "center" });
+    field?.querySelector<HTMLElement>("input, textarea, select, button")?.focus({ preventScroll: true });
   };
   const web = info.mode === "url" && info.url && /^https?:\/\//i.test(info.url) ? info.url : undefined;
   return (
@@ -358,7 +364,7 @@ function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
               );
             })
           )}
-          <div className="grid grid-cols-3 gap-2">
+          <div ref={buttons} className="grid grid-cols-3 gap-2">
             <Button kind="primary" disabled={info.unsupported} onClick={submit}>
               보내기
             </Button>
