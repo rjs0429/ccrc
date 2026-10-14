@@ -264,7 +264,10 @@ export class Hub {
       if (!CALL_OPS.includes(msg.op)) throw Error("unknown request");
       const args = msg.args && typeof msg.args === "object" && !Array.isArray(msg.args) ? msg.args : {};
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
-        this.audit.log("call", { device: this.device, sessionId, op: msg.op, ...(typeof args.server === "string" ? { server: args.server } : {}) });
+        const detail = Object.fromEntries(
+          Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
+        );
+        this.audit.log("call", { device: this.device, sessionId, op: msg.op, ...detail });
       }
       reply({ ok: true, data: await this.manager.call(sessionId, msg.op, args) });
     } catch (e) {

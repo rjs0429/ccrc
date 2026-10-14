@@ -9,6 +9,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ContextDetail, DisplayItem, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
   MCP_CHANGE_MS,
@@ -223,7 +224,10 @@ export class BrokerSession extends SessionCore {
       .catch(() => {});
     this.q
       .initializationResult()
-      .then((r) => (this.commands = commandInfo(r.commands)))
+      .then((r) => {
+        this.commands = commandInfo(r.commands);
+        rememberCommands(this.cwd, this.commands);
+      })
       .catch(() => {});
   }
 

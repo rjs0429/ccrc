@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Link } from "../link/server.ts";
 import type { ContextDetail, DisplayItem, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
   MCP_CHANGE_MS,
@@ -216,7 +217,10 @@ export class WrappedSession extends SessionCore {
   // The answer to VS Code's initialize carries the model and command lists and the current mode.
   private onResponse(r: Obj): void {
     if (Array.isArray(r.models)) this.emit("models", r.models);
-    if (Array.isArray(r.commands)) this.commands = commandInfo(r.commands);
+    if (Array.isArray(r.commands)) {
+      this.commands = commandInfo(r.commands);
+      rememberCommands(this.cwd, this.commands);
+    }
     if (typeof r.current_permission_mode === "string" && r.current_permission_mode !== this.permissionMode) {
       this.permissionMode = r.current_permission_mode;
       this.emit("state");
