@@ -39,3 +39,20 @@ export interface SearchResponse {
   // Transcripts not read yet; their sessions are matched on the title alone until a later search.
   pending: number;
 }
+
+export interface ThreadMessage {
+  id: string;
+  role: "user" | "assistant";
+  at?: number;
+  text: string;
+  // Also part of the current conversation.
+  shared?: boolean;
+}
+
+// The text around a search hit the chat view does not hold, along the hit's own branch.
+export interface Thread {
+  messages: ThreadMessage[];
+  focus: string;
+  // The hit lies off the current conversation (a branch left by a rewind, or before a compaction).
+  rewound: boolean;
+}

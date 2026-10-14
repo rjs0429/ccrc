@@ -1,4 +1,4 @@
-import type { SearchResponse } from "../../broker/src/search-protocol.ts";
+import type { SearchResponse, Thread } from "../../broker/src/search-protocol.ts";
 import type { ModelOption, PermissionModeName, SessionSummary, UploadInfo } from "../../broker/src/protocol.ts";
 
 export interface Me {
@@ -69,5 +69,6 @@ export const api = {
   sessions: () => request<SessionSummary[]>("GET", "/api/sessions"),
   options: () => request<Options>("GET", "/api/options"),
   search: (q: string) => request<SearchResponse>("POST", "/api/search", { q }),
+  thread: (sessionId: string, itemId: string) => request<Thread>("POST", "/api/thread", { sessionId, itemId }),
   upload,
 };

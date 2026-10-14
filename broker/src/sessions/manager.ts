@@ -20,6 +20,7 @@ import {
   type PermissionModeName,
   type ServerMsg,
   type SessionSummary,
+  type SnapshotGap,
   type StartSettings,
   type UsageInfo,
 } from "../protocol.ts";
@@ -35,6 +36,7 @@ import { WrappedSession } from "./wrapped.ts";
 const CATALOG_MS = 3000;
 const SNAPSHOT_ITEMS = 400;
 const FOCUS_BEFORE = 20;
+const FOCUS_AFTER = 200;
 const FOCUS_ITEMS_MAX = 1500;
 const SWEEP_MS = 60_000;
 const WATCH_INTERVAL_MS = 2000;
@@ -60,17 +62,24 @@ export interface Snapshot {
   pending: PendingRequest[];
   state: LiveState;
   hasMore: boolean;
+  gap?: SnapshotGap;
 }
 
 function titleOf(info: SDKSessionInfo): string {
   return info.customTitle || info.summary || info.firstPrompt || "";
 }
 
-// The latest items, reaching back to the focused item when that stays within a bound.
-export function tail(items: DisplayItem[], focus?: string): { items: DisplayItem[]; hasMore: boolean } {
+// The latest items, reaching back to the focused item when that stays within a bound; a focused item further
+// back comes with the items around it, and the ones between that part and the latest are left out.
+export function tail(items: DisplayItem[], focus?: string): { items: DisplayItem[]; hasMore: boolean; gap?: SnapshotGap } {
+  const latest = Math.max(0, items.length - SNAPSHOT_ITEMS);
   const at = focus ? items.findIndex((i) => i.id === focus) : -1;
-  const from = at >= 0 && items.length - at <= FOCUS_ITEMS_MAX ? Math.min(Math.max(0, at - FOCUS_BEFORE), items.length - SNAPSHOT_ITEMS) : items.length - SNAPSHOT_ITEMS;
-  return { items: items.slice(Math.max(0, from)), hasMore: from > 0 };
+  if (at < 0 || at >= latest) return { items: items.slice(latest), hasMore: latest > 0 };
+  const from = Math.max(0, at - FOCUS_BEFORE);
+  if (items.length - at <= FOCUS_ITEMS_MAX) return { items: items.slice(from), hasMore: from > 0 };
+  const to = Math.min(at + FOCUS_AFTER, latest);
+  const gap = latest > to ? { gap: { before: items[latest].id, skipped: latest - to } } : {};
+  return { items: [...items.slice(from, to), ...items.slice(latest)], hasMore: from > 0, ...gap };
 }
 
 function within(dir: string, root: string): boolean {

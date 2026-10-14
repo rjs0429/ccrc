@@ -8,6 +8,7 @@ import type {
   PendingRequest,
   ServerMsg,
   SessionSummary,
+  SnapshotGap,
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, type Me, type Options } from "./api.ts";
 
@@ -28,8 +29,10 @@ export interface Chat {
   state?: LiveState;
   stream?: { text: string; thinking: boolean };
   hasMore: boolean;
-  // An item to scroll to once it has arrived, as a search result asks.
+  gap?: SnapshotGap;
+  // An item to scroll to once it has arrived, as a search result asks; `earlier` when it was said before a compaction.
   focus?: string;
+  focusEarlier?: boolean;
 }
 
 export interface AppState {
@@ -126,13 +129,13 @@ function viewMsg(): ClientMsg {
 }
 
 // Opens a session at one of its items.
-export function openAt(sessionId: string, itemId?: string): void {
-  setState({ chat: { sessionId, loaded: false, items: [], pending: [], hasMore: false, focus: itemId } });
+export function openAt(sessionId: string, itemId?: string, earlier?: boolean): void {
+  setState({ chat: { sessionId, loaded: false, items: [], pending: [], hasMore: false, focus: itemId, ...(earlier ? { focusEarlier: true } : {}) } });
   navigate({ name: "chat", sessionId });
 }
 
 export function focusDone(sessionId: string): void {
-  updateChat(sessionId, () => ({ focus: undefined }));
+  updateChat(sessionId, () => ({ focus: undefined, focusEarlier: undefined }));
 }
 
 function onRoute(): void {
@@ -293,7 +296,7 @@ function onServer(msg: ServerMsg): void {
       setState({ loggedOutReason: msg.reason });
       return;
     case "snapshot":
-      updateChat(msg.sessionId, () => ({ loaded: true, items: msg.items, pending: msg.pending, state: msg.state, hasMore: msg.hasMore, stream: undefined }));
+      updateChat(msg.sessionId, () => ({ loaded: true, items: msg.items, pending: msg.pending, state: msg.state, hasMore: msg.hasMore, gap: msg.gap, stream: undefined }));
       return;
     case "item":
       updateChat(msg.sessionId, (c) => ({ items: upsert(c.items, msg.item) }));
