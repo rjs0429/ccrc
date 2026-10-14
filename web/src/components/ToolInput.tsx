@@ -1,10 +1,18 @@
+import { useMemo } from "react";
+import { DiffView } from "./diff/DiffView.tsx";
+import { snippetHunk } from "./diff/hunks.ts";
+
 type Input = Record<string, unknown>;
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
-function Pre({ children, tone }: { children: string; tone?: "del" | "add" }) {
-  const toneClass = tone === "del" ? "bg-danger/10" : tone === "add" ? "bg-ok/10" : "bg-code";
-  return <pre className={`max-h-72 overflow-auto rounded-lg p-2.5 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap break-all ${toneClass}`}>{children}</pre>;
+function Pre({ children }: { children: string }) {
+  return <pre className="max-h-72 overflow-auto rounded-lg bg-code p-2.5 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap break-all">{children}</pre>;
+}
+
+function EditDiff({ before, after }: { before: string; after: string }) {
+  const hunks = useMemo(() => [snippetHunk(before, after)], [before, after]);
+  return <DiffView hunks={hunks} numbers={false} />;
 }
 
 function Path({ value }: { value: string }) {
@@ -27,8 +35,7 @@ export function ToolInput({ name, input }: { name: string; input: unknown }) {
       return (
         <div className="space-y-1.5">
           <Path value={str(i.file_path)} />
-          <Pre tone="del">{str(i.old_string)}</Pre>
-          <Pre tone="add">{str(i.new_string)}</Pre>
+          <EditDiff before={str(i.old_string)} after={str(i.new_string)} />
         </div>
       );
     case "MultiEdit":
@@ -36,10 +43,7 @@ export function ToolInput({ name, input }: { name: string; input: unknown }) {
         <div className="space-y-1.5">
           <Path value={str(i.file_path)} />
           {(Array.isArray(i.edits) ? (i.edits as Input[]) : []).map((e, n) => (
-            <div key={n} className="space-y-1">
-              <Pre tone="del">{str(e.old_string)}</Pre>
-              <Pre tone="add">{str(e.new_string)}</Pre>
-            </div>
+            <EditDiff key={n} before={str(e.old_string)} after={str(e.new_string)} />
           ))}
         </div>
       );
