@@ -249,7 +249,7 @@ export abstract class SessionCore extends EventEmitter {
     return { current: this.outputStyle ?? "default", available: this.outputStyles };
   }
 
-  // Saved for the project as VS Code saves it (.claude/settings.local.json); Claude Code applies it at once.
+  // Saved for the project as VS Code saves it (.claude/settings.local.json); Claude Code applies it from the next turn.
   async setOutputStyle(style: string): Promise<OutputStyleInfo> {
     const { available } = await this.outputStyleInfo();
     if (!available.includes(style)) throw Error("unknown output style");
