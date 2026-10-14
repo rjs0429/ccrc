@@ -481,6 +481,9 @@ export class SessionManager extends EventEmitter {
         return this.get(sessionId).outputStyleInfo();
       case "set_output_style":
         return this.get(sessionId).setOutputStyle(String(args.style));
+      case "unqueue":
+        await this.get(sessionId).unqueue(String(args.messageId));
+        return {};
     }
   }
 

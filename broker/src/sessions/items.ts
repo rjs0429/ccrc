@@ -207,6 +207,24 @@ export function typedText(text: string): boolean {
   return !CONTEXT_TAGS.test(text) && commandOutput(text) === undefined && !commandNote(text);
 }
 
+// What the user typed and attached in a message's content, without the editor and harness context.
+export function typedContent(content: unknown): { text: string; images: number; files: string[] } {
+  const blocks: unknown[] = typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? content : [];
+  const texts: string[] = [];
+  const files: string[] = [];
+  let images = 0;
+  for (const v of blocks) {
+    const b = record(v);
+    if (b?.type === "image") images++;
+    else if (b?.type === "document") files.push(String(b.title ?? ""));
+    else if (b?.type === "text") {
+      const text = String(b.text ?? "").trim();
+      if (text && !CONTEXT_TAGS.test(text)) texts.push(text);
+    }
+  }
+  return { text: texts.join("\n\n"), images, files };
+}
+
 function commandResult(id: string, ts: string | undefined, text: string, m: RawMessage): CommandItem {
   const run = record(m.local_command_run);
   const name = typeof run?.command === "string" ? run.command.slice(0, COMMAND_NAME_LIMIT) : "";
@@ -248,6 +266,10 @@ export class ItemBuilder {
       this.items[at] = item;
     }
     return item;
+  }
+
+  has(id: string): boolean {
+    return this.pos.has(id);
   }
 
   seed(items: DisplayItem[]): void {

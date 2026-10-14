@@ -947,3 +947,55 @@ test("every MCP input answer the broker accepts passes the wrapper", () => {
     assert.ok(elicitAnswer(elicitResult(info, "accept", content)), Object.keys(content)[0]);
   }
 });
+
+test("messages written during a turn reach the broker at once, and only the broker's own can be taken back", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("HOLD");
+  await t.host.wait((m) => m.type === "user" && m.isReplay === true, "turn started");
+  t.write({
+    type: "user",
+    uuid: "vs-q1",
+    session_id: "",
+    parent_tool_use_id: null,
+    message: { role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "QUFBQQ==" } }, { type: "text", text: "from VS Code" }] },
+  });
+  const copy = await t.broker.frames.wait((f) => f.t === "in" && (f.m as Msg).type === "user", "VS Code's message");
+  assert.deepEqual((copy.m as Msg).message, { role: "user", content: [{ type: "image" }, { type: "text", text: "from VS Code" }] });
+  assert.equal((copy.m as Msg).remote, undefined);
+  assert.ok(!JSON.stringify(copy).includes("QUFBQQ"), "image data stays out of the copy");
+  const phone = { type: "user", uuid: "ph-q2", session_id: "", parent_tool_use_id: null, origin: { kind: "human" }, message: { role: "user", content: [{ type: "text", text: "from the phone" }] } };
+  t.broker.send({ t: "to_cli", m: phone });
+  await t.broker.frames.wait(frameOut((m) => m.type === "command_lifecycle" && m.command_uuid === "ph-q2" && m.state === "queued"), "queued");
+  assert.ok(!t.broker.frames.has((f) => f.t === "in" && (f.m as Msg).uuid === "ph-q2"), "the broker's own message is not copied back");
+
+  const cancel = (id: string, request: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: { subtype: "cancel_async_message", ...request } } });
+  cancel("ccrc-c1", { message_uuid: "vs-q1" });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-c1" && f.reason === "message not allowed", "VS Code's message is not taken back remotely");
+  cancel("ccrc-c2", { message_uuid: "ph-q2", extra: 1 });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-c2", "other arguments refused");
+
+  const hellos = () => t.broker.frames.items.filter((f) => f.t === "hello").length;
+  const reconnect = async (n: number) => {
+    const at = t.broker.frames.items.length;
+    t.broker.dropConnections();
+    for (let i = 0; i < 200 && hellos() < n; i++) await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 100));
+    return t.broker.frames.items.slice(at).filter((f) => f.t === "in" && (f.m as Msg).type === "user").map((f) => [(f.m as Msg).uuid, (f.m as Msg).remote ?? false]);
+  };
+  assert.deepEqual(await reconnect(2), [
+    ["vs-q1", false],
+    ["ph-q2", true],
+  ]);
+
+  cancel("ccrc-c3", { message_uuid: "ph-q2" });
+  const answer = await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-c3", "cancel answered");
+  assert.equal((((answer.m as Msg).response as Msg).response as Msg).cancelled, true);
+  await t.broker.frames.wait(frameOut((m) => m.type === "command_lifecycle" && m.command_uuid === "ph-q2" && m.state === "cancelled"), "cancelled");
+  cancel("ccrc-c4", { message_uuid: "ph-q2" });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-c4", "a message no longer waiting cannot be taken back");
+
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-stop", request: { subtype: "interrupt" } } });
+  await t.broker.frames.wait(frameOut((m) => m.type === "command_lifecycle" && m.command_uuid === "vs-q1" && m.state === "started"), "taken in");
+  assert.deepEqual(await reconnect(3), [], "nothing is waiting any more");
+});

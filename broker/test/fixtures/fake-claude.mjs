@@ -6,6 +6,8 @@
 // {"type":"answered"}. FAKE_BURST=1 writes a long line and an error result at start and exits at once;
 // FAKE_LINGER_MS keeps it running that long after its input ends.
 // The answer to initialize lists models and commands; FAKE_NO_INIT=1 leaves initialize unanswered.
+// While a "HOLD" turn runs, user messages are queued with command_lifecycle lines as Claude Code reports them;
+// cancel_async_message drops one and "interrupt" ends the turn after taking the queued ones in.
 // "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data, and
 // "/status" the same way with text only; "/help" as a command headless Claude Code cannot open, with no name; get_usage fails while the working folder holds a file named .fake-no-usage.
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
@@ -31,6 +33,9 @@ const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const record = (m) => process.env.FAKE_REQUESTS && fs.appendFileSync(process.env.FAKE_REQUESTS, JSON.stringify(m) + "\n");
 record({ args });
 let asks = 0;
+let holding = false;
+const queue = [];
+const lifecycle = (id, state) => out({ type: "command_lifecycle", command_uuid: id, state, uuid: randomUUID(), session_id: sid });
 const STYLES = ["default", "Proactive", "Concise", "Explanatory", "Learning"];
 const LOCAL_SETTINGS = ".claude/settings.local.json";
 let style;
@@ -62,6 +67,11 @@ function handle(m) {
     const content = m.message.content;
     const text = typeof content === "string" ? content : content.map((c) => c.text).join("");
     record({ user: text });
+    if (holding) {
+      queue.push(m);
+      if (m.uuid) lifecycle(m.uuid, "queued");
+      return;
+    }
     if (text === "/status") {
       const shown = "Version: 2.1.296 (fake)\nModel: fake-model";
       out({
@@ -119,7 +129,10 @@ function handle(m) {
       return;
     }
     out({ ...m, session_id: sid, uuid: m.uuid ?? randomUUID(), isReplay: true });
-    if (text === "HOLD") return;
+    if (text === "HOLD") {
+      holding = true;
+      return;
+    }
     if (text === "COMPACTING") {
       out({ type: "system", subtype: "status", status: "compacting", session_id: sid });
       return;
@@ -149,6 +162,25 @@ function handle(m) {
   if (m.type === "control_request") {
     record({ request: m.request });
     const init = m.request.subtype === "initialize";
+    if (m.request.subtype === "cancel_async_message") {
+      const at = queue.findIndex((q) => q.uuid === m.request.message_uuid);
+      if (at !== -1) {
+        queue.splice(at, 1);
+        lifecycle(m.request.message_uuid, "cancelled");
+      }
+      out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { cancelled: at !== -1 } } });
+      return;
+    }
+    if (m.request.subtype === "interrupt" && holding) {
+      holding = false;
+      for (const q of queue.splice(0)) {
+        out({ ...q, session_id: sid, isReplay: true });
+        if (q.uuid) lifecycle(q.uuid, "started");
+      }
+      out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: {} } });
+      out({ type: "result", subtype: "success", session_id: sid, is_error: false, total_cost_usd: 0.001, queued_turn_count: 0 });
+      return;
+    }
     if (init && process.env.FAKE_NO_INIT) return;
     if (m.request.subtype === "read_file") {
       const r = m.request;

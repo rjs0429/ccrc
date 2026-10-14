@@ -12,7 +12,7 @@ const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const MAX_ATTACHMENTS = 10;
 const ELICIT_ACTIONS = new Set<unknown>(["accept", "decline", "cancel"]);
 // Calls that change something are recorded in the audit log.
-const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "resume", "set_output_style"]);
+const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "resume", "set_output_style", "unqueue"]);
 
 function send(ws: WebSocket, msg: ServerMsg): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -300,7 +300,7 @@ export class Hub {
       if (msg.op === "set_output_style") str(args.style);
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
         const detail = Object.fromEntries(
-          Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
+          Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style", "messageId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
         );
         this.audit.log("call", { device: this.device, sessionId, op: msg.op, ...detail });
       }

@@ -1,7 +1,7 @@
 import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, ModelOption } from "../../../broker/src/protocol.ts";
-import { ItemView, StreamPreview, shownItems } from "../components/Items.tsx";
+import { ItemView, QueuedItem, StreamPreview, shownItems } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { commandSheet } from "../components/commandSheets.ts";
 import { PendingCard } from "../components/Pending.tsx";
@@ -80,6 +80,19 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const latest = new Set(all.slice(start).map((i) => i.id));
     return items.find((i) => latest.has(i.id))?.id;
   }, [chat?.gap, chat?.items, items]);
+  // A message that has just been taken in may still be listed as queued for a moment.
+  const queued = useMemo(() => {
+    const shown = new Set((chat?.items ?? []).map((i) => i.id));
+    return (st?.queued ?? []).filter((q) => !shown.has(q.id));
+  }, [chat?.items, st?.queued]);
+  const [taking, setTaking] = useState<string | null>(null);
+  const takeBack = (messageId: string) => {
+    if (taking) return;
+    setTaking(messageId);
+    call(sessionId, "unqueue", { messageId })
+      .catch((e: Error) => toast(errorText(e.message)))
+      .finally(() => setTaking(null));
+  };
 
   const sendText = (text: string, attachments: string[] = []) => {
     stick.current = true;
@@ -154,7 +167,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   useLayoutEffect(() => {
     const el = listRef.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [chat?.items, chat?.stream?.text, chat?.pending.length, chat?.loaded]);
+  }, [chat?.items, chat?.stream?.text, chat?.pending.length, chat?.loaded, queued.length]);
 
   const focus = chat?.loaded ? chat.focus : undefined;
   const focusEarlier = chat?.focusEarlier;
@@ -258,6 +271,15 @@ export function Chat({ sessionId }: { sessionId: string }) {
                   <Spinner className="size-3.5" /> 작업 중…
                 </div>
               )}
+              {queued.map((q) => (
+                <QueuedItem
+                  key={q.id}
+                  message={q}
+                  host={host}
+                  taking={taking === q.id}
+                  onTakeBack={q.from === "remote" && controllable ? () => takeBack(q.id) : undefined}
+                />
+              ))}
               {chat?.pending.map((p) => (
                 <PendingCard
                   key={p.id}

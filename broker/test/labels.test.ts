@@ -59,3 +59,9 @@ test("a start refused for a missing folder and Claude Code's spawn failures read
   assert.equal(noteText("error", "Claude Code process exited with code 2"), "오류: Claude Code가 종료되었습니다 (코드 2)");
   assert.equal(noteText("error", "API Error: 529"), "오류: API Error: 529");
 });
+
+test("taking back a message VS Code's wrapper no longer holds reads as already received", () => {
+  for (const message of ["rejected by the wrapper: message not allowed", "message is no longer queued"]) {
+    assert.equal(errorText(message), "Claude Code가 이미 받은 메시지라 되돌릴 수 없습니다", message);
+  }
+});
