@@ -15,6 +15,7 @@ import { PERMISSION_MODES } from "./protocol.ts";
 import type { Push } from "./push/index.ts";
 import { registerAudit } from "./routes/audit.ts";
 import { registerClaudeSettings } from "./routes/claude-settings.ts";
+import { registerFiles } from "./routes/files.ts";
 import { registerHealth } from "./routes/health.ts";
 import { registerPush } from "./routes/push.ts";
 import { registerUploads } from "./routes/upload.ts";
@@ -94,7 +95,7 @@ export async function buildServer(d: ServerDeps) {
   });
 
   app.addHook("onSend", async (_req, reply) => {
-    reply.header("Content-Security-Policy", CSP);
+    if (!reply.hasHeader("Content-Security-Policy")) reply.header("Content-Security-Policy", CSP);
     reply.header("X-Content-Type-Options", "nosniff");
     reply.header("Referrer-Policy", "no-referrer");
   });
@@ -168,6 +169,7 @@ export async function buildServer(d: ServerDeps) {
   await registerClaudeSettings(app, routes);
   await registerAudit(app, routes);
   await registerHealth(app, routes);
+  await registerFiles(app, routes);
 
   app.get("/ws", { websocket: true }, (socket, req) => {
     const t = token(req);

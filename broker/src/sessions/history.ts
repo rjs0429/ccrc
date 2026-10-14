@@ -27,6 +27,30 @@ export function transcriptPath(sessionId: string, cwd?: string): string | undefi
   return undefined;
 }
 
+const TAIL_BYTES = 256 * 1024;
+
+// The working directory the transcript's last lines were written in.
+export async function lastCwd(sessionId: string, cwd: string): Promise<string | undefined> {
+  const file = transcriptPath(sessionId, cwd);
+  if (!file) return undefined;
+  try {
+    const fh = await fs.promises.open(file, "r");
+    try {
+      const { size } = await fh.stat();
+      const start = Math.max(0, size - TAIL_BYTES);
+      const buf = Buffer.alloc(size - start);
+      await fh.read(buf, 0, buf.length, start);
+      const found = [...buf.toString("utf8").matchAll(/"cwd":("(?:[^"\\]|\\.)*")/g)].pop();
+      const dir = found ? (JSON.parse(found[1]) as unknown) : undefined;
+      return typeof dir === "string" && path.isAbsolute(dir) ? dir : undefined;
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
 interface Row {
   timestamp?: string;
   toolUseResult?: unknown;

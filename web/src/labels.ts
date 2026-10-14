@@ -170,6 +170,11 @@ export function allowAlwaysLabel(suggestions: unknown[] | undefined): string {
   return parts.join(" · ") || "항상 허용";
 }
 
+export function sizeText(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  return bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)}KB` : `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
 export function baseName(p: string): string {
   return p.replace(/\/+$/, "").split("/").pop() || p;
 }

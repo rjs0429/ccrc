@@ -1,9 +1,6 @@
+import { sizeText } from "../../labels.ts";
 import { Icon, Spinner } from "../ui.tsx";
 import { removeAttachment, type Attachment } from "./attachments.ts";
-
-function sizeText(bytes: number): string {
-  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))}KB` : `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-}
 
 export function AttachmentChips({ sessionId, items }: { sessionId: string; items: Attachment[] }) {
   if (!items.length) return null;

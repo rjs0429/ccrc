@@ -22,6 +22,7 @@ export type AuditEvent =
   | "attach"
   | "handoff"
   | "upload"
+  | "file_read"
   | "call"
   | "claude_settings"
   | "push_subscribe"

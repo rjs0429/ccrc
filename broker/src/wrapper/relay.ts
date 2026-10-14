@@ -38,6 +38,7 @@ const REMOTE_REQUESTS = new Set([
   "mcp_reconnect",
   "rewind_files",
   "stop_task",
+  "read_file",
 ]);
 const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
 // The only part of a get_settings answer that leaves the wrapper: what the next request runs with.
@@ -98,6 +99,23 @@ export function allowedFlagSettings(settings: unknown): boolean {
   return (
     entries.length > 0 &&
     entries.every(([k, v]) => (k === "effortLevel" ? EFFORT_LEVELS.has(v as string) : k === "ultracode" && (v === true || v === false || v === null)))
+  );
+}
+
+const READ_FILE_KEYS = new Set(["subtype", "path", "max_bytes", "encoding"]);
+const READ_FILE_MAX_BYTES = 10_000_000;
+
+// read_file names a file and how much of it to send, nothing else; Claude Code applies its read rules to the path.
+export function allowedReadFile(req: Record<string, unknown>): boolean {
+  const { path, max_bytes: max, encoding } = req;
+  return (
+    Object.keys(req).every((k) => READ_FILE_KEYS.has(k)) &&
+    typeof path === "string" &&
+    path.length > 0 &&
+    path.length <= 4096 &&
+    !path.includes("\0") &&
+    (max === undefined || (Number.isSafeInteger(max) && (max as number) > 0 && (max as number) <= READ_FILE_MAX_BYTES)) &&
+    (encoding === undefined || encoding === "utf-8" || encoding === "base64")
   );
 }
 
@@ -446,6 +464,7 @@ export class Relay extends EventEmitter {
       if (typeof req.subtype !== "string" || !REMOTE_REQUESTS.has(req.subtype)) return reject("request not allowed", m.request_id);
       if (req.subtype === "set_permission_mode" && req.mode === "bypassPermissions") return reject("mode not allowed", m.request_id);
       if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
+      if (req.subtype === "read_file" && !allowedReadFile(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "get_settings" || req.subtype === "get_usage") askFor(this.remoteAsked, m.request_id, req.subtype);
       this.toChild(Buffer.from(JSON.stringify(m)));
       return;

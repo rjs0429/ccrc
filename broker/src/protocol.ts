@@ -149,6 +149,25 @@ export interface UploadInfo {
   size: number;
 }
 
+export type FileKind = "markdown" | "text" | "json" | "csv" | "tsv" | "image" | "pdf" | "binary";
+
+// A file a link in the conversation points to (GET /api/sessions/:id/file); its bytes are at .../file/raw?path=.
+// fallback: found by dropping leading ../ ("parent") or by the end of its path ("suffix").
+// via: read by the session's Claude Code process or by ccrc itself.
+export interface FileView {
+  path: string;
+  name: string;
+  size: number;
+  kind: FileKind;
+  text?: string;
+  truncated?: boolean;
+  fallback?: "parent" | "suffix";
+  via: "claude" | "broker";
+  line?: number;
+  endLine?: number;
+  heading?: string;
+}
+
 // dialog: a confirmation Claude Code asks for outside a tool call; it can only be answered where the session is open.
 export type PendingKind = "permission" | "question" | "plan" | "dialog";
 

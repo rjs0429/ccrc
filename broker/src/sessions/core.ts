@@ -15,6 +15,7 @@ import {
   type TaskInfo,
   type UsageInfo,
 } from "../protocol.ts";
+import type { FileContents } from "./file-read.ts";
 import { ItemBuilder, clipInput, type RawMessage } from "./items.ts";
 
 const STREAM_FLUSH_MS = 80;
@@ -41,6 +42,8 @@ const PLAN_DECISIONS = new Set<unknown>(["auto", "acceptEdits", "default", "keep
 // and turning on or reconnecting an MCP server waits for the server to connect.
 export const CONTEXT_MS = 60_000;
 export const MCP_CHANGE_MS = 45_000;
+// A file of up to 10MB travels base64-encoded in one line.
+export const READ_MS = 30_000;
 
 type Obj = Record<string, unknown>;
 
@@ -226,6 +229,12 @@ export abstract class SessionCore extends EventEmitter {
 
   stopTask(_taskId: string): Promise<void> {
     return Promise.reject(Error("not available for this session"));
+  }
+
+  // Asks the session's Claude Code process for a file, which applies its own read rules; undefined
+  // when no process is running.
+  readFile(_path: string, _maxBytes: number, _encoding: "utf-8" | "base64"): Promise<FileContents> | undefined {
+    return undefined;
   }
 
   // The web client names servers, messages and tasks; only the ones this session reports are passed on.

@@ -27,6 +27,7 @@ const EVENT_LABEL: Record<string, string> = {
   attach: "VS Code 세션 연결",
   handoff: "VS Code로 넘김",
   upload: "파일 올림",
+  file_read: "파일 열람",
   call: "세션 작업",
   claude_settings: "Claude Code 설정 바꿈",
   push_subscribe: "알림 켬",
@@ -39,6 +40,16 @@ const CALL_LABEL: Record<string, string> = {
   mcp_reconnect: "MCP 다시 연결",
   rewind: "파일 되돌리기",
   stop_task: "작업 중지",
+};
+
+const READ_OUTCOME: Record<string, string> = {
+  ok: "",
+  truncated: "앞부분만",
+  denied: "거부됨",
+  not_found: "없음",
+  too_large: "너무 큼",
+  invalid: "잘못된 링크",
+  failed: "실패",
 };
 
 const WORD: Record<string, string> = {
@@ -77,6 +88,8 @@ function detail(e: AuditEntry): string {
       return [named(e.op, CALL_LABEL), named(e.server)].filter(Boolean).join(" · ");
     case "claude_settings":
       return Array.isArray(e.keys) ? e.keys.join(", ") : "";
+    case "file_read":
+      return [typeof e.path === "string" ? baseName(e.path) : "", named(e.outcome, READ_OUTCOME)].filter(Boolean).join(" · ");
     case "new_session":
       return typeof e.cwd === "string" ? baseName(e.cwd) : "";
     case "login_failed":

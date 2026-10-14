@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ModelOption } from "../../../broker/src/protocol.ts";
 import { ItemView, StreamPreview, shownItems } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
@@ -11,8 +11,12 @@ import { RewindSheet } from "../components/sheets/Rewind.tsx";
 import { TasksSheet } from "../components/sheets/Tasks.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
+import { FileLinks } from "../components/fileLinks.ts";
+import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { baseName, closedText, hostLabel, sessionTitle } from "../labels.ts";
 import { navigate, send, toast, useApp } from "../state.ts";
+
+const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
 const NEAR_BOTTOM_PX = 160;
 const NO_MODELS: ModelOption[] = [];
@@ -28,6 +32,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [menu, setMenu] = useState(false);
   const [sheet, setSheet] = useState<SheetName | null>(null);
   const [usageCommand, setUsageCommand] = useState("usage");
+  const [file, setFile] = useState<FileTarget | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -52,6 +57,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
     setSheet(target);
     return true;
   };
+
+  const openFile = useCallback((href: string) => {
+    if (!href.startsWith("#")) setFile({ href });
+  }, []);
 
   useLayoutEffect(() => {
     const el = listRef.current;
@@ -101,35 +110,37 @@ export function Chat({ sessionId }: { sessionId: string }) {
         }}
         className="flex-1 overflow-y-auto overscroll-contain"
       >
-        <div className="mx-auto max-w-3xl space-y-4 px-4 py-4">
-          {!chat?.loaded && (
-            <div className="flex justify-center py-10 text-muted">
-              <Spinner className="size-6" />
-            </div>
-          )}
-          {chat?.hasMore && <div className="text-center text-xs text-muted">이전 대화는 생략했습니다</div>}
-          {items.map((item) => <ItemView key={item.id} item={item} running={busy} />)}
-          {chat?.stream && <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />}
-          {busy && !chat?.stream && !chat?.pending.length && (
-            <div className="flex items-center gap-2 text-sm text-muted">
-              <Spinner className="size-3.5" /> 작업 중…
-            </div>
-          )}
-          {chat?.pending.map((p) => (
-            <PendingCard
-              key={p.id}
-              request={p}
-              reply={(answer) => {
-                if (!send({ t: "answer", sessionId, requestId: p.id, answer })) toast("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요");
-              }}
-            />
-          ))}
-          {chat?.loaded && kind === "inactive" && (
-            <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted">
-              {closedText(st?.closedReason)}메시지를 보내면 이 세션을 원격에서 이어서 실행합니다.
-            </div>
-          )}
-        </div>
+        <FileLinks.Provider value={openFile}>
+          <div className="mx-auto max-w-3xl space-y-4 px-4 py-4">
+            {!chat?.loaded && (
+              <div className="flex justify-center py-10 text-muted">
+                <Spinner className="size-6" />
+              </div>
+            )}
+            {chat?.hasMore && <div className="text-center text-xs text-muted">이전 대화는 생략했습니다</div>}
+            {items.map((item) => <ItemView key={item.id} item={item} running={busy} />)}
+            {chat?.stream && <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />}
+            {busy && !chat?.stream && !chat?.pending.length && (
+              <div className="flex items-center gap-2 text-sm text-muted">
+                <Spinner className="size-3.5" /> 작업 중…
+              </div>
+            )}
+            {chat?.pending.map((p) => (
+              <PendingCard
+                key={p.id}
+                request={p}
+                reply={(answer) => {
+                  if (!send({ t: "answer", sessionId, requestId: p.id, answer })) toast("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요");
+                }}
+              />
+            ))}
+            {chat?.loaded && kind === "inactive" && (
+              <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-center text-sm text-muted">
+                {closedText(st?.closedReason)}메시지를 보내면 이 세션을 원격에서 이어서 실행합니다.
+              </div>
+            )}
+          </div>
+        </FileLinks.Provider>
       </div>
 
       {chat?.loaded && <TodoPanel items={chat.items} />}
@@ -171,6 +182,17 @@ export function Chat({ sessionId }: { sessionId: string }) {
             />
           )}
         </Sheet>
+      )}
+      {file && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-40 flex items-center justify-center bg-bg text-muted">
+              <Spinner className="size-6" />
+            </div>
+          }
+        >
+          <FileViewer sessionId={sessionId} cwd={cwd} target={file} onClose={() => setFile(null)} />
+        </Suspense>
       )}
       {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "tasks" && <TasksSheet sessionId={sessionId} onClose={() => setSheet(null)} />}

@@ -22,7 +22,7 @@ import { BrokerSession } from "./broker-session.ts";
 import { lastCommands, rememberCommands } from "./commands.ts";
 import type { ContentBlock, SessionCore } from "./core.ts";
 import { searchFiles } from "./files.ts";
-import { loadHistory, projectDirName, transcriptPath } from "./history.ts";
+import { lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 import { WrappedSession } from "./wrapped.ts";
 
@@ -301,6 +301,15 @@ export class SessionManager extends EventEmitter {
         await this.get(sessionId).stopTask(String(args.taskId));
         return {};
     }
+  }
+
+  // What reading a linked file needs: the folder the session started in, the one it last worked in,
+  // and its running Claude Code process if there is one.
+  async fileAccess(sessionId: string): Promise<{ start: string; latest?: string; session?: SessionCore }> {
+    const s = this.controlled(sessionId);
+    const start = await this.cwdOf(sessionId);
+    const latest = await lastCwd(sessionId, start);
+    return { start, latest: latest !== start ? latest : undefined, session: s && !s.closed ? s : undefined };
   }
 
   private async cwdOf(sessionId: string): Promise<string> {

@@ -11,6 +11,7 @@
 // --version prints a version and exits.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 
 const args = process.argv.slice(2);
 if (args.includes("--version")) {
@@ -95,6 +96,27 @@ function handle(m) {
   if (m.type === "control_request") {
     const init = m.request.subtype === "initialize";
     if (init && process.env.FAKE_NO_INIT) return;
+    if (m.request.subtype === "read_file") {
+      const r = m.request;
+      const answer = (body) => out({ type: "control_response", response: { request_id: m.request_id, ...body } });
+      const abs = path.resolve(process.cwd(), r.path);
+      let real;
+      try {
+        real = fs.realpathSync(abs);
+      } catch {
+        return answer({ subtype: "error", error: `File does not exist: ${r.path}` });
+      }
+      const rel = path.relative(fs.realpathSync(process.cwd()), real);
+      if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return answer({ subtype: "error", error: `read denied: ${r.path}` });
+      const data = fs.readFileSync(real);
+      const max = r.max_bytes ?? 1_000_000;
+      const part = data.subarray(0, max);
+      const base64 = r.encoding === "base64";
+      return answer({
+        subtype: "success",
+        response: { contents: part.toString(base64 ? "base64" : "utf8"), absPath: abs, truncated: data.length > max, ...(base64 ? { encoding: "base64" } : {}) },
+      });
+    }
     if (m.request.subtype === "get_usage" && fs.existsSync(".fake-no-usage")) {
       out({ type: "control_response", response: { subtype: "error", request_id: m.request_id, error: "usage unavailable" } });
       return;

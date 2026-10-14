@@ -137,7 +137,7 @@ async function setup(opts: SetupOptions = {}) {
     await exited;
     await broker.close().catch(() => {});
   });
-  return { broker, host, hostIn, relay, exited, started, write, user };
+  return { dir, broker, host, hostIn, relay, exited, started, write, user };
 }
 
 const frameOut = (pred: (m: Msg) => boolean) => (f: Msg) => f.t === "out" && pred(f.m as Msg);
@@ -504,6 +504,28 @@ test("the session controls reach Claude Code; MCP setup, settings and conversati
   await t.broker.frames.wait(replied("ccrc-last"), "a later request");
   const leaked = t.broker.frames.has((f) => f.t === "reply" && String(((f.m as Msg).response as Msg).request_id).startsWith("ccrc-no-"));
   assert.ok(!leaked, "refused requests never reach Claude Code");
+  assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code sees none of the answers");
+});
+
+test("read_file reaches Claude Code only with a path, a size up to 10MB and a known encoding", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
+  fs.writeFileSync(path.join(t.dir, "notes.md"), "# notes");
+  request("ccrc-read-ok", { subtype: "read_file", path: "notes.md", max_bytes: 10_000_000, encoding: "base64" });
+  const reply = await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-read-ok", "read_file answered");
+  assert.equal(Buffer.from(String((((reply.m as Msg).response as Msg).response as Msg).contents), "base64").toString(), "# notes");
+  const bad: Msg[] = [
+    { subtype: "read_file" },
+    { subtype: "read_file", path: "" },
+    { subtype: "read_file", path: 7 },
+    { subtype: "read_file", path: "a", max_bytes: 10_000_001 },
+    { subtype: "read_file", path: "a", max_bytes: "1" },
+    { subtype: "read_file", path: "a", encoding: "latin1" },
+    { subtype: "read_file", path: "a", anchor: { type: "repo", repo: "x/y" } },
+  ];
+  bad.forEach((r, i) => request(`ccrc-read-bad-${i}`, r));
+  for (const i of bad.keys()) await t.broker.frames.wait((f) => f.t === "rejected" && f.id === `ccrc-read-bad-${i}` && f.reason === "invalid request", `bad read_file ${i}`);
   assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code sees none of the answers");
 });
 

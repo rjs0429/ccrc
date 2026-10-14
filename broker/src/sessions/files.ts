@@ -32,6 +32,11 @@ export async function searchFiles(cwd: string, query: string): Promise<string[]>
   return rankFiles(await l.files, q).slice(0, RESULTS);
 }
 
+// The same cached listing, for finding a linked file by the end of its path.
+export function indexedFiles(cwd: string): Promise<string[]> {
+  return listing(cwd).files;
+}
+
 function listing(cwd: string): Listing {
   const now = Date.now();
   for (const [dir, l] of listings) if (now - l.at > LIST_MS) listings.delete(dir);

@@ -5,6 +5,7 @@ import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
   MCP_CHANGE_MS,
+  READ_MS,
   SessionCore,
   commandInfo,
   mcpServers,
@@ -12,6 +13,7 @@ import {
   type ContentBlock,
   type Decision,
 } from "./core.ts";
+import { fileContents, type FileContents } from "./file-read.ts";
 import type { RawMessage } from "./items.ts";
 import { contextDetail, usageAnswer } from "./reports.ts";
 
@@ -137,6 +139,11 @@ export class WrappedSession extends SessionCore {
   async contextDetail(): Promise<ContextDetail> {
     this.ensureOpen();
     return this.counted(contextDetail(await this.link.request({ subtype: "get_context_usage", detail: "full" }, CONTEXT_MS)));
+  }
+
+  readFile(path: string, maxBytes: number, encoding: "utf-8" | "base64"): Promise<FileContents> | undefined {
+    if (this.closed) return undefined;
+    return this.link.request({ subtype: "read_file", path, max_bytes: maxBytes, encoding }, READ_MS).then(fileContents);
   }
 
   async usage(): Promise<UsageInfo> {
