@@ -213,6 +213,7 @@ export class Hub {
           effort: msg.effort,
         });
         this.audit.log("new_session", { device, sessionId: s.id, cwd: s.cwd });
+        this.remoteSends.set(s.id, Date.now());
         s.send(text);
         if (this.active) send(this.active, { t: "session_started", sessionId: s.id });
         await this.setView(s.id);

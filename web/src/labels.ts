@@ -100,6 +100,10 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^Failed to rewind: (.+)$/, (m) => `되돌리지 못했습니다: ${m[1]}`],
   [/^no answer$/, "응답이 없습니다"],
   [/^not connected$/, "연결되어 있지 않습니다"],
+  [/^unsupported_push_service$/, "이 브라우저의 푸시 서비스로는 알림을 보낼 수 없습니다"],
+  [/^invalid_subscription$/, "알림 구독 정보가 올바르지 않습니다"],
+  [/^not_subscribed$/, "이 기기는 알림이 꺼져 있습니다"],
+  [/^push_failed (\d+)$/, (m) => (m[1] === "0" ? "푸시 서비스에 연결하지 못했습니다" : `푸시 서비스가 알림을 받지 않았습니다 (${m[1]})`)],
 ];
 
 export function errorText(message: string): string {

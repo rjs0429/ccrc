@@ -23,7 +23,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+export async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
     credentials: "same-origin",
