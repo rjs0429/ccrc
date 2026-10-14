@@ -111,13 +111,20 @@ export class WrappedSession extends SessionCore {
     this.ask({ requestId, kind: "elicitation", toolName: info.server, input: {}, elicitation: info });
   }
 
-  // A request the wrapper no longer holds went to VS Code.
+  // A request the wrapper no longer holds went to VS Code; one whose answer the wrapper refused is cancelled
+  // rather than left waiting.
   onRejected(requestId: unknown, reason: unknown): void {
-    if (reason === "not held" && typeof requestId === "string" && this.elicitTimers.has(requestId)) this.drop(requestId);
+    if (typeof requestId !== "string") return;
+    if (reason === "not held" && this.elicitTimers.has(requestId)) this.drop(requestId);
+    else if (reason === "invalid answer") this.settleElicitation(requestId, { action: "cancel" });
   }
 
+  // Input requests taken but not answered go back to VS Code while Claude Code still runs.
   end(reason: string): void {
-    for (const timer of this.elicitTimers.values()) clearTimeout(timer);
+    for (const [id, timer] of this.elicitTimers) {
+      clearTimeout(timer);
+      this.link.send({ t: "pass", id });
+    }
     this.elicitTimers.clear();
     this.finish(reason);
   }

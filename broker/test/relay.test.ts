@@ -18,6 +18,7 @@ import {
   type RelayOptions,
 } from "../src/wrapper/relay.ts";
 import { TurnStore } from "../src/wrapper/turns.ts";
+import { elicitInfo, elicitResult } from "../src/elicit.ts";
 import { tempDir } from "./helpers.ts";
 
 const FAKE = new URL("./fixtures/fake-claude.mjs", import.meta.url).pathname;
@@ -927,8 +928,22 @@ test("an MCP input answer carries an action and, with accept, flat values only",
     { action: "accept", content: { a: { nested: 1 } } },
     { action: "accept", content: { a: [1] } },
     { action: "accept", content: { a: Infinity } },
-    { action: "accept", content: { a: "x".repeat(10_001) } },
+    { action: "accept", content: { a: "x".repeat(20_001) } },
     { action: "accept", content: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`k${i}`, i])) },
   ];
   for (const b of bad) assert.equal(elicitAnswer(b), undefined, JSON.stringify(b)?.slice(0, 80));
+});
+
+test("every MCP input answer the broker accepts passes the wrapper", () => {
+  const info = elicitInfo({
+    serverName: "s",
+    message: "m",
+    mode: "form",
+    requestedSchema: { type: "object", properties: { long: { type: "string", maxLength: 50_000 }, plain: { type: "string" } } },
+  });
+  assert.equal((info.fields?.[0] as { maxLength?: number }).maxLength, 10_000);
+  assert.throws(() => elicitResult(info, "accept", { long: "x".repeat(10_001) }));
+  for (const content of [{ long: "x".repeat(10_000) }, { plain: "\u{1F600}".repeat(10_000) }]) {
+    assert.ok(elicitAnswer(elicitResult(info, "accept", content)), Object.keys(content)[0]);
+  }
 });

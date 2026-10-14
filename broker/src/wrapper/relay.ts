@@ -157,7 +157,8 @@ const plainObj = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
 function elicitValue(v: unknown): boolean {
-  if (typeof v === "string") return v.length <= ELICIT_TEXT_MAX;
+  // The broker counts characters, which may take two UTF-16 units each.
+  if (typeof v === "string") return v.length <= 2 * ELICIT_TEXT_MAX;
   if (typeof v === "number") return Number.isFinite(v);
   if (typeof v === "boolean") return true;
   return Array.isArray(v) && v.length <= ELICIT_ITEMS_MAX && v.every((x) => typeof x === "string" && x.length <= ELICIT_ITEM_MAX);

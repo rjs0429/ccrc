@@ -789,3 +789,31 @@ test("the session's end cancels nothing on the user's behalf and clears its time
   assert.equal(s.pending.size, 0);
   assert.equal(sent(wrapper, elicitAnswerFrame("e8")).length, 0);
 });
+
+test("a taken MCP input request goes back to VS Code when the session ends while Claude Code runs on", async () => {
+  const { s, wrapper, next } = await session();
+  s.reachable = () => true;
+  const added = next("pending_add");
+  wrapper.out(elicit("e9"));
+  wrapper.send({ t: "held", id: "e9" });
+  await added;
+  s.end("switched");
+  const passes = () => sent(wrapper, (f) => f.t === "pass" && f.id === "e9").length;
+  for (let i = 0; i < 50 && !passes(); i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(passes(), 1);
+});
+
+test("an answer the wrapper refuses is followed by a cancel, not left waiting", async () => {
+  const { s, wrapper, next } = await session();
+  s.reachable = () => true;
+  const added = next("pending_add");
+  wrapper.out(elicit("e10"));
+  wrapper.send({ t: "held", id: "e10" });
+  await added;
+  await s.answer("e10", { kind: "elicitation", action: "accept", content: { name: "Kim" } });
+  await wrapper.wait(elicitAnswerFrame("e10"), "answer frame");
+  wrapper.send({ t: "rejected", id: "e10", reason: "invalid answer" });
+  const answers = () => sent(wrapper, elicitAnswerFrame("e10"));
+  for (let i = 0; i < 50 && answers().length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(((answers()[1]?.m as Msg).response as Msg).response, { action: "cancel" });
+});
