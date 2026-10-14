@@ -1,11 +1,24 @@
 import { randomUUID } from "node:crypto";
 import type { Link } from "../link/server.ts";
-import type { DisplayItem, EffortName, PermissionModeName } from "../protocol.ts";
-import { SessionCore, commandInfo, type ContentBlock, type Decision } from "./core.ts";
+import type { ContextDetail, DisplayItem, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import {
+  CONTEXT_MS,
+  MCP_CHANGE_MS,
+  SessionCore,
+  commandInfo,
+  contextDetail,
+  mcpServers,
+  rewindResult,
+  type ContentBlock,
+  type Decision,
+} from "./core.ts";
 import type { RawMessage } from "./items.ts";
 
 type Obj = Record<string, unknown>;
 type Held = { from: "out" | "in" | "settled"; v: unknown };
+
+// The extension's own MCP server inside Claude Code; the extension leaves it out of its server list too.
+const HOST_SERVER = "claude-vscode";
 
 const obj = (v: unknown): Obj => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -108,6 +121,38 @@ export class WrappedSession extends SessionCore {
     await this.link.request({ subtype: "apply_flag_settings", settings: { effortLevel: effort } });
     this.effort = effort;
     this.touch();
+  }
+
+  async contextDetail(): Promise<ContextDetail> {
+    this.ensureOpen();
+    return this.counted(contextDetail(await this.link.request({ subtype: "get_context_usage", detail: "full" }, CONTEXT_MS)));
+  }
+
+  async mcpStatus(): Promise<McpServerInfo[]> {
+    this.ensureOpen();
+    const r = await this.link.request({ subtype: "mcp_status" });
+    return mcpServers(r.mcpServers).filter((s) => s.name !== HOST_SERVER);
+  }
+
+  async mcpToggle(server: string, enabled: boolean): Promise<McpServerInfo[]> {
+    const serverName = await this.knownServer(server);
+    await this.link.request({ subtype: "mcp_toggle", serverName, enabled: enabled === true }, MCP_CHANGE_MS);
+    return this.mcpStatus();
+  }
+
+  async mcpReconnect(server: string): Promise<McpServerInfo[]> {
+    const serverName = await this.knownServer(server);
+    await this.link.request({ subtype: "mcp_reconnect", serverName }, MCP_CHANGE_MS);
+    return this.mcpStatus();
+  }
+
+  async rewind(userMessageId: string, dryRun: boolean): Promise<RewindResult> {
+    const id = this.rewindPoint(userMessageId, dryRun);
+    return rewindResult(await this.link.request({ subtype: "rewind_files", user_message_id: id, dry_run: dryRun }));
+  }
+
+  async stopTask(taskId: string): Promise<void> {
+    await this.link.request({ subtype: "stop_task", task_id: this.runningTask(taskId) });
   }
 
   protected async applyMode(mode: PermissionModeName): Promise<void> {

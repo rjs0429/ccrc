@@ -381,3 +381,182 @@ test("a queued turn shows as running from its init until its result", async () =
   await st;
   assert.equal(s.busy, true);
 });
+
+const MSG = "6a1f3c2e-8b4d-4e5f-9a0b-1c2d3e4f5a6b";
+
+test("context details ask for the full count and map Claude Code's answer", async () => {
+  const { s, wrapper } = await session();
+  const seen: Msg[] = [];
+  wrapper.autoReply((r) => {
+    seen.push(r);
+    return {
+      categories: [
+        { name: "System prompt", tokens: 3178, color: "promptBorder", kind: "used" },
+        { name: "System tools (deferred)", tokens: 22048, color: "inactive", isDeferred: true, kind: "deferred" },
+        { name: "Autocompact buffer", tokens: 33000, color: "inactive", kind: "buffer" },
+        { name: "Free space", tokens: 938439, color: "promptBorder", kind: "free" },
+        { name: "Old CLI row", tokens: 5, isDeferred: true },
+      ],
+      totalTokens: 28561,
+      maxTokens: 1_000_000,
+      rawMaxTokens: 1_000_000,
+      percentage: 2.9,
+      model: "claude-haiku-5-5",
+      gridRows: [[{ color: "x" }]],
+      memoryFiles: [{ path: "/home/u/CLAUDE.md", type: "User", tokens: 10 }],
+    };
+  });
+  const detail = await s.contextDetail();
+  assert.deepEqual(seen, [{ subtype: "get_context_usage", detail: "full" }]);
+  assert.deepEqual(detail, {
+    percentage: 2.9,
+    totalTokens: 28561,
+    maxTokens: 1_000_000,
+    model: "claude-haiku-5-5",
+    categories: [
+      { name: "System prompt", tokens: 3178, kind: "used" },
+      { name: "System tools (deferred)", tokens: 22048, kind: "deferred" },
+      { name: "Autocompact buffer", tokens: 33000, kind: "buffer" },
+      { name: "Free space", tokens: 938439, kind: "free" },
+      { name: "Old CLI row", tokens: 5, kind: "deferred" },
+    ],
+  });
+  assert.equal(s.state().contextPercent, 3);
+});
+
+test("MCP servers are listed without VS Code's own and changed only by a name Claude Code reported", async () => {
+  const { s, wrapper } = await session();
+  const seen: Msg[] = [];
+  wrapper.autoReply((r) => {
+    seen.push(r);
+    if (r.subtype !== "mcp_status") return {};
+    return {
+      mcpServers: [
+        { name: "claude-vscode", status: "connected", scope: "dynamic", tools: [{ name: "getDiagnostics" }] },
+        { name: "github", status: "connected", scope: "user", tools: [{ name: "a" }, { name: "b" }], config: { type: "http", url: "https://example.com" } },
+        { name: "db", status: "failed", scope: "project", error: "spawn db-server ENOENT" },
+        { name: "claude.ai Drive", status: "needs-auth", source: "claudeai" },
+      ],
+    };
+  });
+  const servers = [
+    { name: "github", status: "connected", scope: "user", tools: 2 },
+    { name: "db", status: "failed", error: "spawn db-server ENOENT", scope: "project" },
+    { name: "claude.ai Drive", status: "needs-auth", scope: "claudeai" },
+  ];
+  assert.deepEqual(await s.mcpStatus(), servers);
+  seen.length = 0;
+  assert.deepEqual(await s.mcpToggle("github", false), servers);
+  assert.deepEqual(seen, [{ subtype: "mcp_status" }, { subtype: "mcp_toggle", serverName: "github", enabled: false }, { subtype: "mcp_status" }]);
+  seen.length = 0;
+  await s.mcpReconnect("claude.ai Drive");
+  assert.deepEqual(seen[1], { subtype: "mcp_reconnect", serverName: "claude.ai Drive" });
+  seen.length = 0;
+  await assert.rejects(s.mcpToggle("claude-vscode", false), /unknown MCP server/);
+  await assert.rejects(s.mcpReconnect("other"), /unknown MCP server/);
+  await assert.rejects(s.mcpToggle("", true), /unknown MCP server/);
+  await assert.rejects(s.mcpToggle("x".repeat(300), true), /unknown MCP server/);
+  assert.deepEqual(
+    seen.map((r) => r.subtype),
+    ["mcp_status", "mcp_status"],
+  );
+});
+
+test("file rewind previews and applies only for a message of this session", async () => {
+  const { s, wrapper, next } = await session({ seed: false });
+  s.seed([{ kind: "user", id: MSG, text: "edit the file" }]);
+  const seen: Msg[] = [];
+  wrapper.autoReply((r) => {
+    seen.push(r);
+    return r.dry_run ? { canRewind: true, filesChanged: ["/tmp/project/a.txt"], insertions: 1, deletions: 2 } : { canRewind: true, skippedLinks: 0 };
+  });
+  assert.deepEqual(await s.rewind(MSG, true), { canRewind: true, filesChanged: ["/tmp/project/a.txt"], insertions: 1, deletions: 2 });
+  assert.deepEqual(seen.at(-1), { subtype: "rewind_files", user_message_id: MSG, dry_run: true });
+  assert.deepEqual(await s.rewind(MSG, false), { canRewind: true });
+  assert.deepEqual(seen.at(-1), { subtype: "rewind_files", user_message_id: MSG, dry_run: false });
+  await assert.rejects(s.rewind("6a1f3c2e-8b4d-4e5f-9a0b-000000000000", true), /unknown message/);
+  await assert.rejects(s.rewind("not-a-message", true), /unknown message/);
+  const st = next("state");
+  wrapper.out({ type: "system", subtype: "session_state_changed", state: "running", session_id: SID });
+  await st;
+  await assert.rejects(s.rewind(MSG, false), /session is busy/);
+  await s.rewind(MSG, true);
+  assert.equal(seen.length, 3);
+});
+
+test("a dry run Claude Code cannot apply comes back with its reason", async () => {
+  const { s, wrapper } = await session({ seed: false });
+  s.seed([{ kind: "user", id: MSG, text: "hi" }]);
+  wrapper.autoReply(() => ({ canRewind: false, error: "No file checkpoint found for this message." }));
+  assert.deepEqual(await s.rewind(MSG, true), { canRewind: false, error: "No file checkpoint found for this message." });
+});
+
+test("tasks follow Claude Code's task messages and leave the list a while after they end", async () => {
+  const { s, wrapper, events, next } = await session();
+  s.taskKeepMs = 150;
+  const states = () => events.filter(([e]) => e === "state").length;
+  const out = async (m: Msg) => {
+    const st = next("state");
+    wrapper.out({ type: "system", session_id: SID, ...m });
+    await st;
+  };
+  await out({
+    subtype: "task_started",
+    task_id: "a1",
+    tool_use_id: "toolu_a",
+    description: "Find the tests",
+    subagent_type: "Explore",
+    task_type: "local_agent",
+  });
+  await out({ subtype: "task_started", task_id: "b2", description: "npm test", task_type: "local_bash" });
+  assert.deepEqual(s.state().tasks, [
+    { id: "a1", description: "Find the tests", type: "Explore", status: "running", toolUseId: "toolu_a" },
+    { id: "b2", description: "npm test", type: "local_bash", status: "running" },
+  ]);
+
+  const before = states();
+  wrapper.out({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "a1",
+    tool_use_id: "toolu_a",
+    description: "Find the tests",
+    usage: { total_tokens: 5, tool_uses: 1, duration_ms: 9 },
+    session_id: SID,
+  });
+  wrapper.out({ type: "system", subtype: "task_notification", task_id: "zz", status: "completed", output_file: "", summary: "", session_id: SID });
+  await out({ subtype: "task_progress", task_id: "c3", description: "Watch the build", usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 } });
+  assert.equal(states(), before + 1, "only the task first seen through its progress changed the state");
+  assert.equal(s.tasks.get("c3")?.status, "running");
+  assert.equal(s.tasks.has("zz"), false);
+
+  await out({ subtype: "task_updated", task_id: "b2", patch: { status: "killed", end_time: 1 } });
+  assert.equal(s.tasks.get("b2")?.status, "stopped");
+  await out({ subtype: "task_notification", task_id: "a1", tool_use_id: "toolu_a", status: "completed", output_file: "/tmp/out", summary: "Found them" });
+  assert.equal(s.tasks.get("a1")?.status, "completed");
+  await out({ subtype: "task_updated", task_id: "c3", patch: { status: "failed", error: "boom" } });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(s.state().tasks, undefined);
+});
+
+test("only a running task of this session can be stopped", async () => {
+  const { s, wrapper, next } = await session();
+  const seen: Msg[] = [];
+  wrapper.autoReply((r) => (seen.push(r), {}));
+  let st = next("state");
+  wrapper.out({ type: "system", subtype: "task_started", task_id: "b7", description: "sleep 100", task_type: "local_bash", session_id: SID });
+  await st;
+  await s.stopTask("b7");
+  assert.deepEqual(seen, [{ subtype: "stop_task", task_id: "b7" }]);
+  await assert.rejects(s.stopTask("b8"), /task is not running/);
+  st = next("state");
+  wrapper.out({ type: "system", subtype: "task_notification", task_id: "b7", status: "stopped", output_file: "", summary: "", session_id: SID });
+  await st;
+  await assert.rejects(s.stopTask("b7"), /task is not running/);
+  assert.equal(seen.length, 1);
+  st = next("closed");
+  s.end("vscode_closed");
+  await st;
+  assert.equal(s.tasks.size, 0);
+  await assert.rejects(s.contextDetail(), /session closed/);
+});
