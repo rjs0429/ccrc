@@ -191,9 +191,9 @@ export class Hub {
         return;
       case "send": {
         const id = sid(msg.sessionId);
-        const text = str(msg.text, MAX_TEXT);
         const ids = msg.attachments === undefined ? [] : msg.attachments;
         if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENTS) throw Error("invalid request");
+        const text = ids.length && msg.text === "" ? "" : str(msg.text, MAX_TEXT);
         const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
         const wasControlled = m.isControlled(id);
         this.audit.log("send", { device, sessionId: id, chars: text.length, ...(ids.length ? { attachments: ids.length } : {}) });

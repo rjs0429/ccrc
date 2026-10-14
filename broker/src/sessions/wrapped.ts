@@ -83,7 +83,7 @@ export class WrappedSession extends SessionCore {
         session_id: "",
         parent_tool_use_id: null,
         origin: { kind: "human" },
-        message: { role: "user", content: [...blocks, { type: "text", text }] },
+        message: { role: "user", content: [...blocks, ...(text ? [{ type: "text", text }] : [])] },
       },
     });
     this.emit("item", this.sentItem(uuid, text, blocks));

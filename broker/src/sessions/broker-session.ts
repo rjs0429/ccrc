@@ -92,7 +92,7 @@ export class BrokerSession extends SessionCore {
     const uuid = randomUUID();
     const message: SDKUserMessage = {
       type: "user",
-      message: { role: "user", content: [...blocks, { type: "text", text }] as unknown as SDKUserMessage["message"]["content"] },
+      message: { role: "user", content: [...blocks, ...(text ? [{ type: "text", text }] : [])] as unknown as SDKUserMessage["message"]["content"] },
       parent_tool_use_id: null,
       session_id: this.id,
       uuid,
