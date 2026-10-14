@@ -1,7 +1,15 @@
 @import "tailwindcss";
 
 @custom-variant short (@media (max-height: 30rem));
-@custom-variant tiny (@media (max-height: 15rem));
+/* A layout viewport that short, or the visible area the iOS keyboard leaves (it shrinks only the visual viewport). */
+@custom-variant tiny {
+  @media (max-height: 15rem) {
+    @slot;
+  }
+  [data-tiny] & {
+    @slot;
+  }
+}
 
 :root {
   --bg: #f5f4ef;
@@ -99,7 +107,7 @@ body {
     padding-right: var(--sar);
   }
   /* The keyboard covers the home indicator. */
-  [data-keyboard] .overlay {
+  [data-keyboard] :is(.overlay, .pb-safe) {
     --sab: 0px;
   }
   @media (min-width: 40rem) {
