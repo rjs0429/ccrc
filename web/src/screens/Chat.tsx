@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
+import type { ModelOption } from "../../../broker/src/protocol.ts";
 import { ItemView, StreamPreview } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { PendingCard } from "../components/Pending.tsx";
@@ -13,12 +14,13 @@ import { baseName, closedText, hostLabel, sessionTitle } from "../labels.ts";
 import { navigate, send, useApp } from "../state.ts";
 
 const NEAR_BOTTOM_PX = 160;
+const NO_MODELS: ModelOption[] = [];
 type SheetName = "changes" | "context" | "mcp" | "rewind" | "tasks";
 
 export function Chat({ sessionId }: { sessionId: string }) {
   const chat = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat : undefined));
   const summary = useApp((s) => s.sessions?.find((x) => x.id === sessionId));
-  const models = useApp((s) => s.options?.models ?? []);
+  const models = useApp((s) => s.options?.models ?? NO_MODELS);
   const othersWaiting = useApp((s) => (s.sessions ?? []).some((x) => x.id !== sessionId && x.pendingCount));
   const [menu, setMenu] = useState(false);
   const [sheet, setSheet] = useState<SheetName | null>(null);
@@ -115,9 +117,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
         controllable={controllable}
         disabledReason={disabledReason}
         placeholder="Claude에게 메시지"
-        onSend={(text) => {
+        onSend={(text, attachments) => {
           stick.current = true;
-          send({ t: "send", sessionId, text });
+          send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
         }}
         onStop={() => send({ t: "interrupt", sessionId })}
         onMode={(mode) => send({ t: "set_mode", sessionId, mode })}

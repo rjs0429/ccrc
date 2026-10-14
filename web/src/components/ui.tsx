@@ -20,6 +20,13 @@ export const Icon = {
     </>,
   ),
   send: svg(<path d="M12 19V5M5 12l7-7 7 7" />),
+  paperclip: svg(<path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />),
+  file: svg(
+    <>
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+      <path d="M14 2v6h6M16 13H8M16 17H8" />
+    </>,
+  ),
   stop: ({ className = "size-4" }: IconProps) => (
     <svg viewBox="0 0 24 24" className={className} aria-hidden>
       <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />

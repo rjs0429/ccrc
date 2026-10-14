@@ -1,4 +1,4 @@
-import type { ModelOption, PermissionModeName, SessionSummary } from "../../broker/src/protocol.ts";
+import type { ModelOption, PermissionModeName, SessionSummary, UploadInfo } from "../../broker/src/protocol.ts";
 
 export interface Me {
   configured: boolean;
@@ -35,6 +35,31 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   return data as T;
 }
 
+// Sends a file as the raw body; XMLHttpRequest because fetch cannot report upload progress.
+function upload(file: Blob, name: string, onProgress: (fraction: number) => void, signal?: AbortSignal): Promise<UploadInfo> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/upload");
+    xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
+    xhr.setRequestHeader("x-file-name", encodeURIComponent(name));
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      let body: Record<string, unknown> = {};
+      try {
+        body = JSON.parse(xhr.responseText) as Record<string, unknown>;
+      } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as unknown as UploadInfo);
+      else reject(new ApiError(xhr.status, body));
+    };
+    xhr.onerror = () => reject(new ApiError(0, { error: "network" }));
+    xhr.onabort = () => reject(new DOMException("aborted", "AbortError"));
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(file);
+  });
+}
+
 export const api = {
   me: () => request<Me>("GET", "/api/me"),
   login: (id: string, password: string, takeover: boolean) => request<{ ok: true }>("POST", "/api/login", { id, password, takeover }),
@@ -42,4 +67,5 @@ export const api = {
   changePassword: (current: string, next: string) => request<{ ok: true }>("POST", "/api/password", { current, next }),
   sessions: () => request<SessionSummary[]>("GET", "/api/sessions"),
   options: () => request<Options>("GET", "/api/options"),
+  upload,
 };

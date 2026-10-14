@@ -38,7 +38,12 @@ export interface AppState {
 }
 
 type Listener = () => void;
-let state: AppState = { route: parseRoute(), conn: "idle" };
+const startRoute = parseRoute();
+let state: AppState = {
+  route: startRoute,
+  conn: "idle",
+  chat: startRoute.name === "chat" ? { sessionId: startRoute.sessionId, loaded: false, items: [], pending: [], hasMore: false } : undefined,
+};
 const listeners = new Set<Listener>();
 
 export function getState(): AppState {

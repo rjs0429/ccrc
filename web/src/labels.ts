@@ -89,6 +89,8 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^this request can only be answered where the session is open$/, "이 요청은 VS Code에서만 응답할 수 있습니다"],
   [/^Claude Code did not answer$/, "Claude Code가 응답하지 않았습니다"],
   [/^rejected by the wrapper: (.+)$/, (m) => `VS Code 쪽에서 받지 않았습니다 (${m[1]})`],
+  [/^attachment expired$/, "첨부 파일이 만료되었습니다. 다시 첨부하세요"],
+  [/^attachments too large$/, "첨부 파일이 너무 큽니다 (한 번에 10MB까지)"],
 ];
 
 export function errorText(message: string): string {
