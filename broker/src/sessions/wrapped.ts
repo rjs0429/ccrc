@@ -28,7 +28,8 @@ const str = (v: unknown): string | undefined => (typeof v === "string" ? v : und
 
 // A conversation that runs in VS Code and is reached through the wrapper between VS Code and Claude Code.
 // Remote input goes in as the same messages VS Code sends. Permission prompts show on both sides and the
-// wrapper keeps whichever answer comes first; dialogs show remotely but only VS Code answers them.
+// wrapper keeps whichever answer comes first; dialogs show remotely but only VS Code answers them. MCP input
+// requests are not shown: the extension declines them itself as soon as they arrive.
 export class WrappedSession extends SessionCore {
   readonly kind = "attached";
   readonly host = "VS Code";

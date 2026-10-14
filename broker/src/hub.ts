@@ -10,6 +10,7 @@ const PING_MS = 30_000;
 const CHANGED_DEBOUNCE_MS = 300;
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const MAX_ATTACHMENTS = 10;
+const ELICIT_ACTIONS = new Set<unknown>(["accept", "decline", "cancel"]);
 // Calls that change something are recorded in the audit log.
 const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task"]);
 
@@ -221,8 +222,15 @@ export class Hub {
       }
       case "answer": {
         const answer = msg.answer as Answer;
-        this.audit.log("answer", { device, sessionId: msg.sessionId, kind: answer?.kind, decision: "decision" in answer ? answer.decision : undefined });
-        await m.answer(sid(msg.sessionId), str(msg.requestId), answer);
+        const id = sid(msg.sessionId);
+        const requestId = str(msg.requestId);
+        // Of an MCP input answer only the server and the action are recorded, never what was filled in.
+        const detail =
+          answer?.kind === "elicitation"
+            ? { action: ELICIT_ACTIONS.has(answer.action) ? answer.action : "invalid", server: m.pendingRequest(id, requestId)?.elicitation?.server }
+            : { decision: answer && "decision" in answer ? answer.decision : undefined };
+        this.audit.log("answer", { device, sessionId: id, kind: answer?.kind, ...detail });
+        await m.answer(id, requestId, answer);
         return;
       }
       case "interrupt":

@@ -318,6 +318,10 @@ export class SessionManager extends EventEmitter {
     return cwd;
   }
 
+  pendingRequest(sessionId: string, requestId: string): PendingRequest | undefined {
+    return this.controlled(sessionId)?.pending.get(requestId)?.request;
+  }
+
   answer(sessionId: string, requestId: string, answer: Parameters<SessionCore["answer"]>[1]): Promise<void> {
     return this.get(sessionId).answer(requestId, answer);
   }

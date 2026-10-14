@@ -169,7 +169,39 @@ export interface FileView {
 }
 
 // dialog: a confirmation Claude Code asks for outside a tool call; it can only be answered where the session is open.
-export type PendingKind = "permission" | "question" | "plan" | "dialog";
+// elicitation: input an MCP server asks the user for.
+export type PendingKind = "permission" | "question" | "plan" | "dialog" | "elicitation";
+
+export type ElicitFormat = "email" | "uri" | "date" | "date-time";
+
+export interface ElicitOption {
+  value: string;
+  title: string;
+}
+
+// One field of the form an MCP server asks to have filled. choice: one of the options; multi: any number of them.
+export type ElicitField = { key: string; title?: string; description?: string; required: boolean } & (
+  | { type: "string"; format?: ElicitFormat; minLength?: number; maxLength?: number; default?: string }
+  | { type: "number" | "integer"; minimum?: number; maximum?: number; default?: number }
+  | { type: "boolean"; default?: boolean }
+  | { type: "choice"; options: ElicitOption[]; default?: string }
+  | { type: "multi"; options: ElicitOption[]; minItems?: number; maxItems?: number; default?: string[] }
+);
+
+export type ElicitValue = string | number | boolean | string[];
+
+// url: a page the user opens and finishes there instead of a form. unsupported: the form has fields the
+// phone cannot fill, so it can only be declined or cancelled.
+export interface ElicitInfo {
+  server: string;
+  message: string;
+  mode: "form" | "url";
+  url?: string;
+  title?: string;
+  description?: string;
+  fields?: ElicitField[];
+  unsupported?: boolean;
+}
 
 export interface PendingRequest {
   id: string;
@@ -185,12 +217,14 @@ export interface PendingRequest {
   allowAlways: boolean;
   // Claude Code allows this answer only where the session is open.
   localOnly?: boolean;
+  elicitation?: ElicitInfo;
 }
 
 export type Answer =
   | { kind: "permission"; decision: "allow" | "allow_always" | "deny"; message?: string }
   | { kind: "question"; answers: Record<string, string> }
-  | { kind: "plan"; decision: "auto" | "acceptEdits" | "default" | "keep_planning"; feedback?: string };
+  | { kind: "plan"; decision: "auto" | "acceptEdits" | "default" | "keep_planning"; feedback?: string }
+  | { kind: "elicitation"; action: "accept" | "decline" | "cancel"; content?: Record<string, ElicitValue> };
 
 export interface ModelOption {
   value: string;
