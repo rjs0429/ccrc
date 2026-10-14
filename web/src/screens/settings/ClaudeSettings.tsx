@@ -44,7 +44,7 @@ const HINT: Record<string, string> = {
   "permissions.additionalDirectories": "작업 폴더 밖에서 다룰 수 있는 폴더입니다",
   alwaysThinkingEnabled: "끄면 thinking 없이 답합니다",
   showThinkingSummaries: "Thinking 요약을 대화에 보여 줍니다",
-  autoCompactEnabled: "context가 차면 이전 대화를 요약합니다",
+  autoCompactEnabled: "Context가 차면 이전 대화를 요약합니다",
   includeGitInstructions: "커밋·PR 작업 지침을 시스템 프롬프트에 넣습니다",
   respectGitignore: "파일 찾기에서 무시할 파일을 뺍니다",
 };

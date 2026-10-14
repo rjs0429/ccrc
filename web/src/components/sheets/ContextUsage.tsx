@@ -76,7 +76,7 @@ export function ContextUsageSheet({ sessionId, state, kind, starting, onClose, o
   }, [sessionId, usageRound]);
 
   const left = g ? compactLeft(g) : undefined;
-  const leftText = left !== undefined ? `자동 압축까지 ${left}% 남음` : g && !g.last ? "Auto-compact 꺼짐" : undefined;
+  const leftText = left !== undefined ? `Auto-compact까지 ${left}% 남음` : g && !g.last ? "Auto-compact 꺼짐" : undefined;
   const busy = Boolean(state?.busy);
   const stopped = kind === "inactive";
   const blocked = kind === "live" ? `${hostLabel(state?.host)}에서 열려 있어 여기서는 할 수 없습니다` : busy ? "작업이 끝난 뒤에 할 수 있습니다" : undefined;

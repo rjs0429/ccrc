@@ -94,8 +94,8 @@ export function ContextGroups({ detail }: { detail: ContextDetail }) {
   return (
     <>
       <Group title="사용 중" rows={byKind("used")} max={max} />
-      <Group title="남은 공간" hint="Autocompact buffer는 대화를 요약할 때 쓰려고 남겨 둔 자리입니다" rows={[...byKind("buffer"), ...byKind("free")]} max={max} />
-      <Group title="필요할 때만 불러옴" hint="쓸 때만 context에 올라오는 도구라 지금은 자리를 차지하지 않습니다" rows={byKind("deferred")} />
+      <Group title="남은 공간" hint="Autocompact buffer는 Auto-compact가 대화를 요약할 때 쓰려고 남겨 둔 자리입니다" rows={[...byKind("buffer"), ...byKind("free")]} max={max} />
+      <Group title="필요할 때만 불러옴" hint="쓸 때만 Context에 올라오는 도구라 지금은 자리를 차지하지 않습니다" rows={byKind("deferred")} />
     </>
   );
 }
