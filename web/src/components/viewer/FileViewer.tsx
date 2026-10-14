@@ -75,6 +75,7 @@ function useTicket(sessionId: string, path: string | undefined): [Ticket | undef
     let timer: number | undefined;
     const mint = () => {
       window.clearTimeout(timer);
+      if (!live) return;
       request<{ url: string; expiresInMs: number }>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/file/ticket`, { path })
         .then((t) => {
           if (!live) return;
@@ -289,9 +290,9 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
   const url = view ? rawUrl(view.path) : "";
   const [ticket, renewTicket] = useTicket(sessionId, view?.path);
   const outside = ticket?.url ?? url;
-  // A ticket that ran out while the app slept is renewed first; the next tap opens it.
+  // Without a live ticket (not yet issued, or run out while the app slept) a tap gets one; the next tap opens it.
   const onOutside = (e: React.MouseEvent) => {
-    if (!ticket || Date.now() < ticket.until - 3000) return;
+    if (ticket && Date.now() < ticket.until - 3000) return;
     e.preventDefault();
     renewTicket();
   };
