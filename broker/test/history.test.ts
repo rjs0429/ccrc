@@ -155,3 +155,81 @@ test("a loaded conversation keeps local command results with their card data", a
     },
   ]);
 });
+
+test("a message queued during a turn loads where Claude Code took it in, as the live view shows it", async () => {
+  const sid = "6d0b2a1e-4f3c-4b8a-9e7d-2c5f1a8b3e90";
+  const base = { isSidechain: false, userType: "external", cwd, sessionId: sid, version: "2.1.296", gitBranch: "HEAD" };
+  const queued = "16da89e9-61c1-4cad-a567-74aa7b51081e";
+  // Rows as Claude Code 2.1.296 wrote them for a message sent while a Bash call ran.
+  const rows = [
+    { ...base, parentUuid: null, type: "user", uuid: "q1", timestamp: "2026-10-14T12:24:06.494Z", message: { role: "user", content: [{ type: "text", text: "Run sleep 12" }] } },
+    {
+      ...base,
+      parentUuid: "q1",
+      type: "assistant",
+      uuid: "q2",
+      timestamp: "2026-10-14T12:24:08.195Z",
+      message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_sleep", name: "Bash", input: { command: "sleep 12" } }] },
+    },
+    { type: "queue-operation", operation: "enqueue", timestamp: "2026-10-14T12:24:09.793Z", sessionId: sid },
+    {
+      ...base,
+      parentUuid: "q2",
+      type: "user",
+      uuid: "q3",
+      timestamp: "2026-10-14T12:24:20.241Z",
+      message: { role: "user", content: [{ tool_use_id: "toolu_sleep", type: "tool_result", content: "first", is_error: false }] },
+    },
+    {
+      ...base,
+      parentUuid: "q3",
+      type: "attachment",
+      uuid: "q4",
+      timestamp: "2026-10-14T12:24:09.793Z",
+      attachment: {
+        type: "queued_command",
+        prompt: [
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
+          { type: "text", text: "Also, end your reply with the word banana." },
+        ],
+        source_uuid: queued,
+        delivery_id: "70cbfef1-d235-4b07-9a77-2f9d8bbd37f6",
+        commandMode: "prompt",
+        origin: { kind: "human" },
+        timestamp: "2026-10-14T12:24:09.793Z",
+        humanTurn: true,
+      },
+    },
+    {
+      type: "queue-operation",
+      operation: "remove",
+      reason: "absorbed_mid_turn",
+      commandUuid: queued,
+      deliveryId: "70cbfef1-d235-4b07-9a77-2f9d8bbd37f6",
+      timestamp: "2026-10-14T12:24:20.246Z",
+      sessionId: sid,
+      content: "Also, end your reply with the word banana.",
+    },
+    {
+      ...base,
+      parentUuid: "q4",
+      type: "assistant",
+      uuid: "q5",
+      timestamp: "2026-10-14T12:24:22.734Z",
+      message: { role: "assistant", content: [{ type: "text", text: "Done, banana." }] },
+    },
+  ];
+  const dir = path.join(home, ".claude", "projects", projectDirName(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const items = await loadHistory(sid, cwd);
+  assert.deepEqual(
+    items.map((i) => i.id),
+    ["q1", "toolu_sleep", queued, "q5:0"],
+  );
+  const shown = items[2];
+  assert.equal(shown.kind, "user");
+  assert.equal(shown.kind === "user" && shown.text, "Also, end your reply with the word banana.");
+  assert.equal(shown.kind === "user" && shown.images, 1);
+  assert.equal(shown.ts, "2026-10-14T12:24:09.793Z", "it keeps the time it was sent");
+});

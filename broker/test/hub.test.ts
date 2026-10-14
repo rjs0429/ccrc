@@ -137,6 +137,20 @@ test("an output style change is written to the audit log; a missing style name i
   hub.close();
 });
 
+test("taking back a queued message is written to the audit log", async () => {
+  const manager = new FakeManager();
+  const leases = Object.assign(new EventEmitter(), { validate: () => true }) as unknown as Leases;
+  const logged: [string, Record<string, unknown>][] = [];
+  const audit = { log: (event: string, detail: Record<string, unknown>) => logged.push([event, detail]) } as unknown as Audit;
+  const hub = new Hub(manager as unknown as SessionManager, leases, audit, new Uploads(tempDir()));
+  const ws = new FakeSocket();
+  hub.attach(ws as never, "phone", "token");
+  ws.emit("message", JSON.stringify({ t: "call", id: 1, sessionId: A, op: "unqueue", args: { messageId: "m-1" } }));
+  await sleep(50);
+  assert.deepEqual(logged, [["call", { device: "phone", sessionId: A, op: "unqueue", messageId: "m-1" }]]);
+  hub.close();
+});
+
 test("a focused view keeps its focus while the same session is shown again", async () => {
   const { manager, hub, ws, view } = setup();
   const B = "7c2d1b90-3e4f-4a5b-8c6d-9e0f1a2b3c4d";

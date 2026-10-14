@@ -100,6 +100,16 @@ export interface TaskInfo {
   toolUseId?: string;
 }
 
+// A message sent while Claude Code works, which it holds until it takes it in: from here ("remote") or from VS Code ("host").
+export interface QueuedMessage {
+  id: string;
+  ts: string;
+  text: string;
+  images?: number;
+  files?: string[];
+  from: "remote" | "host";
+}
+
 export interface CommandInfo {
   name: string;
   description: string;
@@ -187,9 +197,11 @@ export interface CallMap {
   resume: { args: Record<string, never>; data: Record<string, never> };
   output_style: { args: Record<string, never>; data: OutputStyleInfo };
   set_output_style: { args: { style: string }; data: OutputStyleInfo };
+  // Takes back a message sent from here that Claude Code has not taken in yet.
+  unqueue: { args: { messageId: string }; data: Record<string, never> };
 }
 export type CallOp = keyof CallMap;
-export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume", "output_style", "set_output_style"];
+export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume", "output_style", "set_output_style", "unqueue"];
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {
@@ -304,6 +316,8 @@ export interface LiveState {
   costUsd?: number;
   closedReason?: string;
   tasks?: TaskInfo[];
+  // In the order Claude Code takes them in.
+  queued?: QueuedMessage[];
 }
 
 export type ClientMsg =

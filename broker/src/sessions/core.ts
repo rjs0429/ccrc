@@ -15,6 +15,7 @@ import {
   type PendingKind,
   type PendingRequest,
   type PermissionModeName,
+  type QueuedMessage,
   type RewindResult,
   type TaskInfo,
   type UsageInfo,
@@ -22,7 +23,7 @@ import {
 import { elicitResult } from "../elicit.ts";
 import { gaugeOf } from "./context-gauge.ts";
 import type { FileContents } from "./file-read.ts";
-import { ItemBuilder, clipInput, type RawMessage } from "./items.ts";
+import { ItemBuilder, clipInput, typedContent, type RawMessage } from "./items.ts";
 
 const STREAM_FLUSH_MS = 80;
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -42,6 +43,9 @@ const TASK_STATUS = new Map<unknown, TaskInfo["status"]>([
   ["killed", "stopped"],
   ["stopped", "stopped"],
 ]);
+const QUEUE_MAX = 100;
+// Command lifecycle states that end a queued message without Claude Code taking it in.
+const UNQUEUED = new Set<unknown>(["cancelled", "discarded", "refused"]);
 // An approved plan continues in the chosen mode, so only modes offered remotely may be named.
 const PLAN_DECISIONS = new Set<unknown>(["auto", "acceptEdits", "default", "keep_planning"]);
 
@@ -150,6 +154,9 @@ export abstract class SessionCore extends EventEmitter {
   readonly builder: ItemBuilder;
   readonly pending = new Map<string, PendingEntry>();
   readonly tasks = new Map<string, TaskInfo>();
+  // Messages Claude Code holds until it takes them in, and the ones it has said it holds.
+  readonly queue = new Map<string, QueuedMessage>();
+  private held = new Set<string>();
   // Claude Code's own watchers, which run for the whole session and are not the user's work.
   private ambientTasks = new Set<string>();
   // How long a task that has ended stays listed.
@@ -218,6 +225,7 @@ export abstract class SessionCore extends EventEmitter {
       costUsd: this.costUsd,
       closedReason: this.closedReason,
       ...(this.tasks.size ? { tasks: [...this.tasks.values()] } : {}),
+      ...(this.queue.size ? { queued: [...this.queue.values()] } : {}),
     };
   }
 
@@ -313,11 +321,63 @@ export abstract class SessionCore extends EventEmitter {
     return detail;
   }
 
-  // The item for a message sent from here, before Claude Code echoes it.
-  protected sentItem(uuid: string, text: string, blocks: ContentBlock[] = []): DisplayItem {
-    const images = blocks.filter((b) => b.type === "image").length;
-    const files = blocks.filter((b) => b.type === "document").map((b) => String(b.title ?? ""));
-    return this.builder.userText(uuid, text, new Date().toISOString(), images, files.length ? files : undefined);
+  // A message waits below the conversation until Claude Code takes it in, which places it where the model
+  // reads it: at the start of a turn, or after a tool result when it arrives mid-turn.
+  protected enqueue(id: string, content: unknown, from: QueuedMessage["from"], ts = new Date().toISOString()): void {
+    if (this.closed || this.queue.has(id) || this.builder.has(id)) return;
+    const { text, images, files } = typedContent(content);
+    if (!text && !images && !files.length) return;
+    this.queue.set(id, { id, ts, text, ...(images ? { images } : {}), ...(files.length ? { files } : {}), from });
+    if (this.queue.size > QUEUE_MAX) this.dequeue(this.queue.keys().next().value!);
+    this.emit("state");
+  }
+
+  protected queueSent(uuid: string, text: string, blocks: ContentBlock[] = []): void {
+    this.enqueue(uuid, [...blocks, ...(text ? [{ type: "text", text }] : [])], "remote");
+  }
+
+  // Takes back a message sent from here while Claude Code still holds it.
+  async unqueue(messageId: string): Promise<void> {
+    this.ensureOpen();
+    const q = this.queue.get(messageId);
+    if (!q) throw Error("message is no longer queued");
+    if (q.from !== "remote") throw Error("only a message sent from here can be taken back");
+    if (!(await this.cancelQueued(messageId))) throw Error("message is no longer queued");
+    this.dequeue(messageId);
+    this.touch();
+  }
+
+  protected cancelQueued(_messageId: string): Promise<boolean> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  private dequeue(id: string): void {
+    this.held.delete(id);
+    if (this.queue.delete(id)) this.emit("state");
+  }
+
+  private deliver(id: string): void {
+    const q = this.queue.get(id);
+    if (!q) return;
+    this.emit("item", this.builder.userText(q.id, q.text, q.ts, q.images, q.files));
+    this.dequeue(id);
+  }
+
+  // Claude Code reports each message it is given as queued, then started (taken in) or cancelled. Messages it
+  // has confirmed keep its order, ahead of the ones it has not seen yet.
+  private onLifecycle(m: Obj): void {
+    const id = m.command_uuid;
+    const q = typeof id === "string" ? this.queue.get(id) : undefined;
+    if (!q) return;
+    if (m.state === "queued") {
+      const rest = [...this.queue.values()].filter((x) => x.id !== q.id);
+      const order = [...rest.filter((x) => this.held.has(x.id)), q, ...rest.filter((x) => !this.held.has(x.id))];
+      this.queue.clear();
+      for (const x of order) this.queue.set(x.id, x);
+      this.held.add(q.id);
+      this.emit("state");
+    } else if (m.state === "started" || m.state === "completed") this.deliver(q.id);
+    else if (UNQUEUED.has(m.state)) this.dequeue(q.id);
   }
 
   async setMode(mode: PermissionModeName): Promise<void> {
@@ -435,6 +495,8 @@ export abstract class SessionCore extends EventEmitter {
     for (const timer of this.taskTimers.values()) clearTimeout(timer);
     this.taskTimers.clear();
     this.tasks.clear();
+    this.queue.clear();
+    this.held.clear();
     this.endStream();
     this.emit("closed", reason);
   }
@@ -443,6 +505,10 @@ export abstract class SessionCore extends EventEmitter {
     if (m.type === "assistant" || m.type === "user" || m.type === "result" || m.type === "stream_event") this.lastActivity = Date.now();
     if (m.type === "stream_event") {
       if (!m.parent_tool_use_id) this.onStream(m.event as StreamEvent);
+      return;
+    }
+    if (m.type === "command_lifecycle") {
+      this.onLifecycle(m);
       return;
     }
     if (m.type === "system") {
@@ -485,6 +551,9 @@ export abstract class SessionCore extends EventEmitter {
       this.emit("state");
     }
     for (const item of this.builder.add(m)) this.emit("item", item);
+    if (m.type === "user" && m.isReplay === true && typeof m.uuid === "string") this.dequeue(m.uuid);
+    // Nothing is left in Claude Code's queue, so what it said it held has been taken in or dropped.
+    if (m.type === "result" && m.queued_turn_count === 0) for (const id of [...this.held]) this.dequeue(id);
   }
 
   protected onInit(): void {}

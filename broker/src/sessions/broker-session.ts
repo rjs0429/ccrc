@@ -167,7 +167,7 @@ export class BrokerSession extends SessionCore {
       uuid,
       origin: { kind: "human" },
     };
-    this.emit("item", this.sentItem(uuid, text, blocks));
+    this.queueSent(uuid, text, blocks);
     this.input.push(message);
     this.busy = true;
     this.touch();
@@ -231,6 +231,10 @@ export class BrokerSession extends SessionCore {
 
   async stopTask(taskId: string): Promise<void> {
     await timed(this.query().stopTask(this.runningTask(taskId)), REQUEST_MS);
+  }
+
+  protected async cancelQueued(messageId: string): Promise<boolean> {
+    return (await this.request({ subtype: "cancel_async_message", message_uuid: messageId })).response?.cancelled === true;
   }
 
   // Resolves once the current turn is over and nothing waits for an answer, or after `ms`.

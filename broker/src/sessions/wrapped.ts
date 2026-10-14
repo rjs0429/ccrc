@@ -70,9 +70,15 @@ export class WrappedSession extends SessionCore {
     else this.onMessage(m as RawMessage & Obj);
   }
 
-  // VS Code's own control requests, for settings it changes without Claude Code reporting them.
+  // VS Code's own control requests, for settings it changes without Claude Code reporting them, and the
+  // messages written to Claude Code that it has not taken in yet ("remote" marks the ones sent from here).
   onIn(m: Obj): void {
-    if (this.hold("in", m) || m.type !== "control_request") return;
+    if (this.hold("in", m)) return;
+    if (m.type === "user" && typeof m.uuid === "string") {
+      this.enqueue(m.uuid, obj(m.message).content, m.remote === true ? "remote" : "host", str(m.timestamp));
+      return;
+    }
+    if (m.type !== "control_request") return;
     const r = obj(m.request);
     if (r.subtype === "set_model" && typeof r.model === "string" && r.model !== "default") this.model = r.model;
     else if (r.subtype === "set_permission_mode" && typeof r.mode === "string") this.permissionMode = r.mode;
@@ -103,7 +109,7 @@ export class WrappedSession extends SessionCore {
         message: { role: "user", content: [...blocks, ...(text ? [{ type: "text", text }] : [])] },
       },
     });
-    this.emit("item", this.sentItem(uuid, text, blocks));
+    this.queueSent(uuid, text, blocks);
     this.busy = true;
     this.touch();
   }
@@ -177,6 +183,10 @@ export class WrappedSession extends SessionCore {
 
   async stopTask(taskId: string): Promise<void> {
     await this.link.request({ subtype: "stop_task", task_id: this.runningTask(taskId) });
+  }
+
+  protected async cancelQueued(messageId: string): Promise<boolean> {
+    return (await this.link.request({ subtype: "cancel_async_message", message_uuid: messageId })).cancelled === true;
   }
 
   protected async applyMode(mode: PermissionModeName): Promise<void> {

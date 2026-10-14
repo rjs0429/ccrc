@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { hideDialogCommands } from "../../../broker/src/dialog-commands.ts";
-import type { DisplayItem, SubagentActivity } from "../../../broker/src/protocol.ts";
+import type { DisplayItem, QueuedMessage, SubagentActivity } from "../../../broker/src/protocol.ts";
 import { clock, noteText } from "../labels.ts";
 import { useApp } from "../state.ts";
 import { DiffView, PatchStats } from "./diff/DiffView.tsx";
@@ -11,8 +11,12 @@ import { ToolInput, ToolOutput } from "./ToolInput.tsx";
 import { Folded } from "./tools/parts.tsx";
 import { Icon, Spinner } from "./ui.tsx";
 
+function attachedText(images?: number, files?: string[]): string {
+  return [images ? `이미지 ${images}개` : "", ...(files ?? []).map((f) => f || "문서")].filter(Boolean).join(" · ");
+}
+
 function UserItem({ text, ts, images, files }: { text: string; ts?: string; images?: number; files?: string[] }) {
-  const attached = [images ? `이미지 ${images}개` : "", ...(files ?? []).map((f) => f || "문서")].filter(Boolean).join(" · ");
+  const attached = attachedText(images, files);
   return (
     <div className="flex flex-col items-end">
       <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words">
@@ -20,6 +24,29 @@ function UserItem({ text, ts, images, files }: { text: string; ts?: string; imag
         {attached && <div className={`text-xs break-all text-muted ${text ? "mt-1" : ""}`}>{attached}</div>}
       </div>
       {ts && <div className="mt-1 text-[11px] text-muted">{clock(ts)}</div>}
+    </div>
+  );
+}
+
+// A message Claude Code has not taken in yet. One sent from here can be taken back.
+export function QueuedItem({ message, host, onTakeBack, taking }: { message: QueuedMessage; host: string; onTakeBack?: () => void; taking?: boolean }) {
+  const attached = attachedText(message.images, message.files);
+  return (
+    <div className="flex flex-col items-end" data-queued={message.id}>
+      <div className="flex max-w-[88%] items-center gap-1">
+        {onTakeBack && (
+          <button onClick={onTakeBack} disabled={taking} aria-label="보내지 않기" className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted disabled:opacity-40">
+            <Icon.x className="size-4" />
+          </button>
+        )}
+        <div className="min-w-0 rounded-2xl rounded-br-md border border-dashed border-line bg-surface-2/60 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-muted">
+          {message.text}
+          {attached && <div className={`text-xs break-all ${message.text ? "mt-1" : ""}`}>{attached}</div>}
+        </div>
+      </div>
+      <div className="mt-1 text-[11px] text-muted">
+        {taking ? "되돌리는 중…" : message.from === "host" && host ? `대기 중 · ${host}에서 보냄` : "대기 중"}
+      </div>
     </div>
   );
 }

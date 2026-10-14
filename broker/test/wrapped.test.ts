@@ -234,12 +234,13 @@ test("a prompt Claude Code shows only locally cannot be answered remotely", asyn
   await assert.rejects(s.answer("p4", { kind: "permission", decision: "allow" }), /only be answered where the session is open/);
 });
 
-test("remote input goes in as a VS Code user message and shows at once", async () => {
-  const { s, wrapper, next } = await session();
-  const item = next("item");
+test("remote input goes in as a VS Code user message and shows at once as queued", async () => {
+  const { s, wrapper } = await session();
   s.send("hello from the phone");
-  const [shown] = (await item) as [{ kind: string; id: string; text: string }];
-  assert.equal(shown.kind, "user");
+  const [shown] = s.state().queued ?? [];
+  assert.equal(shown?.text, "hello from the phone");
+  assert.equal(shown?.from, "remote");
+  assert.equal(s.builder.items.length, 0);
   const f = await wrapper.wait((x) => x.t === "to_cli" && (x.m as Msg).type === "user", "user frame");
   const m = f.m as Msg;
   assert.equal(m.uuid, shown.id);
@@ -683,4 +684,134 @@ test("the output style follows VS Code's answers and is set only to a listed sty
   wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "vs-3", response: { applied: {} } } });
   for (let i = 0; i < 50 && s.outputStyle !== "default"; i++) await new Promise((r) => setTimeout(r, 10));
   assert.equal(s.state().outputStyle, "default", "with no style in the settings the announced one holds");
+});
+
+const until = async (ok: () => boolean, label: string) => {
+  for (let i = 0; i < 100 && !ok(); i++) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(ok(), label);
+};
+const lifecycle = (id: string, state: string) => ({ type: "command_lifecycle", command_uuid: id, state, uuid: `lc-${id}-${state}`, session_id: SID });
+const replay = (id: string, text: string, timestamp: string) => ({
+  type: "user",
+  uuid: id,
+  session_id: SID,
+  parent_tool_use_id: null,
+  isReplay: true,
+  timestamp,
+  message: { role: "user", content: [{ type: "text", text }] },
+});
+const toolUse = (uuid: string, id: string) => ({ type: "assistant", uuid, session_id: SID, message: { content: [{ type: "tool_use", id, name: "Bash", input: { command: "sleep 5" } }] } });
+const toolResult = (uuid: string, id: string) => ({ type: "user", uuid, session_id: SID, message: { content: [{ type: "tool_result", tool_use_id: id, content: "done" }] } });
+
+test("a message sent during a turn waits below the conversation and lands where Claude Code takes it in", async () => {
+  const { s, wrapper } = await session();
+  wrapper.out({ type: "system", subtype: "init", session_id: SID });
+  wrapper.out(toolUse("a1", "t1"));
+  await until(() => s.builder.items.length === 1, "the tool call shows");
+  s.send("also check the tests");
+  const id = s.state().queued![0].id;
+  wrapper.out(lifecycle(id, "queued"));
+  wrapper.out({ type: "assistant", uuid: "a2", session_id: SID, message: { content: [{ type: "text", text: "still working" }] } });
+  await until(() => s.builder.items.length === 2, "the answer goes on");
+  assert.equal(s.state().queued?.length, 1, "still queued while the tool runs");
+  wrapper.out(toolResult("u2", "t1"));
+  wrapper.out(replay(id, "also check the tests", "2026-10-14T12:00:00.000Z"));
+  wrapper.out(lifecycle(id, "started"));
+  await until(() => !s.state().queued, "taken in");
+  assert.deepEqual(
+    s.builder.items.map((i) => i.id),
+    ["t1", "a2:0", id],
+    "it sits after the tool result, not where it was sent",
+  );
+  const item = s.builder.items.at(-1)!;
+  assert.equal(item.kind === "user" && item.text, "also check the tests");
+  assert.equal(item.ts, "2026-10-14T12:00:00.000Z");
+});
+
+test("a message that starts a turn shows when Claude Code starts it and its echo updates it in place", async () => {
+  const { s, wrapper } = await session();
+  s.send("first");
+  const id = s.state().queued![0].id;
+  wrapper.out(lifecycle(id, "queued"));
+  wrapper.out(lifecycle(id, "started"));
+  await until(() => s.builder.items.length === 1, "it moves into the conversation");
+  assert.equal(s.state().queued, undefined);
+  wrapper.out({ type: "system", subtype: "init", session_id: SID });
+  wrapper.out(replay(id, "first", "2026-10-14T12:00:00.000Z"));
+  wrapper.out({ type: "assistant", uuid: "a1", session_id: SID, message: { content: [{ type: "text", text: "hi" }] } });
+  await until(() => s.builder.items.length === 2, "the answer follows");
+  assert.deepEqual(
+    s.builder.items.map((i) => i.id),
+    [id, "a1:0"],
+  );
+});
+
+test("messages from VS Code show as queued at once, in Claude Code's order with the phone's", async () => {
+  const { s, wrapper } = await session();
+  s.send("from the phone");
+  const phone = s.state().queued![0].id;
+  wrapper.send({ m: { type: "user", uuid: "vs-1", timestamp: "2026-10-14T12:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "from VS Code" }, { type: "image" }] } }, t: "in" });
+  await until(() => s.state().queued?.length === 2, "the VS Code message is queued");
+  assert.deepEqual(
+    s.state().queued!.map((q) => [q.id, q.from]),
+    [
+      [phone, "remote"],
+      ["vs-1", "host"],
+    ],
+  );
+  assert.equal(s.state().queued![1].images, 1);
+  // Claude Code got VS Code's line first.
+  wrapper.out(lifecycle("vs-1", "queued"));
+  await until(() => s.state().queued![0].id === "vs-1", "Claude Code's order wins");
+  wrapper.out(lifecycle(phone, "queued"));
+  wrapper.send({ m: { type: "user", uuid: "vs-2", message: { role: "user", content: "later" } }, t: "in" });
+  await until(() => s.state().queued?.length === 3, "a third one");
+  assert.deepEqual(
+    s.state().queued!.map((q) => q.id),
+    ["vs-1", phone, "vs-2"],
+  );
+  await assert.rejects(s.unqueue("vs-1"), /only a message sent from here/);
+  const snap = s.state();
+  assert.deepEqual(
+    snap.queued!.map((q) => q.text),
+    ["from VS Code", "from the phone", "later"],
+    "a reconnecting phone gets the queue with the state",
+  );
+});
+
+test("a queued message sent from here is taken back with cancel_async_message", async () => {
+  const { s, wrapper } = await session();
+  const asked: Msg[] = [];
+  wrapper.autoReply((r) => {
+    asked.push(r);
+    return { cancelled: r.message_uuid !== "gone" };
+  });
+  s.send("never mind");
+  const id = s.state().queued![0].id;
+  wrapper.out(lifecycle(id, "queued"));
+  await s.unqueue(id);
+  assert.deepEqual(asked, [{ subtype: "cancel_async_message", message_uuid: id }]);
+  assert.equal(s.state().queued, undefined);
+  wrapper.out(lifecycle(id, "cancelled"));
+  await assert.rejects(s.unqueue(id), /no longer queued/);
+  assert.equal(s.builder.items.length, 0, "nothing lands in the conversation");
+});
+
+test("Claude Code dropping a message or finishing with an empty queue clears it", async () => {
+  const { s, wrapper } = await session();
+  s.send("one");
+  s.send("two");
+  s.send("three");
+  const [one, two, three] = s.state().queued!.map((q) => q.id);
+  wrapper.out(lifecycle(one, "queued"));
+  wrapper.out(lifecycle(two, "queued"));
+  wrapper.out(lifecycle(one, "refused"));
+  await until(() => s.state().queued?.length === 2, "a refused message leaves the queue");
+  wrapper.out({ type: "result", subtype: "success", is_error: false, session_id: SID, queued_turn_count: 0 });
+  await until(() => s.state().queued?.length === 1, "what Claude Code held is gone once it has none left");
+  assert.equal(s.state().queued![0].id, three, "one it has not seen yet stays");
+  const closed = new Promise((r) => s.once("closed", r));
+  s.end("vscode_closed");
+  await closed;
+  assert.equal(s.state().queued, undefined);
 });

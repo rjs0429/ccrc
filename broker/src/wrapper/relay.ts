@@ -21,6 +21,8 @@ const USER = Buffer.from('"type":"user"');
 const APPLIED = Buffer.from('"applied":');
 const RATE_LIMITS = Buffer.from('"rate_limits"');
 const STYLES = Buffer.from('"available_output_styles"');
+const LIFECYCLE = Buffer.from('"command_lifecycle"');
+const REPLAY = Buffer.from('"isReplay":true');
 // The broker sees the conversation, these requests from Claude Code (only can_use_tool may be answered
 // remotely), the answer to VS Code's initialize, the applied part of its get_settings answers, and these
 // settings changes from VS Code; other control traffic between VS Code and Claude Code stays between them.
@@ -42,6 +44,7 @@ const REMOTE_REQUESTS = new Set([
   "rewind_files",
   "stop_task",
   "read_file",
+  "cancel_async_message",
 ]);
 // Broker requests after which VS Code is told to read the applied settings again.
 const SETTINGS_CHANGES = new Set(["set_model", "apply_flag_settings"]);
@@ -55,6 +58,7 @@ const STYLES_MAX = 100;
 const USAGE_WINDOWS = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"];
 const SESSION_TOTALS = ["total_cost_usd", "total_duration_ms", "total_api_duration_ms", "total_lines_added", "total_lines_removed"];
 const SETTLED_KEEP = 500;
+const WAITING_KEEP = 100;
 const ASKED_KEEP = 100;
 const LINK_BUFFER_MAX = 16 * 1024 * 1024;
 const RELEASE_WAIT_MS = 9000;
@@ -146,6 +150,23 @@ export function allowedReadFile(req: Record<string, unknown>): boolean {
 
 const plainObj = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+// A user message written to Claude Code, reduced to what the conversation shows of it: its text and the kind
+// of each attachment. `remote` marks one the broker sent.
+export function waitingCopy(msg: Record<string, unknown>, remote: boolean): Buffer | undefined {
+  if (typeof msg.uuid !== "string" || !msg.uuid || msg.isSynthetic === true || typeof msg.parent_tool_use_id === "string") return undefined;
+  const content = plainObj(msg.message).content;
+  const blocks = (typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? content : []).flatMap((v): Record<string, unknown>[] => {
+    const b = plainObj(v);
+    if (b.type === "text" && typeof b.text === "string") return [{ type: "text", text: b.text }];
+    if (b.type === "image") return [{ type: "image" }];
+    if (b.type === "document") return [{ type: "document", ...(typeof b.title === "string" ? { title: b.title } : {}) }];
+    return [];
+  });
+  if (!blocks.length) return undefined;
+  const copy = { type: "user", uuid: msg.uuid, timestamp: new Date().toISOString(), ...(remote ? { remote: true } : {}), message: { role: "user", content: blocks } };
+  return Buffer.from(JSON.stringify(copy));
+}
 
 function usageWindow(v: unknown, label?: unknown): Record<string, unknown> {
   const w = plainObj(v);
@@ -255,6 +276,8 @@ export class Relay extends EventEmitter {
   // The output styles Claude Code last listed, which the broker may switch the project to.
   private styles?: string[];
   private state = new Map<string, { seq: number; t: "out" | "in"; line: Buffer }>();
+  // User messages written to Claude Code that it has not taken in yet, as copies for the broker.
+  private waiting = new Map<string, { line: Buffer; remote: boolean }>();
   private seq = 0;
   private sessionId?: string;
   private claim?: string;
@@ -387,9 +410,16 @@ export class Relay extends EventEmitter {
   }
 
   private fromHost(line: Buffer): void {
-    if (line.includes(CONTROL)) {
-      const msg = parseLine(line);
-      if (msg?.type === "control_response") {
+    const user = line.includes(USER);
+    const msg = user || line.includes(CONTROL) ? parseLine(line) : undefined;
+    if (user && msg?.type === "user") {
+      const copy = waitingCopy(msg, false);
+      if (copy) {
+        this.wait(msg.uuid as string, copy, false);
+        this.copy("in", copy);
+      }
+    } else if (msg) {
+      if (msg.type === "control_response") {
         const id = (msg.response as Record<string, unknown> | undefined)?.request_id;
         if (typeof id === "string") {
           const by = this.settled.get(id);
@@ -457,6 +487,7 @@ export class Relay extends EventEmitter {
     this.toHost(line);
     this.noteTurn(line, msg);
     if (line.includes(STATUS)) this.noteStatus(line, msg);
+    if (this.waiting.size && (line.includes(LIFECYCLE) || line.includes(REPLAY))) this.noteTakenIn(line, msg);
     if (!shared) return;
     this.noteState(line, msg);
     this.copy("out", line);
@@ -477,6 +508,19 @@ export class Relay extends EventEmitter {
       const m = parsed ?? parseLine(line);
       if (m?.type === "user" || (m?.type === "system" && m.subtype === "init")) this.running = true;
     }
+  }
+
+  private wait(uuid: string, line: Buffer, remote: boolean): void {
+    this.waiting.delete(uuid);
+    this.waiting.set(uuid, { line, remote });
+    if (this.waiting.size > WAITING_KEEP) this.waiting.delete(this.waiting.keys().next().value!);
+  }
+
+  // A message leaves the waiting list once Claude Code starts, finishes or drops it, or replays it as taken in.
+  private noteTakenIn(line: Buffer, parsed?: Record<string, unknown>): void {
+    const m = parsed ?? parseLine(line);
+    if (m?.type === "command_lifecycle" && m.state !== "queued" && typeof m.command_uuid === "string") this.waiting.delete(m.command_uuid);
+    else if (m?.type === "user" && m.isReplay === true && typeof m.uuid === "string") this.waiting.delete(m.uuid);
   }
 
   private noteStatus(line: Buffer, parsed?: Record<string, unknown>): void {
@@ -518,6 +562,8 @@ export class Relay extends EventEmitter {
     if (this.hostEnded || this.finished) return reject("closed", m.type === "control_request" ? m.request_id : undefined);
     if (m.type === "user") {
       if ((m.message as Record<string, unknown> | undefined)?.role !== "user") return reject("invalid user message");
+      const copy = waitingCopy(m, true);
+      if (copy) this.wait(m.uuid as string, copy, true);
       this.toChild(Buffer.from(JSON.stringify(m)));
       return;
     }
@@ -529,6 +575,8 @@ export class Relay extends EventEmitter {
       if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
       if (req.subtype === "read_file" && !allowedReadFile(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "update_settings" && !allowedUpdateSettings(req, this.styles)) return reject("setting not allowed", m.request_id);
+      // Only a message the broker sent may be taken back; VS Code shows a cancelled message of its own as sent.
+      if (req.subtype === "cancel_async_message" && !this.cancellable(req)) return reject("message not allowed", m.request_id);
       if (req.subtype === "get_settings" || req.subtype === "get_usage" || req.subtype === "update_settings" || SETTINGS_CHANGES.has(req.subtype)) {
         askFor(this.remoteAsked, m.request_id, req.subtype);
       }
@@ -556,6 +604,11 @@ export class Relay extends EventEmitter {
       return;
     }
     reject("unsupported");
+  }
+
+  private cancellable(req: Record<string, unknown>): boolean {
+    const id = req.message_uuid;
+    return Object.keys(req).every((k) => k === "subtype" || k === "message_uuid") && typeof id === "string" && this.waiting.get(id)?.remote === true;
   }
 
   private settle(id: string, by: Party): void {
@@ -641,6 +694,7 @@ export class Relay extends EventEmitter {
       if (this.child?.pid) this.send({ t: "spawned", cpid: this.child.pid });
       for (const s of [...this.state.values()].sort((a, b) => a.seq - b.seq)) this.copy(s.t, s.line);
       for (const { line } of this.open.values()) this.copy("out", line);
+      for (const { line } of this.waiting.values()) this.copy("in", line);
       if (claiming) this.gate!.wait(this.o.claimAckMs ?? 3000);
     });
     const split = new LineSplitter((line) => this.fromBroker(line));
