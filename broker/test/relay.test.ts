@@ -514,3 +514,37 @@ test("without the broker's go-ahead a session that stays held starts as a copy",
   const replay = await t.host.wait((m) => m.type === "user" && m.isReplay === true, "replay");
   assert.notEqual(replay.session_id, "jjjj");
 });
+
+// A notes folder that cannot be written to, as on a full disk.
+async function lockedNotes(fn: (turns: TurnStore) => Promise<void>): Promise<void> {
+  const dir = tempDir();
+  const turns = turnStore(dir);
+  turns.cut("kkkk", 1001);
+  turns.cut("llll", 1002);
+  fs.chmodSync(dir, 0o500);
+  try {
+    await fn(turns);
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+}
+
+test("a turn note that cannot be updated does not keep Claude Code from starting", async () => {
+  await lockedNotes(async (turns) => {
+    const t = await setup({ args: ["--resume", "kkkk"], relay: { turns, hostPid: 1002 } });
+    await t.started.catch((e) => {
+      t.relay.signal("SIGTERM");
+      throw e;
+    });
+    assert.equal(((await initOf(t)).m as Msg).continueTurn, null, "not continued when the rerun cannot be counted");
+  });
+});
+
+test("a turn note that cannot be cleared does not cut off what Claude Code writes next", async () => {
+  await lockedNotes(async (turns) => {
+    const t = await setup({ args: ["--resume", "llll"], relay: { turns, hostPid: 1002 } });
+    t.user("one");
+    t.user("two");
+    await t.host.wait((m) => m.type === "assistant" && JSON.stringify(m).includes("echo: two"), "the second turn");
+  });
+});
