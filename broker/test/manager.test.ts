@@ -16,6 +16,7 @@ fs.mkdirSync(sessionsDir, { recursive: true });
 const { LineSplitter, parseLine } = await import("../src/link/lines.ts");
 const { LinkServer } = await import("../src/link/server.ts");
 const { SessionManager } = await import("../src/sessions/manager.ts");
+const { projectDirName } = await import("../src/sessions/history.ts");
 
 type Msg = Record<string, unknown>;
 const X = "5f0e8a43-6a8b-4a0f-9f6e-2b7d7c1e9a10";
@@ -147,4 +148,23 @@ test("what a wrapper reports before naming its session is replayed in order", as
   await new Promise((r) => setTimeout(r, 100));
   const snap = await manager.snapshot(Y);
   assert.deepEqual(snap.pending, []);
+});
+
+test("a phone message left queued when VS Code closes stays in the stopped session's conversation", async () => {
+  const Z = "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d";
+  const dir = path.join(home, ".claude", "projects", projectDirName(home));
+  fs.mkdirSync(dir, { recursive: true });
+  const row = { sessionId: Z, cwd: home, type: "user", uuid: "2a3b4c5d-0000-4000-8000-000000000001", parentUuid: null, timestamp: "2026-10-14T03:00:00Z" };
+  fs.writeFileSync(path.join(dir, `${Z}.jsonl`), JSON.stringify({ ...row, message: { role: "user", content: "hello" } }) + "\n");
+  const { manager, connect, events } = await setup();
+  const w = await connect({ sessionId: Z });
+  await until(() => manager.isControlled(Z), "attached");
+  await manager.send(Z, "left behind");
+  w.sock.destroy();
+  await until(() => events.some(([e, id]) => e === "detached" && id === Z), "detached");
+  const snap = await manager.snapshot(Z);
+  assert.deepEqual(
+    snap.items.map((i) => [i.kind, "text" in i ? i.text : undefined]),
+    [["user", "hello"], ["note", "left behind"]],
+  );
 });

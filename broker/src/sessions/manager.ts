@@ -129,7 +129,8 @@ export class SessionManager extends EventEmitter {
   private wrapped = new Map<string, WrappedSession>();
   private starting = new Map<string, Promise<SessionCore>>();
   private claiming = new Set<string>();
-  private ended = new Map<string, { reason: string; at: number }>();
+  // Sessions that stopped lately, with the notes of phone messages Claude Code never took in, which no transcript keeps.
+  private ended = new Map<string, { reason: string; at: number; unsent: DisplayItem[] }>();
   private catalog?: { at: number; list: SDKSessionInfo[] };
   private viewed: string | null = null;
   private sweeper: NodeJS.Timeout;
@@ -293,7 +294,7 @@ export class SessionManager extends EventEmitter {
     const info = await this.info(sessionId);
     if (!info?.cwd) throw Error("unknown session");
     const [items, state] = await Promise.all([loadHistory(sessionId, info.cwd), this.idleState(sessionId, info.cwd, titleOf(info))]);
-    return { ...tail(items, focus), pending: [], state };
+    return { ...tail([...items, ...(this.ended.get(sessionId)?.unsent ?? [])], focus), pending: [], state };
   }
 
   // A session without a process this broker drives: whether one runs elsewhere, the transcript's last context
@@ -738,7 +739,8 @@ export class SessionManager extends EventEmitter {
       if (!this.current(s)) return;
       if (this.owned.get(s.id) === s) this.owned.delete(s.id);
       if (this.wrapped.get(s.id) === s) this.wrapped.delete(s.id);
-      this.ended.set(s.id, { reason, at: Date.now() });
+      const unsent = s.builder.items.filter((i) => i.kind === "note" && i.code === "unsent");
+      this.ended.set(s.id, { reason, at: Date.now(), unsent });
       this.catalog = undefined;
       this.emit("event", s.id, { t: "state", sessionId: s.id, state: s.state() });
       if (!isFolder(s.cwd)) void this.restate(s.id);
