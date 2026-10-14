@@ -176,6 +176,34 @@ test("a stopped session's gauge comes from its transcript and the window asked o
   await manager.closeAll();
 });
 
+test("a window that could not be asked is asked again a while later", async () => {
+  const V = "6e2b5c43-7f80-4192-9dae-2f3a4b5c6d7e";
+  writeTranscript(V, "claude-test-3");
+  const manager = new SessionManager(config, undefined, { probeRetryMs: 100 });
+  const answers: (() => Promise<{ max: number } | undefined>)[] = [
+    async () => {
+      throw Error("Claude Code did not answer");
+    },
+    async () => undefined,
+    async () => ({ max: 200_000 }),
+  ];
+  let probes = 0;
+  manager.windowProbe = () => answers[probes++]();
+  const gaugeOf = async () => (await manager.snapshot(V)).state.context;
+  assert.equal(await gaugeOf(), undefined);
+  await sleep(20);
+  assert.equal(await gaugeOf(), undefined);
+  assert.equal(probes, 1, "not asked again at once");
+  await sleep(150);
+  await gaugeOf();
+  await sleep(150);
+  await gaugeOf();
+  await sleep(20);
+  assert.equal(probes, 3);
+  assert.equal((await gaugeOf())?.max, 200_000);
+  await manager.closeAll();
+});
+
 test("the model list is asked of Claude Code once before any session reports it, and kept for the next run", async () => {
   fs.rmSync(path.join(home, "state", "models.json"), { force: true });
   const manager = new SessionManager(config);

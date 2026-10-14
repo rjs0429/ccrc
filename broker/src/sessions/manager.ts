@@ -45,11 +45,14 @@ const HANDOFF_OTHER_MS = 9_000;
 const EARLY_LINES_MAX = 500;
 const ENDED_KEEP_MS = 10 * 60_000;
 const USAGE_KEEP_MS = 30_000;
+// A model whose window could not be asked is asked again after this long.
+const PROBE_RETRY_MS = 60_000;
 const MODEL_NAME = /^[A-Za-z0-9][\w.:[\]\/@-]{0,99}$/;
 
 export interface ManagerTiming {
   handoffTurnMs: number;
   handoffOtherMs: number;
+  probeRetryMs: number;
 }
 
 export interface Snapshot {
@@ -111,7 +114,7 @@ export class SessionManager extends EventEmitter {
     super();
     this.cfg = cfg;
     this.audit = audit;
-    this.timing = { handoffTurnMs: HANDOFF_TURN_MS, handoffOtherMs: HANDOFF_OTHER_MS, ...timing };
+    this.timing = { handoffTurnMs: HANDOFF_TURN_MS, handoffOtherMs: HANDOFF_OTHER_MS, probeRetryMs: PROBE_RETRY_MS, ...timing };
     this.sweeper = setInterval(() => void this.sweep(), SWEEP_MS);
     this.sweeper.unref();
   }
@@ -283,13 +286,15 @@ export class SessionManager extends EventEmitter {
     if (!model) return undefined;
     let asked = this.probing.get(model);
     if (!asked) {
-      asked = this.windowProbe(cwd, model, this.cfg.claudePath).then(
-        (w) => {
-          if (w) this.windows.learn(model, w);
-          return w;
-        },
-        () => undefined,
-      );
+      const forget = () => {
+        setTimeout(() => this.probing.get(model) === asked && this.probing.delete(model), this.timing.probeRetryMs).unref();
+        return undefined;
+      };
+      asked = this.windowProbe(cwd, model, this.cfg.claudePath).then((w) => {
+        if (!w) return forget();
+        this.windows.learn(model, w);
+        return w;
+      }, forget);
       this.probing.set(model, asked);
     }
     void asked.then((w) => w && found());
