@@ -1,6 +1,7 @@
 // Stands in for Claude Code in relay tests. Reads stream-json lines and answers in a fixed way:
 // a user message is replayed and answered; "ASK" opens a permission prompt; "CANCEL" opens one and
-// withdraws it; "MCP" sends VS Code an MCP request; "BIG" answers with a very long line. Control
+// withdraws it; "MCP" sends VS Code an MCP request; "BIG" answers with a very long line; "HOLD" leaves
+// the turn running. Its init line reports whether it was asked to continue a cut-off turn. Control
 // requests get a success response, and each control_response it receives is reported back as
 // {"type":"answered"}. FAKE_BURST=1 writes a long line and an error result at start and exits at once;
 // FAKE_LINGER_MS keeps it running that long after its input ends.
@@ -17,7 +18,7 @@ const sid = value("--session-id") || (args.includes("--fork-session") ? undefine
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 let asks = 0;
 
-out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: "default", args });
+out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: "default", args, continueTurn: process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN ?? null });
 if (process.env.FAKE_BURST) {
   out({ type: "user", session_id: sid, message: { content: [{ type: "tool_result", content: "y".repeat(3_000_000) }] } });
   process.stdout.write(JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, session_id: sid }) + "\n", () => process.exit(1));
@@ -41,6 +42,7 @@ function handle(m) {
     const content = m.message.content;
     const text = typeof content === "string" ? content : content.map((c) => c.text).join("");
     out({ ...m, session_id: sid, uuid: m.uuid ?? randomUUID(), isReplay: true });
+    if (text === "HOLD") return;
     if (text === "MCP") {
       out({ type: "control_request", request_id: "mcp-1", request: { subtype: "mcp_message", server_name: "claude-vscode", message: { method: "x" } } });
       return;

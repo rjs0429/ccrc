@@ -60,28 +60,39 @@ function runDirect(reason: string): void {
 
 async function main(): Promise<void> {
   rotateLog();
+  log(`start cwd=${process.cwd()} args=${args.join(" ")}`);
   let relay;
   try {
     const { Relay } = await import("./relay.ts");
     const { linkSocketPath } = await import("../link/protocol.ts");
+    const { TurnStore } = await import("./turns.ts");
+    const vscode = await import("./vscode.ts");
+    const dataDir = vscode.userDataDir(process.env);
+    const launchArgs = await vscode.permissionArgs(args, dataDir);
+    if (launchArgs !== args) log("VS Code named no permission mode; Claude Code starts in its configured one");
     relay = new Relay({
       claudePath,
-      args,
+      args: launchArgs,
       cwd: process.cwd(),
       env: process.env,
       socketPath: linkSocketPath(),
       hostIn: process.stdin,
       hostOut: process.stdout,
       log,
+      hostPid: process.ppid,
+      turns: vscode.continuesAfterReload(dataDir) ? new TurnStore({ dir: path.join(stateDir(), "turns") }) : undefined,
     });
   } catch (e) {
     return runDirect(e instanceof Error ? e.message : String(e));
   }
   process.on("uncaughtException", (e) => log(`uncaught: ${e.stack ?? e.message}`));
   process.on("unhandledRejection", (e) => log(`unhandled: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`));
-  for (const s of SIGNALS) process.on(s, () => relay.signal(s));
+  for (const s of SIGNALS)
+    process.on(s, () => {
+      log(`received ${s}`);
+      relay.signal(s);
+    });
   relay.on("exit", exitLike);
-  log(`start cwd=${process.cwd()} args=${args.join(" ")}`);
   await relay.start();
 }
 

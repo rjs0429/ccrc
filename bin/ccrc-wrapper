@@ -23,8 +23,7 @@ NODE=${CCRC_NODE:-$DEFAULT_NODE}
 # run directly, which needs a Node that strips TypeScript.
 SRC=$(dirname "$(readlink -f "$0")")/../broker/src
 JS=$SRC/../dist/wrapper/main.js
-if [ -f "$JS" ] && [ "$JS" -nt "$SRC/wrapper/main.ts" ] && [ "$JS" -nt "$SRC/wrapper/relay.ts" ] &&
-  [ "$JS" -nt "$SRC/link/lines.ts" ] && [ "$JS" -nt "$SRC/link/protocol.ts" ]; then
+if [ -f "$JS" ] && [ -z "$(find "$SRC/wrapper" "$SRC/link" "$SRC/sessions/live.ts" -name '*.ts' -newer "$JS" 2>/dev/null | head -n 1)" ]; then
   MAIN=$JS
   if [ "$NODE" != "$DEFAULT_NODE" ]; then
     "$NODE" -e 'process.exit(+process.versions.node.split(".")[0] >= 20 ? 0 : 1)' 2>/dev/null || exec "$@"

@@ -23,7 +23,7 @@ const HOSTS: Record<string, string> = {
 let cache: { at: number; list: LiveProcess[] } | undefined;
 
 // Field 22 of /proc/<pid>/stat; Claude Code records the same value as `procStart`.
-function startTime(pid: number): string | undefined {
+export function startTime(pid: number): string | undefined {
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
     return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];

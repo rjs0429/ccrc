@@ -6,7 +6,8 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { after, test } from "node:test";
 import { LineSplitter, parseLine } from "../src/link/lines.ts";
-import { Relay, launchSession } from "../src/wrapper/relay.ts";
+import { Relay, launchSession, type RelayOptions } from "../src/wrapper/relay.ts";
+import { TurnStore } from "../src/wrapper/turns.ts";
 import { tempDir } from "./helpers.ts";
 
 const FAKE = new URL("./fixtures/fake-claude.mjs", import.meta.url).pathname;
@@ -91,7 +92,17 @@ after(async () => {
   for (const c of cleanups.reverse()) await c();
 });
 
-async function setup(opts: { broker?: boolean; args?: string[]; claimAckMs?: number; claimMaxMs?: number; env?: Record<string, string>; dirMode?: number } = {}) {
+type SetupOptions = {
+  broker?: boolean;
+  args?: string[];
+  claimAckMs?: number;
+  claimMaxMs?: number;
+  env?: Record<string, string>;
+  dirMode?: number;
+  relay?: Partial<RelayOptions>;
+};
+
+async function setup(opts: SetupOptions = {}) {
   const dir = tempDir();
   if (opts.dirMode !== undefined) fs.chmodSync(dir, opts.dirMode);
   const socketPath = path.join(dir, "link.sock");
@@ -114,6 +125,8 @@ async function setup(opts: { broker?: boolean; args?: string[]; claimAckMs?: num
     claimAckMs: opts.claimAckMs ?? 2000,
     claimMaxMs: opts.claimMaxMs,
     retryMs: [50],
+    heldElsewhere: () => false,
+    ...opts.relay,
   });
   const exited = new Promise<[number | null, string | null]>((resolve) => relay.on("exit", (code, signal) => resolve([code, signal])));
   const started = relay.start();
@@ -399,4 +412,68 @@ test("everything Claude Code wrote reaches VS Code before the wrapper exits", as
   assert.equal(code, 1);
   assert.equal(lines.length, 3);
   assert.equal(JSON.parse(lines[2]).type, "result");
+});
+
+// VS Code processes in these tests: 1001 went away (a reloaded window), 1002 is the current one.
+function turnStore(dir: string, alive = new Set([1002])): TurnStore {
+  return new TurnStore({ dir, processStart: (pid) => (alive.has(pid) ? `start-${pid}` : undefined), hostExitWaitMs: 300 });
+}
+
+const initOf = (t: { broker: FakeBroker }) => t.broker.frames.wait(frameOut((m) => m.type === "system" && m.subtype === "init"), "init");
+
+test("a turn VS Code leaves mid-way continues when another VS Code process reopens the session", async () => {
+  const turns = turnStore(tempDir());
+  const first = await setup({ args: ["--session-id", "ffff"], relay: { turns, hostPid: 1001 } });
+  first.user("HOLD");
+  await first.host.wait((m) => m.type === "user" && m.isReplay === true, "turn started");
+  first.hostIn.end();
+  await first.exited;
+  const again = await setup({ args: ["--resume", "ffff"], relay: { turns, hostPid: 1002 } });
+  assert.equal(((await initOf(again)).m as Msg).continueTurn, "1");
+  again.user("hi");
+  await again.host.wait((m) => m.type === "result", "turn completed");
+  const later = await setup({ args: ["--resume", "ffff"], relay: { turns, hostPid: 1002 } });
+  assert.equal(((await initOf(later)).m as Msg).continueTurn, null, "a completed turn is not continued");
+});
+
+test("a turn is not continued when the same VS Code process reopens the session", async () => {
+  const turns = turnStore(tempDir(), new Set([1001, 1002]));
+  const first = await setup({ args: ["--session-id", "gggg"], relay: { turns, hostPid: 1002 } });
+  first.user("HOLD");
+  await first.host.wait((m) => m.type === "user" && m.isReplay === true, "turn started");
+  first.hostIn.end();
+  await first.exited;
+  const again = await setup({ args: ["--resume", "gggg"], relay: { turns, hostPid: 1002 } });
+  assert.equal(((await initOf(again)).m as Msg).continueTurn, null);
+});
+
+test("a turn left with no turn running is not noted", async () => {
+  const turns = turnStore(tempDir());
+  const first = await setup({ args: ["--session-id", "hhhh"], relay: { turns, hostPid: 1001 } });
+  first.user("hi");
+  await first.host.wait((m) => m.type === "result", "turn completed");
+  first.hostIn.end();
+  await first.exited;
+  const again = await setup({ args: ["--resume", "hhhh"], relay: { turns, hostPid: 1002 } });
+  assert.equal(((await initOf(again)).m as Msg).continueTurn, null);
+});
+
+test("without the broker's go-ahead a resuming launch waits for the process that still holds the session", async () => {
+  let heldUntil = Date.now() + 600;
+  const t = await setup({ broker: false, args: ["--resume", "iiii"], relay: { heldElsewhere: () => Date.now() < heldUntil } });
+  const t0 = Date.now();
+  await t.started;
+  assert.ok(Date.now() - t0 >= 500, `started after ${Date.now() - t0} ms`);
+  t.user("hi");
+  const replay = await t.host.wait((m) => m.type === "user" && m.isReplay === true, "replay");
+  assert.equal(replay.session_id, "iiii", "the session itself, not a copy");
+  heldUntil = 0;
+});
+
+test("without the broker's go-ahead a session that stays held starts as a copy", async () => {
+  const t = await setup({ broker: false, args: ["--resume", "jjjj"], relay: { heldElsewhere: () => true, releaseWaitMs: 300 } });
+  await t.started;
+  t.user("hi");
+  const replay = await t.host.wait((m) => m.type === "user" && m.isReplay === true, "replay");
+  assert.notEqual(replay.session_id, "jjjj");
 });

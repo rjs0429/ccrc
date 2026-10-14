@@ -5,6 +5,8 @@ import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { LineSplitter, parseLine } from "../link/lines.ts";
 import { LINK_VERSION, REMOTE_PREFIX, isPrivateDir, type BrokerFrame, type Hello, type Party, type WrapperFrame } from "../link/protocol.ts";
+import { liveProcesses } from "../sessions/live.ts";
+import type { TurnStore } from "./turns.ts";
 
 const NL = Buffer.from("\n");
 const CONTROL = Buffer.from('"control_');
@@ -13,6 +15,8 @@ const STATUS = Buffer.from('"subtype":"status"');
 const MODE = Buffer.from('"permissionMode"');
 const STATE = Buffer.from('"subtype":"session_state_changed"');
 const MODELS = Buffer.from('"models":');
+const RESULT = Buffer.from('"type":"result"');
+const USER = Buffer.from('"type":"user"');
 // The broker sees the conversation, these requests from Claude Code (only can_use_tool may be answered
 // remotely), the answer to VS Code's initialize, and these settings changes from VS Code; other control
 // traffic between VS Code and Claude Code stays between them.
@@ -22,6 +26,7 @@ const HOST_SETTINGS = new Set(["set_model", "set_permission_mode", "apply_flag_s
 const REMOTE_REQUESTS = new Set(["interrupt", "set_model", "set_permission_mode", "apply_flag_settings", "get_context_usage"]);
 const SETTLED_KEEP = 500;
 const LINK_BUFFER_MAX = 16 * 1024 * 1024;
+const RELEASE_WAIT_MS = 9000;
 
 export interface RelayOptions {
   claudePath: string;
@@ -36,6 +41,13 @@ export interface RelayOptions {
   claimAckMs?: number;
   claimMaxMs?: number;
   retryMs?: number[];
+  // VS Code's process. When it goes away mid-turn, as on a window reload, `turns` notes the turn so the
+  // next launch of the session can continue it.
+  hostPid?: number;
+  turns?: TurnStore;
+  // Whether another process holds a session, and how long a resuming launch waits for it to let go.
+  heldElsewhere?: (sessionId: string) => boolean;
+  releaseWaitMs?: number;
 }
 
 export function argValue(args: string[], name: string): string | undefined {
@@ -101,6 +113,9 @@ export class Relay extends EventEmitter {
   private claim?: string;
   private gate?: Gate;
   private fork = false;
+  private claimSettled = false;
+  private running = false;
+  private hostLeft = false;
   private warnedDir = false;
   private link?: net.Socket;
   private retry = 0;
@@ -121,32 +136,72 @@ export class Relay extends EventEmitter {
     const split = new LineSplitter((line) => this.fromHost(line));
     this.o.hostIn.on("data", (chunk: Buffer) => split.push(chunk));
     this.o.hostIn.on("end", () => {
+      this.o.log("VS Code closed its input");
+      this.leave();
       split.end();
       this.hostEnded = true;
       this.child?.stdin?.end();
     });
-    this.o.hostOut.on("error", () => (this.hostGone = true));
+    this.o.hostOut.on("error", () => {
+      if (!this.hostGone) this.o.log("VS Code stopped reading");
+      this.hostGone = true;
+    });
     if (this.claim) this.gate = new Gate(this.o.claimAckMs ?? 3000, this.o.claimMaxMs ?? 45_000);
     this.connect();
+    let env = this.o.env;
     if (this.gate) {
       const t0 = Date.now();
       await this.gate.opened;
       this.o.log(`claim ${this.claim} took ${Date.now() - t0}ms`);
+      if (!this.claimSettled) await this.awaitRelease(this.claim!);
+      const extra = this.fork || this.finished || !this.o.hostPid ? undefined : await this.o.turns?.continueEnv(this.claim!, this.o.hostPid);
+      if (extra) {
+        this.o.log("continuing the turn VS Code left unfinished");
+        env = { ...env, ...extra };
+      }
     }
-    this.spawnChild();
+    this.spawnChild(env);
   }
 
   // Forwards a termination signal; before Claude Code has started the relay just ends.
   signal(sig: NodeJS.Signals): void {
+    this.leave();
     if (this.child) this.child.kill(sig);
     else this.finish(null, sig);
   }
 
-  private spawnChild(): void {
+  private leave(): void {
+    if (this.hostLeft) return;
+    this.hostLeft = true;
+    if (!this.running || !this.sessionId || !this.o.hostPid || !this.o.turns) return;
+    try {
+      this.o.turns.cut(this.sessionId, this.o.hostPid);
+      this.o.log("VS Code left during a turn");
+    } catch (e) {
+      this.o.log(`cannot note the unfinished turn: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Only the broker's go-ahead says the session's previous process is gone. Without it the launch waits for
+  // that process itself, and starts on a copy if it does not let go, so two processes never share a session.
+  private async awaitRelease(sessionId: string): Promise<void> {
+    const held = this.o.heldElsewhere ?? ((id: string) => liveProcesses({ fresh: true }).some((l) => l.sessionId === id));
+    if (this.finished || !held(sessionId)) return;
+    this.o.log(`session ${sessionId} is still open in another process; waiting for it`);
+    const until = Date.now() + (this.o.releaseWaitMs ?? RELEASE_WAIT_MS);
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 250));
+      if (this.finished || !held(sessionId)) return;
+    }
+    this.fork = true;
+    this.sessionId = undefined;
+  }
+
+  private spawnChild(env: NodeJS.ProcessEnv): void {
     if (this.finished) return;
     const args = this.fork && !this.o.args.includes("--fork-session") ? [...this.o.args, "--fork-session"] : this.o.args;
     if (this.fork) this.o.log(`session ${this.claim} is held by another process; starting a copy of it`);
-    const child = spawn(this.o.claudePath, args, { cwd: this.o.cwd, env: this.o.env, stdio: ["pipe", "pipe", "inherit"] });
+    const child = spawn(this.o.claudePath, args, { cwd: this.o.cwd, env, stdio: ["pipe", "pipe", "inherit"] });
     this.child = child;
     child.stdin!.on("error", () => {});
     child.on("error", (e) => {
@@ -216,9 +271,22 @@ export class Relay extends EventEmitter {
       }
     }
     this.toHost(line);
+    this.noteTurn(line, msg);
     if (!shared) return;
     this.noteState(line, msg);
     this.copy("out", line);
+  }
+
+  // A turn runs from its init line or the user message that opens it until its result.
+  private noteTurn(line: Buffer, parsed?: Record<string, unknown>): void {
+    if (line.includes(RESULT)) {
+      if ((parsed ?? parseLine(line))?.type !== "result") return;
+      this.running = false;
+      if (!this.hostLeft && this.sessionId) this.o.turns?.completed(this.sessionId);
+    } else if (!this.running && (line.includes(INIT) || line.includes(USER))) {
+      const m = parsed ?? parseLine(line);
+      if (m?.type === "user" || (m?.type === "system" && m.subtype === "init")) this.running = true;
+    }
   }
 
   private noteState(line: Buffer, parsed?: Record<string, unknown>): void {
@@ -390,9 +458,12 @@ export class Relay extends EventEmitter {
     if (!f) return;
     try {
       if (f.t === "claim_ok") {
-        if (f.fork && this.gate && !this.gate.isOpen) {
-          this.fork = true;
-          this.sessionId = undefined;
+        if (this.gate && !this.gate.isOpen) {
+          this.claimSettled = true;
+          if (f.fork) {
+            this.fork = true;
+            this.sessionId = undefined;
+          }
         }
         this.gate?.open();
       } else if (f.t === "claim_wait") this.gate?.wait(Math.max(0, Number(f.ms) || 0));
