@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import {
   query,
   type CanUseTool,
@@ -8,7 +9,9 @@ import {
   type PermissionUpdate,
   type Query,
   type SDKUserMessage,
+  type Settings,
 } from "@anthropic-ai/claude-agent-sdk";
+import { claudeSettingsFile } from "../claude-settings.ts";
 import { elicitInfo } from "../elicit.ts";
 import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
 import { rememberCommands } from "./commands.ts";
@@ -384,7 +387,27 @@ export class BrokerSession extends SessionCore {
   }
 }
 
-// Asks a Claude Code process started for this question alone: it loads no settings or MCP servers, writes no
+const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+
+// What a probe takes from the user's settings without loading them (and so their hooks or Remote Control): the
+// env, which may name where the account's credentials are, and the auto-compact window.
+export function probeSettings(file = claudeSettingsFile()): { env: Record<string, string>; settings: Settings } {
+  let data: unknown;
+  try {
+    data = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {}
+  if (!isObject(data)) return { env: {}, settings: {} };
+  const env = isObject(data.env) ? Object.fromEntries(Object.entries(data.env).filter((e): e is [string, string] => typeof e[1] === "string")) : {};
+  const settings: Settings = {};
+  if (typeof data.autoCompactWindow === "number") settings.autoCompactWindow = data.autoCompactWindow;
+  if (isObject(data.modelSettings)) {
+    const windows = Object.entries(data.modelSettings).flatMap(([m, v]) => (isObject(v) && v.autoCompactWindow !== undefined ? [[m, { autoCompactWindow: v.autoCompactWindow }]] : []));
+    if (windows.length) settings.modelSettings = Object.fromEntries(windows) as Settings["modelSettings"];
+  }
+  return { env, settings };
+}
+
+// Asks a Claude Code process started for this question alone: it loads no settings files or MCP servers, writes no
 // transcript and never starts a turn.
 async function probe<T>(cwd: string, claudePath: string | undefined, model: string | undefined, ask: (q: Query) => Promise<T>): Promise<T> {
   let release = () => {};
@@ -392,9 +415,20 @@ async function probe<T>(cwd: string, claudePath: string | undefined, model: stri
   async function* nothing(): AsyncGenerator<SDKUserMessage> {
     await held;
   }
+  const user = probeSettings();
   const q = query({
     prompt: nothing(),
-    options: { cwd, pathToClaudeCodeExecutable: claudePath, model, persistSession: false, settingSources: [], strictMcpConfig: true, stderr: () => {} },
+    options: {
+      cwd,
+      pathToClaudeCodeExecutable: claudePath,
+      model,
+      persistSession: false,
+      settingSources: [],
+      strictMcpConfig: true,
+      env: { ...process.env, ...user.env },
+      ...(Object.keys(user.settings).length ? { settings: user.settings } : {}),
+      stderr: () => {},
+    },
   });
   void (async () => {
     try {

@@ -429,9 +429,11 @@ export class SessionManager extends EventEmitter {
     const value = this.freshAccountUsage(cwd, s);
     const entry = { at: Date.now(), value };
     this.accountUsage = entry;
-    value.catch(() => {
+    // An answer without limits may come from a process that could not sign in, so it is not kept.
+    const forget = () => {
       if (this.accountUsage === entry) this.accountUsage = undefined;
-    });
+    };
+    value.then((u) => u.limits.length || forget(), forget);
     return value;
   }
 

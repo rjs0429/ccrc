@@ -131,6 +131,43 @@ test("the usage probe reads plan limits from a process of its own", async () => 
   assert.equal(usage.session, undefined);
 });
 
+test("a probe runs with the user's settings env and auto-compact window but not their hooks", async () => {
+  const settings = path.join(home, ".claude", "settings.json");
+  const requests = path.join(home, "probe-requests.jsonl");
+  fs.writeFileSync(
+    settings,
+    JSON.stringify({
+      env: { FAKE_REQUESTS: requests, CCRC_PROBE_NUMBER: 3 },
+      hooks: { SessionStart: [{ hooks: [{ type: "command", command: "false" }] }] },
+      remoteControlAtStartup: true,
+      autoCompactWindow: 400_000,
+      modelSettings: { "claude-test": { effortLevel: "high", autoCompactWindow: 300_000 } },
+    }),
+  );
+  try {
+    await probeUsage(cwd, FAKE);
+    const { args } = JSON.parse(fs.readFileSync(requests, "utf8").split("\n")[0]) as { args: string[] };
+    const flag = JSON.parse(args[args.indexOf("--settings") + 1]);
+    assert.deepEqual(flag, { autoCompactWindow: 400_000, modelSettings: { "claude-test": { autoCompactWindow: 300_000 } } });
+    assert.ok(args.includes("--setting-sources="), "no settings file is loaded");
+  } finally {
+    fs.rmSync(settings);
+    fs.rmSync(requests, { force: true });
+  }
+});
+
+test("plan limits that come back empty are not kept", async () => {
+  transcript(SID);
+  const manager = new SessionManager(config);
+  let asks = 0;
+  manager.usageProbe = async () => (asks++ ? { limits: [{ kind: "session", percent: 12 }] } : { limits: [] });
+  assert.deepEqual(await manager.call(SID, "usage", {}), { limits: [] });
+  assert.deepEqual(await manager.call(SID, "usage", {}), { limits: [{ kind: "session", percent: 12 }] });
+  assert.deepEqual(await manager.call(SID, "usage", {}), { limits: [{ kind: "session", percent: 12 }] });
+  assert.equal(asks, 2);
+  await manager.closeAll();
+});
+
 test("a resume from the phone is audited and the viewed session is shown again", async () => {
   class FakeSocket extends EventEmitter {
     readonly OPEN = 1;
