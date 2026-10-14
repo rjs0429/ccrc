@@ -9,7 +9,7 @@
 // "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data, and
 // "/status" the same way with text only; get_usage fails while the working folder holds a file named .fake-no-usage.
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
-// FAKE_REQUESTS=<file> gets a line with its arguments and then one per control request it receives.
+// FAKE_REQUESTS=<file> gets a line with its arguments and then one per control request or user message it receives.
 // --version prints a version and exits.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -61,6 +61,7 @@ function handle(m) {
   if (m.type === "user") {
     const content = m.message.content;
     const text = typeof content === "string" ? content : content.map((c) => c.text).join("");
+    record({ user: text });
     if (text === "/status") {
       const shown = "Version: 2.1.296 (fake)\nModel: fake-model";
       out({

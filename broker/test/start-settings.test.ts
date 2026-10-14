@@ -24,6 +24,7 @@ type ServerMsg = import("../src/protocol.ts").ServerMsg;
 
 const S = "3b9e2f10-4c5d-4e6f-8a7b-9c0d1e2f3a4b";
 const T = "4c0f3a21-5d6e-4f70-9b8c-0d1e2f3a4b5c";
+const U = "5d1a4b32-6e7f-4081-8c9d-1e2f3a4b5c6d";
 const cwd = path.join(home, "work");
 const FAKE = new URL("./fixtures/fake-claude.mjs", import.meta.url).pathname;
 const config = { host: "127.0.0.1", port: 0, allowedDevices: [], allowLocal: true, claudePath: FAKE, roots: [], leaseIdleMinutes: 1, sessionIdleMinutes: 1 };
@@ -50,6 +51,7 @@ function writeTranscript(sessionId: string, model: string): void {
 fs.mkdirSync(cwd, { recursive: true });
 writeTranscript(S, "claude-test-1");
 writeTranscript(T, "claude-test-2");
+writeTranscript(U, "claude-test-1");
 
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 
@@ -142,6 +144,20 @@ test("choices for a stopped session are kept, shown, audited, applied when the b
   say({ t: "set_effort", sessionId: S, effort: "low" });
   await sleep(200);
   assert.equal(logged.at(-1)?.[1].start, undefined, "a running session changes at once");
+});
+
+test("a message that starts a session goes out after the effort it starts with is applied", async () => {
+  const manager = new SessionManager(config);
+  manager.windowProbe = async () => undefined;
+  fs.rmSync(requests, { force: true });
+  await manager.setEffort(U, "max");
+  await manager.send(U, "hello there");
+  for (let i = 0; i < 150 && !recorded().some((r) => r.user === "hello there"); i++) await sleep(20);
+  const order = recorded()
+    .filter((r) => r.user === "hello there" || (r.request as { subtype?: string })?.subtype === "apply_flag_settings")
+    .map((r) => (r.user ? "user" : (r.request as { settings?: unknown }).settings));
+  assert.deepEqual(order, [{ effortLevel: "max" }, "user"]);
+  await manager.closeAll();
 });
 
 test("a stopped session's gauge comes from its transcript and the window asked of Claude Code once per model", async () => {

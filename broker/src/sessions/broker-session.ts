@@ -31,6 +31,7 @@ import { contextDetail, usageAnswer } from "./reports.ts";
 
 const CLOSE_WAIT_MS = 10_000;
 const REQUEST_MS = 15_000;
+const LATER_WAIT_MS = 20_000;
 // A process started for one question still has to start up and sign in.
 const PROBE_MS = 45_000;
 // An MCP server's input request left unanswered this long is cancelled.
@@ -61,6 +62,8 @@ class InputQueue {
   private queue: SDKUserMessage[] = [];
   private wake?: () => void;
   private closed = false;
+  // Nothing goes out before this settles.
+  held: Promise<void> = Promise.resolve();
 
   push(m: SDKUserMessage): void {
     this.queue.push(m);
@@ -73,6 +76,7 @@ class InputQueue {
   }
 
   async *messages(): AsyncGenerator<SDKUserMessage> {
+    await this.held;
     for (;;) {
       while (this.queue.length) yield this.queue.shift()!;
       if (this.closed) return;
@@ -102,6 +106,9 @@ export class BrokerSession extends SessionCore {
   start(opts: StartOptions): void {
     this.permissionMode = opts.mode;
     this.effort = opts.effort;
+    // The first message waits for the settings applied after start, so its turn already runs with them.
+    let ready = () => {};
+    if (opts.later) this.input.held = timed(new Promise<void>((r) => (ready = r)), LATER_WAIT_MS).catch(() => {});
     this.q = query({
       prompt: this.input.messages(),
       options: {
@@ -129,15 +136,16 @@ export class BrokerSession extends SessionCore {
       .then(async (r) => {
         this.adoptStyles(r.output_style, r.available_output_styles);
         if (opts.later) await this.applyLater(opts.later).catch(() => {});
+        ready();
         this.refreshApplied();
         this.refreshContext();
       })
-      .catch(() => {});
+      .catch(() => ready());
   }
 
   // Ultracode goes on only where the model offers it.
   private async applyLater({ effort, ultracode }: NonNullable<StartOptions["later"]>): Promise<void> {
-    if (ultracode) this.adoptSettings(await this.readApplied());
+    if (ultracode) this.adoptSettings(await this.readApplied().catch(() => ({})));
     const on = ultracode === true && this.ultracodeAvailable !== false;
     if (!effort && !on) return;
     await this.query().applyFlagSettings({ ...(effort ? { effortLevel: effort } : {}), ...(on ? { ultracode: true } : {}) });
