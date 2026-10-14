@@ -51,7 +51,7 @@ export function ThreadSheet({ thread, onClose }: { thread: ShownThread; onClose:
                 {m.at ? ` · ${when(m.at)}` : ""}
               </div>
               {m.role === "user" ? (
-                <div className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{m.text}</div>
+                <div className="text-[15px] leading-relaxed whitespace-pre-wrap">{m.text}</div>
               ) : (
                 <Markdown text={m.text} className="text-[15px]" />
               )}
