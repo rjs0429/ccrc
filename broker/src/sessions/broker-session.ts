@@ -8,11 +8,31 @@ import {
   type Query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { DisplayItem, EffortName, PermissionModeName } from "../protocol.ts";
-import { SessionCore, commandInfo, type ContentBlock, type Decision } from "./core.ts";
+import type { ContextDetail, DisplayItem, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import {
+  CONTEXT_MS,
+  MCP_CHANGE_MS,
+  SessionCore,
+  commandInfo,
+  contextDetail,
+  mcpServers,
+  rewindResult,
+  type ContentBlock,
+  type Decision,
+} from "./core.ts";
 import type { RawMessage } from "./items.ts";
 
 const CLOSE_WAIT_MS = 10_000;
+const REQUEST_MS = 15_000;
+
+// Claude Code's answer, or an error once `ms` pass without one.
+function timed<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(Error("Claude Code did not answer")), ms);
+  });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
+}
 
 export interface StartOptions {
   resume?: boolean;
@@ -119,6 +139,35 @@ export class BrokerSession extends SessionCore {
     await this.query().applyFlagSettings({ effortLevel: effort });
     this.effort = effort;
     this.touch();
+  }
+
+  async contextDetail(): Promise<ContextDetail> {
+    return this.counted(contextDetail(await timed(this.query().getContextUsage({ detail: "full" }), CONTEXT_MS)));
+  }
+
+  async mcpStatus(): Promise<McpServerInfo[]> {
+    return mcpServers(await timed(this.query().mcpServerStatus(), REQUEST_MS));
+  }
+
+  async mcpToggle(server: string, enabled: boolean): Promise<McpServerInfo[]> {
+    const name = await this.knownServer(server);
+    await timed(this.query().toggleMcpServer(name, enabled === true), MCP_CHANGE_MS);
+    return this.mcpStatus();
+  }
+
+  async mcpReconnect(server: string): Promise<McpServerInfo[]> {
+    const name = await this.knownServer(server);
+    await timed(this.query().reconnectMcpServer(name), MCP_CHANGE_MS);
+    return this.mcpStatus();
+  }
+
+  async rewind(userMessageId: string, dryRun: boolean): Promise<RewindResult> {
+    const id = this.rewindPoint(userMessageId, dryRun);
+    return rewindResult(await timed(this.query().rewindFiles(id, { dryRun }), REQUEST_MS));
+  }
+
+  async stopTask(taskId: string): Promise<void> {
+    await timed(this.query().stopTask(this.runningTask(taskId)), REQUEST_MS);
   }
 
   // Resolves once the current turn is over and nothing waits for an answer, or after `ms`.

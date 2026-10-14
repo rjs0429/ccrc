@@ -18,6 +18,33 @@ import { ItemBuilder, clipInput, type RawMessage } from "./items.ts";
 
 const STREAM_FLUSH_MS = 80;
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NAME_MAX = 200;
+const TEXT_MAX = 1000;
+const FILES_MAX = 500;
+const TASK_KEEP_MS = 5 * 60_000;
+const TASK_EVENTS = new Set(["task_started", "task_progress", "task_updated", "task_notification"]);
+const TASK_STATUS = new Map<unknown, TaskInfo["status"]>([
+  ["pending", "running"],
+  ["running", "running"],
+  ["paused", "running"],
+  ["completed", "completed"],
+  ["failed", "failed"],
+  ["killed", "stopped"],
+  ["stopped", "stopped"],
+]);
+const CONTEXT_KINDS = new Set<unknown>(["used", "free", "buffer", "deferred"]);
+
+// How long Claude Code may take to answer: counting the context by category calls the token-count API,
+// and turning on or reconnecting an MCP server waits for the server to connect.
+export const CONTEXT_MS = 60_000;
+export const MCP_CHANGE_MS = 45_000;
+
+type Obj = Record<string, unknown>;
+
+const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v);
+const clipped = (v: unknown, max = TEXT_MAX): string | undefined => (typeof v === "string" && v ? v.slice(0, max) : undefined);
+const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 export type Decision =
   | { behavior: "allow"; updatedInput: Record<string, unknown>; updatedPermissions?: unknown[] }
@@ -53,6 +80,54 @@ export function commandInfo(list: unknown): CommandInfo[] {
     }));
 }
 
+// Claude Code's get_context_usage answer, as the web client shows it.
+export function contextDetail(r: unknown): ContextDetail {
+  const o = isObj(r) ? r : {};
+  const model = clipped(o.model, NAME_MAX);
+  return {
+    percentage: count(o.percentage),
+    totalTokens: count(o.totalTokens),
+    maxTokens: count(o.maxTokens),
+    ...(model ? { model } : {}),
+    categories: (Array.isArray(o.categories) ? o.categories.filter(isObj) : []).map((c) => ({
+      name: clipped(c.name, NAME_MAX) ?? "",
+      tokens: count(c.tokens),
+      kind: CONTEXT_KINDS.has(c.kind) ? (c.kind as string) : c.isDeferred === true ? "deferred" : "used",
+    })),
+  };
+}
+
+// The servers of an mcp_status answer, with the number of tools in place of the tool list.
+export function mcpServers(list: unknown): McpServerInfo[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((s): s is Obj => isObj(s) && typeof s.name === "string" && s.name !== "")
+    .map((s) => {
+      const error = clipped(s.error);
+      const scope = clipped(s.scope, NAME_MAX) ?? clipped(s.source, NAME_MAX);
+      return {
+        name: s.name as string,
+        status: clipped(s.status, NAME_MAX) ?? "unknown",
+        ...(error ? { error } : {}),
+        ...(scope ? { scope } : {}),
+        ...(Array.isArray(s.tools) ? { tools: s.tools.length } : {}),
+      };
+    });
+}
+
+export function rewindResult(r: unknown): RewindResult {
+  const o = isObj(r) ? r : {};
+  const error = clipped(o.error);
+  const files = Array.isArray(o.filesChanged) ? o.filesChanged.filter((f): f is string => typeof f === "string") : undefined;
+  return {
+    canRewind: o.canRewind === true,
+    ...(error ? { error } : {}),
+    ...(files ? { filesChanged: files.slice(0, FILES_MAX) } : {}),
+    ...(typeof o.insertions === "number" ? { insertions: o.insertions } : {}),
+    ...(typeof o.deletions === "number" ? { deletions: o.deletions } : {}),
+  };
+}
+
 export interface PendingEntry {
   request: PendingRequest;
   input: Record<string, unknown>;
@@ -77,6 +152,8 @@ export abstract class SessionCore extends EventEmitter {
   readonly builder: ItemBuilder;
   readonly pending = new Map<string, PendingEntry>();
   readonly tasks = new Map<string, TaskInfo>();
+  // How long a task that has ended stays listed.
+  taskKeepMs = TASK_KEEP_MS;
   commands?: CommandInfo[];
   busy = false;
   model?: string;
@@ -89,6 +166,7 @@ export abstract class SessionCore extends EventEmitter {
   closedReason?: string;
 
   private ended = false;
+  private taskTimers = new Map<string, NodeJS.Timeout>();
   private streamText = "";
   private streamThinking = false;
   private streamTimer?: NodeJS.Timeout;
@@ -151,6 +229,33 @@ export abstract class SessionCore extends EventEmitter {
 
   stopTask(_taskId: string): Promise<void> {
     return Promise.reject(Error("not available for this session"));
+  }
+
+  // The web client names servers, messages and tasks; only the ones this session reports are passed on.
+  protected async knownServer(name: string): Promise<string> {
+    this.ensureOpen();
+    if (!name || name.length > NAME_MAX || !(await this.mcpStatus()).some((s) => s.name === name)) throw Error("unknown MCP server");
+    return name;
+  }
+
+  protected rewindPoint(userMessageId: string, dryRun: boolean): string {
+    this.ensureOpen();
+    if (!UUID.test(userMessageId) || !this.builder.items.some((i) => i.kind === "user" && i.id === userMessageId)) throw Error("unknown message");
+    if (!dryRun && this.busy) throw Error("session is busy");
+    return userMessageId;
+  }
+
+  protected runningTask(taskId: string): string {
+    this.ensureOpen();
+    if (this.tasks.get(taskId)?.status !== "running") throw Error("task is not running");
+    return taskId;
+  }
+
+  // A full count is also the current context percentage.
+  protected counted(detail: ContextDetail): ContextDetail {
+    this.contextPercent = Math.round(detail.percentage);
+    this.emit("state");
+    return detail;
   }
 
   // The item for a message sent from here, before Claude Code echoes it.
@@ -259,6 +364,9 @@ export abstract class SessionCore extends EventEmitter {
     this.closedReason = reason;
     this.busy = false;
     for (const id of [...this.pending.keys()]) this.unask(id);
+    for (const timer of this.taskTimers.values()) clearTimeout(timer);
+    this.taskTimers.clear();
+    this.tasks.clear();
     this.endStream();
     this.emit("closed", reason);
   }
@@ -294,6 +402,7 @@ export abstract class SessionCore extends EventEmitter {
         }
         return;
       }
+      if (TASK_EVENTS.has(m.subtype ?? "")) this.onTask(m);
     }
     if (m.type === "assistant" && !m.parent_tool_use_id) this.endStream();
     if (m.type === "result") {
@@ -307,6 +416,39 @@ export abstract class SessionCore extends EventEmitter {
   }
 
   protected onInit(): void {}
+
+  // Subagents, shells and workflows as Claude Code reports them. A task_updated carries its changes in
+  // `patch`; a task first seen through its progress counts as running. An ended task stays listed a while.
+  private onTask(m: Obj): void {
+    const id = m.task_id;
+    if (typeof id !== "string" || !id || id.length > NAME_MAX) return;
+    const prev = this.tasks.get(id);
+    const started = m.subtype === "task_started";
+    if (!prev && !started && m.subtype !== "task_progress") return;
+    const change = isObj(m.patch) ? m.patch : m;
+    const type = clipped(m.subagent_type, NAME_MAX) ?? clipped(m.task_type, NAME_MAX) ?? prev?.type;
+    const toolUseId = clipped(m.tool_use_id, NAME_MAX) ?? prev?.toolUseId;
+    const next: TaskInfo = {
+      id,
+      description: clipped(change.description) ?? prev?.description ?? "",
+      ...(type ? { type } : {}),
+      status: started ? "running" : (TASK_STATUS.get(change.status) ?? prev?.status ?? "running"),
+      ...(toolUseId ? { toolUseId } : {}),
+    };
+    if (JSON.stringify(next) === JSON.stringify(prev)) return;
+    this.tasks.set(id, next);
+    clearTimeout(this.taskTimers.get(id));
+    this.taskTimers.delete(id);
+    if (next.status !== "running") {
+      const timer = setTimeout(() => {
+        this.taskTimers.delete(id);
+        if (this.tasks.delete(id)) this.emit("state");
+      }, this.taskKeepMs);
+      timer.unref();
+      this.taskTimers.set(id, timer);
+    }
+    this.emit("state");
+  }
 
   private onStream(ev: StreamEvent): void {
     if (ev.type === "content_block_start") {

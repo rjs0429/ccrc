@@ -156,14 +156,14 @@ let callSeq = 0;
 const calls = new Map<number, { resolve: (data: unknown) => void; reject: (e: Error) => void; timer: number }>();
 
 // Asks the broker something about a session; rejects with the broker's error message.
-export function call<K extends CallOp>(sessionId: string, op: K, args?: CallMap[K]["args"]): Promise<CallMap[K]["data"]> {
+export function call<K extends CallOp>(sessionId: string, op: K, args?: CallMap[K]["args"], ms = CALL_TIMEOUT_MS): Promise<CallMap[K]["data"]> {
   if (socket?.readyState !== WebSocket.OPEN || state.conn !== "ready") return Promise.reject(Error("not connected"));
   const id = ++callSeq;
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
       calls.delete(id);
       reject(Error("no answer"));
-    }, CALL_TIMEOUT_MS);
+    }, ms);
     calls.set(id, { resolve: resolve as (data: unknown) => void, reject, timer });
     socket!.send(JSON.stringify({ t: "call", id, sessionId, op, args: args ?? {} } satisfies ClientMsg));
   });

@@ -353,6 +353,43 @@ test("broker control requests are limited to the ones it needs", async () => {
   await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-c", "effort allowed");
 });
 
+test("the session controls reach Claude Code; MCP setup, settings and conversation rewind do not", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
+  const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
+  const allowed: Msg[] = [
+    { subtype: "get_context_usage", detail: "full" },
+    { subtype: "mcp_status" },
+    { subtype: "mcp_toggle", serverName: "github", enabled: false },
+    { subtype: "mcp_reconnect", serverName: "github" },
+    { subtype: "rewind_files", user_message_id: "6a1f3c2e-8b4d-4e5f-9a0b-1c2d3e4f5a6b", dry_run: true },
+    { subtype: "stop_task", task_id: "b1" },
+  ];
+  allowed.forEach((r, i) => request(`ccrc-ok-${i}`, r));
+  for (const [i, r] of allowed.entries()) await t.broker.frames.wait(replied(`ccrc-ok-${i}`), String(r.subtype));
+  const refused = [
+    "mcp_set_servers",
+    "mcp_authenticate",
+    "mcp_read_resource",
+    "set_mcp_permission_mode_override",
+    "rewind_conversation",
+    "background_tasks",
+    "get_task_output",
+    "update_settings",
+    "initialize",
+  ];
+  for (const subtype of refused) request(`ccrc-no-${subtype}`, { subtype });
+  for (const subtype of refused) {
+    await t.broker.frames.wait((f) => f.t === "rejected" && f.id === `ccrc-no-${subtype}` && f.reason === "request not allowed", `${subtype} refused`);
+  }
+  request("ccrc-last", { subtype: "mcp_status" });
+  await t.broker.frames.wait(replied("ccrc-last"), "a later request");
+  const leaked = t.broker.frames.has((f) => f.t === "reply" && String(((f.m as Msg).response as Msg).request_id).startsWith("ccrc-no-"));
+  assert.ok(!leaked, "refused requests never reach Claude Code");
+  assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code sees none of the answers");
+});
+
 test("a broker request after VS Code closed its input is refused by id", async () => {
   const t = await setup({ env: { FAKE_LINGER_MS: "1500" } });
   await t.broker.frames.wait((f) => f.t === "hello", "hello");
