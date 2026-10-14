@@ -255,79 +255,81 @@ export function Composer({
   };
 
   if (disabledReason) {
-    return <div className="pb-safe border-t border-line bg-bg px-4 pt-3 text-center text-sm text-muted">{disabledReason}</div>;
+    return <div className="pb-safe border-t border-line bg-bg px-safe-4 pt-3 text-center text-sm text-muted short:pt-2">{disabledReason}</div>;
   }
 
   return (
-    <div className="pb-safe relative border-t border-line bg-bg px-3 pt-2">
-      {shown && <Suggestions rows={rows} active={active} onPick={pick} />}
-      <div className="rounded-2xl border border-line bg-surface px-3 pt-2.5 pb-1.5 focus-within:border-accent">
-        {sessionId && <AttachmentChips sessionId={sessionId} items={attachments} />}
-        <textarea
-          ref={ref}
-          value={text}
-          rows={1}
-          enterKeyHint={enterToSend ? "send" : "enter"}
-          placeholder={busy ? "대기열에 추가할 메시지…" : placeholder}
-          onChange={(e) => {
-            setText(e.target.value);
-            setCaret(e.target.selectionStart);
-            setDismissed(false);
-          }}
-          onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-          onKeyDown={onKeyDown}
-          className="block max-h-42 w-full resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-muted"
-        />
-        {chosen && (
-          <div className="mt-1 text-[11px] text-muted" data-start-hint>
-            고른 값은 여기서 시작할 때 적용됩니다
-          </div>
-        )}
-        <div className="mt-1 flex items-center gap-1">
-          <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-            {sessionId && (
-              // The keyboard goes down first, so the sheet and any picker menu open on a page that stays put.
-              <button
-                aria-label="파일 첨부"
-                onClick={() => {
-                  ref.current?.blur();
-                  setSheet("attach");
-                }}
-                className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-2"
-              >
-                <Icon.paperclip className="size-[18px]" />
-              </button>
-            )}
-            <Chip name="model" disabled={!choosable} onClick={() => setSheet("model")}>
-              {modelLabel(models, model)}
-              <Icon.chevronDown className="size-3.5" />
-            </Chip>
-            {onContext && <ContextRing gauge={state?.context} onClick={onContext} />}
-            <Chip name="mode" disabled={!choosable} onClick={() => setSheet("mode")}>
-              {MODE_LABEL[mode ?? ""] ?? "권한 모드"}
-              <Icon.chevronDown className="size-3.5" />
-            </Chip>
-            {hasEffort && (
-              <Chip name="effort" disabled={!choosable} onClick={() => setSheet("effort")}>
-                {effort || controllable ? `Effort ${effortLabel(effort)}` : "Effort"}
-                {ultracode && <span className="ml-1 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">Ultracode</span>}
+    <div className="pb-safe border-t border-line bg-bg px-safe-3 pt-2 short:pt-1">
+      <div className="relative mx-auto max-w-3xl">
+        {shown && <Suggestions rows={rows} active={active} onPick={pick} />}
+        <div className="rounded-2xl border border-line bg-surface px-3 pt-2.5 pb-1.5 focus-within:border-accent short:pt-1.5 short:pb-1">
+          {sessionId && <AttachmentChips sessionId={sessionId} items={attachments} />}
+          <textarea
+            ref={ref}
+            value={text}
+            rows={1}
+            enterKeyHint={enterToSend ? "send" : "enter"}
+            placeholder={busy ? "대기열에 추가할 메시지…" : placeholder}
+            onChange={(e) => {
+              setText(e.target.value);
+              setCaret(e.target.selectionStart);
+              setDismissed(false);
+            }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+            onKeyDown={onKeyDown}
+            className="block max-h-42 w-full resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-muted short:max-h-20 short:leading-snug"
+          />
+          {chosen && (
+            <div className="mt-1 text-[11px] text-muted" data-start-hint>
+              고른 값은 여기서 시작할 때 적용됩니다
+            </div>
+          )}
+          <div className="mt-1 flex items-center gap-1 short:mt-0.5">
+            <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+              {sessionId && (
+                // The keyboard goes down first, so the sheet and any picker menu open on a page that stays put.
+                <button
+                  aria-label="파일 첨부"
+                  onClick={() => {
+                    ref.current?.blur();
+                    setSheet("attach");
+                  }}
+                  className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-2"
+                >
+                  <Icon.paperclip className="size-[18px]" />
+                </button>
+              )}
+              <Chip name="model" disabled={!choosable} onClick={() => setSheet("model")}>
+                {modelLabel(models, model)}
                 <Icon.chevronDown className="size-3.5" />
               </Chip>
+              {onContext && <ContextRing gauge={state?.context} onClick={onContext} />}
+              <Chip name="mode" disabled={!choosable} onClick={() => setSheet("mode")}>
+                {MODE_LABEL[mode ?? ""] ?? "권한 모드"}
+                <Icon.chevronDown className="size-3.5" />
+              </Chip>
+              {hasEffort && (
+                <Chip name="effort" disabled={!choosable} onClick={() => setSheet("effort")}>
+                  {effort || controllable ? `Effort ${effortLabel(effort)}` : "Effort"}
+                  {ultracode && <span className="ml-1 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">Ultracode</span>}
+                  <Icon.chevronDown className="size-3.5" />
+                </Chip>
+              )}
+            </div>
+            {busy && (
+              <button onClick={onStop} aria-label="중지" className="flex size-9 items-center justify-center rounded-full bg-surface-2 text-fg short:size-8">
+                <Icon.stop />
+              </button>
             )}
-          </div>
-          {busy && (
-            <button onClick={onStop} aria-label="중지" className="flex size-9 items-center justify-center rounded-full bg-surface-2 text-fg">
-              <Icon.stop />
+            <button
+              onClick={submit}
+              disabled={!canSend}
+              aria-label="보내기"
+              className="flex size-9 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30 short:size-8"
+            >
+              <Icon.send className="size-5" />
             </button>
-          )}
-          <button
-            onClick={submit}
-            disabled={!canSend}
-            aria-label="보내기"
-            className="flex size-9 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30"
-          >
-            <Icon.send className="size-5" />
-          </button>
+          </div>
         </div>
       </div>
 

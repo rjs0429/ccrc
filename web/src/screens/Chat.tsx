@@ -169,14 +169,14 @@ export function Chat({ sessionId }: { sessionId: string }) {
   return (
     <div className="flex h-dvh flex-col">
       <header className="pt-safe border-b border-line bg-bg">
-        <div className="flex items-center gap-1 px-2 py-2">
+        <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="relative rounded-lg p-2">
             <Icon.back />
             {othersWaiting && <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-warn" title="다른 세션에서 입력이 필요합니다" />}
           </button>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[15px] font-semibold">{title}</div>
-            <div className="truncate text-xs text-muted">
+          <div className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
+            <div className="truncate text-[15px] font-semibold short:max-w-[60%] short:shrink-0">{title}</div>
+            <div className="truncate text-xs text-muted short:min-w-0">
               {baseName(cwd)}
               {summary?.branch && summary.branch !== "HEAD" ? ` · ${summary.branch}` : ""} · {status}
             </div>
@@ -193,10 +193,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
           const el = e.currentTarget;
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
         }}
-        className="flex-1 overflow-y-auto overscroll-contain"
+        className="flex-1 overflow-y-auto overscroll-contain px-safe-0"
       >
         <FileLinks.Provider value={openFile}>
-          <div className="mx-auto max-w-3xl space-y-4 px-4 py-4">
+          <div className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:py-3">
             {!chat?.loaded && (
               <div className="flex justify-center py-10 text-muted">
                 <Spinner className="size-6" />

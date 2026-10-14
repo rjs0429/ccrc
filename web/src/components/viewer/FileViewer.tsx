@@ -218,7 +218,7 @@ function Body({ view, raw, url, openUrl, onOpen, onLink, image }: BodyProps) {
     return (
       <FileLinks.Provider value={onLink}>
         <FileImages.Provider value={image}>
-          <div className="px-4 py-3">
+          <div className="mx-auto max-w-3xl px-4 py-3">
             <Markdown text={text} className="text-[15px]" />
           </div>
         </FileImages.Provider>
@@ -306,7 +306,7 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-bg" role="dialog" aria-label="파일 보기">
       <header className="pt-safe border-b border-line bg-surface">
-        <div className="flex items-center gap-1 px-2 py-2">
+        <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           {stack.length > 1 ? (
             <button onClick={() => setStack((s) => s.slice(0, -1))} aria-label="이전 파일" className="rounded-lg p-2">
               <Icon.back />
@@ -325,7 +325,7 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
           </button>
         </div>
         {view && (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-2 text-xs text-muted">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-safe-3 pb-2 text-xs text-muted short:pb-1.5">
             <span>{sizeText(view.size)}</span>
             {toggles && (
               <span className="flex overflow-hidden rounded-lg border border-line">
@@ -342,12 +342,12 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
             </a>
           </div>
         )}
-        {view?.fallback && <div className="border-t border-line bg-surface-2 px-3 py-1.5 text-xs text-warn">{FALLBACK_TEXT[view.fallback]}</div>}
+        {view?.fallback && <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn">{FALLBACK_TEXT[view.fallback]}</div>}
         {view?.truncated && (
-          <div className="border-t border-line bg-surface-2 px-3 py-1.5 text-xs text-warn">파일이 커서 앞 1MB만 보입니다. 전체는 내려받아 보세요.</div>
+          <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn">파일이 커서 앞 1MB만 보입니다. 전체는 내려받아 보세요.</div>
         )}
       </header>
-      <div ref={scroller} className="pb-safe flex-1 overflow-auto overscroll-contain">
+      <div ref={scroller} className="pb-safe flex-1 overflow-auto overscroll-contain px-safe-0">
         {!loaded && (
           <div className="flex justify-center py-10 text-muted">
             <Spinner className="size-6" />

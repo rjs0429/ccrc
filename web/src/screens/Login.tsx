@@ -44,7 +44,7 @@ export function Login() {
   };
 
   return (
-    <div className="pt-safe flex min-h-dvh items-center justify-center px-6">
+    <div className="pt-safe pb-safe flex min-h-dvh items-center justify-center px-safe-6">
       <form
         className="w-full max-w-sm space-y-3"
         onSubmit={(e) => {

@@ -38,7 +38,7 @@ export function NewSession() {
   return (
     <div className="flex h-dvh flex-col">
       <header className="pt-safe border-b border-line bg-bg">
-        <div className="flex items-center gap-1 px-2 py-2">
+        <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="rounded-lg p-2">
             <Icon.back />
           </button>
@@ -46,7 +46,7 @@ export function NewSession() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="pb-safe flex-1 overflow-y-auto px-safe-0">
         <div className="mx-auto max-w-2xl space-y-5 px-4 py-4">
           <section>
             <div className="mb-2 text-sm font-semibold text-muted">폴더</div>

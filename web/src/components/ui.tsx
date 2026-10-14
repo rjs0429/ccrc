@@ -76,9 +76,9 @@ export function Spinner({ className = "size-4" }: IconProps) {
 
 export function Sheet({ title, onClose, children }: { title?: string; onClose: () => void; children: ReactNode }) {
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center" onClick={onClose}>
+    <div className="overlay fixed z-40 flex items-end justify-center bg-black/40 sm:items-center" onClick={onClose}>
       <div
-        className="pb-safe max-h-[85dvh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-surface p-4 shadow-xl sm:rounded-2xl"
+        className="pb-safe max-h-[85%] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 shadow-xl sm:max-h-full sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
       >
@@ -118,7 +118,7 @@ export function Row({ label, value, onClick }: { label: string; value?: string; 
 
 export function Notice({ title, body, action, onAction }: { title: string; body?: string; action: string; onAction: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg px-safe-6 py-6">
       <div className="w-full max-w-sm text-center">
         <div className="text-lg font-semibold">{title}</div>
         {body && <p className="mt-2 text-sm text-muted">{body}</p>}

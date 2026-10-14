@@ -13,6 +13,9 @@ const REFRESH_MS = 10_000;
 const SEARCH_DELAY_MS = 250;
 const PENDING_RETRY_MS = 1500;
 const QUERY_MAX = 200;
+// A list in portrait; cards in columns once the screen is wide, as in landscape.
+const CARDS = "sm:grid sm:grid-cols-2 sm:gap-2 sm:px-3 xl:grid-cols-3";
+const CARD = "border-b border-line sm:rounded-xl sm:border sm:bg-surface";
 
 // The last search stays when the user opens a result and comes back.
 let lastSearch: { q: string; found?: SearchResponse } = { q: "" };
@@ -42,7 +45,7 @@ function openSnippet(sessionId: string, sn: SearchSnippet): void {
 function SearchRow({ r }: { r: SearchResult }) {
   const meta = [baseName(r.cwd), relTime(r.lastModified), r.hits ? `메시지 ${r.hits}건` : ""].filter(Boolean).join(" · ");
   return (
-    <div className="border-b border-line">
+    <div className="mx-auto max-w-3xl border-b border-line">
       <button onClick={() => openAt(r.id, r.snippets.find((sn) => !sn.earlier)?.itemId)} className="block w-full px-4 pt-3 pb-1 text-left active:bg-surface-2">
         <span className="block truncate text-[15px] font-medium">{r.title.trim() ? <Marked text={r.title} marks={r.titleMarks} /> : sessionTitle(r)}</span>
         <span className="mt-0.5 block truncate text-xs text-muted">{meta}</span>
@@ -115,7 +118,7 @@ function SessionRow({ s }: { s: SessionSummary }) {
   const st = status(s);
   const meta = [st.text, baseName(s.cwd), s.branch && s.branch !== "HEAD" ? s.branch : "", relTime(s.lastModified)].filter(Boolean).join(" · ");
   return (
-    <button onClick={() => navigate({ name: "chat", sessionId: s.id })} className="flex w-full items-start gap-3 border-b border-line px-4 py-3 text-left active:bg-surface-2">
+    <button onClick={() => navigate({ name: "chat", sessionId: s.id })} className={`flex w-full items-start gap-3 px-4 py-3 text-left active:bg-surface-2 ${CARD}`}>
       <span className={`mt-1.5 size-2.5 shrink-0 rounded-full ${st.dot}`} />
       <span className="min-w-0 flex-1">
         <span className={`block truncate text-[15px] ${s.pendingCount ? "font-semibold" : "font-medium"}`}>{sessionTitle(s)}</span>
@@ -177,20 +180,18 @@ export function Home() {
   return (
     <div className="flex h-dvh flex-col">
       <header className="pt-safe border-b border-line bg-bg">
-        <div className="flex items-center gap-2 px-4 pt-2.5 pb-2">
-          <h1 className="flex-1 text-xl font-semibold">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-safe-3 pt-2.5 pb-2 short:flex-nowrap short:py-1.5">
+          <h1 className="order-1 flex-1 pl-1 text-xl font-semibold short:flex-none short:text-lg">
             ccrc
             <span className={`ml-2 inline-block size-2 rounded-full align-middle ${conn === "ready" ? "bg-ok" : "bg-warn"}`} title={conn} />
           </h1>
-          <button onClick={() => navigate({ name: "new" })} className="flex items-center gap-1 rounded-xl bg-accent px-3 py-2 text-sm font-medium text-white">
+          <button onClick={() => navigate({ name: "new" })} className="order-2 flex shrink-0 items-center gap-1 rounded-xl bg-accent px-3 py-2 text-sm font-medium text-white short:order-5 short:ml-auto">
             <Icon.plus className="size-4" />새 세션
           </button>
-          <button onClick={() => navigate({ name: "settings" })} aria-label="설정" className="rounded-lg p-2 text-muted">
+          <button onClick={() => navigate({ name: "settings" })} aria-label="설정" className="order-3 mr-1 shrink-0 rounded-lg p-2 text-muted short:order-6">
             <Icon.gear />
           </button>
-        </div>
-        <div className="px-3 pb-2">
-          <div className="flex items-center gap-2 rounded-xl border border-line bg-surface px-3">
+          <div className="order-4 flex basis-full items-center gap-2 rounded-xl border border-line bg-surface px-3 short:order-3 short:max-w-xl short:min-w-0 short:flex-1 short:basis-0">
             <Icon.search className="size-4 shrink-0 text-muted" />
             <input
               value={q}
@@ -205,7 +206,7 @@ export function Home() {
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
-              className="min-w-0 flex-1 bg-transparent py-2 text-[16px] outline-none"
+              className="min-w-0 flex-1 bg-transparent py-2 text-[16px] outline-none short:py-1.5"
             />
             {busy && <Spinner className="size-4 shrink-0 text-muted" />}
             {q && (
@@ -214,18 +215,18 @@ export function Home() {
               </button>
             )}
           </div>
-        </div>
-        <div className={`flex gap-1 px-3 pb-2 ${searching ? "hidden" : ""}`}>
-          {(["sessions", "folders"] as const).map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 text-sm ${tab === t ? "bg-surface-2 font-semibold" : "text-muted"}`}>
-              {t === "sessions" ? "세션" : "폴더"}
-            </button>
-          ))}
+          <div className={`order-5 flex basis-full gap-1 short:order-2 short:basis-auto ${searching ? "hidden" : ""}`}>
+            {(["sessions", "folders"] as const).map((t) => (
+              <button key={t} onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 text-sm ${tab === t ? "bg-surface-2 font-semibold" : "text-muted"}`}>
+                {t === "sessions" ? "세션" : "폴더"}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
       <UpdateBanner />
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="pb-safe flex-1 overflow-y-auto px-safe-0">
         {!sessions && (
           <div className="flex justify-center py-12 text-muted">
             <Spinner className="size-6" />
@@ -245,7 +246,7 @@ export function Home() {
 
         {sessions && !searching && tab === "sessions" && (
           <>
-            <div className="flex gap-1.5 overflow-x-auto px-4 py-2.5">
+            <div className="flex gap-1.5 overflow-x-auto px-4 py-2.5 short:py-2">
               {(
                 [
                   ["all", "전체"],
@@ -268,9 +269,11 @@ export function Home() {
                 </button>
               )}
             </div>
-            {shown.slice(0, limit).map((s) => (
-              <SessionRow key={s.id} s={s} />
-            ))}
+            <div className={CARDS}>
+              {shown.slice(0, limit).map((s) => (
+                <SessionRow key={s.id} s={s} />
+              ))}
+            </div>
             {shown.length === 0 && <div className="px-4 py-10 text-center text-sm text-muted">세션이 없습니다</div>}
             {shown.length > limit && (
               <button onClick={() => setLimit(limit + PAGE)} className="w-full py-4 text-sm text-muted">
@@ -281,7 +284,7 @@ export function Home() {
         )}
 
         {sessions && !searching && tab === "folders" && (
-          <div className="py-1">
+          <div className={`py-1 sm:pt-3 ${CARDS}`}>
             {folders.map((g) => (
               <button
                 key={g.cwd}
@@ -289,7 +292,7 @@ export function Home() {
                   setFolder(g.cwd);
                   setTab("sessions");
                 }}
-                className="flex w-full items-center gap-3 border-b border-line px-4 py-3 text-left active:bg-surface-2"
+                className={`flex w-full items-center gap-3 px-4 py-3 text-left active:bg-surface-2 ${CARD}`}
               >
                 <Icon.folder className="size-5 shrink-0 text-muted" />
                 <span className="min-w-0 flex-1">

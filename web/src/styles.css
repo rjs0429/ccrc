@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+@custom-variant short (@media (max-height: 30rem));
+@custom-variant tiny (@media (max-height: 15rem));
+
 :root {
   --bg: #f5f4ef;
   --surface: #ffffff;
@@ -14,6 +17,10 @@
   --warn: #a35f00;
   --info: #2b6cb0;
   --code-bg: #f0efe9;
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
   color-scheme: light;
 }
 
@@ -69,11 +76,34 @@ body {
 }
 
 .pt-safe {
-  padding-top: env(safe-area-inset-top);
+  padding-top: var(--sat);
 }
 
 .pb-safe {
-  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  padding-bottom: max(0.5rem, var(--sab));
+}
+
+/* Edge-to-edge rows keep their padding inside the notch and rounded-corner insets. */
+@utility px-safe-* {
+  padding-left: calc(--spacing(--value(number)) + var(--sal));
+  padding-right: calc(--spacing(--value(number)) + var(--sar));
+}
+
+/* Overlays follow the visual viewport, so a sheet stays above the on-screen keyboard. */
+@layer components {
+  .overlay {
+    inset-inline: 0;
+    top: var(--vv-top, 0px);
+    height: var(--vv-height, 100dvh);
+    padding-left: var(--sal);
+    padding-right: var(--sar);
+  }
+  @media (min-width: 40rem) {
+    .overlay {
+      padding-top: max(0.5rem, var(--sat));
+      padding-bottom: max(0.5rem, var(--sab));
+    }
+  }
 }
 
 .md {

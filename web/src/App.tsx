@@ -21,7 +21,7 @@ function Toast() {
   }, [toast]);
   if (!toast || hidden) return null;
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-24 z-50 flex justify-center px-6">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(6rem+var(--sab))] z-50 flex justify-center px-safe-6">
       <div className="rounded-xl bg-fg px-4 py-2.5 text-sm text-bg shadow-lg">{errorText(toast.text)}</div>
     </div>
   );
@@ -53,7 +53,7 @@ export function App() {
         <Home />
       )}
       {conn === "offline" && (
-        <div className="pt-safe fixed inset-x-0 top-0 z-30 bg-warn/90 px-4 py-1.5 text-center text-xs text-white">연결이 끊겼습니다. 다시 연결하는 중…</div>
+        <div className="pt-safe fixed inset-x-0 top-0 z-30 bg-warn/90 px-safe-4 py-1.5 text-center text-xs text-white">연결이 끊겼습니다. 다시 연결하는 중…</div>
       )}
       {conn === "conflict" && (
         <Notice title="다른 창에서 사용 중입니다" body="이 창에서 계속하면 다른 창의 연결은 끊깁니다." action="이 창에서 계속" onAction={takeWindow} />

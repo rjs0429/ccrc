@@ -34,7 +34,7 @@ function DenyBox({ placeholder, label, onSend }: { placeholder: string; label: s
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={placeholder}
-        className="min-w-0 flex-1 rounded-xl border border-line bg-bg px-3 py-2.5 text-[15px] outline-none focus:border-accent"
+        className="min-w-0 flex-1 rounded-xl border border-line bg-bg px-3 py-2.5 text-[16px] outline-none focus:border-accent"
       />
       <Button kind="danger" onClick={() => onSend(text)}>
         {label}
@@ -101,7 +101,7 @@ function QuestionCard({ request, reply }: { request: PendingRequest; reply: Repl
             value={other[q.question] ?? ""}
             onChange={(e) => setOther((s) => ({ ...s, [q.question]: e.target.value }))}
             placeholder="직접 입력"
-            className="w-full rounded-xl border border-line bg-bg px-3 py-2 text-[15px] outline-none focus:border-accent"
+            className="w-full rounded-xl border border-line bg-bg px-3 py-2 text-[16px] outline-none focus:border-accent"
           />
         </div>
       ))}

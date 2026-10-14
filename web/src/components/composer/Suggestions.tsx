@@ -18,7 +18,7 @@ export function Suggestions({ rows, active, onPick }: { rows: SuggestRow[]; acti
     else if (row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = row.offsetTop + row.offsetHeight - box.clientHeight;
   }, [active]);
   return (
-    <div ref={ref} role="listbox" className="absolute inset-x-3 bottom-full z-20 mb-1.5 max-h-56 overflow-y-auto overscroll-contain rounded-xl border border-line bg-surface py-1 shadow-lg">
+    <div ref={ref} role="listbox" className="absolute inset-x-0 bottom-full z-20 mb-1.5 max-h-56 short:max-h-32 overflow-y-auto overscroll-contain rounded-xl border border-line bg-surface py-1 shadow-lg">
       {rows.map((r, i) => (
         <button
           key={r.key}
