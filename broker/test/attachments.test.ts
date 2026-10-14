@@ -140,7 +140,7 @@ async function server(known: Record<string, string | undefined>) {
 }
 
 test("the attachment route serves the four image types with safe headers", async () => {
-  const { get } = await server({ [SID]: file });
+  const { app, get } = await server({ [SID]: file });
   const url = (msg: string, n: number | string) => `/api/sessions/${SID}/messages/${msg}/attachments/${n}`;
   for (const [msg, n, type, body] of [
     [U1, 0, "image/png", PNG],
@@ -155,7 +155,12 @@ test("the attachment route serves the four image types with safe headers", async
     assert.deepEqual(r.rawPayload, body);
     assert.equal(r.headers["x-content-type-options"], "nosniff");
     assert.match(String(r.headers["content-security-policy"]), /^sandbox; default-src 'none'/);
-    assert.match(String(r.headers["cache-control"]), /^private, /);
+    assert.equal(r.headers["cache-control"], "private, no-cache", "every load is checked against the sign-in");
+    const again = await app.inject({ method: "GET", url: url(msg, n), headers: { authorization: "ok", "if-none-match": String(r.headers.etag) } });
+    assert.equal(again.statusCode, 304, "a kept copy is confirmed without the bytes");
+    assert.equal(again.rawPayload.length, 0);
+    const signedOut = await app.inject({ method: "GET", url: url(msg, n), headers: { "if-none-match": String(r.headers.etag) } });
+    assert.equal(signedOut.statusCode, 401, "a kept copy is not confirmed once signed out");
   }
   const big = await get(url(BIG, 0));
   assert.equal(big.statusCode, 200, "a row that spans read chunks is found");
