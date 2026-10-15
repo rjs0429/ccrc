@@ -22,7 +22,7 @@ import type { RawMessage } from "./items.ts";
 import { contextDetail, usageAnswer } from "./reports.ts";
 
 type Obj = Record<string, unknown>;
-type Held = { from: "out" | "in" | "settled"; v: unknown };
+type Held = { from: "out" | "in" | "settled"; v: unknown; at: string };
 
 // The extension's own MCP server inside Claude Code; the extension leaves it out of its server list too.
 const HOST_SERVER = "claude-vscode";
@@ -62,25 +62,26 @@ export class WrappedSession extends SessionCore {
     const held = this.backlog ?? [];
     this.backlog = null;
     for (const h of held) {
-      if (h.from === "out") this.onOut(h.v as Obj);
+      if (h.from === "out") this.onOut(h.v as Obj, h.at);
       else if (h.from === "in") this.onIn(h.v as Obj);
       else this.onSettled(h.v);
     }
   }
 
-  private hold(from: Held["from"], v: unknown): boolean {
+  private hold(from: Held["from"], v: unknown, at = new Date().toISOString()): boolean {
     if (!this.backlog) return false;
-    this.backlog.push({ from, v });
+    this.backlog.push({ from, v, at });
     return true;
   }
 
-  onOut(m: Obj): void {
+  // at: when the broker received the line.
+  onOut(m: Obj, at = new Date().toISOString()): void {
     if (m.type === "control_request" && obj(m.request).subtype === "elicitation") return this.noteElicitation(m);
-    if (this.hold("out", m)) return;
+    if (this.hold("out", m, at)) return;
     if (m.type === "control_request") this.onRequest(m);
     else if (m.type === "control_cancel_request") this.drop(m.request_id);
     else if (m.type === "control_response") this.onResponse(obj(obj(m.response).response));
-    else this.onMessage(m as RawMessage & Obj);
+    else this.onMessage(m as RawMessage & Obj, at);
   }
 
   // VS Code's own control requests, for settings it changes without Claude Code reporting them, and the

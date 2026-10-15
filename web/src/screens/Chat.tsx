@@ -1,7 +1,7 @@
 import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, ModelOption, QueuedMessage } from "../../../broker/src/protocol.ts";
-import { ItemView, QueuedItem, StreamPreview, shownItems } from "../components/Items.tsx";
+import { DateLine, ItemView, QueuedItem, StreamPreview, shownItems } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { reattach } from "../components/composer/attachments.ts";
 import { commandSheet } from "../components/commandSheets.ts";
@@ -20,6 +20,7 @@ import { ThreadSheet, type ShownThread } from "../components/sheets/Thread.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { FileLinks, FileRoots } from "../components/fileLinks.ts";
+import { dayLines, streamLine } from "../components/stamps.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { baseName, closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
@@ -124,6 +125,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const cannotStart = folderMissing ? `작업 폴더가 없어 이 세션을 시작할 수 없습니다: ${shortPath(cwd)}` : undefined;
   const title = sessionTitle({ title: st?.title || summary?.title || "" });
   const items = useMemo(() => shownItems(chat?.items ?? []), [chat?.items]);
+  const days = useMemo(() => dayLines(items), [items]);
   // The first shown item of the latest part, when a far-back search hit left items out before it.
   const gapAt = useMemo(() => {
     const gap = chat?.gap;
@@ -368,6 +370,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
                       <span className="h-px flex-1 bg-line" />
                     </div>
                   )}
+                  <DateLine day={days.get(item.id)} />
                   <div
                     data-item={item.id}
                     className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
@@ -376,7 +379,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
                   </div>
                 </Fragment>
               ))}
-              {chat?.stream && <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />}
+              {chat?.stream && (
+                <>
+                  <DateLine day={streamLine(days, chat.stream)} />
+                  <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />
+                </>
+              )}
               {busy && !chat?.stream && !chat?.pending.length && (
                 <div className="flex items-center gap-2 text-sm text-muted">
                   <Spinner className="size-3.5" /> 작업 중…

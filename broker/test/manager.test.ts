@@ -150,6 +150,19 @@ test("what a wrapper reports before naming its session is replayed in order", as
   assert.deepEqual(snap.pending, []);
 });
 
+test("a reply a wrapper reports before naming its session keeps the time it arrived", async () => {
+  const { manager, connect } = await setup();
+  const w = await connect({});
+  w.send({ m: { type: "assistant", uuid: "early-1", parent_tool_use_id: null, message: { content: [{ type: "text", text: "early" }] } }, t: "out" });
+  await new Promise((r) => setTimeout(r, 100));
+  const named = Date.now();
+  w.send({ m: { type: "system", subtype: "init", session_id: Y }, t: "out" });
+  await until(() => manager.isControlled(Y), "attached");
+  await new Promise((r) => setTimeout(r, 100));
+  const reply = (await manager.snapshot(Y)).items.find((i) => i.id === "early-1:0");
+  assert.ok(reply?.ts && Date.parse(reply.ts) < named, reply?.ts);
+});
+
 test("a phone message left queued when VS Code closes stays in the stopped session's conversation", async () => {
   const Z = "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d";
   const dir = path.join(home, ".claude", "projects", projectDirName(home));

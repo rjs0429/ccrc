@@ -638,7 +638,7 @@ export class SessionManager extends EventEmitter {
   attachLink(link: Link): void {
     let session: WrappedSession | undefined;
     let claiming = false;
-    let early: { from: "out" | "in" | "settled" | "held"; v: unknown }[] = [];
+    let early: { from: "out" | "in" | "settled" | "held"; v: unknown; at: string }[] = [];
     const bind = (id: string) => {
       if (session?.id === id || !link.usable) return;
       session?.end("switched");
@@ -652,7 +652,7 @@ export class SessionManager extends EventEmitter {
       prev?.end("replaced");
       this.adopt(s);
       for (const h of early) {
-        if (h.from === "out") s.onOut(h.v as Record<string, unknown>);
+        if (h.from === "out") s.onOut(h.v as Record<string, unknown>, h.at);
         else if (h.from === "in") s.onIn(h.v as Record<string, unknown>);
         else if (h.from === "held") s.onHeld(h.v);
         else s.onSettled(h.v);
@@ -668,7 +668,7 @@ export class SessionManager extends EventEmitter {
         });
     };
     const keep = (from: "out" | "in" | "settled" | "held", v: unknown) => {
-      if (early.length < EARLY_LINES_MAX) early.push({ from, v });
+      if (early.length < EARLY_LINES_MAX) early.push({ from, v, at: new Date().toISOString() });
     };
     link.on("hello", (h: Hello) => {
       if (!h.claim) {

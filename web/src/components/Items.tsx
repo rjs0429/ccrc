@@ -10,14 +10,54 @@ import { UsageView } from "./sheets/Usage.tsx";
 import { ToolInput, ToolOutput } from "./ToolInput.tsx";
 import { UserAttachments } from "./UserAttachments.tsx";
 import { Folded } from "./tools/parts.tsx";
+import { fullTime, stampTime, type Day } from "./stamps.ts";
 import { Icon, Spinner } from "./ui.tsx";
 
+// When a message was sent, with the full date and time on hover.
+function Stamp({ at, className }: { at: Date; className?: string }) {
+  return (
+    <time dateTime={at.toISOString()} title={fullTime(at)} className={className}>
+      {clock(at)}
+    </time>
+  );
+}
+
 function UserItem({ item }: { item: Extract<DisplayItem, { kind: "user" }> }) {
+  const at = stampTime(item);
   return (
     <div className="flex flex-col items-end gap-1.5">
       {item.attachments && <UserAttachments messageId={item.id} list={item.attachments} />}
       {item.text && <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap">{item.text}</div>}
-      {item.ts && <div className="-mt-0.5 text-[11px] text-muted">{clock(item.ts)}</div>}
+      {at && <Stamp at={at} className="-mt-0.5 text-[11px] text-muted" />}
+    </div>
+  );
+}
+
+// The line under a Claude reply's text that holds its time; while the reply streams, the same line holds the caret.
+const REPLY_LINE = "mt-1 h-4 leading-4";
+
+function AssistantItem({ item }: { item: Extract<DisplayItem, { kind: "assistant" }> }) {
+  const at = stampTime(item);
+  return (
+    <div>
+      <Markdown text={item.text} className="text-[15px]" />
+      {at && (
+        <div className={`${REPLY_LINE} text-[11px] text-muted`}>
+          <Stamp at={at} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Where the local day changes in the conversation: the day between two thin rules.
+export function DateLine({ day }: { day?: Day }) {
+  if (!day) return null;
+  return (
+    <div className="flex items-center gap-3 text-xs text-muted" data-day={day.date}>
+      <span className="h-px flex-1 bg-line" />
+      <time dateTime={day.date}>{day.label}</time>
+      <span className="h-px flex-1 bg-line" />
     </div>
   );
 }
@@ -294,7 +334,7 @@ export const ItemView = memo(function ItemView({ item, running }: { item: Displa
     case "user":
       return <UserItem item={item} />;
     case "assistant":
-      return <Markdown text={item.text} className="text-[15px]" />;
+      return <AssistantItem item={item} />;
     case "thinking":
       return <Thinking text={item.text} />;
     case "tool":
@@ -325,5 +365,10 @@ export function StreamPreview({ text, thinking }: { text: string; thinking: bool
       </div>
     );
   }
-  return <Markdown text={text} className="caret text-[15px]" />;
+  return (
+    <div>
+      <Markdown text={text} className="text-[15px]" />
+      <div className={`${REPLY_LINE} caret text-[15px]`} />
+    </div>
+  );
 }

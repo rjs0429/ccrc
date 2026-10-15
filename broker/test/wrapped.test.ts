@@ -371,6 +371,32 @@ test("lines that arrive while the history loads are applied after it", async () 
   );
 });
 
+test("a live reply has Claude Code's time, or the time the broker received it when it comes without one", async () => {
+  const { wrapper, next } = await session();
+  const before = Date.now();
+  let item = next("item");
+  wrapper.out({ type: "assistant", uuid: "live-1", session_id: SID, message: { content: [{ type: "text", text: "no time" }] } });
+  const [plain] = (await item) as [DisplayItem];
+  const received = Date.parse(plain.ts ?? "");
+  assert.ok(received >= before && received <= Date.now(), plain.ts);
+  item = next("item");
+  wrapper.out({ type: "assistant", uuid: "live-2", session_id: SID, timestamp: "2026-10-14T23:59:58.000Z", message: { content: [{ type: "text", text: "own time" }] } });
+  assert.equal(((await item) as [DisplayItem])[0].ts, "2026-10-14T23:59:58.000Z");
+});
+
+test("a reply held while the history loads keeps the time it arrived", async () => {
+  const { s, wrapper, next } = await session({ seed: false });
+  const arrived = new Promise((r) => s.link.once("out", r));
+  wrapper.out({ type: "assistant", uuid: "live-1", session_id: SID, message: { content: [{ type: "text", text: "live" }] } });
+  await arrived;
+  const received = Date.now();
+  await new Promise((r) => setTimeout(r, 50));
+  const item = next("item");
+  s.seed([]);
+  const [shown] = (await item) as [DisplayItem];
+  assert.ok(Date.parse(shown.ts ?? "") <= received, shown.ts);
+});
+
 test("the models in VS Code's initialize answer are offered", async () => {
   const { wrapper, next } = await session();
   const models = next("models");
