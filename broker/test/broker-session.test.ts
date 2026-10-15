@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { DisplayItem } from "../src/protocol.ts";
 import { BrokerSession } from "../src/sessions/broker-session.ts";
 
 const SID = "3e7c9a10-5b2d-4f8e-9c1a-2d3e4f5a6b7c";
@@ -89,4 +90,19 @@ test("a message still waiting in the broker is taken back here without asking Cl
   assert.equal(s.busy, true, "the message Claude Code has still runs");
   await s.unqueue(second);
   assert.deepEqual(asked, [{ subtype: "cancel_async_message", message_uuid: second }], "only a message Claude Code has is cancelled there");
+});
+
+test("a reply from Claude Code has its own time, or the time the broker received it when it comes without one", async () => {
+  const s = new BrokerSession(SID, "/tmp/project");
+  const items: DisplayItem[] = [];
+  s.on("item", (item: DisplayItem) => items.push(item));
+  const before = Date.now();
+  async function* replies() {
+    yield { type: "assistant", uuid: "a1", session_id: SID, parent_tool_use_id: null, message: { content: [{ type: "text", text: "no time" }] } };
+    yield { type: "assistant", uuid: "a2", session_id: SID, parent_tool_use_id: null, timestamp: "2026-10-14T23:59:58.000Z", message: { content: [{ type: "text", text: "own time" }] } };
+  }
+  await (s as unknown as { consume(q: AsyncIterable<unknown>): Promise<void> }).consume(replies());
+  const received = Date.parse(items[0]?.ts ?? "");
+  assert.ok(received >= before && received <= Date.now(), items[0]?.ts);
+  assert.equal(items[1]?.ts, "2026-10-14T23:59:58.000Z");
 });

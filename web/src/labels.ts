@@ -239,7 +239,7 @@ export function relTime(ms: number, now = Date.now()): string {
   return `${d.getMonth() + 1}월 ${d.getDate()}일`;
 }
 
-export function clock(ts?: string): string {
+export function clock(ts?: string | Date): string {
   if (!ts) return "";
   const d = new Date(ts);
   return Number.isNaN(d.getTime()) ? "" : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;

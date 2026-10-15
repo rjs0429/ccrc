@@ -506,7 +506,8 @@ export abstract class SessionCore extends EventEmitter {
     this.emit("closed", reason);
   }
 
-  protected onMessage(m: RawMessage & Record<string, unknown>): void {
+  // at: when the broker received the message, the time of its items when Claude Code gives the message none.
+  protected onMessage(m: RawMessage & Record<string, unknown>, at = new Date().toISOString()): void {
     if (m.type === "assistant" || m.type === "user" || m.type === "result" || m.type === "stream_event") this.lastActivity = Date.now();
     if (m.type === "stream_event") {
       if (!m.parent_tool_use_id) this.onStream(m.event as StreamEvent);
@@ -555,7 +556,7 @@ export abstract class SessionCore extends EventEmitter {
       this.refreshApplied();
       this.emit("state");
     }
-    for (const item of this.builder.add(m)) this.emit("item", item);
+    for (const item of this.builder.add(m, at)) this.emit("item", item);
     if (m.type === "user" && m.isReplay === true && typeof m.uuid === "string") this.dequeue(m.uuid);
   }
 
