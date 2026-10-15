@@ -87,19 +87,19 @@ export function dialogLabel(kind: string): string {
   return DIALOG_LABEL[kind] ?? kind;
 }
 
-// Why a session no longer has a process the broker drives, as a sentence that ends with a space.
+// Why a session no longer has a process the broker drives, as a sentence.
 export function closedText(reason?: string): string {
   switch (reason) {
     case "vscode_closed":
-      return "VS Code에서 닫혔습니다. ";
+      return "VS Code에서 닫혔습니다.";
     case "switched":
-      return "VS Code에서 다른 대화로 바뀌었습니다. ";
+      return "VS Code에서 다른 대화로 바뀌었습니다.";
     case "handed_off":
-      return "VS Code로 넘겼습니다. ";
+      return "VS Code로 넘겼습니다.";
     case "idle":
-      return "한동안 쓰지 않아 원격 실행을 끝냈습니다. ";
+      return "한동안 쓰지 않아 원격 실행을 끝냈습니다.";
     case "released":
-      return "원격 실행을 끝냈습니다. ";
+      return "원격 실행을 끝냈습니다.";
     default:
       return "";
   }

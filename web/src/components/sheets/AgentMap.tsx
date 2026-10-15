@@ -422,7 +422,8 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
   const busy = Boolean(st?.busy);
   const map = useMemo(() => agentMap({ tasks: st?.tasks, items: chat?.items ?? [], pending: chat?.pending ?? [], busy }), [st?.tasks, chat?.items, chat?.pending, busy]);
   const [selected, setSelected] = useState<Selected | null>(null);
-  const [showPast, setShowPast] = useState(false);
+  // With nothing listed the map opens on the conversation's past agents.
+  const [showPast, setShowPast] = useState(() => map.nodes.length === 0);
   const [pastLimit, setPastLimit] = useState(PAST_SHOWN);
   const [stopping, setStopping] = useState<ReadonlySet<string>>(new Set());
   const [failed, setFailed] = useState<{ id: string; text: string }>();
@@ -492,7 +493,7 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
     if (detailRef.current) detailRef.current.scrollTop = 0;
     if (p) p.scrollTop = selectedKey ? 0 : listScroll.current;
   }, [selectedKey]);
-  const mainStatus = (chat?.pending ?? []).some((p) => !p.agentId) ? "권한 대기" : busy ? "작업 중" : "쉬는 중";
+  const mainStatus = (chat?.pending ?? []).some((p) => !p.agentId) ? "권한 대기" : busy ? "작업 중" : st?.state === "inactive" ? "꺼져 있음" : "쉬는 중";
   const past = map.past.slice(0, pastLimit);
   const detailProps = {
     clock,

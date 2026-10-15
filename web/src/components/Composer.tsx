@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { EffortName, LiveState, ModelOption, PermissionModeName, StartSettings } from "../../../broker/src/protocol.ts";
 import { MODE_HINT, MODE_LABEL, baseName, effortLabel, effortLevels, findModel, modelLabel } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
@@ -8,10 +9,11 @@ import { toast, useApp } from "../state.ts";
 import { isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import { bareCommandSheet } from "./commandSheets.ts";
 import { ContextRing } from "./ContextRing.tsx";
-import { AgentChip } from "./agents/AgentChip.tsx";
+import { AgentChip, agentChipWidths } from "./agents/AgentChip.tsx";
 import type { AgentMap } from "./agents/tree.ts";
 import { AttachmentChips } from "./composer/AttachmentChips.tsx";
 import { ATTACH_ACCEPT, MAX_MESSAGE_BYTES, NEW_SESSION_SCOPE, addFiles, takeAttachments, useAttachments } from "./composer/attachments.ts";
+import { chipLayout, sameLayout, type ChipLayout } from "./composer/chipLayout.ts";
 import { afterKeyboard } from "./composer/picker.ts";
 import { Suggestions, type SuggestRow } from "./composer/Suggestions.tsx";
 import { commandQuery, mentionAt, mentionText, rankCommands, useCommands, useFileSuggestions, type SuggestTarget } from "./composer/suggest.ts";
@@ -25,6 +27,9 @@ const START_HINT = "여기서 이 세션을 시작할 때 적용합니다. VS Co
 const DRAFT_HINT = "새 세션을 시작할 때 적용합니다.";
 // Commands that mean nothing before a session exists.
 const DRAFT_HIDDEN = new Set(["clear", "compact", "rename", "recap", "heapdump"]);
+// The round buttons sit on the last chip line. Their tap target grows to 44px across and mostly downward, into
+// the composer's bottom padding, so it covers no other control.
+const ROUND_TAP = "relative after:absolute after:-inset-x-1.5 after:-top-0.5 after:-bottom-2.5";
 
 // Each composerInsert request is applied once, by the composer that is mounted when it arrives.
 let appliedInsert = 0;
@@ -52,12 +57,14 @@ function StartHint({ draft }: { draft: boolean }) {
 
 function Chip({
   name,
+  label,
   children,
   onClick,
   disabled,
   className = "shrink-0",
 }: {
   name: string;
+  label?: string;
   children: React.ReactNode;
   onClick?: () => void;
   disabled?: boolean;
@@ -68,11 +75,20 @@ function Chip({
       onClick={onClick}
       disabled={disabled}
       data-chip={name}
+      aria-label={label}
       className={`flex min-h-8 items-center gap-0.5 rounded-lg px-1.5 py-1 text-[13px] text-muted hover:bg-surface-2 disabled:opacity-50 ${className}`}
     >
       {children}
     </button>
   );
+}
+
+// A chip group's width with its cut name in full: from its first part to its last, plus what the name hides.
+function groupWidth(group: HTMLElement, name: HTMLElement | null): number {
+  const parts = [...group.children].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0);
+  if (!parts.length) return 0;
+  const span = Math.max(...parts.map((r) => r.right)) - Math.min(...parts.map((r) => r.left));
+  return span + (name ? name.scrollWidth - name.clientWidth : 0);
 }
 
 interface Props {
@@ -105,7 +121,7 @@ interface Props {
   openSheet?: { name: "model" | "effort"; at: number };
   // The context ring next to the model chip; absent where there is no session.
   onContext?: () => void;
-  // The agent chip between the chip groups, while subagents or workflows are listed.
+  // The agent chip, while the conversation has subagents or workflows.
   agents?: AgentMap["chip"];
   onAgents?: () => void;
 }
@@ -183,6 +199,53 @@ export function Composer({
             .map((c) => ({ key: c.name, label: `/${c.name}`, hint: c.argumentHint, detail: c.description }))
         : [];
   const shown = rows.length > 0 && !locked;
+  const effortName = [effort ? `Effort ${effortLabel(effort)}` : "Effort", ultracode ? "Ultracode 켜짐" : ""].filter(Boolean).join(", ");
+
+  const [layout, setLayout] = useState<ChipLayout>({ lines: "two", agent: "above", word: true });
+  const barRef = useRef<HTMLDivElement>(null);
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const leftRef = useRef<HTMLDivElement>(null);
+  const rightRef = useRef<HTMLDivElement>(null);
+  const modelRef = useRef<HTMLSpanElement>(null);
+  const modeRef = useRef<HTMLSpanElement>(null);
+  const agentRef = useRef<HTMLButtonElement>(null);
+  // The chip lines follow from the chips' widths with every name in full, measured after each render before it
+  // paints, and again when the composer's width changes or fonts load.
+  const measure = (): ChipLayout | undefined => {
+    const [bar, rows, left, right] = [barRef.current, rowsRef.current, leftRef.current, rightRef.current];
+    if (!bar || !rows || !left || !right) return undefined;
+    return chipLayout({
+      composer: bar.getBoundingClientRect().width,
+      row: rows.getBoundingClientRect().width,
+      gap: parseFloat(getComputedStyle(left.parentElement!).columnGap) || 0,
+      left: groupWidth(left, modelRef.current),
+      right: groupWidth(right, modeRef.current),
+      agent: agentRef.current ? agentChipWidths(agentRef.current) : undefined,
+    });
+  };
+  useLayoutEffect(() => {
+    const next = measure();
+    if (next && !sameLayout(next, layout)) setLayout(next);
+  });
+  const hasRows = !disabledReason;
+  // The textarea spans the chip rows and its height never follows them, so watching it sees each width change
+  // and never the layout chosen here.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const next = measure();
+      if (next) flushSync(() => setLayout((was) => (sameLayout(was, next) ? was : next)));
+    };
+    const resized = new ResizeObserver(update);
+    resized.observe(el);
+    document.fonts.addEventListener("loadingdone", update);
+    void document.fonts.ready.then(update);
+    return () => {
+      resized.disconnect();
+      document.fonts.removeEventListener("loadingdone", update);
+    };
+  }, [hasRows]);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -318,8 +381,16 @@ export function Composer({
     return <div className="pb-safe border-t border-line bg-bg px-safe-4 pt-3 text-center text-sm text-muted short:pt-2">{disabledReason}</div>;
   }
 
+  const agentChip = agents && onAgents && <AgentChip ref={agentRef} chip={agents} word={layout.word} onClick={openAgents} />;
+  const two = layout.lines === "two";
+  // Sharing a line with the right group, the left group never shrinks: a longer name is measured in full and takes
+  // the chips to two lines instead of being cut.
+  const leftFit = two ? "basis-full" : layout.lines === "wide" ? "flex-1" : "shrink-0";
+  // The stop button's room, kept while it is hidden so a turn starting or ending leaves the chips on their lines.
+  const stopRoom = !busy && !draft;
+
   return (
-    <div className="pb-safe border-t border-line bg-bg px-safe-3 pt-2 short:pt-1">
+    <div ref={barRef} className="pb-safe border-t border-line bg-bg px-safe-3 pt-2 short:pt-1">
       <div className="relative mx-auto max-w-3xl">
         {shown && <Suggestions rows={rows} active={active} onPick={pick} />}
         <div className="rounded-2xl border border-line bg-surface px-3 pt-2.5 pb-1.5 focus-within:border-accent short:pt-1.5 short:pb-1">
@@ -345,68 +416,72 @@ export function Composer({
               고른 값은 여기서 시작할 때 적용됩니다
             </div>
           )}
-          <div className="mt-1 flex flex-wrap items-center gap-x-1 gap-y-0.5 short:mt-0.5 sm:flex-nowrap" data-chip-rows>
-            <div className="flex min-w-0 basis-full items-center sm:flex-1 sm:basis-auto" data-chip-group="left">
-              {scope && (
-                <span className="relative shrink-0">
-                  <button
-                    aria-label="파일 첨부"
-                    onClick={attach}
-                    disabled={locked}
-                    className="flex size-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2 disabled:opacity-50"
-                  >
-                    <Icon.paperclip className="size-[18px]" />
-                  </button>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    multiple
-                    accept={ATTACH_ACCEPT}
-                    tabIndex={-1}
-                    aria-hidden
-                    disabled={locked}
-                    onChange={(e) => {
-                      const picked = [...(e.target.files ?? [])];
-                      e.target.value = "";
-                      if (picked.length) addFiles(scope, picked);
-                    }}
-                    className="pointer-events-none absolute inset-0 size-full opacity-0"
-                  />
-                </span>
-              )}
-              <Chip name="model" className="min-w-0" disabled={!choosable} onClick={() => setSheet("model")}>
-                <span className="truncate">{modelLabel(models, model)}</span>
-                <Icon.chevronDown className="size-3 shrink-0" />
-              </Chip>
-              {efforts && (
-                <Chip name="effort" disabled={!choosable} onClick={() => setSheet("effort")}>
-                  {effort || controllable ? `Effort ${effortLabel(effort)}` : "Effort"}
-                  {ultracode && <span className="ml-0.5 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">Ultracode</span>}
-                  <Icon.chevronDown className="size-3" />
+          <div ref={rowsRef} className="mt-1 short:mt-0.5" data-chip-rows={layout.lines}>
+            {agentChip && layout.agent === "above" && <div className="mb-1 flex short:mb-0.5">{agentChip}</div>}
+            <div className={`flex items-center gap-x-1 gap-y-1 short:gap-y-0.5 ${two ? "flex-wrap" : ""}`}>
+              <div ref={leftRef} className={`flex min-w-0 items-center ${leftFit}`} data-chip-group="left">
+                {scope && (
+                  <span className="relative shrink-0">
+                    <button
+                      aria-label="파일 첨부"
+                      onClick={attach}
+                      disabled={locked}
+                      className="flex size-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2 disabled:opacity-50"
+                    >
+                      <Icon.paperclip className="size-[18px]" />
+                    </button>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      multiple
+                      accept={ATTACH_ACCEPT}
+                      tabIndex={-1}
+                      aria-hidden
+                      disabled={locked}
+                      onChange={(e) => {
+                        const picked = [...(e.target.files ?? [])];
+                        e.target.value = "";
+                        if (picked.length) addFiles(scope, picked);
+                      }}
+                      className="pointer-events-none absolute inset-0 size-full opacity-0"
+                    />
+                  </span>
+                )}
+                <Chip name="model" className="min-w-0" disabled={!choosable} onClick={() => setSheet("model")}>
+                  <span ref={modelRef} className="truncate">{modelLabel(models, model)}</span>
+                  <Icon.chevronDown className="size-3 shrink-0" />
                 </Chip>
-              )}
-            </div>
-            {agents && onAgents && <AgentChip chip={agents} onClick={openAgents} />}
-            <div className="ml-auto flex shrink-0 items-center gap-0.5" data-chip-group="right">
-              <Chip name="mode" disabled={!choosable} onClick={() => setSheet("mode")}>
-                {MODE_LABEL[mode ?? ""] ?? "권한 모드"}
-                <Icon.chevronDown className="size-3" />
-              </Chip>
-              {onContext && <ContextRing gauge={state?.context} onClick={onContext} />}
-              {busy && (
-                <button onClick={onStop} aria-label="중지" className="flex size-11 shrink-0 items-center justify-center rounded-full bg-surface-2 text-fg">
-                  <Icon.stop />
+                {efforts && (
+                  <Chip name="effort" label={effortName} disabled={!choosable} onClick={() => setSheet("effort")}>
+                    {effort ? effortLabel(effort) : "Effort"}
+                    {ultracode && <span className="ml-0.5 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">Ultracode</span>}
+                    <Icon.chevronDown className="size-3" />
+                  </Chip>
+                )}
+              </div>
+              {agentChip && layout.agent === "inline" && agentChip}
+              <div ref={rightRef} className="ml-auto flex max-w-full shrink-0 items-center" data-chip-group="right">
+                {stopRoom && <span className="w-11 shrink-0" aria-hidden />}
+                <Chip name="mode" className="min-w-0" disabled={!choosable} onClick={() => setSheet("mode")}>
+                  <span ref={modeRef} className="truncate">{MODE_LABEL[mode ?? ""] ?? "권한 모드"}</span>
+                  <Icon.chevronDown className="size-3 shrink-0" />
+                </Chip>
+                {onContext && <ContextRing gauge={state?.context} onClick={onContext} className="ml-0.5" />}
+                {busy && (
+                  <button onClick={onStop} aria-label="중지" className={`mx-1.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-fg ${ROUND_TAP}`}>
+                    <Icon.stop className="size-5" />
+                  </button>
+                )}
+                <button
+                  onClick={submit}
+                  disabled={!canSend}
+                  aria-label={locked ? "시작하는 중" : draft ? "시작" : "보내기"}
+                  data-starting={locked || undefined}
+                  className={`ml-1.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-white ${ROUND_TAP} ${locked ? "" : "disabled:opacity-30"}`}
+                >
+                  {locked ? <Spinner className="size-4" /> : <Icon.send className="size-4 [stroke-width:2.5]" />}
                 </button>
-              )}
-              <button
-                onClick={submit}
-                disabled={!canSend}
-                aria-label={locked ? "시작하는 중" : draft ? "시작" : "보내기"}
-                data-starting={locked || undefined}
-                className={`flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-white ${locked ? "" : "disabled:opacity-30"}`}
-              >
-                {locked ? <Spinner className="size-5" /> : <Icon.send className="size-5" />}
-              </button>
+              </div>
             </div>
           </div>
         </div>

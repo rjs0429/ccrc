@@ -2,7 +2,7 @@ import type { DisplayItem, PendingRequest, SubagentActivity, TaskInfo, WorkflowI
 import { workflowMeta } from "../../../../broker/src/tools.ts";
 
 export type NodeStatus = "waiting" | "running" | "completed" | "failed" | "stopped" | "unknown";
-export type ChipDot = "waiting" | "running" | "failed" | "done";
+export type ChipDot = "waiting" | "running" | "failed" | "done" | "idle";
 
 type ToolItem = Extract<DisplayItem, { kind: "tool" }>;
 
@@ -46,8 +46,8 @@ export interface AgentMap {
   // Subagents and workflows of the conversation no longer listed, latest first.
   past: AgentNode[];
   counts: Record<NodeStatus, number>;
-  // Absent while no subagent or workflow is listed.
-  chip?: { running: number; dot: ChipDot };
+  // Absent while the conversation has no subagent or workflow, listed or not. total: listed ones and past ones.
+  chip?: { running: number; dot: ChipDot; total: number };
 }
 
 const AGENT_TOOLS = new Set(["Agent", "Task"]);
@@ -219,14 +219,16 @@ export function agentMap({ tasks = [], items, pending, busy }: { tasks?: TaskInf
 
   const counts: Record<NodeStatus, number> = { waiting: 0, running: 0, completed: 0, failed: 0, stopped: 0, unknown: 0 };
   for (const n of nodes) counts[n.status]++;
+  // The chip counts running agents listed or not; failed and done show only while the broker still lists them.
   let chip: AgentMap["chip"];
-  if (nodes.length) {
-    const running = nodes.reduce((sum, n) => {
+  if (nodes.length || past.length) {
+    const listed = nodes.reduce((sum, n) => {
       if (n.status !== "running" && n.status !== "waiting") return sum;
       return sum + (n.progress?.total ? Math.max(1, n.progress.running) : 1);
     }, 0);
-    const dot: ChipDot = counts.waiting ? "waiting" : running ? "running" : counts.failed ? "failed" : "done";
-    chip = { running, dot };
+    const running = listed + past.filter((n) => n.status === "running").length;
+    const dot: ChipDot = counts.waiting ? "waiting" : running ? "running" : counts.failed ? "failed" : nodes.length ? "done" : "idle";
+    chip = { running, dot, total: nodes.length + past.length };
   }
   return { tree, nodes, background, past, counts, chip };
 }
