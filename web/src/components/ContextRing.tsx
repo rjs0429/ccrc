@@ -39,7 +39,7 @@ export function Ring({ gauge, className = "size-5" }: { gauge?: ContextGauge; cl
   );
 }
 
-export function ContextRing({ gauge, onClick }: { gauge?: ContextGauge; onClick: () => void }) {
+export function ContextRing({ gauge, onClick, className = "" }: { gauge?: ContextGauge; onClick: () => void; className?: string }) {
   const label = gauge ? `Context ${gauge.percent}%${gauge.last ? " (마지막 기록)" : ""}` : "Context 사용량";
   return (
     <button
@@ -47,7 +47,7 @@ export function ContextRing({ gauge, onClick }: { gauge?: ContextGauge; onClick:
       aria-label={label}
       data-context-ring={gauge ? Math.min(100, Math.max(0, gauge.percent)) : ""}
       data-warn={contextWarn(gauge) ? "" : undefined}
-      className="flex size-8 shrink-0 items-center justify-center rounded-lg hover:bg-surface-2"
+      className={`flex size-8 shrink-0 items-center justify-center rounded-lg hover:bg-surface-2 ${className}`}
     >
       <Ring gauge={gauge} />
     </button>

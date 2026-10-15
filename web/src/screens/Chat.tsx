@@ -411,7 +411,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
                     </p>
                   ) : (
                     <>
-                      <p className="min-w-0 flex-1 break-keep text-balance">{closedText(st?.closedReason) || "꺼져 있는 세션입니다. "}메시지를 보내면 이어서 실행합니다.</p>
+                      <p className="min-w-0 flex-1 break-keep text-balance">
+                        <span className="block">{closedText(st?.closedReason) || "꺼져 있는 세션입니다."}</span>
+                        <span className="block">메시지를 보내면 이어서 실행합니다.</span>
+                      </p>
                       <button onClick={startNow} disabled={starting} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent disabled:opacity-50">
                         {starting ? "시작하는 중…" : "지금 시작"}
                       </button>
@@ -445,7 +448,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onEffort={(effort) => send({ t: "set_effort", sessionId, effort })}
         onUltracode={(on) => send({ t: "set_ultracode", sessionId, on })}
         onContext={() => setSheet("contextUsage")}
-        agents={controllable ? agentChip : undefined}
+        agents={agentChip}
         onAgents={() => setSheet("agents")}
       />
 

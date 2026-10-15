@@ -41,17 +41,17 @@ test("a nested subagent shows under the subagent that started it, merged with it
     outer.children.map((c) => [c.title, c.status, c.background]),
     [["Run nested echo check", "running", true]],
   );
-  assert.deepEqual(map.chip, { running: 2, dot: "running" });
+  assert.deepEqual(map.chip, { running: 2, dot: "running", total: 2 });
   assert.equal(map.past.length, 0, "a listed call is not also a past one");
 });
 
-test("once all agents end the chip shows done until the broker drops them", () => {
+test("once all agents end the chip shows done until the broker drops them, then stays idle for the conversation", () => {
   const { tasks, items, pending } = replay("a");
   const map = agentMap({ tasks, items, pending, busy: false });
-  assert.deepEqual(map.chip, { running: 0, dot: "done" });
+  assert.deepEqual(map.chip, { running: 0, dot: "done", total: 2 });
   assert.deepEqual([map.counts.completed, map.counts.running], [2, 0]);
   const gone = agentMap({ tasks: [], items, pending, busy: false });
-  assert.equal(gone.chip, undefined);
+  assert.deepEqual(gone.chip, { running: 0, dot: "idle", total: 1 });
   assert.deepEqual(
     gone.past.map((n) => [n.title, n.status]),
     [["Run nested subagent echo check", "completed"]],
@@ -68,7 +68,7 @@ test("a workflow shows its phases and agents and counts its running agents on th
   assert.equal(wf.itemId, "toolu_011UT1xC9Fx3hWf24zG3PGpH");
   assert.deepEqual(wf.progress?.phases, ["gather", "join"]);
   assert.deepEqual([wf.progress?.phase, wf.progress?.running, wf.progress?.done], [1, 1, 2]);
-  assert.deepEqual(map.chip, { running: 1, dot: "running" });
+  assert.deepEqual(map.chip, { running: 1, dot: "running", total: 1 });
 });
 
 test("a workflow without its progress is one row counted once", () => {
@@ -76,7 +76,7 @@ test("a workflow without its progress is one row counted once", () => {
   const map = agentMap({ tasks, items: [], pending: [], busy: false });
   assert.equal(map.tree[0].progress, undefined);
   assert.equal(map.tree[0].name, "review");
-  assert.deepEqual(map.chip, { running: 1, dot: "running" });
+  assert.deepEqual(map.chip, { running: 1, dot: "running", total: 1 });
 });
 
 test("a subagent asking for permission is waiting, and so is the chip", () => {
@@ -84,7 +84,7 @@ test("a subagent asking for permission is waiting, and so is the chip", () => {
   const map = agentMap({ tasks, items, pending, busy: true });
   assert.equal(map.tree[0].status, "waiting");
   assert.equal(map.tree[0].pending?.toolName, "Write");
-  assert.deepEqual(map.chip, { running: 1, dot: "waiting" });
+  assert.deepEqual(map.chip, { running: 1, dot: "waiting", total: 1 });
   assert.equal(map.counts.waiting, 1);
 });
 
@@ -167,4 +167,21 @@ test("a subagent's result is its report without Claude Code's hand-back notice, 
   const outer = agentMap({ tasks, items, pending, busy: false }).nodes.find((n) => n.task?.id === "a095e9cb1491eec1a")!;
   assert.equal(outer.result?.startsWith("The nested subagent is launched but has not finished"), true, outer.result);
   assert.equal(outer.result?.endsWith("too large to read directly."), true, outer.result);
+});
+
+test("the chip stays for the conversation's agents: running ones count listed or not, how listed ones ended fades with the list", () => {
+  const call = (id: string, extra: Partial<Extract<DisplayItem, { kind: "tool" }>> = {}): DisplayItem => ({ kind: "tool", id, name: "Agent", summary: id, input: { description: id }, ...extra });
+  const ended = call("ended", { result: { text: "Found three files", isError: false, truncated: false } });
+  const broke = call("broke", { result: { text: "boom", isError: true, truncated: false } });
+  const open = call("open");
+  assert.deepEqual(agentMap({ items: [ended, broke], pending: [], busy: false }).chip, { running: 0, dot: "idle", total: 2 }, "past failures do not turn the chip red");
+  assert.deepEqual(agentMap({ items: [ended, open], pending: [], busy: true }).chip, { running: 1, dot: "running", total: 2 }, "a call still running counts");
+  assert.deepEqual(agentMap({ items: [ended, open], pending: [], busy: false }).chip, { running: 0, dot: "idle", total: 2 }, "without a turn it no longer runs");
+  const listed: TaskInfo[] = [{ id: "t1", description: "Review", kind: "local_agent", status: "running" }];
+  assert.deepEqual(agentMap({ tasks: listed, items: [ended, open], pending: [], busy: true }).chip, { running: 2, dot: "running", total: 3 });
+  const failed: TaskInfo[] = [{ id: "t1", description: "Review", kind: "local_agent", status: "failed" }];
+  assert.deepEqual(agentMap({ tasks: failed, items: [ended], pending: [], busy: false }).chip, { running: 0, dot: "failed", total: 2 });
+  const done: TaskInfo[] = [{ id: "t1", description: "Review", kind: "local_agent", status: "stopped" }];
+  assert.deepEqual(agentMap({ tasks: done, items: [broke], pending: [], busy: false }).chip, { running: 0, dot: "done", total: 2 });
+  assert.equal(agentMap({ items: [], pending: [], busy: true }).chip, undefined);
 });
