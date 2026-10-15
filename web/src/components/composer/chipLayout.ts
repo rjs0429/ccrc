@@ -9,8 +9,8 @@ export interface ChipWidths {
   gap: number;
   left: number;
   right: number;
-  // The agent chip with and without its word, while it shows.
-  agent?: { word: number; icon: number };
+  // The agent chip with its word and, where its dot or count still shows without the word, without it.
+  agent?: { word: number; icon?: number };
 }
 
 export interface ChipLayout {
@@ -27,7 +27,7 @@ export function chipLayout(w: ChipWidths): ChipLayout {
   if (w.left + w.gap + w.right <= w.row) return { lines: "one", agent: "above", word: true };
   const room = w.row - w.gap - w.right;
   if (w.agent && w.agent.word <= room) return { lines: "two", agent: "inline", word: true };
-  if (w.agent && w.agent.icon <= room) return { lines: "two", agent: "inline", word: false };
+  if (w.agent?.icon !== undefined && w.agent.icon <= room) return { lines: "two", agent: "inline", word: false };
   return { lines: "two", agent: "above", word: true };
 }
 

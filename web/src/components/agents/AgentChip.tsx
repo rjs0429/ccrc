@@ -19,14 +19,15 @@ function label(chip: Chip): string {
   return `이 대화의 에이전트 ${chip.total}개. 에이전트 지도 열기`;
 }
 
-// The chip's width with its word and without, from its parts as laid out now: icon, word, then the count.
-export function agentChipWidths(el: HTMLElement): { word: number; icon: number } {
+// The chip's width with its word and without, from its parts as laid out now: icon, word, then the count. An idle
+// chip has no dot or count to show instead, so it always keeps its word.
+export function agentChipWidths(el: HTMLElement): { word: number; icon?: number } {
   const s = getComputedStyle(el);
   const gap = parseFloat(s.columnGap) || 0;
   const [icon, word, ...rest] = [...el.children].map((e) => e.getBoundingClientRect().width);
   const bare = parseFloat(s.paddingLeft) + parseFloat(s.paddingRight) + icon + rest.reduce((sum, w) => sum + gap + w, 0);
   const min = parseFloat(s.minWidth) || 0;
-  return { word: Math.max(min, bare + gap + word), icon: Math.max(min, bare) };
+  return { word: Math.max(min, bare + gap + word), icon: el.dataset.dot === "idle" ? undefined : Math.max(min, bare) };
 }
 
 // Shows while the conversation has subagents or workflows. Without `word` the word stays laid out, hidden and out

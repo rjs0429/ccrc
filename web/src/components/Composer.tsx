@@ -30,6 +30,8 @@ const DRAFT_HIDDEN = new Set(["clear", "compact", "rename", "recap", "heapdump"]
 // The round buttons sit on the last chip line. Their tap target grows to 44px across and mostly downward, into
 // the composer's bottom padding, so it covers no other control.
 const ROUND_TAP = "relative after:absolute after:-inset-x-1.5 after:-top-0.5 after:-bottom-2.5";
+// The stop button's width with its margins (size-8 mx-1.5), as wide as the room kept for it (w-11).
+const STOP_PX = 44;
 
 // Each composerInsert request is applied once, by the composer that is mounted when it arrives.
 let appliedInsert = 0;
@@ -209,8 +211,11 @@ export function Composer({
   const modelRef = useRef<HTMLSpanElement>(null);
   const modeRef = useRef<HTMLSpanElement>(null);
   const agentRef = useRef<HTMLButtonElement>(null);
+  const stopRef = useRef<HTMLButtonElement>(null);
+  const roomRef = useRef<HTMLSpanElement>(null);
   // The chip lines follow from the chips' widths with every name in full, measured after each render before it
-  // paints, and again when the composer's width changes or fonts load.
+  // paints, and again when the composer's width changes or fonts load. The right group counts the stop button while
+  // it is hidden: by the room kept for it or, on the wide line, by its width.
   const measure = (): ChipLayout | undefined => {
     const [bar, rows, left, right] = [barRef.current, rowsRef.current, leftRef.current, rightRef.current];
     if (!bar || !rows || !left || !right) return undefined;
@@ -219,7 +224,7 @@ export function Composer({
       row: rows.getBoundingClientRect().width,
       gap: parseFloat(getComputedStyle(left.parentElement!).columnGap) || 0,
       left: groupWidth(left, modelRef.current),
-      right: groupWidth(right, modeRef.current),
+      right: groupWidth(right, modeRef.current) + (draft || stopRef.current || roomRef.current ? 0 : STOP_PX),
       agent: agentRef.current ? agentChipWidths(agentRef.current) : undefined,
     });
   };
@@ -386,8 +391,9 @@ export function Composer({
   // Sharing a line with the right group, the left group never shrinks: a longer name is measured in full and takes
   // the chips to two lines instead of being cut.
   const leftFit = two ? "basis-full" : layout.lines === "wide" ? "flex-1" : "shrink-0";
-  // The stop button's room, kept while it is hidden so a turn starting or ending leaves the chips on their lines.
-  const stopRoom = !busy && !draft;
+  // The stop button's room, kept while it is hidden so a turn starting or ending leaves the chips on their lines. The
+  // wide line never wraps and keeps none, so the agent chip stays beside the right group.
+  const stopRoom = !busy && !draft && layout.lines !== "wide";
 
   return (
     <div ref={barRef} className="pb-safe border-t border-line bg-bg px-safe-3 pt-2 short:pt-1">
@@ -461,14 +467,14 @@ export function Composer({
               </div>
               {agentChip && layout.agent === "inline" && agentChip}
               <div ref={rightRef} className="ml-auto flex max-w-full shrink-0 items-center" data-chip-group="right">
-                {stopRoom && <span className="w-11 shrink-0" aria-hidden />}
+                {stopRoom && <span ref={roomRef} className="w-11 shrink-0" aria-hidden />}
                 <Chip name="mode" className="min-w-0" disabled={!choosable} onClick={() => setSheet("mode")}>
                   <span ref={modeRef} className="truncate">{MODE_LABEL[mode ?? ""] ?? "권한 모드"}</span>
                   <Icon.chevronDown className="size-3 shrink-0" />
                 </Chip>
                 {onContext && <ContextRing gauge={state?.context} onClick={onContext} className="ml-0.5" />}
                 {busy && (
-                  <button onClick={onStop} aria-label="중지" className={`mx-1.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-fg ${ROUND_TAP}`}>
+                  <button ref={stopRef} onClick={onStop} aria-label="중지" className={`mx-1.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-fg ${ROUND_TAP}`}>
                     <Icon.stop className="size-5" />
                   </button>
                 )}

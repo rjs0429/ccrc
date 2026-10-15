@@ -16,11 +16,17 @@ test("narrow, both groups share a line when they fit, and the agent chip takes a
 });
 
 test("narrow, on two lines the agent chip joins the right group's line with its word, without it, or goes above", () => {
-  const two = (agent: { word: number; icon: number }) => chipLayout({ ...base, right: 250, agent });
+  const two = (agent: { word: number; icon?: number }) => chipLayout({ ...base, right: 250, agent });
   assert.deepEqual(two({ word: 86, icon: 44 }), { lines: "two", agent: "inline", word: true });
   assert.deepEqual(two({ word: 87, icon: 44 }), { lines: "two", agent: "inline", word: false });
   assert.deepEqual(two({ word: 100, icon: 87 }), { lines: "two", agent: "above", word: true });
   assert.deepEqual(chipLayout({ ...base, right: 250 }), { lines: "two", agent: "above", word: true });
+});
+
+test("a chip with nothing to show without its word keeps it, on line 2 where it fits or else above", () => {
+  const two = (word: number) => chipLayout({ ...base, right: 250, agent: { word } });
+  assert.deepEqual(two(86), { lines: "two", agent: "inline", word: true });
+  assert.deepEqual(two(87), { lines: "two", agent: "above", word: true });
 });
 
 test("layouts compare by their lines, the agent chip's place and its word", () => {
