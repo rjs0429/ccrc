@@ -20,7 +20,7 @@ import { ThreadSheet, type ShownThread } from "../components/sheets/Thread.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { FileLinks, FileRoots } from "../components/fileLinks.ts";
-import { dayLines } from "../components/stamps.ts";
+import { dayLines, streamLine } from "../components/stamps.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { baseName, closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
@@ -379,7 +379,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
                   </div>
                 </Fragment>
               ))}
-              {chat?.stream && <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />}
+              {chat?.stream && (
+                <>
+                  <DateLine day={streamLine(days, chat.stream)} />
+                  <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />
+                </>
+              )}
               {busy && !chat?.stream && !chat?.pending.length && (
                 <div className="flex items-center gap-2 text-sm text-muted">
                   <Spinner className="size-3.5" /> 작업 중…

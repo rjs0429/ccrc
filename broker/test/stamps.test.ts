@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DisplayItem } from "../src/protocol.ts";
-import { dayLabel, dayLines, fullTime, stampTime } from "../../web/src/components/stamps.ts";
+import { dayLabel, dayLines, fullTime, stampTime, streamLine } from "../../web/src/components/stamps.ts";
 import { clock } from "../../web/src/labels.ts";
 
 // Days are the phone's local days; this file reads times in a zone ahead of UTC.
@@ -81,6 +81,30 @@ test("a day of another year leads with its year, and the new year draws a line",
   );
   assert.equal(dayLabel(at(2026, 10, 5), NOW), "10월 5일 (월)");
   assert.equal(dayLabel(at(2026, 1, 1), at(2027, 3, 1)), "2026년 1월 1일 (목)");
+});
+
+test("a reply still streaming has the date line it lands with if it lands now", () => {
+  const asked: DisplayItem[] = [user("u1", iso(2026, 10, 15, 23, 58)), { kind: "tool", id: "t1", ts: iso(2026, 10, 16, 0, 0, 10), name: "Bash", summary: "ls", input: {} }];
+  const lastYear = [reply("a0", iso(2025, 12, 31, 23, 59))];
+  const text = { text: "답을 쓰는 중입니다", thinking: false };
+  const cases: [DisplayItem[], Date][] = [
+    [asked, at(2026, 10, 15, 23, 59, 59)],
+    [asked, at(2026, 10, 16, 0, 0, 1)],
+    [asked, at(2026, 10, 17, 9)],
+    [[user("y", iso(2026, 10, 14, 22)), reply("t", iso(2026, 10, 15, 9))], at(2026, 10, 15, 10)],
+    [lastYear, at(2026, 1, 1, 0, 0, 3)],
+    [[user("no time"), reply("bad time", "garbage")], at(2026, 10, 15, 9)],
+    [[], at(2026, 10, 15, 9)],
+  ];
+  for (const [items, now] of cases) {
+    const landed = dayLines([...items, reply("landed", now.toISOString(), text.text)], now).get("landed");
+    assert.deepEqual(streamLine(dayLines(items, now), text, now), landed, now.toISOString());
+  }
+  assert.equal(streamLine(dayLines(asked, NOW), text, at(2026, 10, 15, 23, 59, 59)), undefined);
+  assert.deepEqual(streamLine(dayLines(asked, NOW), text, at(2026, 10, 16, 0, 0, 1)), { date: "2026-10-16", label: "10월 16일 (금)" });
+  assert.deepEqual(streamLine(dayLines(lastYear, NOW), text, at(2026, 1, 1, 0, 0, 3)), { date: "2026-01-01", label: "1월 1일 (목)" });
+  assert.equal(streamLine(dayLines(asked, NOW), { text: "생각하는 중", thinking: true }, at(2026, 10, 16, 0, 0, 1)), undefined);
+  assert.equal(streamLine(dayLines(asked, NOW), { text: " \n ", thinking: false }, at(2026, 10, 16, 0, 0, 1)), undefined);
 });
 
 test("a stamp reads as the local hour and minute, and its full time as the local date, weekday and time to the second", () => {

@@ -44,3 +44,11 @@ export function dayLines(items: DisplayItem[], now = new Date()): Map<string, Da
   }
   return lines;
 }
+
+// The date line over a reply still streaming after a list with these date lines: the one it takes if it lands now,
+// as Claude Code stamps a reply when its text ends. None while Claude thinks or before the reply has text.
+export function streamLine(lines: Map<string, Day>, stream: { text: string; thinking: boolean }, now = new Date()): Day | undefined {
+  if (stream.thinking || !stream.text.trim()) return undefined;
+  const date = localDate(now);
+  return [...lines.values()].at(-1)?.date === date ? undefined : { date, label: dayLabel(now, now) };
+}
