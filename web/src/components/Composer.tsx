@@ -355,17 +355,26 @@ export function Composer({
     if (sessionId) rememberSent(sessionId, text.trim(), takeAttachments(sessionId));
   };
 
-  // A tap does what the round button showed as the finger went down, and a stop that has only just taken its place
-  // takes no tap until STOP_SETTLE_MS have passed. A click from the keyboard does what the button shows.
+  // A tap does what the round button showed as the finger went down. A stop that has only just taken its place takes
+  // no tap or key until it has been left alone for STOP_SETTLE_MS.
   const face = useRef({ stops, since: 0 });
   useLayoutEffect(() => {
     if (face.current.stops !== stops) face.current = { stops, since: performance.now() };
   }, [stops]);
   const pressed = useRef<"send" | "stop" | "none" | null>(null);
-  const meant = () => (!face.current.stops ? "send" : performance.now() - face.current.since < STOP_SETTLE_MS ? "none" : "stop");
+  const meant = () => {
+    if (!face.current.stops) return "send";
+    const now = performance.now();
+    if (now - face.current.since >= STOP_SETTLE_MS) return "stop";
+    face.current.since = now;
+    return "none";
+  };
+  // Where a click gives the button the focus, the focus moves on to the input, since by the next key the button may
+  // be a stop.
   const tapRound = (e: React.MouseEvent) => {
-    const act = e.detail === 0 ? (stops ? "stop" : "send") : (pressed.current ?? meant());
+    const act = e.detail === 0 ? meant() : (pressed.current ?? meant());
     pressed.current = null;
+    if (document.activeElement === e.currentTarget) ref.current?.focus();
     if (act === "send") submit();
     else if (act === "stop" && busy) onStop();
   };

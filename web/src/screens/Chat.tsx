@@ -70,7 +70,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const summary = useApp((s) => s.sessions?.find((x) => x.id === sessionId));
   const models = useApp((s) => s.options?.models ?? NO_MODELS);
   const othersWaiting = useApp((s) => (s.sessions ?? []).some((x) => x.id !== sessionId && x.pendingCount));
-  const [menu, setMenu] = useState(false);
+  // The ⋯ menu decides as it opens whether it offers 이번 턴 중지 and keeps that row while open, enabled while a turn
+  // runs, so a turn starting or ending moves none of its rows.
+  const [menu, setMenu] = useState<false | { stop: boolean }>(false);
   const [sheet, setSheet] = useState<SheetName | null>(null);
   const [usageCommand, setUsageCommand] = useState("usage");
   const [stopped, setStopped] = useState<string | null>(null);
@@ -335,7 +337,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               {summary?.branch && summary.branch !== "HEAD" ? ` · ${summary.branch}` : ""} · {status}
             </div>
           </div>
-          <button onClick={() => setMenu(true)} aria-label="메뉴" className="rounded-lg p-2 text-muted">
+          <button onClick={() => setMenu({ stop: busy && controllable })} aria-label="메뉴" className="rounded-lg p-2 text-muted">
             <Icon.dots />
           </button>
         </div>
@@ -465,7 +467,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {menu && (
         <Sheet title={title} onClose={() => setMenu(false)}>
           <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
-          {busy && controllable && (
+          {menu.stop && (
             <Choice
               label="이번 턴 중지"
               hint={
@@ -474,6 +476,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
                   <span className="block">백그라운드 에이전트는 에이전트 지도에서 멈춥니다.</span>
                 </>
               }
+              disabled={!busy || !controllable}
               onClick={() => (stop(), setMenu(false))}
             />
           )}

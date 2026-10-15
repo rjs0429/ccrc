@@ -99,11 +99,12 @@ export function Sheet({ title, onClose, children, wide }: { title?: string; onCl
   );
 }
 
-export function Choice({ label, hint, selected, onClick }: { label: string; hint?: ReactNode; selected?: boolean; onClick: () => void }) {
+export function Choice({ label, hint, selected, disabled, onClick }: { label: string; hint?: ReactNode; selected?: boolean; disabled?: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left ${selected ? "bg-accent-soft" : "hover:bg-surface-2"}`}
+      disabled={disabled}
+      className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left disabled:opacity-50 ${selected ? "bg-accent-soft" : "enabled:hover:bg-surface-2"}`}
     >
       <span>
         <span className="block text-[15px]">{label}</span>
