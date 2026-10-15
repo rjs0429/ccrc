@@ -99,7 +99,7 @@ export function Sheet({ title, onClose, children, wide }: { title?: string; onCl
   );
 }
 
-export function Choice({ label, hint, selected, onClick }: { label: string; hint?: string; selected?: boolean; onClick: () => void }) {
+export function Choice({ label, hint, selected, onClick }: { label: string; hint?: ReactNode; selected?: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}

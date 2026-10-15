@@ -27,11 +27,10 @@ const START_HINT = "여기서 이 세션을 시작할 때 적용합니다. VS Co
 const DRAFT_HINT = "새 세션을 시작할 때 적용합니다.";
 // Commands that mean nothing before a session exists.
 const DRAFT_HIDDEN = new Set(["clear", "compact", "rename", "recap", "heapdump"]);
-// The round buttons sit on the last chip line. Their tap target grows to 44px across and mostly downward, into
+// The round button sits on the last chip line. Its tap target grows to 44px across and mostly downward, into
 // the composer's bottom padding, so it covers no other control.
 const ROUND_TAP = "relative after:absolute after:-inset-x-1.5 after:-top-0.5 after:-bottom-2.5";
-// The stop button's width with its margins (size-8 mx-1.5), as wide as the room kept for it (w-11).
-const STOP_PX = 44;
+const STOP_SETTLE_MS = 500;
 
 // Each composerInsert request is applied once, by the composer that is mounted when it arrives.
 let appliedInsert = 0;
@@ -183,7 +182,10 @@ export function Composer({
   const uploading = attachments.some((a) => !a.uploaded);
   // While a new session starts, its first message stays as it was sent.
   const locked = Boolean(draft && starting);
-  const canSend = !uploading && !locked && (text.trim() !== "" || attachments.length > 0);
+  const filled = text.trim() !== "" || attachments.length > 0;
+  const canSend = !uploading && !locked && filled;
+  // One round button: stop while a turn runs and there is nothing to send, else send, which queues during a turn.
+  const stops = busy && !filled;
 
   const draftCwd = draft?.cwd;
   const target = useMemo<SuggestTarget | undefined>(() => (sessionId ? { sessionId } : draftCwd ? { cwd: draftCwd } : undefined), [sessionId, draftCwd]);
@@ -211,11 +213,8 @@ export function Composer({
   const modelRef = useRef<HTMLSpanElement>(null);
   const modeRef = useRef<HTMLSpanElement>(null);
   const agentRef = useRef<HTMLButtonElement>(null);
-  const stopRef = useRef<HTMLButtonElement>(null);
-  const roomRef = useRef<HTMLSpanElement>(null);
   // The chip lines follow from the chips' widths with every name in full, measured after each render before it
-  // paints, and again when the composer's width changes or fonts load. The right group counts the stop button while
-  // it is hidden: by the room kept for it or, on the wide line, by its width.
+  // paints, and again when the composer's width changes or fonts load.
   const measure = (): ChipLayout | undefined => {
     const [bar, rows, left, right] = [barRef.current, rowsRef.current, leftRef.current, rightRef.current];
     if (!bar || !rows || !left || !right) return undefined;
@@ -224,7 +223,7 @@ export function Composer({
       row: rows.getBoundingClientRect().width,
       gap: parseFloat(getComputedStyle(left.parentElement!).columnGap) || 0,
       left: groupWidth(left, modelRef.current),
-      right: groupWidth(right, modeRef.current) + (draft || stopRef.current || roomRef.current ? 0 : STOP_PX),
+      right: groupWidth(right, modeRef.current),
       agent: agentRef.current ? agentChipWidths(agentRef.current) : undefined,
     });
   };
@@ -356,6 +355,21 @@ export function Composer({
     if (sessionId) rememberSent(sessionId, text.trim(), takeAttachments(sessionId));
   };
 
+  // A tap does what the round button showed as the finger went down, and a stop that has only just taken its place
+  // takes no tap until STOP_SETTLE_MS have passed. A click from the keyboard does what the button shows.
+  const face = useRef({ stops, since: 0 });
+  useLayoutEffect(() => {
+    if (face.current.stops !== stops) face.current = { stops, since: performance.now() };
+  }, [stops]);
+  const pressed = useRef<"send" | "stop" | "none" | null>(null);
+  const meant = () => (!face.current.stops ? "send" : performance.now() - face.current.since < STOP_SETTLE_MS ? "none" : "stop");
+  const tapRound = (e: React.MouseEvent) => {
+    const act = e.detail === 0 ? (stops ? "stop" : "send") : (pressed.current ?? meant());
+    pressed.current = null;
+    if (act === "send") submit();
+    else if (act === "stop" && busy) onStop();
+  };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const composing = e.nativeEvent.isComposing || e.keyCode === 229;
     if (shown && !composing) {
@@ -391,9 +405,6 @@ export function Composer({
   // Sharing a line with the right group, the left group never shrinks: a longer name is measured in full and takes
   // the chips to two lines instead of being cut.
   const leftFit = two ? "basis-full" : layout.lines === "wide" ? "flex-1" : "shrink-0";
-  // The stop button's room, kept while it is hidden so a turn starting or ending leaves the chips on their lines. The
-  // wide line never wraps and keeps none, so the agent chip stays beside the right group.
-  const stopRoom = !busy && !draft && layout.lines !== "wide";
 
   return (
     <div ref={barRef} className="pb-safe border-t border-line bg-bg px-safe-3 pt-2 short:pt-1">
@@ -467,25 +478,21 @@ export function Composer({
               </div>
               {agentChip && layout.agent === "inline" && agentChip}
               <div ref={rightRef} className="ml-auto flex max-w-full shrink-0 items-center" data-chip-group="right">
-                {stopRoom && <span ref={roomRef} className="w-11 shrink-0" aria-hidden />}
                 <Chip name="mode" className="min-w-0" disabled={!choosable} onClick={() => setSheet("mode")}>
                   <span ref={modeRef} className="truncate">{MODE_LABEL[mode ?? ""] ?? "권한 모드"}</span>
                   <Icon.chevronDown className="size-3 shrink-0" />
                 </Chip>
                 {onContext && <ContextRing gauge={state?.context} onClick={onContext} className="ml-0.5" />}
-                {busy && (
-                  <button ref={stopRef} onClick={onStop} aria-label="중지" className={`mx-1.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-fg ${ROUND_TAP}`}>
-                    <Icon.stop className="size-5" />
-                  </button>
-                )}
                 <button
-                  onClick={submit}
-                  disabled={!canSend}
-                  aria-label={locked ? "시작하는 중" : draft ? "시작" : "보내기"}
+                  onPointerDown={() => (pressed.current = meant())}
+                  onPointerCancel={() => (pressed.current = null)}
+                  onClick={tapRound}
+                  disabled={!stops && !canSend}
+                  aria-label={locked ? "시작하는 중" : stops ? "중지" : draft ? "시작" : busy ? "대기열에 추가" : "보내기"}
                   data-starting={locked || undefined}
-                  className={`ml-1.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-white ${ROUND_TAP} ${locked ? "" : "disabled:opacity-30"}`}
+                  className={`ml-1.5 flex size-8 shrink-0 items-center justify-center rounded-full ${ROUND_TAP} ${stops ? "bg-surface-2 text-fg" : `bg-accent text-white ${locked ? "" : "disabled:opacity-30"}`}`}
                 >
-                  {locked ? <Spinner className="size-4" /> : <Icon.send className="size-4 [stroke-width:2.5]" />}
+                  {locked ? <Spinner className="size-4" /> : stops ? <Icon.stop className="size-5" /> : <Icon.send className="size-4 [stroke-width:2.5]" />}
                 </button>
               </div>
             </div>

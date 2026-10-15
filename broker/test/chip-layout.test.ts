@@ -2,17 +2,20 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { chipLayout, sameLayout } from "../../web/src/components/composer/chipLayout.ts";
 
-const base = { composer: 390, row: 340, gap: 4, left: 180, right: 190 };
+// A phone's composer: the paperclip, a short model name and Effort on the left; the mode chip, the Context ring and
+// the one round button on the right, as wide while a turn runs as when idle.
+const base = { composer: 390, row: 340, gap: 4, left: 162, right: 143 };
 
 test("from the sm breakpoint the chips stand on one line with the agent chip between the groups", () => {
   assert.deepEqual(chipLayout({ ...base, composer: 640, left: 400, right: 300, agent: { word: 90, icon: 44 } }), { lines: "wide", agent: "inline", word: true });
-  assert.equal(chipLayout({ ...base, composer: 639.5 }).lines, "two");
+  assert.equal(chipLayout({ ...base, composer: 639.5, left: 226 }).lines, "two");
 });
 
 test("narrow, both groups share a line when they fit, and the agent chip takes a line of its own above them", () => {
-  assert.deepEqual(chipLayout({ ...base, left: 146, right: 190 }), { lines: "one", agent: "above", word: true });
-  assert.deepEqual(chipLayout({ ...base, left: 146, right: 190, agent: { word: 90, icon: 44 } }), { lines: "one", agent: "above", word: true });
-  assert.equal(chipLayout({ ...base, left: 146.5, right: 190 }).lines, "two");
+  assert.deepEqual(chipLayout(base), { lines: "one", agent: "above", word: true });
+  assert.deepEqual(chipLayout({ ...base, agent: { word: 90, icon: 44 } }), { lines: "one", agent: "above", word: true });
+  assert.deepEqual(chipLayout({ ...base, left: 193 }), { lines: "one", agent: "above", word: true });
+  assert.equal(chipLayout({ ...base, left: 193.5 }).lines, "two");
 });
 
 test("narrow, on two lines the agent chip joins the right group's line with its word, without it, or goes above", () => {

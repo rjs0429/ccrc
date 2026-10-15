@@ -1,8 +1,7 @@
 // The composer's width from which the chips stand on one line: the sm breakpoint.
 const WIDE_PX = 640;
 
-// Widths of the composer's chip rows with every name in full; the right group counts the stop button while it
-// is hidden.
+// Widths of the composer's chip rows with every name in full.
 export interface ChipWidths {
   composer: number;
   row: number;
