@@ -70,7 +70,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const summary = useApp((s) => s.sessions?.find((x) => x.id === sessionId));
   const models = useApp((s) => s.options?.models ?? NO_MODELS);
   const othersWaiting = useApp((s) => (s.sessions ?? []).some((x) => x.id !== sessionId && x.pendingCount));
-  const [menu, setMenu] = useState(false);
+  // The ⋯ menu decides as it opens whether it offers 이번 턴 중지 and keeps that row while open, enabled while a turn
+  // runs, so a turn starting or ending moves none of its rows.
+  const [menu, setMenu] = useState<false | { stop: boolean }>(false);
   const [sheet, setSheet] = useState<SheetName | null>(null);
   const [usageCommand, setUsageCommand] = useState("usage");
   const [stopped, setStopped] = useState<string | null>(null);
@@ -154,6 +156,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
       .catch((e: Error) => toast(errorText(e.message)))
       .finally(() => setTaking(null));
   };
+
+  const stop = () => send({ t: "interrupt", sessionId });
 
   const sendText = (text: string, attachments: string[] = []) => {
     const c = attachments.length ? undefined : parseCommand(text);
@@ -333,7 +337,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               {summary?.branch && summary.branch !== "HEAD" ? ` · ${summary.branch}` : ""} · {status}
             </div>
           </div>
-          <button onClick={() => setMenu(true)} aria-label="메뉴" className="rounded-lg p-2 text-muted">
+          <button onClick={() => setMenu({ stop: busy && controllable })} aria-label="메뉴" className="rounded-lg p-2 text-muted">
             <Icon.dots />
           </button>
         </div>
@@ -450,7 +454,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onSend={sendText}
         onCommand={openCommand}
         openSheet={composerSheet}
-        onStop={() => send({ t: "interrupt", sessionId })}
+        onStop={stop}
         onMode={(mode) => send({ t: "set_mode", sessionId, mode })}
         onModel={(model) => send({ t: "set_model", sessionId, model })}
         onEffort={(effort) => send({ t: "set_effort", sessionId, effort })}
@@ -463,6 +467,19 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {menu && (
         <Sheet title={title} onClose={() => setMenu(false)}>
           <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
+          {menu.stop && (
+            <Choice
+              label="이번 턴 중지"
+              hint={
+                <>
+                  <span className="block">입력창에 쓴 글은 그대로 둡니다.</span>
+                  <span className="block">백그라운드 에이전트는 에이전트 지도에서 멈춥니다.</span>
+                </>
+              }
+              disabled={!busy || !controllable}
+              onClick={() => (stop(), setMenu(false))}
+            />
+          )}
           <Choice label="새로고침" onClick={() => (send({ t: "view", sessionId }), setMenu(false))} />
           <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
           <Choice label="Context와 사용량" hint="Context, 요금제 사용량, Compact" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
@@ -481,7 +498,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
           {kind === "owned" && (
             <Choice
               label="원격 실행 끝내기"
-              hint="이 세션의 Claude Code 프로세스를 닫습니다. 대화 기록은 남습니다."
+              hint={
+                <>
+                  <span className="block">이 세션의 Claude Code 프로세스를 닫습니다.</span>
+                  <span className="block">대화 기록은 남습니다.</span>
+                </>
+              }
               onClick={() => (send({ t: "release", sessionId }), setMenu(false))}
             />
           )}
