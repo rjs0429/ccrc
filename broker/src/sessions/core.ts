@@ -134,6 +134,7 @@ export function rewindResult(r: unknown): RewindResult {
     ...(files ? { filesChanged: files.slice(0, FILES_MAX) } : {}),
     ...(typeof o.insertions === "number" ? { insertions: o.insertions } : {}),
     ...(typeof o.deletions === "number" ? { deletions: o.deletions } : {}),
+    ...(typeof o.skippedLinks === "number" && o.skippedLinks > 0 ? { skippedLinks: o.skippedLinks } : {}),
   };
 }
 
@@ -342,6 +343,11 @@ export abstract class SessionCore extends EventEmitter {
     if (!UUID.test(userMessageId) || !this.builder.items.some((i) => i.kind === "user" && i.id === userMessageId)) throw Error("unknown message");
     if (!dryRun && this.busy) throw Error("session is busy");
     return userMessageId;
+  }
+
+  // The latest message the phone says it shows, passed on only when this session holds it.
+  protected seenItem(id: unknown): string | undefined {
+    return typeof id === "string" && UUID.test(id) && this.builder.items.some((i) => i.id === id || i.id.startsWith(`${id}:`)) ? id : undefined;
   }
 
   protected runningTask(taskId: string): string {

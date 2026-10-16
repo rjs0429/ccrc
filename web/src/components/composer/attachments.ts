@@ -77,6 +77,14 @@ export function removeAttachment(sessionId: string, key: number): void {
   set(sessionId, list.filter((a) => a.key !== key));
 }
 
+// Hands the files attached in one place, all uploaded, over to another, as a fork's message goes to the fork.
+export function moveAttachments(from: string, to: string): void {
+  const list = lists.get(from) ?? [];
+  if (!list.length) return;
+  lists.delete(from);
+  set(to, [...(lists.get(to) ?? []), ...list]);
+}
+
 // An image as it was sent, with its object URL and name.
 export type SentImage = { url: string; blob: Blob; name: string } | undefined;
 

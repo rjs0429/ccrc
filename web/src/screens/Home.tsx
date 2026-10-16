@@ -5,6 +5,7 @@ import { ApiError, api } from "../api.ts";
 import { ArchivedBadge, SessionActions, setArchived } from "../components/SessionActions.tsx";
 import { Icon, Spinner } from "../components/ui.tsx";
 import { UpdateBanner } from "../components/UpdateBanner.tsx";
+import { TitleText } from "../components/TitleText.tsx";
 import { useLongPress } from "../components/useLongPress.ts";
 import { baseName, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
 import { loggedOut, navigate, openAt, refreshSessions, useApp } from "../state.ts";
@@ -148,7 +149,9 @@ function SessionRow({ s, view, onActions }: { s: SessionSummary; view: Filter; o
     >
       <span className={`mt-1.5 size-2.5 shrink-0 rounded-full ${st.dot}`} />
       <span className="min-w-0 flex-1">
-        <span className={`block truncate text-[15px] ${s.pendingCount ? "font-semibold" : "font-medium"}`}>{sessionTitle(s)}</span>
+        <span className={`block truncate text-[15px] ${s.pendingCount ? "font-semibold" : "font-medium"}`}>
+          <TitleText text={sessionTitle(s)} />
+        </span>
         <Meta text={meta} archived={s.archived && view !== "archived"} />
       </span>
     </button>

@@ -10,6 +10,8 @@ import { UsageView } from "./sheets/Usage.tsx";
 import { ToolInput, ToolOutput } from "./ToolInput.tsx";
 import { UserAttachments } from "./UserAttachments.tsx";
 import { AgentLinks } from "./agents/links.ts";
+import { actionable, type UserMessage } from "./messageActions.ts";
+import { useLongPress } from "./useLongPress.ts";
 import { Folded } from "./tools/parts.tsx";
 import { SentFiles } from "./tools/SentFiles.tsx";
 import { fullTime, stampTime, type Day } from "./stamps.ts";
@@ -24,13 +26,39 @@ function Stamp({ at, className }: { at: Date; className?: string }) {
   );
 }
 
-function UserItem({ item }: { item: Extract<DisplayItem, { kind: "user" }> }) {
+// A message the conversation can be forked from or rewound to opens its actions from a long press on its bubble or from
+// the button before its time, whose target reaches 44px into the space around the line without making it taller.
+function UserItem({ item, onActions }: { item: UserMessage; onActions?: (m: UserMessage) => void }) {
   const at = stampTime(item);
+  const open = onActions && actionable(item) ? () => onActions(item) : undefined;
+  const press = useLongPress(() => open?.());
   return (
     <div className="flex flex-col items-end gap-1.5">
       {item.attachments && <UserAttachments messageId={item.id} list={item.attachments} />}
-      {item.text && <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap">{item.text}</div>}
-      {at && <Stamp at={at} className="-mt-0.5 text-[11px] text-muted" />}
+      {item.text && (
+        <div
+          {...(open ? press : {})}
+          className={`max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap ${open ? "pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none]" : ""}`}
+        >
+          {item.text}
+        </div>
+      )}
+      {open ? (
+        <div className="-mt-0.5 flex h-4 items-center gap-1 text-[11px] text-muted">
+          <button
+            onClick={open}
+            aria-label="메시지 동작"
+            aria-haspopup="dialog"
+            className="relative flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-inset-y-3.5 active:text-fg"
+            data-message-actions
+          >
+            <Icon.dots className="size-4" />
+          </button>
+          {at && <Stamp at={at} />}
+        </div>
+      ) : (
+        at && <Stamp at={at} className="-mt-0.5 text-[11px] text-muted" />
+      )}
     </div>
   );
 }
@@ -344,10 +372,11 @@ export function shownItems(all: DisplayItem[]): DisplayItem[] {
   });
 }
 
-export const ItemView = memo(function ItemView({ item, running }: { item: DisplayItem; running: boolean }) {
+// onMessage: opens the actions of a message the user sent; without it, messages offer none.
+export const ItemView = memo(function ItemView({ item, running, onMessage }: { item: DisplayItem; running: boolean; onMessage?: (m: UserMessage) => void }) {
   switch (item.kind) {
     case "user":
-      return <UserItem item={item} />;
+      return <UserItem item={item} onActions={onMessage} />;
     case "assistant":
       return <AssistantItem item={item} />;
     case "thinking":

@@ -1,7 +1,6 @@
-import { getSessionMessages } from "@anthropic-ai/claude-agent-sdk";
 import type { FastifyInstance } from "fastify";
 import { SEARCH_QUERY_MAX } from "../search-protocol.ts";
-import { transcriptPath } from "../sessions/history.ts";
+import { currentMessages, transcriptPath } from "../sessions/history.ts";
 import { SessionSearch } from "../sessions/search.ts";
 import { threadAround } from "../sessions/thread.ts";
 import type { RouteDeps } from "./types.ts";
@@ -26,7 +25,7 @@ export async function registerSearch(app: FastifyInstance, d: RouteDeps, search 
     const s = (await d.manager.list()).find((x) => x.id === sessionId);
     const file = s && transcriptPath(sessionId, s.cwd);
     if (!file) return reply.code(404).send({ error: "unknown session" });
-    const current = new Set((await getSessionMessages(sessionId, { dir: s.cwd })).map((m) => m.uuid));
+    const current = new Set((await currentMessages(sessionId, s.cwd)).map((m) => m.uuid));
     const thread = await threadAround(file, itemId, current);
     return thread ?? reply.code(404).send({ error: "not found" });
   });

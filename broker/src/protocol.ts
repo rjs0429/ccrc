@@ -371,7 +371,41 @@ export interface RewindResult {
   filesChanged?: string[];
   insertions?: number;
   deletions?: number;
+  // Files left as they are because they are links.
+  skippedLinks?: number;
 }
+
+// id: the new session's id, chosen by the phone. before: the message the copy leaves out with all after it.
+// text and attachments (POST /api/upload ids): the fork's first message, which starts it at once. name: the fork's name
+// in place of the original's with " (fork)".
+export type ForkArgs = {
+  id: string;
+  before?: string;
+  text?: string;
+  attachments?: string[];
+  name?: string;
+};
+
+// sent: the fork has its first message, from this request or an earlier one with the same id. draft: the message starts
+// the conversation, so nothing comes before it; a new session in its folder stands instead.
+export type ForkResult = { sessionId: string; cwd: string; title: string; sent?: boolean } | { draft: { cwd: string } };
+
+// lastSeen: the latest message the phone shows; Claude Code refuses when a later turn came. forkId: the id of the new
+// session a rewind opens where it cannot happen in place.
+export type RewindConversationArgs = {
+  userMessageId: string;
+  choice: "both" | "conversation";
+  lastSeen?: string;
+  forkId?: string;
+};
+
+// prefill: the message's text, for the composer. files: how rewinding the code went, when asked for. fallback: Claude Code
+// could not rewind in place, so a new session stands instead.
+export type RewindConversationResult = { prefill: string; files?: RewindResult } & (
+  | { mode: "in_place" }
+  | { mode: "forked"; sessionId: string; fallback?: boolean }
+  | { mode: "draft"; cwd: string }
+);
 
 // The session's output style and the styles it can switch to, built-in and custom, as Claude Code lists them.
 export interface OutputStyleInfo {
@@ -388,6 +422,11 @@ export interface CallMap {
   mcp_toggle: { args: { server: string; enabled: boolean }; data: McpServerInfo[] };
   mcp_reconnect: { args: { server: string }; data: McpServerInfo[] };
   rewind: { args: { userMessageId: string; dryRun: boolean }; data: RewindResult };
+  // Copies the conversation into a new session the broker runs: up to a message, or as it stands without a turn that runs.
+  // The same id gives the same session.
+  fork: { args: ForkArgs; data: ForkResult };
+  // Takes the conversation back to before a message: in place where the broker runs the session, else in a new session.
+  rewind_conversation: { args: RewindConversationArgs; data: RewindConversationResult };
   stop_task: { args: { taskId: string }; data: Record<string, never> };
   // A subagent's transcript, by its id or else by the Agent call that started it: the latest page, the page before
   // item `before`, or what follows the items the phone holds.
@@ -417,6 +456,7 @@ export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage", "git"];
 // The agent map's reads, about one session like the calls above.
 CALL_OPS.push("agent_transcript", "task_output", "workflow_agents");
 CALL_OPS.push("worktree_status", "worktree_remove");
+CALL_OPS.push("fork", "rewind_conversation");
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {

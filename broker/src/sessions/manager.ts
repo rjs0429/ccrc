@@ -17,10 +17,13 @@ import {
   type ContextGauge,
   type DisplayItem,
   type EffortName,
+  type ForkResult,
   type LiveState,
   type ModelOption,
   type PendingRequest,
   type PermissionModeName,
+  type RewindConversationResult,
+  type RewindResult,
   type ServerMsg,
   type SessionSummary,
   type SnapshotGap,
@@ -39,7 +42,7 @@ import { ContextWindows, exactModel, gauge, lastModelId, lastUsage, widened, typ
 import type { ContentBlock, SessionCore } from "./core.ts";
 import { writeTitle } from "./custom-title.ts";
 import { searchFiles } from "./files.ts";
-import { PROJECTS, lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
+import { PROJECTS, forkPoint, lastCwd, loadHistory, projectDirName, transcriptPath, turnPoint } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
@@ -72,12 +75,32 @@ const PROBE_RETRY_MS = 60_000;
 const CLOSING_WAIT_MS = 3000;
 // Making a worktree may first fetch origin's default branch, then check the files out.
 const WORKTREE_START_MS = 60_000;
+// A fork: how long Claude Code may take to start on the copy, to name it and to show the name in its transcript, how long
+// the same request gets the same fork, and how much of the original's title the name keeps.
+const FORK_START_MS = 60_000;
+const FORK_NAME_MS = 30_000;
+const FORK_WRITTEN_MS = 3000;
+const FORK_KEEP_MS = 10 * 60_000;
+const FORK_TITLE_MAX = 120;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EFFORT_NAMES = new Set<unknown>(["low", "medium", "high", "xhigh", "max"]);
+// How a Claude Code without rewind_conversation answers it.
+const UNSUPPORTED = /^Unsupported control request subtype/;
 
 export interface ManagerTiming {
   handoffTurnMs: number;
   handoffOtherMs: number;
   probeRetryMs: number;
   worktreeStartMs: number;
+}
+
+// A fork's first message, if any, starts it at once.
+export interface ForkRequest {
+  id: string;
+  before?: string;
+  text?: string;
+  blocks?: ContentBlock[];
+  name?: string;
 }
 
 export interface Snapshot {
@@ -91,6 +114,14 @@ export interface Snapshot {
 function titleOf(info: SDKSessionInfo): string {
   return info.customTitle || info.summary || info.firstPrompt || "";
 }
+
+// A fork is named as VS Code names one: the original's name on one short line, then " (fork)". A name given for it
+// stands instead, as Claude Code's /branch takes one.
+function forkTitle(title: string, name = ""): string {
+  return cleanTitle(name) || `${[...cleanTitle(title)].slice(0, FORK_TITLE_MAX).join("").trim()} (fork)`.trim();
+}
+
+const failed = (e: unknown): RewindResult => ({ canRewind: false, error: e instanceof Error ? e.message : String(e) });
 
 // The latest items, reaching back to the focused item when that stays within a bound; a focused item further
 // back comes with the items around it, and the ones between that part and the latest are left out.
@@ -173,6 +204,8 @@ export class SessionManager extends EventEmitter {
   private ultracodeModels = new UltracodeModels(path.join(paths.stateDir, "ultracode-models.json"));
   private archive = new ArchiveStore(path.join(paths.stateDir, "archived.json"));
   private probing = new Map<string, Promise<ContextWindow | undefined>>();
+  // Forks made here by the id the phone chose for them; sent: a first message went to the fork.
+  private forks = new Map<string, { at: number; done: Promise<ForkResult>; sent: boolean }>();
   private exact = new Map<string, { size: number; model: string }>();
   private sent = new SentIndex();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
@@ -565,6 +598,137 @@ export class SessionManager extends EventEmitter {
     if (place && isFolder(place)) s.moveTo(place);
   }
 
+  // A copy of the session's conversation that runs here. Claude Code copies the transcript up to the fork point with its
+  // message ids and file checkpoints, and writes the copy once its first input comes, which names it. The same id gives
+  // the same fork, which takes a first message the earlier request for it did not bring; one before the conversation's
+  // first message gives a draft in the session's folder instead.
+  fork(sourceId: string, req: ForkRequest): Promise<ForkResult> {
+    if (!UUID.test(req.id) || req.id === sourceId || (req.before !== undefined && !UUID.test(req.before))) return Promise.reject(Error("invalid request"));
+    const now = Date.now();
+    for (const [id, f] of this.forks) if (now - f.at > FORK_KEEP_MS) this.forks.delete(id);
+    const first = Boolean(req.text || req.blocks?.length);
+    const known = this.forks.get(req.id);
+    if (known) return first && !known.sent ? this.sendToFork(known, req) : known.done;
+    const f = { at: now, done: this.makeFork(sourceId, req), sent: first };
+    this.forks.set(req.id, f);
+    f.done.catch(() => this.forks.delete(req.id));
+    return f.done;
+  }
+
+  private async sendToFork(f: { done: Promise<ForkResult>; sent: boolean }, req: ForkRequest): Promise<ForkResult> {
+    f.sent = true;
+    const r = await f.done;
+    if (!("sessionId" in r)) return r;
+    try {
+      await this.send(r.sessionId, req.text ?? "", req.blocks);
+    } catch (e) {
+      f.sent = false;
+      throw e;
+    }
+    const sent = { ...r, sent: true };
+    f.done = Promise.resolve(sent);
+    return sent;
+  }
+
+  // Without a message to cut at, a fork leaves out the turn running now.
+  private async makeFork(sourceId: string, req: ForkRequest): Promise<ForkResult> {
+    const taken = this.controlled(req.id);
+    if (taken) return { sessionId: taken.id, cwd: taken.cwd, title: taken.title ?? "" };
+    const kept = transcriptPath(req.id) ? await this.info(req.id) : undefined;
+    if (kept?.cwd) return { sessionId: req.id, cwd: kept.cwd, title: titleOf(kept) };
+    const source = this.controlled(sourceId);
+    const info = await this.info(sourceId);
+    if (!source && !info?.cwd) throw Error("unknown session");
+    const cwd = source ? source.cwd : await this.resumeFolder(sourceId, info!.cwd!);
+    if (!isFolder(cwd)) throw Error(`working folder is missing: ${cwd}`);
+    const busy = source ? source.busy : liveProcesses({ fresh: true }).find((l) => l.sessionId === sourceId)?.status === "busy";
+    const point = req.before ? await forkPoint(sourceId, cwd, req.before) : busy ? await turnPoint(sourceId, cwd) : undefined;
+    if (!point && req.before) throw Error("unknown message");
+    if (point && point.at === undefined) return { draft: { cwd } };
+    const title = forkTitle((info ? titleOf(info) : "") || source?.title || "", req.name);
+    const cli = await this.claude();
+    const s = new BrokerSession(req.id, cwd, [], title);
+    this.adopt(s);
+    s.start({ fork: { from: sourceId, ...(point?.at ? { at: point.at } : {}) }, claudePath: cli.path, ...this.forkSettings(sourceId, source) });
+    this.logCli(s.id, cli);
+    try {
+      await s.started(FORK_START_MS);
+      await s.command(`/rename ${title}`, FORK_NAME_MS);
+    } catch (e) {
+      await s.close("fork_failed");
+      if (!transcriptPath(req.id, cwd)) fs.rmSync(path.join(os.homedir(), ".claude", "file-history", req.id), { recursive: true, force: true });
+      throw Error(`fork failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    s.builder.seed(await this.written(s));
+    s.emit("state");
+    this.catalog = undefined;
+    this.emit("changed");
+    const first = Boolean(req.text || req.blocks?.length);
+    if (first) s.send(req.text ?? "", req.blocks);
+    return { sessionId: s.id, cwd, title: s.title || title, ...(first ? { sent: true } : {}) };
+  }
+
+  // What a fork starts with: the original's permission mode where it can run here, its model, Effort, Ultracode and
+  // Thinking as far as this broker knows them, never Fast mode, which holds for one session and costs more.
+  private forkSettings(sourceId: string, s?: SessionCore): Partial<StartOptions> {
+    const from: StartSettings = s
+      ? { model: s.model, mode: s.permissionMode as PermissionModeName, effort: s.effort as EffortName, ultracode: s.ultracode, thinking: s.thinking }
+      : (this.starts.get(sourceId) ?? {});
+    return {
+      ...(from.mode && PERMISSION_MODES.includes(from.mode) ? { mode: from.mode } : {}),
+      ...(from.model ? { model: from.model } : {}),
+      ...(EFFORT_NAMES.has(from.effort) ? { effort: from.effort } : {}),
+      ...(from.ultracode ? { ultracode: true } : {}),
+      ...(from.thinking === false ? { thinking: false } : {}),
+    };
+  }
+
+  // The fork as Claude Code wrote it, once its transcript ends with the result of the command that named it.
+  private async written(s: BrokerSession): Promise<DisplayItem[]> {
+    const until = Date.now() + FORK_WRITTEN_MS;
+    for (;;) {
+      const items = await loadHistory(s.id, s.cwd).catch(() => []);
+      if (items.at(-1)?.kind === "command" || Date.now() >= until) return items;
+      await sleep(100);
+    }
+  }
+
+  // In place where this broker runs the session. A session VS Code or another program runs keeps its conversation: the
+  // rewind opens a new session at the message instead, and rewinds the code through VS Code when asked to.
+  async rewindConversation(sessionId: string, args: Record<string, unknown>): Promise<RewindConversationResult> {
+    if (args.choice !== "both" && args.choice !== "conversation") throw Error("invalid request");
+    const id = typeof args.userMessageId === "string" ? args.userMessageId : "";
+    const files = args.choice === "both";
+    const s = this.controlled(sessionId);
+    if (s instanceof BrokerSession && !s.closed) {
+      try {
+        return { mode: "in_place", ...(await s.rewindConversation(id, args.lastSeen, files)) };
+      } catch (e) {
+        if (!(e instanceof Error) || !UNSUPPORTED.test(e.message)) throw e;
+        const r = await this.rewindByFork(sessionId, id, args.forkId, files);
+        return r.mode === "forked" ? { ...r, fallback: true } : r;
+      }
+    }
+    if (!s || s.closed) {
+      const other = liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId);
+      if (!other) throw Error("session is not running here");
+      if (files) throw Error(`cannot rewind files while open in ${other.host}`);
+    }
+    return this.rewindByFork(sessionId, id, args.forkId, files);
+  }
+
+  private async rewindByFork(sessionId: string, messageId: string, forkId: unknown, files: boolean): Promise<RewindConversationResult> {
+    if (typeof forkId !== "string") throw Error("invalid request");
+    const s = this.controlled(sessionId);
+    const items = s && !s.closed ? s.builder.items : await loadHistory(sessionId, await this.cwdOf(sessionId));
+    const message = items.find((i) => i.kind === "user" && i.id === messageId);
+    if (message?.kind !== "user") throw Error("unknown message");
+    const r = await this.fork(sessionId, { id: forkId, before: messageId });
+    const restored = files && s && !s.closed ? await s.rewind(messageId, false).catch(failed) : undefined;
+    const done = { prefill: message.text, ...(restored ? { files: restored } : {}) };
+    return "draft" in r ? { mode: "draft", cwd: r.draft.cwd, ...done } : { mode: "forked", sessionId: r.sessionId, ...done };
+  }
+
   // The Claude Code to start now; the ones running sessions use stay.
   private claude(): Promise<CliChoice> {
     return this.cli.choose([...this.owned.values()].map((s) => s.claudePath));
@@ -670,6 +834,15 @@ export class SessionManager extends EventEmitter {
         return this.get(sessionId).mcpReconnect(String(args.server));
       case "rewind":
         return this.get(sessionId).rewind(String(args.userMessageId), args.dryRun !== false);
+      case "fork":
+        return this.fork(sessionId, {
+          id: String(args.id),
+          ...(typeof args.before === "string" ? { before: args.before } : {}),
+          ...(typeof args.text === "string" ? { text: args.text } : {}),
+          ...(typeof args.name === "string" ? { name: args.name } : {}),
+        });
+      case "rewind_conversation":
+        return this.rewindConversation(sessionId, args);
       case "stop_task":
         await this.get(sessionId).stopTask(String(args.taskId));
         return {};

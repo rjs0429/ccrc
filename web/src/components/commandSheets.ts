@@ -1,6 +1,6 @@
 import { commandName, parseCommand } from "../../../broker/src/dialog-commands.ts";
 
-export type CommandSheet = "context" | "usage" | "mcp" | "agents" | "rewind" | "model" | "effort" | "config" | "permissions" | "outputStyle";
+export type CommandSheet = "context" | "usage" | "mcp" | "agents" | "rewind" | "model" | "effort" | "config" | "permissions" | "outputStyle" | "fork";
 
 // Bare "/" commands the phone answers with a sheet or page of its own instead of sending them, the way VS Code
 // opens a dialog. live: the sheet needs the session's Claude Code process. Aliases resolve through commandName.
@@ -11,7 +11,9 @@ export const COMMAND_SHEETS: Record<string, { sheet: CommandSheet; title: string
   model: { sheet: "model", title: "모델" },
   effort: { sheet: "effort", title: "Effort" },
   tasks: { sheet: "agents", title: "에이전트 지도" },
-  rewind: { sheet: "rewind", title: "파일 되돌리기", live: true },
+  rewind: { sheet: "rewind", title: "되돌리기" },
+  fork: { sheet: "fork", title: "갈래 만들기" },
+  branch: { sheet: "fork", title: "갈래 만들기" },
   "output-style": { sheet: "outputStyle", title: "출력 스타일", live: true },
   config: { sheet: "config", title: "Claude Code 설정" },
   permissions: { sheet: "permissions", title: "권한 규칙" },

@@ -1,23 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DisplayItem, RewindResult } from "../../../../broker/src/protocol.ts";
-import { clock, errorText, shortPath } from "../../labels.ts";
-import { call, useApp } from "../../state.ts";
-import { Sheet } from "../ui.tsx";
-import { Failed, SmallButton, Waiting } from "./parts.tsx";
+import type { RewindConversationResult, RewindResult } from "../../../../broker/src/protocol.ts";
+import { clock, errorText, hostLabel, shortPath } from "../../labels.ts";
+import { call, composerInsert, navigate, toast, useApp } from "../../state.ts";
+import { openNewSession } from "../../screens/NewSession.tsx";
+import { loadDraft, saveDraft } from "../Composer.tsx";
+import { actionable, excerpt, filesBack, filesDone, filesError, lastSeen, type UserMessage } from "../messageActions.ts";
+import { Button, Sheet } from "../ui.tsx";
+import { newId, startOf } from "./Fork.tsx";
+import { Failed, Waiting } from "./parts.tsx";
 import type { SheetProps } from "./types.ts";
 
-type UserItem = Extract<DisplayItem, { kind: "user" }>;
 type Outcome = { result?: RewindResult; error?: string };
+type Way = "both" | "conversation" | "code";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const EXCERPT_MAX = 80;
-
-function excerpt(m: UserItem): string {
-  const images = m.attachments?.filter((a) => a.kind === "image").length ?? 0;
-  const docs = m.attachments?.filter((a) => a.kind === "document").map((a) => a.name || "문서") ?? [];
-  const line = m.text.split("\n").find((l) => l.trim())?.trim() || (images ? `이미지 ${images}개` : docs.join(", ")) || "(내용 없음)";
-  return line.length > EXCERPT_MAX ? `${line.slice(0, EXCERPT_MAX)}…` : line;
-}
+const RESUME_WAIT_MS = 60_000;
+// A rewind that cannot happen in place starts a copy of the conversation first.
+const REWIND_WAIT_MS = 100_000;
+const FILES_NOTE = "Claude가 편집 도구로 바꾼 파일만 되돌립니다. 명령(Bash)이나 직접 고친 파일, 백그라운드 에이전트가 고친 파일은 그대로입니다.";
 
 function when(ts?: string): string {
   const d = ts ? new Date(ts) : undefined;
@@ -29,11 +28,22 @@ function relative(file: string, cwd?: string): string {
   return cwd && file.startsWith(cwd + "/") ? file.slice(cwd.length + 1) : shortPath(file);
 }
 
-function Preview({ outcome, cwd }: { outcome: Outcome; cwd?: string }) {
+const folderOf = (file: string) => file.slice(0, file.lastIndexOf("/")) || "/";
+
+// A failure in a panel of choices, told apart from them.
+function Trouble({ text }: { text: string }) {
+  return (
+    <p className="px-1 text-sm text-danger" role="alert">
+      {text}
+    </p>
+  );
+}
+
+function Preview({ outcome, cwd, outside }: { outcome: Outcome; cwd?: string; outside: string[] }) {
   const r = outcome.result;
-  if (outcome.error) return <Failed text={outcome.error} />;
+  if (outcome.error) return <Trouble text={outcome.error} />;
   if (!r) return null;
-  if (!r.canRewind) return <Failed text={errorText(r.error ?? "이 시점으로는 되돌릴 수 없습니다")} />;
+  if (!r.canRewind) return <div className="px-1 text-sm text-muted">{errorText(r.error ?? "이 시점으로는 코드를 되돌릴 수 없습니다")}</div>;
   if (!r.filesChanged?.length) return <div className="px-1 text-sm text-muted">이 시점 이후 바뀐 파일이 없습니다</div>;
   return (
     <div>
@@ -45,93 +55,231 @@ function Preview({ outcome, cwd }: { outcome: Outcome; cwd?: string }) {
           <div key={f}>{relative(f, cwd)}</div>
         ))}
       </div>
+      {outside.length > 0 && (
+        <p className="mt-1.5 px-1 text-xs text-warn" data-rewind-outside>
+          다른 폴더의 파일도 되돌립니다: {[...new Set(outside.map(folderOf))].map(shortPath).join(", ")}
+        </p>
+      )}
+      <p className="mt-1.5 px-1 text-xs text-muted">{FILES_NOTE}</p>
     </div>
   );
 }
 
-export function RewindSheet({ sessionId, onClose }: SheetProps) {
+// One way to rewind. A tap arms it and the next one does it; one that touches files outside the session's folder asks once more.
+function Option({ label, hint, armed, busy, disabled, onClick }: { label: string; hint: string; armed?: string; busy: boolean; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex min-h-11 w-full flex-col justify-center rounded-xl px-3 py-2 text-left disabled:opacity-40 ${armed ? "bg-danger/10" : "bg-surface-2 enabled:active:bg-line"}`}
+      data-rewind-way={label}
+    >
+      <span className={`text-[15px] font-medium ${armed ? "text-danger" : ""}`}>{busy ? "되돌리는 중…" : (armed ?? label)}</span>
+      <span className="text-xs text-muted">{hint}</span>
+    </button>
+  );
+}
+
+// Takes the conversation, the code or both back to before a message the user sent. Where ccrc runs the session this
+// happens in place, a stopped one first being started here; a session VS Code or another program runs keeps its
+// conversation, and the rewound one opens as a new session.
+export function RewindSheet({ sessionId, initial, onClose }: SheetProps & { initial?: string }) {
   const chat = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat : undefined));
   const [selected, setSelected] = useState<string>();
   const [preview, setPreview] = useState<Outcome>();
-  const [confirm, setConfirm] = useState(false);
-  const [applying, setApplying] = useState(false);
+  const [armed, setArmed] = useState<{ way: Way; step: number }>();
+  const [applying, setApplying] = useState<Way | null>(null);
   const [applied, setApplied] = useState<Outcome>();
+  const [error, setError] = useState<string>();
+  const [starting, setStarting] = useState(false);
+  const [forkId, setForkId] = useState(newId);
   const latest = useRef<string | undefined>(undefined);
+  const chosen = useRef<HTMLDivElement>(null);
 
   const items = chat?.items;
-  const messages = useMemo(() => (items ?? []).filter((i): i is UserItem => i.kind === "user" && UUID.test(i.id)).reverse(), [items]);
-  const busy = Boolean(chat?.state?.busy);
-  const cwd = chat?.state?.cwd;
+  const messages = useMemo(() => (items ?? []).filter((i): i is UserMessage => i.kind === "user" && actionable(i)).reverse(), [items]);
+  const st = chat?.state;
+  const kind = st?.state ?? "inactive";
+  const controllable = kind === "owned" || kind === "attached";
+  const busy = Boolean(st?.busy);
+  const cwd = st?.cwd;
+  const folderMissing = kind === "inactive" && Boolean(st?.folderMissing);
+  const files = preview?.result?.canRewind ? (preview.result.filesChanged ?? []) : [];
+  const outside = cwd ? files.filter((f) => !f.startsWith(cwd + "/")) : [];
 
   const pick = (id: string) => {
     if (applying) return;
     latest.current = id;
     setSelected(id);
     setPreview(undefined);
-    setConfirm(false);
+    setArmed(undefined);
     setApplied(undefined);
+    setError(undefined);
+    setForkId(newId());
+    if (kind !== "owned" && kind !== "attached") return;
     call(sessionId, "rewind", { userMessageId: id, dryRun: true }).then(
       (result) => latest.current === id && setPreview({ result }),
       (e: Error) => latest.current === id && setPreview({ error: errorText(e.message) }),
     );
   };
 
-  const apply = (id: string) => {
-    if (!confirm) {
-      setConfirm(true);
-      return;
-    }
-    setApplying(true);
-    call(sessionId, "rewind", { userMessageId: id, dryRun: false })
-      .then(
-        (result) => setApplied({ result }),
-        (e: Error) => setApplied({ error: errorText(e.message) }),
-      )
-      .finally(() => {
-        setApplying(false);
-        setConfirm(false);
-      });
+  // A turn can change more files, so the preview is taken again when one ends; a session started here gets its first.
+  useEffect(() => {
+    if (selected && controllable && !busy && !applied && !applying) pick(selected);
+  }, [busy, controllable]);
+
+  useEffect(() => {
+    if (initial) pick(initial);
+  }, []);
+
+  useEffect(() => {
+    if (selected && selected === initial) chosen.current?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
+
+  const resume = () => {
+    setStarting(true);
+    setError(undefined);
+    call(sessionId, "resume", {}, RESUME_WAIT_MS)
+      .catch((e: Error) => setError(errorText(e.message)))
+      .finally(() => setStarting(false));
   };
 
-  // A turn can change more files, so the preview is taken again when one ends.
-  useEffect(() => {
-    if (!busy && selected && !applied && !applying) pick(selected);
-  }, [busy]);
+  const done = (r: RewindConversationResult) => {
+    const filesFailed = r.files && !r.files.canRewind ? filesError(r.files) : undefined;
+    onClose();
+    if (r.mode === "in_place") {
+      if (r.prefill) composerInsert(r.prefill, true);
+      toast(filesFailed ? `대화는 되돌렸지만 파일은 되돌리지 못했습니다: ${filesFailed}` : `되돌렸습니다${r.files?.canRewind ? filesDone(r.files, files.length) : ""}`);
+      return;
+    }
+    if (r.mode === "draft") openNewSession(r.cwd, r.prefill, startOf(st));
+    else {
+      saveDraft(r.sessionId, r.prefill);
+      navigate({ name: "chat", sessionId: r.sessionId });
+    }
+    const opened =
+      r.mode === "draft" ? "첫 메시지라 같은 폴더의 새 세션으로 엽니다" : r.fallback ? "이 Claude Code는 제자리 되돌리기를 지원하지 않아 새 세션으로 열었습니다" : "새 세션으로 열었습니다";
+    toast(filesFailed ? `${opened}. 파일은 되돌리지 못했습니다: ${filesFailed}` : r.files?.canRewind ? `${opened}. ${filesBack(r.files, files.length)}` : opened);
+  };
 
-  const changed = preview?.result?.canRewind ? (preview.result.filesChanged?.length ?? 0) : 0;
+  const apply = (id: string, way: Way) => {
+    const steps = way !== "conversation" && outside.length ? 3 : 2;
+    const step = armed?.way === way ? armed.step + 1 : 1;
+    if (step < steps) {
+      setArmed({ way, step });
+      return;
+    }
+    setArmed(undefined);
+    setApplying(way);
+    setError(undefined);
+    if (way === "code") {
+      call(sessionId, "rewind", { userMessageId: id, dryRun: false })
+        .then(
+          (result) => setApplied({ result }),
+          (e: Error) => setApplied({ error: errorText(e.message) }),
+        )
+        .finally(() => setApplying(null));
+      return;
+    }
+    const seen = lastSeen(items ?? []);
+    call(sessionId, "rewind_conversation", { userMessageId: id, choice: way, ...(seen ? { lastSeen: seen } : {}), forkId }, REWIND_WAIT_MS).then(done, (e: Error) => {
+      setError(errorText(e.message));
+      setApplying(null);
+    });
+  };
+
+  const inPlace = kind === "owned";
+  const elsewhere = kind === "attached" ? "VS Code" : hostLabel(st?.host);
+  const draft = inPlace && Boolean(loadDraft(sessionId).trim());
+  const armedText = (way: Way) => (armed?.way !== way ? undefined : way !== "conversation" && outside.length && armed.step === 1 ? "다른 폴더의 파일도 되돌립니다 · 한 번 더 누르세요" : "한 번 더 누르면 되돌립니다");
+  const ways: { way: Way; label: string; hint: string; disabled: boolean }[] =
+    kind === "live"
+      ? [{ way: "conversation", label: "대화만 되돌리기 (새 세션)", hint: `${elsewhere}의 대화와 파일은 그대로입니다`, disabled: false }]
+      : [
+          ...(files.length
+            ? [
+                {
+                  way: "both" as const,
+                  label: inPlace ? "대화와 코드 되돌리기" : "대화와 코드 되돌리기 (새 세션)",
+                  hint: inPlace ? "대화와 그 뒤에 바뀐 파일을 이 메시지 앞으로 되돌립니다" : "새 세션으로 열고 그 뒤에 바뀐 파일도 되돌립니다",
+                  disabled: busy,
+                },
+              ]
+            : []),
+          {
+            way: "conversation",
+            label: inPlace ? "대화만 되돌리기" : "대화만 되돌리기 (새 세션)",
+            hint: inPlace ? "파일은 그대로 둡니다" : "새 세션으로 엽니다. 파일은 그대로 둡니다",
+            disabled: inPlace && busy,
+          },
+          ...(files.length ? [{ way: "code" as const, label: "코드만 되돌리기", hint: "대화는 그대로 둡니다", disabled: busy }] : []),
+        ];
 
   return (
-    <Sheet title="파일 되돌리기" onClose={onClose}>
-      <p className="px-1 text-sm text-muted">
-        고른 메시지를 보내기 전으로 파일을 되돌립니다. 대화는 그대로 남습니다. Claude가 편집 도구로 바꾼 파일만 되돌리고, 명령으로 바뀐 파일은 그대로 둡니다.
+    <Sheet title="되돌리기" onClose={onClose}>
+      <p className="px-1 text-sm text-muted" data-rewind-about>
+        {kind === "live"
+          ? `${elsewhere}에서 열려 있어 대화만 새 세션으로 되돌릴 수 있습니다. 파일은 되돌릴 수 없습니다.`
+          : kind === "attached"
+            ? "VS Code 대화는 그대로 두고, 고른 메시지 앞까지를 새 세션으로 엽니다. 코드는 VS Code 세션에서 되돌립니다."
+            : "고른 메시지를 보내기 전으로 대화와 코드를 되돌립니다."}
       </p>
+      {folderMissing && (
+        <div className="mt-3">
+          <Failed text="작업 폴더가 없어 되돌릴 수 없습니다" />
+        </div>
+      )}
+      {kind === "inactive" && !folderMissing && (
+        <div className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5" data-rewind-resume>
+          <p className="text-sm text-muted">되돌리려면 이 세션을 원격에서 이어서 실행합니다. 대화에는 아무것도 보내지 않습니다.</p>
+          <Button kind="primary" className="mt-2.5 w-full" disabled={starting} onClick={resume}>
+            {starting ? "세션을 여는 중…" : "이어서 실행"}
+          </Button>
+        </div>
+      )}
+      {error && !selected && (
+        <div className="mt-3">
+          <Failed text={error} />
+        </div>
+      )}
       {messages.length === 0 && <div className="px-1 py-3 text-sm text-muted">보낸 메시지가 없습니다</div>}
       <div className="mt-3 space-y-2">
         {messages.map((m) => (
-          <div key={m.id} className={`rounded-xl border ${selected === m.id ? "border-accent" : "border-line"} bg-surface`}>
+          <div key={m.id} ref={selected === m.id ? chosen : undefined} className={`rounded-xl border ${selected === m.id ? "border-accent" : "border-line"} bg-surface`} data-rewind-message={m.id}>
             <button onClick={() => pick(m.id)} className="flex w-full items-start gap-3 px-3 py-2.5 text-left">
               <span className="min-w-0 flex-1 text-[15px]">{excerpt(m)}</span>
               <span className="shrink-0 pt-0.5 text-xs text-muted">{when(m.ts)}</span>
             </button>
-            {selected === m.id && (
+            {selected === m.id && (kind !== "inactive" || error) && (
               <div className="space-y-2.5 border-t border-line px-3 py-2.5">
-                {!preview && <Waiting text="바뀔 파일을 확인하는 중입니다" />}
-                {preview && !applied && <Preview outcome={preview} cwd={cwd} />}
-                {applied?.result && <div className="px-1 text-sm text-ok">파일 {changed}개를 되돌렸습니다</div>}
-                {applied?.error && <Failed text={applied.error} />}
-                {changed > 0 && !applied && (
-                  <div className="flex items-center gap-2">
-                    <SmallButton onClick={() => apply(m.id)} disabled={applying || busy} tone={confirm ? "text-danger" : ""}>
-                      {applying ? "되돌리는 중…" : confirm ? "한 번 더 누르면 되돌립니다" : "이 시점으로 되돌리기"}
-                    </SmallButton>
-                    {confirm && !applying && (
-                      <SmallButton onClick={() => setConfirm(false)} tone="text-muted">
+                {controllable && !preview && <Waiting text="바뀔 파일을 확인하는 중입니다" />}
+                {controllable && preview && !applied && <Preview outcome={preview} cwd={cwd} outside={outside} />}
+                {applied?.result?.canRewind && <div className="px-1 text-sm text-ok">{filesBack(applied.result, files.length)}</div>}
+                {applied?.result && !applied.result.canRewind && <Trouble text={`파일을 되돌리지 못했습니다: ${filesError(applied.result)}`} />}
+                {applied?.error && <Trouble text={applied.error} />}
+                {error && <Trouble text={error} />}
+                {busy && !applied && kind !== "live" && <div className="px-1 text-xs text-muted">Claude가 작업 중입니다. {inPlace ? "작업이 끝난 뒤 되돌릴 수 있습니다" : "코드는 작업이 끝난 뒤 되돌릴 수 있습니다"}</div>}
+                {draft && !applied && <div className="px-1 text-xs text-muted">대화를 되돌리면 입력창의 글이 이 메시지 글로 바뀝니다</div>}
+                {!applied && (preview || !controllable) && kind !== "inactive" && (
+                  <div className="space-y-1.5">
+                    {ways.map((w) => (
+                      <Option
+                        key={w.way}
+                        label={w.label}
+                        hint={w.hint}
+                        armed={armedText(w.way)}
+                        busy={applying === w.way}
+                        disabled={w.disabled || Boolean(applying)}
+                        onClick={() => apply(m.id, w.way)}
+                      />
+                    ))}
+                    {armed && !applying && (
+                      <button onClick={() => setArmed(undefined)} className="min-h-11 w-full rounded-xl text-sm font-medium text-muted">
                         취소
-                      </SmallButton>
+                      </button>
                     )}
                   </div>
                 )}
-                {changed > 0 && !applied && busy && <div className="px-1 text-xs text-muted">Claude가 작업 중입니다. 작업이 끝난 뒤 되돌릴 수 있습니다</div>}
               </div>
             )}
           </div>

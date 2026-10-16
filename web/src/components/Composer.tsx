@@ -37,7 +37,7 @@ const OLD_WRAPPER = "VS Code에서 Claude Code를 다시 띄우면 바꿀 수 �
 // Each composerInsert request is applied once, by the composer that is mounted when it arrives.
 let appliedInsert = 0;
 
-function loadDraft(scope?: string): string {
+export function loadDraft(scope?: string): string {
   if (!scope) return "";
   try {
     return sessionStorage.getItem(DRAFT_KEY + scope) ?? "";
@@ -390,7 +390,7 @@ export function Composer({
   useEffect(() => {
     if (!insert || insert.at <= appliedInsert) return;
     appliedInsert = insert.at;
-    const next = text && !/\s$/.test(text) ? `${text}\n${insert.text}` : text + insert.text;
+    const next = insert.replace ? insert.text : text && !/\s$/.test(text) ? `${text}\n${insert.text}` : text + insert.text;
     edit(next, next.length);
   }, [insert]);
 

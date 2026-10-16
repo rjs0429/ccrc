@@ -126,6 +126,21 @@ export function noteText(code: NoteCode, text?: string, attachments?: number): s
   }
 }
 
+// Why Claude Code would not rewind a conversation, which then stays as it was.
+const REWIND_REFUSED: Record<string, string> = {
+  turn_running: "작업 중에는 되돌릴 수 없습니다. 먼저 멈추세요",
+  commands_queued: "대기 중인 메시지나 답할 요청이 있습니다",
+  prompt_pending: "대기 중인 메시지나 답할 요청이 있습니다",
+  stale_target: "그사이 대화가 바뀌었습니다. 새로고침한 뒤 다시 하세요",
+  unseen_later_turn: "그사이 대화가 바뀌었습니다. 새로고침한 뒤 다시 하세요",
+  state_changed: "그사이 대화가 바뀌었습니다. 새로고침한 뒤 다시 하세요",
+  target_not_found: "이 메시지로는 되돌릴 수 없습니다 (Compact 앞이거나 이미 지운 메시지)",
+  target_splits_tool_call: "도구 실행 도중이라 이 지점으로는 되돌릴 수 없습니다",
+  poll_tool_result_target: "도구 실행 도중이라 이 지점으로는 되돌릴 수 없습니다",
+  delivered_poll_events_in_range: "도구 실행 도중이라 이 지점으로는 되돌릴 수 없습니다",
+  persist_failed: "기록에 쓰지 못해 되돌리지 않았습니다",
+};
+
 const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^session is starting$/, "세션을 시작하는 중입니다. 시작된 뒤 다시 고르세요"],
   [/^session started meanwhile$/, "그 사이 세션이 시작되었습니다. 다시 고르세요"],
@@ -184,6 +199,10 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^File rewinding is not enabled\.?$/, "이 세션은 파일 되돌리기가 꺼져 있습니다"],
   [/^No file checkpoint found for this message\.?$/, "이 메시지 시점의 파일 기록이 없습니다"],
   [/^Failed to rewind: (.+)$/, (m) => `되돌리지 못했습니다: ${m[1]}`],
+  [/^rewind refused: (\w+)$/, (m) => REWIND_REFUSED[m[1]] ?? `지금은 되돌릴 수 없습니다 (${m[1]})`],
+  [/^cannot rewind files while open in (.+)$/, (m) => `${hostLabel(m[1])}에서 열려 있어 파일은 되돌릴 수 없습니다`],
+  [/^fork failed: ([\s\S]+)$/, (m) => `갈래를 만들지 못했습니다: ${errorText(m[1])}`],
+  [/^Claude Code did not run \/rename$/, "갈래에 이름을 붙이지 못했습니다"],
   [/^no answer$/, "응답이 없습니다"],
   [/^not connected$/, "연결되어 있지 않습니다"],
   [/^unsupported_push_service$/, "이 브라우저의 푸시 서비스로는 알림을 보낼 수 없습니다"],

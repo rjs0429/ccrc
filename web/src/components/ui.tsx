@@ -153,12 +153,14 @@ export function Button({
   kind = "secondary",
   disabled,
   className = "",
+  describedBy,
 }: {
   children: ReactNode;
   onClick?: () => void;
   kind?: "primary" | "secondary" | "danger" | "ghost";
   disabled?: boolean;
   className?: string;
+  describedBy?: string;
 }) {
   const styles = {
     primary: "bg-accent text-white",
@@ -167,7 +169,12 @@ export function Button({
     ghost: "text-muted",
   }[kind];
   return (
-    <button onClick={onClick} disabled={disabled} className={`rounded-xl px-3.5 py-2.5 text-[15px] font-medium disabled:opacity-40 ${styles} ${className}`}>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      aria-describedby={describedBy}
+      className={`rounded-xl px-3.5 py-2.5 text-[15px] font-medium disabled:opacity-40 ${styles} ${className}`}
+    >
       {children}
     </button>
   );

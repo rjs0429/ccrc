@@ -42,6 +42,8 @@ const EVENT_LABEL: Record<string, string> = {
   doctor: "호환성 점검",
   archive: "보관 해제",
   worktree_remove: "worktree 지우기",
+  fork: "갈래",
+  rewind_conversation: "대화 되돌리기",
 };
 
 const CALL_LABEL: Record<string, string> = {
@@ -151,6 +153,10 @@ function detail(e: AuditEntry): string {
       return named(e.ip);
     case "send":
       return typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : "";
+    case "fork":
+      return [e.before ? "메시지에서" : "지금까지", typeof e.chars === "number" ? "바로 시작" : "", typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : ""].filter(Boolean).join(" · ");
+    case "rewind_conversation":
+      return [e.choice === "both" ? "대화와 코드" : "대화만", e.mode === "in_place" ? "제자리" : "새 세션"].join(" · ");
     default:
       return "";
   }

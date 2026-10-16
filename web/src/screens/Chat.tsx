@@ -9,6 +9,7 @@ import { commandSheet } from "../components/commandSheets.ts";
 import { PendingCard } from "../components/Pending.tsx";
 import { ArchivedBadge, SessionActions, renameBlocked, setArchived } from "../components/SessionActions.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
+import { TitleText } from "../components/TitleText.tsx";
 import { ChangesSheet } from "../components/sheets/Changes.tsx";
 import { CommandResultSheet, StoppedSheet } from "../components/sheets/Command.tsx";
 import { ContextSheet } from "../components/sheets/Context.tsx";
@@ -16,6 +17,9 @@ import { ContextUsageSheet } from "../components/sheets/ContextUsage.tsx";
 import { McpSheet } from "../components/sheets/Mcp.tsx";
 import { OutputStyleSheet, outputStyleLabel } from "../components/sheets/OutputStyle.tsx";
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
+import { ForkSheet } from "../components/sheets/Fork.tsx";
+import { MessageActionsSheet } from "../components/sheets/MessageActions.tsx";
+import type { UserMessage } from "../components/messageActions.ts";
 import { AgentMapSheet } from "../components/sheets/AgentMap.tsx";
 import { agentMap } from "../components/agents/tree.ts";
 import { ThreadSheet, type ShownThread } from "../components/sheets/Thread.tsx";
@@ -91,6 +95,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [renaming, setRenaming] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [cleaning, setCleaning] = useState(false);
+  const [message, setMessage] = useState<UserMessage | null>(null);
+  // typed: the "/fork" or "/branch" message that opened the sheet, back in the composer when the sheet goes without a fork.
+  const [fork, setFork] = useState<{ before?: UserMessage; text?: string; name?: string; typed?: string } | null>(null);
+  const [rewindAt, setRewindAt] = useState<string>();
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   // A smooth scroll to the bottom from the jump button, until it lands or the user touches the list; a touch
@@ -184,6 +192,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   const sendText = (text: string, attachments: string[] = []) => {
     const c = attachments.length ? undefined : parseCommand(text);
+    // "/fork" and "/branch" open the fork sheet with what follows them as the fork's task or, as Claude Code's /branch
+    // takes it, its name; nothing is sent.
+    if (c && commandSheet(c.name)?.sheet === "fork") {
+      (document.activeElement as HTMLElement | null)?.blur();
+      setFork({ ...(commandName(c.name) === "branch" ? { name: c.args } : { text: c.args }), typed: text });
+      return true;
+    }
     const before = new Set((chat?.items ?? []).filter((i) => i.kind === "command").map((i) => i.id));
     const ok = send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
     if (ok) follow(true);
@@ -225,6 +240,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (target === "model" || target === "effort") setComposerSheet({ name: target, at: Date.now() });
     else if (target === "config") openSettingsFrom("claude");
     else if (target === "permissions") openSettingsFrom("claude", "permissions");
+    else if (target === "fork") setFork({});
     else if (target === "usage") {
       setUsageCommand(name);
       setSheet("usage");
@@ -283,6 +299,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const openFile = useCallback((href: string) => {
     if (!href.startsWith("#")) setFile({ href });
   }, []);
+  const openMessage = useCallback((m: UserMessage) => setMessage(m), []);
   const roots = useMemo(() => (cwd ? [cwd] : []), [cwd]);
 
   useLayoutEffect(() => {
@@ -361,7 +378,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           >
             <span className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
               <span className="block truncate text-[15px] font-semibold short:max-w-[60%] short:shrink-0" data-chat-title>
-                {title}
+                <TitleText text={title} />
               </span>
               <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted">
                 {archived && <ArchivedBadge />}
@@ -414,7 +431,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
                     data-item={item.id}
                     className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
                   >
-                    <ItemView item={item} running={busy} />
+                    <ItemView item={item} running={busy} onMessage={openMessage} />
                   </div>
                 </Fragment>
               ))}
@@ -544,6 +561,18 @@ export function Chat({ sessionId }: { sessionId: string }) {
             onClick={() => (!archived && worktree ? setArchiving(true) : setArchived(sessionId, !archived), setMenu(false))}
           />
           {worktree && <Choice label="worktree 정리" hint={`worktree ${worktree.name}의 남은 작업을 보고 지웁니다`} onClick={() => (setCleaning(true), setMenu(false))} />}
+          <Choice
+            label="갈래로 떼기"
+            hint={folderMissing ? "작업 폴더가 없어 만들 수 없습니다" : "지금까지의 대화를 새 세션으로 복사합니다"}
+            disabled={folderMissing}
+            onClick={() => (setFork({}), setMenu(false))}
+          />
+          <Choice
+            label="되돌리기"
+            hint={folderMissing ? "작업 폴더가 없어 되돌릴 수 없습니다" : "보낸 메시지 시점으로 대화와 코드를 되돌립니다"}
+            disabled={folderMissing}
+            onClick={() => (setRewindAt(undefined), setSheet("rewind"), setMenu(false))}
+          />
           <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
           <Choice label="Context와 사용량" hint="Context, 요금제 사용량, Compact" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
           <Choice label="에이전트 지도" hint="에이전트와 백그라운드 작업 보기·중지" onClick={() => (setSheet("agents"), setMenu(false))} />
@@ -555,7 +584,6 @@ export function Chat({ sessionId }: { sessionId: string }) {
                 hint={st?.outputStyle ? outputStyleLabel(st.outputStyle) : "응답 방식을 고릅니다"}
                 onClick={() => (setSheet("outputStyle"), setMenu(false))}
               />
-              <Choice label="파일 되돌리기" hint="보낸 메시지 시점으로 파일을 되돌립니다" onClick={() => (setSheet("rewind"), setMenu(false))} />
             </>
           )}
           {kind === "owned" && (
@@ -628,7 +656,39 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {awaited && <CommandResultSheet title={awaited.title} item={result} late={awaited.late && !busy} onClose={() => setAwaited(undefined)} />}
       {sheet === "mcp" && <McpSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "outputStyle" && <OutputStyleSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
-      {sheet === "rewind" && <RewindSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "rewind" && <RewindSheet sessionId={sessionId} initial={rewindAt} onClose={() => (setSheet(null), setRewindAt(undefined))} />}
+      {message && (
+        <MessageActionsSheet
+          message={message}
+          kind={kind}
+          busy={busy}
+          host={st?.host ?? summary?.host}
+          cannot={folderMissing ? "작업 폴더가 없어 할 수 없습니다" : undefined}
+          onFork={() => {
+            setMessage(null);
+            setFork({ before: message });
+          }}
+          onRedo={() => {
+            setMessage(null);
+            setRewindAt(message.id);
+            setSheet("rewind");
+          }}
+          onClose={() => setMessage(null)}
+        />
+      )}
+      {fork && (
+        <ForkSheet
+          sessionId={sessionId}
+          before={fork.before}
+          text={fork.text}
+          name={fork.name}
+          onDone={() => setFork(null)}
+          onClose={() => {
+            if (fork.typed) composerInsert(fork.typed, true);
+            setFork(null);
+          }}
+        />
+      )}
     </div>
   );
 }

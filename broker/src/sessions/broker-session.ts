@@ -35,6 +35,7 @@ import type { ContextWindow } from "./context-gauge.ts";
 import { sessionEnv } from "./entrypoint.ts";
 import { fileContents, type FileContents } from "./file-read.ts";
 import type { RawMessage } from "./items.ts";
+import type { TurnEnd } from "./outcome.ts";
 import { contextDetail, usageAnswer } from "./reports.ts";
 
 const CLOSE_WAIT_MS = 10_000;
@@ -73,6 +74,8 @@ export interface StartOptions {
   later?: { effort?: EffortName; ultracode?: boolean };
   // Starts in a worktree Claude Code makes, or opens again, by this name.
   worktree?: WorktreeChoice;
+  // Starts as a copy of session `from`, up to and with row `at`; Claude Code writes the copy once its first input comes.
+  fork?: { from: string; at?: string };
 }
 
 class InputQueue {
@@ -166,7 +169,11 @@ export class BrokerSession extends SessionCore {
       prompt: this.input.messages(),
       options: {
         cwd: this.cwd,
-        ...(opts.resume ? { resume: this.id } : { sessionId: this.id }),
+        ...(opts.fork
+          ? { resume: opts.fork.from, forkSession: true, sessionId: this.id, ...(opts.fork.at ? { resumeSessionAt: opts.fork.at } : {}) }
+          : opts.resume
+            ? { resume: this.id }
+            : { sessionId: this.id }),
         pathToClaudeCodeExecutable: opts.claudePath,
         permissionMode: opts.mode,
         model: opts.model,
@@ -258,6 +265,29 @@ export class BrokerSession extends SessionCore {
     if (this.ultracodeAvailable === undefined || this.ultracode === true || this.closed) return;
     const item = this.builder.note("ultracode", undefined, new Date().toISOString());
     if (item) this.emit("item", item);
+  }
+
+  // Sends a local command ("/rename x") and resolves once Claude Code has run it.
+  async command(text: string, ms: number): Promise<void> {
+    let off = () => {};
+    try {
+      await timed(
+        new Promise<void>((resolve, reject) => {
+          const ended = (end: TurnEnd) => (end.outcome === "local" ? resolve() : reject(Error(`Claude Code did not run ${text.split(" ")[0]}`)));
+          const closed = () => reject(Error("session closed"));
+          this.on("turn_end", ended);
+          this.on("closed", closed);
+          off = () => {
+            this.off("turn_end", ended);
+            this.off("closed", closed);
+          };
+          this.send(text);
+        }),
+        ms,
+      );
+    } finally {
+      off();
+    }
   }
 
   // Ultracode goes on only where the model offers it.
@@ -354,6 +384,25 @@ export class BrokerSession extends SessionCore {
   async rewind(userMessageId: string, dryRun: boolean): Promise<RewindResult> {
     const id = this.rewindPoint(userMessageId, dryRun);
     return rewindResult(await timed(this.query().rewindFiles(id, { dryRun }), REQUEST_MS));
+  }
+
+  // In place, as Claude Code's own rewind: the message and all after it leave the conversation, and with `files` the
+  // files go back to before it too. Claude Code refuses without a change while the session is not still or a turn came
+  // after `lastSeen`, the latest message the phone shows. prefill: the message's text.
+  async rewindConversation(userMessageId: string, lastSeen: unknown, files: boolean): Promise<{ prefill: string; files?: RewindResult }> {
+    const id = this.rewindPoint(userMessageId, false);
+    if (this.pending.size) throw Error("rewind refused: prompt_pending");
+    if (this.queue.size) throw Error("rewind refused: commands_queued");
+    const seen = this.seenItem(lastSeen);
+    const r = (await this.request({ subtype: "rewind_conversation", target_message_uuid: id, ...(seen ? { last_seen_user_message_uuid: seen } : {}) })).response ?? {};
+    if (r.rewound !== true) throw Error(`rewind refused: ${typeof r.reason === "string" && /^[a-z_]{1,64}$/.test(r.reason) ? r.reason : "unknown"}`);
+    const restored = files
+      ? await timed(this.query().rewindFiles(id, { dryRun: false }), REQUEST_MS).then(rewindResult, (e: unknown) => ({ canRewind: false, error: e instanceof Error ? e.message : String(e) }))
+      : undefined;
+    if (typeof r.targetMessageUuid !== "string" || !this.builder.cut(r.targetMessageUuid)) this.builder.cut(id);
+    this.touch();
+    this.refreshContext();
+    return { prefill: typeof r.prefillText === "string" ? r.prefillText : "", ...(restored ? { files: restored } : {}) };
   }
 
   async stopTask(taskId: string): Promise<void> {

@@ -48,9 +48,10 @@ export interface AppState {
   conn: Conn;
   loggedOutReason?: string;
   chat?: Chat;
-  toast?: { text: string; at: number };
-  // Text another part of the app asks the composer to add (for example a comment on a changed line).
-  insert?: { text: string; at: number };
+  toast?: { text: string; at: number; action?: ToastAction };
+  // Text another part of the app asks the composer to add (for example a comment on a changed line), or to hold in place
+  // of what it has.
+  insert?: { text: string; at: number; replace?: boolean };
   // A new session asked for from here and not yet started or refused.
   starting?: string;
 }
@@ -82,12 +83,18 @@ export function useApp<T>(select: (s: AppState) => T): T {
   return useSyncExternalStore(subscribe, () => select(state));
 }
 
-export function toast(text: string): void {
-  setState({ toast: { text, at: Date.now() } });
+// A button on a toast, for what the user may want to do next.
+export interface ToastAction {
+  label: string;
+  run: () => void;
 }
 
-export function composerInsert(text: string): void {
-  setState({ insert: { text, at: Date.now() } });
+export function toast(text: string, action?: ToastAction): void {
+  setState({ toast: { text, at: Date.now(), ...(action ? { action } : {}) } });
+}
+
+export function composerInsert(text: string, replace = false): void {
+  setState({ insert: { text, at: Date.now(), ...(replace ? { replace } : {}) } });
 }
 
 function parseRoute(): Route {
