@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSummary } from "../../../broker/src/protocol.ts";
 import type { Mark, SearchResponse, SearchResult, SearchSnippet } from "../../../broker/src/search-protocol.ts";
 import { ApiError, api } from "../api.ts";
-import { SessionActions, setArchived } from "../components/SessionActions.tsx";
+import { ArchivedBadge, SessionActions, setArchived } from "../components/SessionActions.tsx";
 import { Icon, Spinner } from "../components/ui.tsx";
 import { UpdateBanner } from "../components/UpdateBanner.tsx";
 import { useLongPress } from "../components/useLongPress.ts";
@@ -42,10 +42,6 @@ function Marked({ text, marks }: { text: string; marks: Mark[] }) {
 
 function openSnippet(sessionId: string, sn: SearchSnippet): void {
   openAt(sessionId, sn.itemId, sn.earlier);
-}
-
-function ArchivedBadge() {
-  return <span className="shrink-0 rounded border border-line px-1 text-[11px] leading-4">보관됨</span>;
 }
 
 function Meta({ text, archived }: { text: string; archived?: boolean }) {
@@ -362,7 +358,7 @@ export function Home() {
                   <span className="block truncate text-xs text-muted">{shortPath(g.cwd)}</span>
                 </span>
                 <span className="shrink-0 text-right text-xs text-muted">
-                  {g.count > 0 ? <span className="block">세션 {g.count}</span> : <span className="block opacity-60">보관 {g.archived}</span>}
+                  <span className="block">{g.count > 0 ? `세션 ${g.count}` : `보관 ${g.archived}`}</span>
                   {g.running > 0 && <span className="block text-info">실행 중 {g.running}</span>}
                 </span>
               </button>

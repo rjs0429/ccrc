@@ -7,7 +7,7 @@ import { Composer } from "../components/Composer.tsx";
 import { reattach } from "../components/composer/attachments.ts";
 import { commandSheet } from "../components/commandSheets.ts";
 import { PendingCard } from "../components/Pending.tsx";
-import { SessionActions, renameBlocked, setArchived } from "../components/SessionActions.tsx";
+import { ArchivedBadge, SessionActions, renameBlocked, setArchived } from "../components/SessionActions.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
 import { ChangesSheet } from "../components/sheets/Changes.tsx";
 import { CommandResultSheet, StoppedSheet } from "../components/sheets/Command.tsx";
@@ -134,7 +134,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const archived = Boolean(summary?.archived);
   const renameTarget = { id: sessionId, title: named, state: kind, host: st?.host ?? summary?.host, archived };
   const renameRefused = renameBlocked(renameTarget);
-  // The rename sheet opens within the tap, so its field can take the keyboard on iOS.
+  // The header's title and the line under it are one button to rename, its padding reaching over the header's height
+  // as the back button's does. The sheet opens within the tap, so its field can take the keyboard on iOS.
   const rename = () => {
     if (renameRefused) return toast(renameRefused);
     flushSync(() => {
@@ -346,16 +347,25 @@ export function Chat({ sessionId }: { sessionId: string }) {
             <Icon.back />
             {othersWaiting && <span className="absolute top-2.5 right-2.5 size-2 rounded-full bg-warn" title="다른 세션에서 입력이 필요합니다" />}
           </button>
-          <div className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
-            <button onClick={rename} aria-haspopup="dialog" className="block max-w-full truncate text-left text-[15px] font-semibold short:max-w-[60%] short:shrink-0" data-chat-title>
-              {title}
-            </button>
-            <div className="truncate text-xs text-muted short:min-w-0">
-              {baseName(cwd)}
-              {summary?.branch && summary.branch !== "HEAD" ? ` · ${summary.branch}` : ""} · {status}
-              {archived ? " · 보관됨" : ""}
-            </div>
-          </div>
+          <button
+            onClick={rename}
+            aria-haspopup="dialog"
+            title="이름 바꾸기"
+            className="-my-2 flex min-w-0 flex-1 items-center self-stretch py-2 text-left short:-my-1 short:py-1"
+          >
+            <span className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
+              <span className="block truncate text-[15px] font-semibold short:max-w-[60%] short:shrink-0" data-chat-title>
+                {title}
+              </span>
+              <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted">
+                {archived && <ArchivedBadge />}
+                <span className="truncate">
+                  {baseName(cwd)}
+                  {summary?.branch && summary.branch !== "HEAD" ? ` · ${summary.branch}` : ""} · {status}
+                </span>
+              </span>
+            </span>
+          </button>
           <button onClick={() => setMenu({ stop: busy && controllable })} aria-label="메뉴" className="rounded-lg p-2 text-muted">
             <Icon.dots />
           </button>

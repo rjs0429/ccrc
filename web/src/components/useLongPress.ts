@@ -34,26 +34,32 @@ function dropReleaseClick(): void {
 export function useLongPress(open: () => void) {
   const timer = useRef<number | undefined>(undefined);
   const start = useRef<{ x: number; y: number } | null>(null);
-  const fired = useRef(false);
-  const touch = useRef(false);
+  const touching = useRef(false);
+  // Set while the touch that opened the actions is still down: the context menu a browser raises for that same hold
+  // opens nothing more.
+  const held = useRef(false);
   const cancel = () => {
     clearTimeout(timer.current);
     timer.current = undefined;
     start.current = null;
   };
+  const end = () => {
+    cancel();
+    touching.current = false;
+    held.current = false;
+  };
   const fire = () => {
     cancel();
-    fired.current = true;
-    if (touch.current) dropReleaseClick();
+    held.current = touching.current;
+    if (touching.current) dropReleaseClick();
     open();
   };
   useEffect(() => cancel, []);
   return {
     onPointerDown: (e: React.PointerEvent) => {
-      fired.current = false;
-      touch.current = e.pointerType !== "mouse";
-      cancel();
-      if (!touch.current || !e.isPrimary) return;
+      end();
+      touching.current = e.pointerType !== "mouse";
+      if (!touching.current || !e.isPrimary) return;
       start.current = { x: e.clientX, y: e.clientY };
       timer.current = window.setTimeout(fire, PRESS_MS);
     },
@@ -61,12 +67,12 @@ export function useLongPress(open: () => void) {
       const s = start.current;
       if (s && Math.hypot(e.clientX - s.x, e.clientY - s.y) > MOVE_PX) cancel();
     },
-    onPointerUp: cancel,
-    onPointerCancel: cancel,
+    onPointerUp: end,
+    onPointerCancel: end,
     onPointerLeave: cancel,
     onContextMenu: (e: React.MouseEvent) => {
       e.preventDefault();
-      if (!fired.current) fire();
+      if (!held.current) fire();
     },
   };
 }

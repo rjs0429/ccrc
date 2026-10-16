@@ -25,6 +25,11 @@ export function setArchived(sessionId: string, on: boolean): void {
   );
 }
 
+// Sits in a line of small text without making the line taller.
+export function ArchivedBadge() {
+  return <span className="-my-px shrink-0 rounded border border-line px-1 text-[11px] leading-4">보관됨</span>;
+}
+
 // Why the session cannot be renamed from here: a program ccrc cannot drive has it open.
 export function renameBlocked(s: Pick<SessionSummary, "state" | "host">): string | undefined {
   return s.state === "live" ? `${hostLabel(s.host)}에서 열려 있어 여기서는 바꿀 수 없습니다` : undefined;
@@ -34,13 +39,15 @@ export function renameBlocked(s: Pick<SessionSummary, "state" | "host">): string
 // The step that shows the field commits within the tap, as iOS raises the keyboard only for a focus made there.
 export function SessionActions({ session, step: first, onClose }: { session: Target; step: "menu" | "rename"; onClose: () => void }) {
   const [step, setStep] = useState(first);
-  const shown = session.title.trim();
-  const [value, setValue] = useState(shown);
+  // The field starts from, and Save compares with, the name as Claude Code would keep it; a title the list made from
+  // the first prompt can run past the limit.
+  const current = cleanTitle(session.title);
+  const [value, setValue] = useState(current);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
   const next = cleanTitle(value);
-  const ready = Boolean(next) && next !== shown && !saving;
+  const ready = Boolean(next) && next !== current && !saving;
   const blocked = renameBlocked(session);
 
   useLayoutEffect(() => {

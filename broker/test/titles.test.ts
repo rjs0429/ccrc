@@ -21,6 +21,14 @@ test("a name is cleaned as Claude Code cleans it", () => {
   assert.equal(cleanTitle(`${"a".repeat(199)} b`), "a".repeat(199), "trimmed again after the cut");
 });
 
+test("a title the list made from a long first prompt cleans to the name a rename would keep, without its …", () => {
+  const prompt = "프롬프트가 길게 이어집니다. ".repeat(20);
+  const listed = `${prompt.slice(0, 200).trim()}…`;
+  assert.equal([...listed].length, TITLE_MAX + 1);
+  assert.equal(cleanTitle(listed), prompt.slice(0, 200).trim());
+  assert.equal(cleanTitle(cleanTitle(listed)), cleanTitle(listed), "a cleaned name stays as it is");
+});
+
 function transcript(content: string): string {
   const file = path.join(tempDir(), "-home-u-ws", `${SID}.jsonl`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
