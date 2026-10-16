@@ -310,7 +310,7 @@ test("a fork that cannot start leaves nothing behind and says why", async (t) =>
   const r = await call(src, "fork", { id }, 70_000);
   fs.renameSync(path.join(home, "moved.jsonl"), path.join(project, `${src}.jsonl`));
   assert.equal(r.ok, false);
-  assert.match(r.error ?? "", /^fork failed: Claude Code process exited with code 1[\s\S]*No conversation found/);
+  assert.match(r.error ?? "", /^fork failed: Claude Code could not start: [\s\S]*No conversation found/);
   assert.ok(!(await manager.list()).some((x) => x.id === id));
   assert.equal(fs.existsSync(path.join(home, ".claude", "file-history", id)), false);
 });

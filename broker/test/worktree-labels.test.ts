@@ -31,6 +31,7 @@ test("every name problem and every worktree error reads in Korean", () => {
     ["branch worktree-x already exists", "이미 있는 브랜치(worktree-x)라 이 이름은 쓸 수 없습니다"],
     ["Claude Code could not start: Error: Can only use --worktree in a git repository", "Claude Code가 시작하지 못했습니다: Can only use --worktree in a git repository"],
     ["Claude Code did not start in 60s", "Claude Code가 60초 안에 시작하지 않았습니다"],
+    ["fork failed: Claude Code could not start: No conversation found with session ID: x", "갈래를 만들지 못했습니다: 대화 기록을 찾지 못해 이 세션을 이어서 실행할 수 없습니다"],
     ["Claude Code did not start in 60s: fetching origin", "Claude Code가 60초 안에 시작하지 않았습니다: fetching origin"],
     ["not a worktree session", "worktree에서 시작한 세션이 아닙니다"],
     ["worktree is in use in ccrc", "원격에서 실행 중이라 worktree를 지울 수 없습니다. 먼저 끝내세요"],

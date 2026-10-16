@@ -153,6 +153,7 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^repository has no commits$/, "커밋이 없는 저장소라 worktree를 만들 수 없습니다"],
   [/^invalid worktree name: \w+$/, "worktree 이름이 올바르지 않습니다"],
   [/^branch (\S+) already exists$/, (m) => `이미 있는 브랜치(${m[1]})라 이 이름은 쓸 수 없습니다`],
+  [/^Claude Code could not start: [\s\S]*No conversation found/, "대화 기록을 찾지 못해 이 세션을 이어서 실행할 수 없습니다"],
   [/^Claude Code could not start: (?:Error: )?([\s\S]+)$/, (m) => `Claude Code가 시작하지 못했습니다: ${m[1]}`],
   [/^Claude Code did not start in (\d+)s(?:: ([\s\S]+))?$/, (m) => `Claude Code가 ${m[1]}초 안에 시작하지 않았습니다${m[2] ? `: ${m[2]}` : ""}`],
   [/^not a worktree session$/, "worktree에서 시작한 세션이 아닙니다"],
