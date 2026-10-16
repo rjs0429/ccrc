@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { elicitInfo } from "../elicit.ts";
 import type { Link } from "../link/server.ts";
-import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput } from "../protocol.ts";
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
@@ -13,6 +13,7 @@ import {
   commandInfo,
   mcpServers,
   rewindResult,
+  shellOutput,
   type ContentBlock,
   type Decision,
   type ElicitAnswer,
@@ -225,6 +226,10 @@ export class WrappedSession extends SessionCore {
 
   async stopTask(taskId: string): Promise<void> {
     await this.link.request({ subtype: "stop_task", task_id: this.runningTask(taskId) });
+  }
+
+  async taskOutput(taskId: string): Promise<TaskOutput> {
+    return shellOutput(await this.link.request({ subtype: "get_task_output", task_id: this.shellTask(taskId) }, READ_MS));
   }
 
   protected async cancelQueued(messageId: string): Promise<boolean> {

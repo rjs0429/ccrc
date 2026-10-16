@@ -17,6 +17,7 @@ import {
   type PermissionModeName,
   type QueuedMessage,
   type RewindResult,
+  type TaskOutput,
   type UsageInfo,
 } from "../protocol.ts";
 import { elicitResult } from "../elicit.ts";
@@ -37,6 +38,9 @@ const QUEUE_MAX = 100;
 const UNQUEUED = new Set<unknown>(["cancelled", "discarded", "refused"]);
 // An approved plan continues in the chosen mode, so only modes offered remotely may be named.
 const PLAN_DECISIONS = new Set<unknown>(["auto", "acceptEdits", "default", "keep_planning"]);
+// The tasks whose output Claude Code hands out: shells and monitors.
+const SHELL_TASKS = new Set<unknown>(["local_bash", "monitor_mcp", "monitor_ws"]);
+const OUTPUT_MAX = 64 * 1024;
 
 // How long Claude Code may take to answer: counting the context by category calls the token-count API,
 // and turning on or reconnecting an MCP server waits for the server to connect.
@@ -120,6 +124,16 @@ export function rewindResult(r: unknown): RewindResult {
     ...(files ? { filesChanged: files.slice(0, FILES_MAX) } : {}),
     ...(typeof o.insertions === "number" ? { insertions: o.insertions } : {}),
     ...(typeof o.deletions === "number" ? { deletions: o.deletions } : {}),
+  };
+}
+
+// Claude Code's get_task_output answer.
+export function shellOutput(r: unknown): TaskOutput {
+  const o = isObj(r) ? r : {};
+  return {
+    text: typeof o.output === "string" ? o.output.slice(-OUTPUT_MAX) : "",
+    totalBytes: typeof o.total_bytes === "number" && o.total_bytes >= 0 ? o.total_bytes : 0,
+    truncated: o.truncated === true || (typeof o.output === "string" && o.output.length > OUTPUT_MAX),
   };
 }
 
@@ -247,6 +261,10 @@ export abstract class SessionCore extends EventEmitter {
     return Promise.reject(Error("not available for this session"));
   }
 
+  taskOutput(_taskId: string): Promise<TaskOutput> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
   get outputStyle(): string | undefined {
     return this.settingsStyle ?? this.initStyle;
   }
@@ -295,6 +313,13 @@ export abstract class SessionCore extends EventEmitter {
   protected runningTask(taskId: string): string {
     this.ensureOpen();
     if (this.tasks.get(taskId)?.status !== "running") throw Error("task is not running");
+    return taskId;
+  }
+
+  // A listed shell or monitor task, running or ended a while ago.
+  protected shellTask(taskId: string): string {
+    this.ensureOpen();
+    if (!SHELL_TASKS.has(this.tasks.get(taskId)?.kind)) throw Error("not a shell task");
     return taskId;
   }
 

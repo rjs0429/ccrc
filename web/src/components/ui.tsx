@@ -83,16 +83,17 @@ export function Spinner({ className = "size-4" }: IconProps) {
   );
 }
 
-// wide: room for two columns on a landscape screen.
-export function Sheet({ title, onClose, children, wide }: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+// wide: room for two columns on a landscape screen. tall: the whole height of a portrait screen below its status bar,
+// with a header of the content's own in place of the title there.
+export function Sheet({ title, onClose, children, wide, tall }: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean; tall?: boolean }) {
   return (
     <div className="overlay fixed z-40 flex items-end justify-center bg-black/40 sm:items-center" onClick={onClose}>
       <div
-        className={`pb-safe max-h-[85%] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 shadow-xl sm:max-h-full sm:rounded-2xl ${wide ? "sm:max-w-3xl" : ""}`}
+        className={`pb-safe ${tall ? "h-[calc(100%-var(--sat)-0.5rem)] sm:h-auto" : "max-h-[85%]"} w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 shadow-xl sm:max-h-full sm:rounded-2xl ${wide ? "sm:max-w-3xl" : ""}`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
       >
-        {title && <div className="mb-3 text-sm font-semibold text-muted">{title}</div>}
+        {title && <div className={`mb-3 text-sm font-semibold text-muted ${tall ? "hidden sm:block" : ""}`}>{title}</div>}
         {children}
       </div>
     </div>

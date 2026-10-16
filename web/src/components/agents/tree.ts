@@ -8,10 +8,13 @@ type ToolItem = Extract<DisplayItem, { kind: "tool" }>;
 
 // A subagent or workflow on the map. task: the live task the broker lists; itemId: the Agent/Workflow call in the
 // conversation. key: "t:<task id>" for a listed task, "i:<item id>" for one known only from the conversation.
+// agentId: the subagent's id, which names its transcript; runId: the workflow's run, which names its agents' folder.
 export interface AgentNode {
   key: string;
   task?: TaskInfo;
   itemId?: string;
+  agentId?: string;
+  runId?: string;
   workflow: boolean;
   title: string;
   name?: string;
@@ -99,6 +102,8 @@ function fromItem(item: ToolItem | undefined, workflow: boolean) {
     text: item?.sub?.text,
     result,
     ended: item?.sub?.ended,
+    agentId: workflow ? undefined : item?.sub?.agentId,
+    runId: workflow ? item?.sub?.runId : undefined,
   };
 }
 
@@ -139,6 +144,8 @@ export function agentMap({ tasks = [], items, pending, busy }: { tasks?: TaskInf
         key: `t:${t.id}`,
         task: t,
         itemId: item?.id,
+        agentId: workflow ? undefined : t.id,
+        runId: known.runId,
         workflow,
         title: t.description || known.title || (workflow ? "워크플로" : "서브에이전트"),
         name: t.workflow?.name ?? known.name,
@@ -197,6 +204,8 @@ export function agentMap({ tasks = [], items, pending, busy }: { tasks?: TaskInf
       clean({
         key: `i:${item.id}`,
         itemId: item.id,
+        agentId: known.agentId,
+        runId: known.runId,
         workflow,
         title: known.title || (workflow ? "워크플로" : "서브에이전트"),
         name: known.name,

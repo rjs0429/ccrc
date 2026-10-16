@@ -34,6 +34,7 @@ import { searchFiles } from "./files.ts";
 import { lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
+import { agentTranscript, workflowAgents } from "./subagents.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
 import { WrappedSession } from "./wrapped.ts";
 
@@ -486,6 +487,12 @@ export class SessionManager extends EventEmitter {
       case "stop_task":
         await this.get(sessionId).stopTask(String(args.taskId));
         return {};
+      case "agent_transcript":
+        return agentTranscript(sessionId, await this.cwdOf(sessionId), args);
+      case "task_output":
+        return this.get(sessionId).taskOutput(String(args.taskId));
+      case "workflow_agents":
+        return workflowAgents(sessionId, await this.cwdOf(sessionId), args.runId);
       case "output_style":
         return this.get(sessionId).outputStyleInfo();
       case "set_output_style":

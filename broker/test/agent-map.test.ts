@@ -185,3 +185,29 @@ test("the chip stays for the conversation's agents: running ones count listed or
   assert.deepEqual(agentMap({ tasks: done, items: [broke], pending: [], busy: false }).chip, { running: 0, dot: "done", total: 2 });
   assert.equal(agentMap({ items: [], pending: [], busy: true }).chip, undefined);
 });
+
+test("a subagent on the map names its transcript: a listed one by its task, a past one by its call's result", () => {
+  const b = new ItemBuilder("/tmp/w1d");
+  b.add({ type: "assistant", uuid: "a1", message: { content: [{ type: "tool_use", id: "toolu_past", name: "Agent", input: { description: "Old look" } }] } } as never);
+  b.add({ type: "user", uuid: "u1", message: { content: [{ type: "tool_result", tool_use_id: "toolu_past", content: "done" }] }, tool_use_result: { status: "completed", agentId: "apast", totalToolUseCount: 2 } } as never);
+  b.add({ type: "assistant", uuid: "a2", message: { content: [{ type: "tool_use", id: "toolu_old", name: "Agent", input: { description: "Older look" } }] } } as never);
+  b.add({ type: "user", uuid: "u2", message: { content: [{ type: "tool_result", tool_use_id: "toolu_old", content: "done" }] } } as never);
+  b.add({ type: "assistant", uuid: "a3", message: { content: [{ type: "tool_use", id: "toolu_wf", name: "Workflow", input: { script: "export const meta = { name: 'review' }" } }] } } as never);
+  b.add({ type: "user", uuid: "u3", message: { content: [{ type: "tool_result", tool_use_id: "toolu_wf", content: "Workflow launched" }] }, tool_use_result: { runId: "wf_r1" } } as never);
+  b.add({ type: "assistant", uuid: "a4", message: { content: [{ type: "tool_use", id: "toolu_live", name: "Agent", input: { description: "Live look" } }] } } as never);
+  const tasks: TaskInfo[] = [{ id: "alive", description: "Live look", kind: "local_agent", status: "running", toolUseId: "toolu_live" }];
+  const map = agentMap({ tasks, items: b.items, pending: [], busy: true });
+  assert.deepEqual(
+    map.nodes.map((n) => [n.key, n.agentId, n.itemId]),
+    [["t:alive", "alive", "toolu_live"]],
+  );
+  assert.deepEqual(
+    map.past.map((n) => [n.key, n.agentId, n.runId]),
+    [
+      ["i:toolu_wf", undefined, "wf_r1"],
+      ["i:toolu_old", undefined, undefined],
+      ["i:toolu_past", "apast", undefined],
+    ],
+  );
+});
+

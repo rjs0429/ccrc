@@ -13,7 +13,7 @@
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
 // FAKE_REQUESTS=<file> gets a line with its arguments and environment and then one per control request or user message it receives.
 // get_settings reports a --model starting with "claude-" as the model; one naming "no-ultracode" does not offer Ultracode, which
-// --settings {"ultracode":true} asks for.
+// --settings {"ultracode":true} asks for. get_task_output answers with a coloured line naming the task.
 // --version prints a version and exits.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -222,6 +222,11 @@ function handle(m) {
         subtype: "success",
         response: { contents: part.toString(base64 ? "base64" : "utf8"), absPath: abs, truncated: data.length > max, ...(base64 ? { encoding: "base64" } : {}) },
       });
+    }
+    if (m.request.subtype === "get_task_output") {
+      const output = `\u001b[32m${m.request.task_id}\u001b[0m "applied": {"rate_limits": 1}\n`;
+      out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { output, total_bytes: Buffer.byteLength(output), truncated: false } } });
+      return;
     }
     if (m.request.subtype === "get_usage" && fs.existsSync(".fake-no-usage")) {
       out({ type: "control_response", response: { subtype: "error", request_id: m.request_id, error: "usage unavailable" } });

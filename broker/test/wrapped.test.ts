@@ -753,6 +753,35 @@ test("only a running task of this session can be stopped", async () => {
   await assert.rejects(s.contextDetail(), /session closed/);
 });
 
+test("a VS Code session reads a listed shell's output through the wrapper; an old wrapper's refusal comes back as it is", async () => {
+  const { s, wrapper, next } = await session();
+  const seen: Msg[] = [];
+  let old = false;
+  // A wrapper from before get_task_output was allowed refuses it by id.
+  wrapper.sock.on("data", () => {
+    for (const f of wrapper.frames) {
+      const m = f.m as Msg | undefined;
+      if (f.t !== "to_cli" || m?.type !== "control_request" || f.handled) continue;
+      f.handled = true;
+      seen.push(m.request as Msg);
+      if (old) wrapper.send({ t: "rejected", id: m.request_id, reason: "request not allowed" });
+      else wrapper.send({ m: { type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { output: "line1\n", total_bytes: 6, truncated: false } } }, t: "reply" });
+    }
+  });
+  const st = next("state");
+  wrapper.out({ type: "system", subtype: "task_started", task_id: "b7", description: "npm run dev", task_type: "local_bash", session_id: SID });
+  await st;
+  assert.deepEqual(await s.taskOutput("b7"), { text: "line1\n", totalBytes: 6, truncated: false });
+  await assert.rejects(s.taskOutput("b8"), /not a shell task/);
+  old = true;
+  await assert.rejects(s.taskOutput("b7"), /rejected by the wrapper: request not allowed/);
+  assert.deepEqual(seen, [
+    { subtype: "get_task_output", task_id: "b7" },
+    { subtype: "get_task_output", task_id: "b7" },
+  ]);
+  assert.equal(s.closed, false, "the session goes on");
+});
+
 test("the output style follows VS Code's answers and is set only to a listed style", async () => {
   const { s, wrapper } = await session();
   const seen: Msg[] = [];

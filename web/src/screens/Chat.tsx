@@ -512,7 +512,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {file && (
         <Suspense
           fallback={
-            <div className="fixed inset-0 z-40 flex items-center justify-center bg-bg text-muted">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg text-muted">
               <Spinner className="size-6" />
             </div>
           }
@@ -523,7 +523,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {thread && <ThreadSheet thread={thread} onClose={() => setThread(null)} />}
       {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "agents" && (
-        <AgentMapSheet sessionId={sessionId} title={title} controllable={controllable} onClose={() => setSheet(null)} onJump={jumpTo} onPending={jumpToRequest} />
+        <AgentMapSheet sessionId={sessionId} title={title} controllable={controllable} onClose={() => setSheet(null)} onJump={jumpTo} onPending={jumpToRequest} onFile={openFile} />
       )}
       {sheet === "context" && (
         <ContextSheet sessionId={sessionId} state={st} kind={kind} starting={starting} cannotStart={cannotStart} onClose={() => setSheet(null)} onStart={startNow} />

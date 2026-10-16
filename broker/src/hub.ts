@@ -347,6 +347,11 @@ export class Hub {
         );
         this.audit.log("call", { device: this.device, sessionId, op: msg.op, ...detail });
       }
+      // Opening a subagent's transcript is recorded; following it as it grows and paging back are not.
+      if (msg.op === "agent_transcript" && args.before === undefined && args.after === undefined) {
+        const ids = Object.entries(args).filter(([k, v]) => (k === "agentId" || k === "toolUseId") && typeof v === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(v));
+        this.audit.log("agent_transcript", { device: this.device, sessionId, ...Object.fromEntries(ids) });
+      }
       const data = await this.manager.call(sessionId, msg.op, args);
       if (msg.op === "resume") {
         if (this.viewing === sessionId) await this.setView(sessionId);

@@ -384,3 +384,50 @@ test("a compacted conversation's summary is not shown as the user's message", as
     ],
   );
 });
+
+test("a reload keeps the transcript ids of a background subagent and a workflow run", async () => {
+  const sid = "4f8a2c6e-1b3d-4e5f-9a7b-0c2d4e6f8a1b";
+  const base = { isSidechain: false, userType: "external", cwd, sessionId: sid, version: "2.1.296", gitBranch: "HEAD" };
+  const rows = [
+    { ...base, parentUuid: null, type: "user", uuid: "q1", timestamp: "2026-10-16T05:00:00.000Z", message: { role: "user", content: "Start both" } },
+    {
+      ...base,
+      parentUuid: "q1",
+      type: "assistant",
+      uuid: "q2",
+      timestamp: "2026-10-16T05:00:01.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "toolu_bg", name: "Agent", input: { description: "Watch", prompt: "go", run_in_background: true } },
+          { type: "tool_use", id: "toolu_wf", name: "Workflow", input: { script: "export const meta = { name: 'review' }" } },
+        ],
+      },
+    },
+    {
+      ...base,
+      parentUuid: "q2",
+      type: "user",
+      uuid: "q3",
+      timestamp: "2026-10-16T05:00:02.000Z",
+      message: { role: "user", content: [{ tool_use_id: "toolu_bg", type: "tool_result", content: [{ type: "text", text: "Async agent launched successfully." }] }] },
+      toolUseResult: { isAsync: true, status: "async_launched", agentId: "aec1e95a753adddd3", description: "Watch", prompt: "go" },
+    },
+    {
+      ...base,
+      parentUuid: "q3",
+      type: "user",
+      uuid: "q4",
+      timestamp: "2026-10-16T05:00:03.000Z",
+      message: { role: "user", content: [{ tool_use_id: "toolu_wf", type: "tool_result", content: "Workflow launched in background. Task ID: w1" }] },
+      toolUseResult: { status: "async_launched", taskId: "w1", runId: "wf_5ef7f2d2-0c4", transcriptDir: "/somewhere/subagents/workflows/wf_5ef7f2d2-0c4" },
+    },
+  ];
+  const dir = path.join(home, ".claude", "projects", projectDirName(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const items = await loadHistory(sid, cwd);
+  const sub = (id: string) => items.find((i) => i.id === id && i.kind === "tool") as Extract<(typeof items)[number], { kind: "tool" }>;
+  assert.equal(sub("toolu_bg").sub?.agentId, "aec1e95a753adddd3");
+  assert.equal(sub("toolu_wf").sub?.runId, "wf_5ef7f2d2-0c4");
+});

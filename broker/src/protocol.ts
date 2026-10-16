@@ -44,12 +44,15 @@ export interface Hunk {
 }
 
 // What a subagent started by an Agent/Task tool call has done so far. ended: how it ended, from the notice
-// Claude Code gives the model (agents and agentsFailed for a workflow).
+// Claude Code gives the model (agents and agentsFailed for a workflow). agentId: the subagent's id, which names its
+// transcript; runId: a workflow's run, which names the folder of its agents. Both come from the call's result.
 export interface SubagentActivity {
   tools: number;
   recent: { name: string; summary: string }[];
   text?: string;
   ended?: { status: "completed" | "failed" | "stopped"; tokens?: number; ms?: number; agents?: number; agentsFailed?: number };
+  agentId?: string;
+  runId?: string;
 }
 
 // What the user did with a question or plan call (AskUserQuestion, ExitPlanMode). answers, notes and
@@ -167,6 +170,37 @@ export interface WorkflowInfo {
   failed: number;
 }
 
+// What the phone holds of a transcript it follows: how many items from the start, the last one's id, and the tool
+// items still without a result.
+export interface TranscriptAfter {
+  count: number;
+  lastId: string;
+  open?: string[];
+}
+
+// A page of a subagent's transcript as conversation items. from: where items[0] stands among all `total` items.
+// changed: items the phone holds that changed since (after.open). reset: the phone's items no longer line up, so this
+// is the latest page instead. promptId: the item of the subagent's instructions. missing: no transcript yet.
+export interface AgentTranscript {
+  agentId: string;
+  items: DisplayItem[];
+  from: number;
+  total: number;
+  changed?: DisplayItem[];
+  reset?: boolean;
+  promptId?: string;
+  agentType?: string;
+  description?: string;
+  missing?: boolean;
+}
+
+// The end of a shell or monitor task's output as Claude Code hands it out; truncated: the output began earlier.
+export interface TaskOutput {
+  text: string;
+  totalBytes: number;
+  truncated: boolean;
+}
+
 // A message sent while Claude Code works, which it holds until it takes it in: from here ("remote") or from VS Code ("host").
 export interface QueuedMessage {
   id: string;
@@ -259,6 +293,12 @@ export interface CallMap {
   mcp_reconnect: { args: { server: string }; data: McpServerInfo[] };
   rewind: { args: { userMessageId: string; dryRun: boolean }; data: RewindResult };
   stop_task: { args: { taskId: string }; data: Record<string, never> };
+  // A subagent's transcript, by its id or else by the Agent call that started it: the latest page, the page before
+  // item `before`, or what follows the items the phone holds.
+  agent_transcript: { args: { agentId?: string; toolUseId?: string; before?: number; after?: TranscriptAfter }; data: AgentTranscript };
+  task_output: { args: { taskId: string }; data: TaskOutput };
+  // The agents of a workflow run, from the journal Claude Code keeps of it.
+  workflow_agents: { args: { runId: string }; data: WorkflowInfo };
   commands: { args: Record<string, never>; data: CommandInfo[] };
   files: { args: { query: string }; data: string[] };
   // Starts the session's Claude Code process here without sending anything.
@@ -273,6 +313,9 @@ export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle
 // The calls the new-session screen makes about a folder before any session runs in it.
 export type FolderOp = "files" | "commands" | "usage";
 export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage"];
+
+// The agent map's reads, about one session like the calls above.
+CALL_OPS.push("agent_transcript", "task_output", "workflow_agents");
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {

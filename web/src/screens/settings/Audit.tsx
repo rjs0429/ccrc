@@ -29,6 +29,7 @@ const EVENT_LABEL: Record<string, string> = {
   handoff: "VS Code로 넘김",
   upload: "파일 첨부",
   file_read: "파일 열람",
+  agent_transcript: "에이전트 기록 열람",
   call: "세션 작업",
   folder_index: "폴더 파일 목록 만듦",
   folder_denied: "폴더 요청 거부됨",

@@ -13,7 +13,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeSettingsFile } from "../claude-settings.ts";
 import { elicitInfo } from "../elicit.ts";
-import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput } from "../protocol.ts";
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
@@ -24,6 +24,7 @@ import {
   commandInfo,
   mcpServers,
   rewindResult,
+  shellOutput,
   type ContentBlock,
   type Decision,
   type ElicitAnswer,
@@ -263,6 +264,10 @@ export class BrokerSession extends SessionCore {
 
   async stopTask(taskId: string): Promise<void> {
     await timed(this.query().stopTask(this.runningTask(taskId)), REQUEST_MS);
+  }
+
+  async taskOutput(taskId: string): Promise<TaskOutput> {
+    return shellOutput((await this.request({ subtype: "get_task_output", task_id: this.shellTask(taskId) })).response);
   }
 
   protected async cancelQueued(messageId: string): Promise<boolean> {

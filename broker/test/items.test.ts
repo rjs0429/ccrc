@@ -460,6 +460,7 @@ test("a background subagent's end notice in the transcript gives its tool count 
   assert.deepEqual(item.kind === "tool" && item.sub, {
     tools: 2,
     recent: [],
+    agentId: "a1",
     text: "Three files:\na.ts",
     ended: { status: "completed", tokens: 17723, ms: 7813 },
   });
@@ -473,6 +474,27 @@ test("a background subagent's end notice in the transcript gives its tool count 
   assert.equal(b.add(notice("<tool-use-id>toolu_agent</tool-use-id>\n<note>no status</note>")).length, 0, "a notice without status or usage changes nothing");
   assert.equal(b.add(notice("<tool-use-id>toolu_other</tool-use-id>\n<usage><tool_uses>5</tool_uses></usage>")).length, 0);
   assert.equal(toolItem(b, "toolu_agent").sub?.tools, 2);
+});
+
+test("a subagent's and a workflow run's transcript ids come from their calls' results", () => {
+  const b = new ItemBuilder(cwd);
+  agentTurn(b);
+  const text = "Report.\n  agentId: not-this-one\nagentId: a2d504cb3a0a2e7b4 (use SendMessage with to: 'a2d504cb3a0a2e7b4')";
+  b.add({ type: "user", uuid: "u2", message: { content: [{ type: "tool_result", tool_use_id: "toolu_agent", content: [{ type: "text", text }] }] } });
+  assert.deepEqual(toolItem(b, "toolu_agent").sub, { tools: 0, recent: [], agentId: "a2d504cb3a0a2e7b4" }, "from the last id line of the result");
+  b.add({ type: "user", uuid: "u3", message: { content: [{ type: "tool_result", tool_use_id: "toolu_agent", content: "Failed", is_error: true }] }, tool_use_result: { agentId: "a77" } });
+  assert.equal(toolItem(b, "toolu_agent").sub?.agentId, "a77", "a failed run has a transcript too");
+  b.add({ type: "assistant", uuid: "a2", message: { content: [{ type: "tool_use", id: "toolu_wf", name: "Workflow", input: { script: "export const meta = { name: 'review' }" } }] } });
+  b.add({
+    type: "user",
+    uuid: "u4",
+    message: { content: [{ type: "tool_result", tool_use_id: "toolu_wf", content: "Workflow launched in background. Task ID: w1" }] },
+    toolUseResult: { status: "async_launched", taskId: "w1", runId: "wf_fef5cf87-d79", transcriptDir: "/x/subagents/workflows/wf_fef5cf87-d79" },
+  });
+  assert.deepEqual(toolItem(b, "toolu_wf").sub, { tools: 0, recent: [], runId: "wf_fef5cf87-d79" });
+  b.add({ type: "assistant", uuid: "a3", message: { content: [{ type: "tool_use", id: "toolu_bad", name: "Agent", input: { description: "x" } }] } });
+  b.add({ type: "user", uuid: "u5", message: { content: [{ type: "tool_result", tool_use_id: "toolu_bad", content: "done" }] }, tool_use_result: { agentId: "../escape" } });
+  assert.equal(toolItem(b, "toolu_bad").sub, undefined, "an id that could leave the folder is not taken");
 });
 
 test("a workflow's end notice gives its agent counts", () => {
