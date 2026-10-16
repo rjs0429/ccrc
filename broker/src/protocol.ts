@@ -128,8 +128,10 @@ export type DisplayItem =
       patchCut?: number;
       sub?: SubagentActivity;
       reply?: ToolReply;
-      // SendUserFile: the files its result names. by: the Agent call whose subagent sent them, shown here while it runs.
+      // SendUserFile: the files its result names; sentCut: those that open left out to keep the item small. by: the
+      // Agent call whose subagent sent them, shown here while it runs.
       sent?: SentFile[];
+      sentCut?: number;
       by?: string;
     }
   // "unsent": a message sent from here that Claude Code never took in; its text, and how many files it carried.

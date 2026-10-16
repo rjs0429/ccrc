@@ -712,8 +712,14 @@ test("a SendUserFile result names the files it sent; one Claude Code did not del
 
   const many = new ItemBuilder(cwd);
   many.add(SEND_USE(["a"]));
-  many.add(SEND_RESULT("ok", { attachments: Array.from({ length: 25 }, (_, n) => ({ path: `/tmp/f${n}.txt`, size: n, isImage: false, pathValidated: true })) }));
+  many.add(
+    SEND_RESULT("ok", {
+      attachments: Array.from({ length: 26 }, (_, n) => ({ path: `/tmp/f${n}.txt`, size: n, isImage: false, pathValidated: true, ...(n === 22 ? { upload_error: "upload failed" } : {}) })),
+    }),
+  );
   assert.equal(toolItem(many, "toolu_send").sent?.length, 20, "at most twenty files");
+  assert.equal(toolItem(many, "toolu_send").sentCut, 5, "the files left out that open are counted");
+  assert.equal(item.sentCut, undefined, "a call of fewer files leaves none out");
 
   const refused = new ItemBuilder(cwd);
   refused.add(SEND_USE(["/home/u/.ssh/id_rsa"]));

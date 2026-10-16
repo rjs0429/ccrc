@@ -202,7 +202,7 @@ export function NotificationsSection() {
             </div>
           </div>
           <TurnEndChoice value={prefs.turnEnd} onChange={(turnEnd) => update({ turnEnd })} />
-          <Toggle label="도구 이름 표시" hint="권한 요청 알림에 도구 이름을, 입력 요청 알림에 MCP 서버 이름을 함께 보여 줍니다. 잠금 화면에도 보입니다" on={prefs.details} onChange={(on) => update({ details: on })} />
+          <Toggle label="도구 이름 표시" hint="권한 요청 알림에 도구 이름을, 입력 요청 알림에 MCP 서버 이름을, 파일 알림에 보낸 파일 이름을 함께 보여 줍니다. 잠금 화면에도 보입니다" on={prefs.details} onChange={(on) => update({ details: on })} />
         </div>
         <div className="flex gap-2">
           <Button className="flex-1" disabled={busy} onClick={test}>

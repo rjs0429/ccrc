@@ -18,30 +18,36 @@ type Obj = Record<string, unknown>;
 
 const record = (v: unknown): Obj | undefined => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : undefined);
 
-// The files a SendUserFile result lists in its structured output; undefined when it has none. A file is served only when
-// Claude Code resolved it to an absolute path on this machine and reported no failure for it.
-export function sentFiles(output: unknown): SentFile[] | undefined {
+type Named = Obj & { path: string };
+
+// The entries of a SendUserFile result's structured output that name a file; undefined when it has no list of them.
+function named(output: unknown): Named[] | undefined {
   const list = record(output)?.attachments;
-  if (!Array.isArray(list)) return undefined;
-  const files: SentFile[] = [];
-  for (const v of list) {
-    if (files.length === FILES_MAX) break;
-    const a = record(v);
-    const p = a?.path;
-    if (!a || typeof p !== "string" || !p) continue;
-    const local = a.pathValidated === true && typeof a.upload_error !== "string" && p.length <= PATH_MAX && path.isAbsolute(p) && !p.includes("\0");
+  return Array.isArray(list) ? list.map(record).filter((a): a is Named => typeof a?.path === "string" && a.path !== "") : undefined;
+}
+
+// A file is served only when Claude Code resolved it to an absolute path on this machine and reported no failure for it.
+const served = (a: Named) => a.pathValidated === true && typeof a.upload_error !== "string" && a.path.length <= PATH_MAX && path.isAbsolute(a.path) && !a.path.includes("\0");
+
+// The files a SendUserFile result lists, the first FILES_MAX of them.
+export function sentFiles(output: unknown): SentFile[] | undefined {
+  return named(output)?.slice(0, FILES_MAX).map((a) => {
     const why = [a.upload_error, a.partial_error].find((e): e is string => typeof e === "string" && e !== "");
     const media = typeof a.media_type === "string" && a.media_type ? a.media_type.slice(0, MEDIA_TYPE_MAX) : undefined;
-    files.push({
-      name: (path.basename(p) || p).slice(0, NAME_MAX),
-      path: p.slice(0, PATH_MAX),
+    return {
+      name: (path.basename(a.path) || a.path).slice(0, NAME_MAX),
+      path: a.path.slice(0, PATH_MAX),
       size: typeof a.size === "number" && Number.isFinite(a.size) && a.size >= 0 ? a.size : 0,
       ...(media ? { mediaType: media } : {}),
       ...(a.isImage === true ? { image: true } : {}),
-      ...(local ? {} : { error: why?.slice(0, ERROR_MAX) ?? "" }),
-    });
-  }
-  return files;
+      ...(served(a) ? {} : { error: why?.slice(0, ERROR_MAX) ?? "" }),
+    };
+  });
+}
+
+// How many of the files a SendUserFile result lists past those sentFiles keeps would be served.
+export function sentCut(output: unknown): number {
+  return named(output)?.slice(FILES_MAX).filter(served).length ?? 0;
 }
 
 // A SendUserFile call's files and when it was made, in ms.

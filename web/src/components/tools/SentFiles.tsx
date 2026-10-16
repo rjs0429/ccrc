@@ -2,7 +2,7 @@ import { Suspense, lazy, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { SENT_MAX_BYTES, type DisplayItem, type FileView, type SentFile, type SentRef } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
-import { sizeText } from "../../labels.ts";
+import { shortPath, sizeText } from "../../labels.ts";
 import { toast, useApp } from "../../state.ts";
 import { FileLinks, SentAgent } from "../fileLinks.ts";
 import { Icon, Spinner } from "../ui.tsx";
@@ -163,6 +163,8 @@ function SentRow({ sessionId, file, at, attach, failed, opened, onOpen, onFailed
         : failed
           ? (SENT_ERROR_TEXT[failed] ?? "파일을 열지 못했습니다")
           : undefined;
+  // A row that says why its file does not open offers no download.
+  const closed = failed !== undefined && Object.hasOwn(SENT_ERROR_TEXT, failed);
   // A picture the broker refuses says why; one it serves but the browser cannot draw is just not shown.
   const explain = () =>
     request<FileView>("GET", sentUrl(sessionId, at)).catch((e: unknown) => {
@@ -184,8 +186,9 @@ function SentRow({ sessionId, file, at, attach, failed, opened, onOpen, onFailed
       </span>
     </>
   );
+  // A filled download button keeps the card's inset on the right; a bare icon's margin inside its button stands in for it.
   return (
-    <div className="flex items-center gap-1 pr-1.5 pl-3" data-sent-file={at.n}>
+    <div className={`flex items-center gap-1 pl-3 ${attach ? "pr-3" : "pr-1.5"}`} data-sent-file={at.n}>
       {shut ? (
         <div className="flex min-h-15 min-w-0 flex-1 items-center gap-3 py-2 opacity-80">{body}</div>
       ) : (
@@ -193,7 +196,7 @@ function SentRow({ sessionId, file, at, attach, failed, opened, onOpen, onFailed
           {body}
         </button>
       )}
-      {!shut && failed !== "denied" && <Download sessionId={sessionId} file={at} name={file.name} primary={attach} />}
+      {!shut && !closed && <Download sessionId={sessionId} file={at} name={file.name} primary={attach} />}
     </div>
   );
 }
@@ -208,7 +211,7 @@ function AskedRow({ path, pending }: { path: string; pending: boolean }) {
       <TypeBox name={name} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[14px] font-medium">{name}</span>
-        {dir ? <span className="block truncate font-mono text-[11.5px] text-muted">{dir}</span> : <span className="block truncate text-xs text-muted">{typeLabel(name)}</span>}
+        {dir ? <span className="block truncate font-mono text-[11.5px] text-muted">{shortPath(dir)}</span> : <span className="block truncate text-xs text-muted">{typeLabel(name)}</span>}
       </span>
     </>
   );
@@ -223,7 +226,8 @@ function AskedRow({ path, pending }: { path: string; pending: boolean }) {
 }
 
 // The files Claude sent with SendUserFile, always open: what it said with them, and each file to look at or download.
-// A file a subagent sent names the subagent. The viewer opens over whatever shows the card, the agent map too.
+// A file a subagent sent names the subagent, and waits for its result while the turn or that subagent's background task
+// runs. The viewer opens over whatever shows the card, the agent map too.
 export function SentFiles({ item, running }: { item: ToolItem; running: boolean }) {
   const agent = useContext(SentAgent);
   const sessionId = useApp((s) => s.chat?.sessionId);
@@ -232,6 +236,7 @@ export function SentFiles({ item, running }: { item: ToolItem; running: boolean 
     const owner = item.by ? s.chat?.items.find((i) => i.id === item.by) : undefined;
     return owner?.kind === "tool" ? owner.summary : undefined;
   });
+  const byRunning = useApp((s) => Boolean(item.by && s.chat?.state?.tasks?.some((t) => t.toolUseId === item.by && t.status === "running")));
   const [viewing, setViewing] = useState<number | null>(null);
   const [failed, setFailed] = useState<Record<number, string>>({});
   const [opened, setOpened] = useState<Set<number>>(() => new Set());
@@ -240,10 +245,10 @@ export function SentFiles({ item, running }: { item: ToolItem; running: boolean 
   const attach = input.display === "attach";
   const asked = (Array.isArray(input.files) ? input.files : [input.files]).filter((f): f is string => typeof f === "string" && f !== "");
   const files = item.sent;
-  const pending = !item.result && (running || Boolean(item.by));
+  const pending = !item.result && (running || byRunning);
   const refused = item.result?.isError === true || (!item.result && !pending);
   // Files Claude Code could not deliver do not count as sent.
-  const count = files ? files.filter((f) => f.error === undefined).length : asked.length;
+  const count = files ? files.filter((f) => f.error === undefined).length + (item.sentCut ?? 0) : asked.length;
   const ref = (n: number): SentRef => ({ call: item.id, n, ...(agent ? { agent } : {}) });
   const nothing = !pending && (refused || count === 0);
   const head = pending ? "파일을 보내는 중…" : nothing ? "파일을 보내지 못했습니다" : count > 1 ? `파일 ${count}개를 보냈습니다` : "파일을 보냈습니다";

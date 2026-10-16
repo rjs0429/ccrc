@@ -4,7 +4,7 @@ import { attachmentsOf } from "./attachments.ts";
 import { classify } from "./outcome.ts";
 import { PLAN_LIMIT, toolReply } from "./replies.ts";
 import { contextDetail, usageReport } from "./reports.ts";
-import { sentFiles } from "./sent-files.ts";
+import { sentCut, sentFiles } from "./sent-files.ts";
 
 const RESULT_LIMIT = 4000;
 const INPUT_STRING_LIMIT = 2000;
@@ -498,7 +498,8 @@ export class ItemBuilder {
     if (result.isError) return this.put(known);
     const sub = counted(known.sub, record(output)?.totalToolUseCount);
     const sent = prev.name === "SendUserFile" ? sentFiles(output) : undefined;
-    return this.put({ ...known, ...fileChange(output), ...(sub ? { sub } : {}), ...(sent ? { sent } : {}) });
+    const cut = sent ? sentCut(output) : 0;
+    return this.put({ ...known, ...fileChange(output), ...(sub ? { sub } : {}), ...(sent ? { sent } : {}), ...(cut ? { sentCut: cut } : {}) });
   }
 
   // Folds a subagent's messages into the call that started it: how many tools it used, the last few,

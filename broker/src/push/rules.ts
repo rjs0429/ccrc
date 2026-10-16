@@ -156,12 +156,13 @@ export class Notifier {
     this.sentCalls.set(sessionId, calls);
     for (const old of [...this.sentCalls.keys()].slice(0, -SENT_SESSIONS_KEEP)) this.sentCalls.delete(old);
     const input = item.input !== null && typeof item.input === "object" ? (item.input as Record<string, unknown>) : {};
-    if (input.status === "proactive") void this.onFiles(sessionId, files.map((f) => f.name)).catch((e) => this.fail(e));
-    else this.sentFiles.set(sessionId, (this.sentFiles.get(sessionId) ?? 0) + files.length);
+    const count = files.length + (item.sentCut ?? 0);
+    if (input.status === "proactive") void this.onFiles(sessionId, files[0].name, count).catch((e) => this.fail(e));
+    else this.sentFiles.set(sessionId, (this.sentFiles.get(sessionId) ?? 0) + count);
   }
 
   // Goes out almost at once to every device unless the user is looking at the session; a newer one replaces it.
-  private async onFiles(sessionId: string, names: string[]): Promise<void> {
+  private async onFiles(sessionId: string, name: string, count: number): Promise<void> {
     if (!this.d.subscriptions().length) return;
     const key = `${sessionId} file`;
     const timers = new Set<NodeJS.Timeout>();
@@ -174,7 +175,7 @@ export class Notifier {
         if (this.hub.isWatching(sessionId)) return;
         const now = this.d.subscriptions().find((s) => s.endpoint === sub.endpoint);
         if (!now) return;
-        const named = now.prefs.details ? ` · ${clip(names[0], TOOL_MAX)}${names.length > 1 ? ` 외 ${names.length - 1}개` : ""}` : "";
+        const named = now.prefs.details ? ` · ${clip(name, TOOL_MAX)}${count > 1 ? ` 외 ${count - 1}개` : ""}` : "";
         this.markUnseen(sessionId, now.endpoint);
         const payload: PushPayload = { title, body: `${SENT}${named}`, tag: `${sessionId}:file`, data: { url: `/#/s/${sessionId}` } };
         this.d.deliver(now, { ...payload, badge: this.badgeFor(now.endpoint).badge }, "normal");
