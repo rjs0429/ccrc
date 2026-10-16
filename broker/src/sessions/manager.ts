@@ -40,7 +40,8 @@ import { liveProcesses } from "./live.ts";
 import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
-import { agentTranscript, workflowAgents } from "./subagents.ts";
+import { SentIndex, sentCall, type SentCall } from "./sent-files.ts";
+import { agentItem, agentTranscript, workflowAgents } from "./subagents.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
 import { WrappedSession } from "./wrapped.ts";
 
@@ -156,6 +157,7 @@ export class SessionManager extends EventEmitter {
   private archive = new ArchiveStore(path.join(paths.stateDir, "archived.json"));
   private probing = new Map<string, Promise<ContextWindow | undefined>>();
   private exact = new Map<string, { size: number; model: string }>();
+  private sent = new SentIndex();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string) => Promise<UsageInfo> = probeUsage;
   // Whether a phone can be reached now (connected, or the signed-in device gets notifications), so a VS Code
@@ -350,6 +352,7 @@ export class SessionManager extends EventEmitter {
     const info = await this.info(sessionId);
     if (!info?.cwd) throw Error("unknown session");
     const [items, state] = await Promise.all([loadHistory(sessionId, info.cwd), this.idleState(sessionId, info.cwd, titleOf(info))]);
+    this.sent.add(sessionId, items);
     return { ...tail([...items, ...(this.ended.get(sessionId)?.unsent ?? [])], focus), pending: [], state };
   }
 
@@ -701,6 +704,16 @@ export class SessionManager extends EventEmitter {
     return transcriptPath(sessionId, await this.cwdOf(sessionId));
   }
 
+  // A SendUserFile call of the session as Claude Code reported it, found by its id: in the conversation a process here
+  // runs, in the session's transcript, or in the transcript of the subagent `agent` that made it. Never by a path.
+  async sentCall(sessionId: string, call: string, agent?: string): Promise<SentCall | undefined> {
+    const cwd = await this.cwdOf(sessionId);
+    if (agent) return sentCall(await agentItem(sessionId, cwd, agent, call).catch(() => undefined));
+    const s = this.controlled(sessionId);
+    const live = s && sentCall(s.builder.items.find((i) => i.id === call));
+    return live ?? this.sent.find(sessionId, call, async () => transcriptPath(sessionId, cwd));
+  }
+
   private async cwdOf(sessionId: string): Promise<string> {
     const cwd = this.controlled(sessionId)?.cwd ?? (await this.info(sessionId))?.cwd;
     if (!cwd) throw Error("unknown session");
@@ -918,6 +931,7 @@ export class SessionManager extends EventEmitter {
       if (this.wrapped.get(s.id) === s) this.wrapped.delete(s.id);
       const unsent = s.builder.items.filter((i) => i.kind === "note" && i.code === "unsent");
       this.ended.set(s.id, { reason, at: Date.now(), unsent });
+      this.sent.add(s.id, s.builder.items);
       this.catalog = undefined;
       this.emit("event", s.id, { t: "state", sessionId: s.id, state: s.state() });
       if (!isFolder(s.cwd)) void this.restate(s.id);

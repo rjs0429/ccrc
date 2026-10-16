@@ -3,7 +3,7 @@ import type { DisplayItem } from "../../../../broker/src/protocol.ts";
 import { errorText } from "../../labels.ts";
 import { call, toast } from "../../state.ts";
 import { ItemView, shownItems } from "../Items.tsx";
-import { FileLinks, FileRoots } from "../fileLinks.ts";
+import { FileLinks, FileRoots, SentAgent } from "../fileLinks.ts";
 import { Failed, Waiting } from "../sheets/parts.tsx";
 import { Icon, Spinner } from "../ui.tsx";
 import { AgentLinks, type TranscriptRef } from "./links.ts";
@@ -212,13 +212,15 @@ export function Transcript({ sessionId, target, active, startAt, running, roots,
               </button>
             )}
             {h && (
-              <div className="space-y-4" data-transcript-items>
-                {items.map((item) => (
-                  <div key={item.id} data-item={item.id}>
-                    <Entry item={item} promptId={h.promptId} running={running} />
-                  </div>
-                ))}
-              </div>
+              <SentAgent.Provider value={h.agentId || target.agentId}>
+                <div className="space-y-4" data-transcript-items>
+                  {items.map((item) => (
+                    <div key={item.id} data-item={item.id}>
+                      <Entry item={item} promptId={h.promptId} running={running} />
+                    </div>
+                  ))}
+                </div>
+              </SentAgent.Provider>
             )}
             {h && running && h.total > 0 && !error && (
               <div className="mt-4 flex items-center gap-2 text-sm text-muted" data-transcript-working>

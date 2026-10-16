@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { Hub } from "../hub.ts";
-import type { LiveState, PendingKind, PendingRequest, ServerMsg } from "../protocol.ts";
+import type { DisplayItem, LiveState, PendingKind, PendingRequest, ServerMsg } from "../protocol.ts";
 import type { SessionManager } from "../sessions/manager.ts";
 import type { ErrorReason, TurnEnd, TurnOutcome } from "../sessions/outcome.ts";
 import type { Subscription } from "./subscriptions.ts";
@@ -29,6 +29,9 @@ const UNSEEN_KEEP_MS = 24 * 3600_000;
 const UNSEEN_MAX = 200;
 const TITLE_MAX = 80;
 const TOOL_MAX = 60;
+const SENT_CALLS_KEEP = 200;
+const SENT_SESSIONS_KEEP = 200;
+const SENT = "파일을 보냈습니다";
 
 const BODY: Record<PendingKind, string> = {
   permission: "권한 요청",
@@ -79,16 +82,21 @@ export interface NotifierDeps {
 
 // Turns session events into notifications for the subscribed devices: a request that needs an answer on a session the
 // user is not looking at, and the end of a model turn as each device asks for it. A turn the user stopped or a local
-// command such as /compact is not notified.
+// command such as /compact is not notified. Files Claude sends are told at once when Claude marks them proactive, the
+// user being away; others are counted on the next turn end's notice.
 export class Notifier {
   private manager: SessionManager;
   private hub: Hub;
   private d: NotifierDeps;
-  // Timers by `<session> <request id>` for a request, `<session> end` for a turn that ended and `<session> crash`.
+  // Timers by `<session> <request id>` for a request, `<session> end` for a turn that ended, `<session> crash` and
+  // `<session> file`.
   private timers = new Map<string, Set<NodeJS.Timeout>>();
   private states = new Map<string, LiveState>();
-  // Sessions whose turn end went to a device and that were not opened since, with those devices' endpoints.
+  // Sessions whose turn end or file went to a device and that were not opened since, with those devices' endpoints.
   private unseen = new Map<string, { at: number; endpoints: Set<string> }>();
+  // SendUserFile calls already counted or told, and the files sent since the last turn end, by session.
+  private sentCalls = new Map<string, Set<string>>();
+  private sentFiles = new Map<string, number>();
   private listener = (sessionId: string, msg: ServerMsg) => {
     try {
       this.onEvent(sessionId, msg);
@@ -101,6 +109,7 @@ export class Notifier {
     this.unseen.delete(sessionId);
     this.cancel(`${sessionId} end`);
     this.cancel(`${sessionId} crash`);
+    this.cancel(`${sessionId} file`);
   };
 
   constructor(manager: SessionManager, hub: Hub, deps: NotifierDeps) {
@@ -132,6 +141,45 @@ export class Notifier {
     if (msg.t === "pending_add") void this.onPending(sessionId, msg.request).catch((e) => this.fail(e));
     else if (msg.t === "pending_remove") this.cancel(`${sessionId} ${msg.requestId}`);
     else if (msg.t === "state") this.onState(sessionId, msg.state);
+    else if (msg.t === "item") this.onItem(sessionId, msg.item);
+  }
+
+  // A SendUserFile call counts once, when its result names a file that opens.
+  private onItem(sessionId: string, item: DisplayItem): void {
+    if (item.kind !== "tool" || item.name !== "SendUserFile") return;
+    const files = item.sent?.filter((f) => f.error === undefined) ?? [];
+    const calls = this.sentCalls.get(sessionId) ?? new Set<string>();
+    if (!files.length || calls.has(item.id)) return;
+    calls.add(item.id);
+    for (const old of [...calls].slice(0, -SENT_CALLS_KEEP)) calls.delete(old);
+    this.sentCalls.delete(sessionId);
+    this.sentCalls.set(sessionId, calls);
+    for (const old of [...this.sentCalls.keys()].slice(0, -SENT_SESSIONS_KEEP)) this.sentCalls.delete(old);
+    const input = item.input !== null && typeof item.input === "object" ? (item.input as Record<string, unknown>) : {};
+    if (input.status === "proactive") void this.onFiles(sessionId, files.map((f) => f.name)).catch((e) => this.fail(e));
+    else this.sentFiles.set(sessionId, (this.sentFiles.get(sessionId) ?? 0) + files.length);
+  }
+
+  // Goes out almost at once to every device unless the user is looking at the session; a newer one replaces it.
+  private async onFiles(sessionId: string, names: string[]): Promise<void> {
+    if (!this.d.subscriptions().length) return;
+    const key = `${sessionId} file`;
+    const timers = new Set<NodeJS.Timeout>();
+    this.cancel(key);
+    this.timers.set(key, timers);
+    const { title } = await this.describe(sessionId);
+    if (this.timers.get(key) !== timers) return;
+    for (const sub of this.d.subscriptions()) {
+      this.arm(key, this.d.timing.ownedMs, () => {
+        if (this.hub.isWatching(sessionId)) return;
+        const now = this.d.subscriptions().find((s) => s.endpoint === sub.endpoint);
+        if (!now) return;
+        const named = now.prefs.details ? ` · ${clip(names[0], TOOL_MAX)}${names.length > 1 ? ` 외 ${names.length - 1}개` : ""}` : "";
+        this.markUnseen(sessionId, now.endpoint);
+        const payload: PushPayload = { title, body: `${SENT}${named}`, tag: `${sessionId}:file`, data: { url: `/#/s/${sessionId}` } };
+        this.d.deliver(now, { ...payload, badge: this.badgeFor(now.endpoint).badge }, "normal");
+      });
+    }
   }
 
   // VS Code sessions wait the device's delay so an answer at the laptop comes first; requests of broker-run
@@ -177,6 +225,8 @@ export class Notifier {
   // started; "all" devices of every turn. A VS Code turn waits the device's delay unless the remote user gave the last
   // word, and no notice goes once a new turn starts or the user looks at the session.
   private async onEnd(sessionId: string, end: TurnEnd): Promise<void> {
+    const files = end.queued ? 0 : (this.sentFiles.get(sessionId) ?? 0);
+    if (!end.queued) this.sentFiles.delete(sessionId);
     if (end.outcome === "interrupted" || end.outcome === "local" || end.queued || !this.d.subscriptions().length) return;
     const key = `${sessionId} ${end.outcome === "crashed" ? "crash" : "end"}`;
     const timers = new Set<NodeJS.Timeout>();
@@ -197,7 +247,7 @@ export class Notifier {
         const now = this.d.subscriptions().find((s) => s.endpoint === sub.endpoint);
         if (!now || !wants(now)) return;
         this.markUnseen(sessionId, now.endpoint);
-        this.d.deliver(now, { ...this.endPayload(sessionId, end, title), badge: this.badgeFor(now.endpoint).badge }, end.outcome === "done" ? "normal" : "high");
+        this.d.deliver(now, { ...this.endPayload(sessionId, end, title, files), badge: this.badgeFor(now.endpoint).badge }, end.outcome === "done" ? "normal" : "high");
       });
     }
   }
@@ -228,8 +278,9 @@ export class Notifier {
     return { title, body: tool ? `${text} · ${clip(tool, TOOL_MAX)}` : text, tag: `${sessionId}:${request.kind}`, data: { url: `/#/s/${sessionId}` } };
   }
 
-  private endPayload(sessionId: string, end: TurnEnd, title: string): PushPayload {
-    return { title, body: endText(end), tag: `${sessionId}:end`, data: { url: `/#/s/${sessionId}` } };
+  // files: how many files Claude sent since the last turn end without telling them on their own.
+  private endPayload(sessionId: string, end: TurnEnd, title: string, files = 0): PushPayload {
+    return { title, body: `${endText(end)}${files ? ` · 파일 ${files}개` : ""}`, tag: `${sessionId}:end`, data: { url: `/#/s/${sessionId}` } };
   }
 
   private arm(key: string, ms: number, fn: () => void): void {

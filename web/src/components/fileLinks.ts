@@ -18,3 +18,6 @@ export function urlTransform(url: string): string {
   if (/^file:/i.test(url)) return url;
   return /^[^/?#:]+:\d+(?::\d+)?(?:-\d+)?(?:[?#]|$)/.test(url) ? `./${url}` : defaultUrlTransform(url);
 }
+
+// The subagent whose transcript the items shown come from; files it sent are asked for by its id.
+export const SentAgent = createContext<string | undefined>(undefined);

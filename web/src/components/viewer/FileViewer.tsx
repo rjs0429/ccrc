@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FileView } from "../../../../broker/src/protocol.ts";
+import type { FileView, SentRef } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
-import { sizeText } from "../../labels.ts";
+import { shortPath, sizeText } from "../../labels.ts";
 import { FileImages, FileLinks } from "../fileLinks.ts";
 import { Markdown } from "../Markdown.tsx";
 import { Icon, Spinner } from "../ui.tsx";
+import { PREVIEW_MAX_BYTES, SENT_ERROR_TEXT, sentUrl } from "./sent.ts";
 import { htmlLines, languageOf, parseTable, slug } from "./text.ts";
 
 export interface FileTarget {
   href: string;
   // The folder of the file the link was in, for links inside a file opened in the viewer.
   base?: string;
+  // A file Claude sent, read by its call instead of a path; href is then its name.
+  sent?: SentRef;
 }
 
 type Loaded = { view: FileView } | { error: string; path?: string };
@@ -65,18 +68,20 @@ interface Ticket {
 
 // A cookie-free URL for the file, for pages the app opens outside itself (PDF, downloads): the
 // home-screen app does not share its login with the browser it opens them in. Renewed before it expires.
-function useTicket(sessionId: string, path: string | undefined): [Ticket | undefined, () => void] {
+// `file`: the ticket request's body, which names the file by its path or, for a file Claude sent, by its call.
+function useTicket(sessionId: string, file: { path: string } | { sent: SentRef } | undefined): [Ticket | undefined, () => void] {
   const [ticket, setTicket] = useState<Ticket>();
   const renew = useRef<() => void>(() => {});
+  const key = file ? JSON.stringify(file) : "";
   useEffect(() => {
     setTicket(undefined);
-    if (!path) return;
+    if (!key) return;
     let live = true;
     let timer: number | undefined;
     const mint = () => {
       window.clearTimeout(timer);
       if (!live) return;
-      request<{ url: string; expiresInMs: number }>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/file/ticket`, { path })
+      request<{ url: string; expiresInMs: number }>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/file/ticket`, JSON.parse(key))
         .then((t) => {
           if (!live) return;
           setTicket({ url: t.url, until: Date.now() + t.expiresInMs });
@@ -99,12 +104,12 @@ function useTicket(sessionId: string, path: string | undefined): [Ticket | undef
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [sessionId, path]);
+  }, [sessionId, key]);
   return [ticket, () => renew.current()];
 }
 
 function shown(p: string, cwd: string): string {
-  return cwd && p.startsWith(`${cwd}/`) ? p.slice(cwd.length + 1) : p;
+  return cwd && p.startsWith(`${cwd}/`) ? p.slice(cwd.length + 1) : shortPath(p);
 }
 
 function CodeLines({ text, lang, line, endLine }: { text: string; lang?: string; line?: number; endLine?: number }) {
@@ -177,6 +182,8 @@ function prettyJson(text: string): string | undefined {
 interface BodyProps {
   view: FileView;
   raw: boolean;
+  // A file Claude sent that is too large to preview here.
+  big?: boolean;
   url: string;
   // Where "열기" points: a ticket URL when there is one.
   openUrl: string;
@@ -185,8 +192,17 @@ interface BodyProps {
   image: (src: string) => string;
 }
 
-function Body({ view, raw, url, openUrl, onOpen, onLink, image }: BodyProps) {
+function Body({ view, raw, big, url, openUrl, onOpen, onLink, image }: BodyProps) {
   const text = view.text ?? "";
+  if (big) {
+    return (
+      <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-muted" data-sent-big>
+        <Icon.file className="size-10" />
+        <div>파일이 커서(10MB 초과) 미리 보지 않습니다 · {sizeText(view.size)}</div>
+        <div>위의 내려받기로 받으세요.</div>
+      </div>
+    );
+  }
   if (view.kind === "image") {
     return (
       <div className="flex justify-center p-3">
@@ -234,8 +250,20 @@ function Body({ view, raw, url, openUrl, onOpen, onLink, image }: BodyProps) {
 }
 
 // Full-screen viewer for files that links in the conversation point to. Links inside a Markdown file
-// open on top of it; the back button returns to the file before.
-export default function FileViewer({ sessionId, cwd, target, onClose }: { sessionId: string; cwd: string; target: FileTarget; onClose: () => void }) {
+// open on top of it; the back button returns to the file before. onError hears why a file Claude sent did not open.
+export default function FileViewer({
+  sessionId,
+  cwd,
+  target,
+  onClose,
+  onError,
+}: {
+  sessionId: string;
+  cwd: string;
+  target: FileTarget;
+  onClose: () => void;
+  onError?: (code: string) => void;
+}) {
   const [stack, setStack] = useState<FileTarget[]>([target]);
   const [loaded, setLoaded] = useState<Loaded | undefined>();
   const [raw, setRaw] = useState(false);
@@ -247,7 +275,7 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
     setLoaded(undefined);
     setRaw(false);
     const q = new URLSearchParams({ href: current.href, ...(current.base ? { base: current.base } : {}) });
-    request<FileView>("GET", `/api/sessions/${encodeURIComponent(sessionId)}/file?${q}`)
+    request<FileView>("GET", current.sent ? sentUrl(sessionId, current.sent) : `/api/sessions/${encodeURIComponent(sessionId)}/file?${q}`)
       .then((view) => {
         if (!live) return;
         setLoaded({ view });
@@ -257,7 +285,9 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
       .catch((e: unknown) => {
         if (!live) return;
         const body = e instanceof ApiError ? e.body : {};
-        setLoaded({ error: typeof body.error === "string" ? body.error : "failed", path: typeof body.path === "string" ? body.path : undefined });
+        const error = typeof body.error === "string" ? body.error : "failed";
+        setLoaded({ error, path: typeof body.path === "string" ? body.path : undefined });
+        if (current.sent) onError?.(error);
       });
     return () => {
       live = false;
@@ -287,8 +317,10 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
   };
 
   const rawUrl = (p: string) => `/api/sessions/${encodeURIComponent(sessionId)}/file/raw?path=${encodeURIComponent(p)}`;
-  const url = view ? rawUrl(view.path) : "";
-  const [ticket, renewTicket] = useTicket(sessionId, view?.path);
+  const sent = current.sent;
+  const url = view ? (sent ? sentUrl(sessionId, sent, true) : rawUrl(view.path)) : "";
+  const [ticket, renewTicket] = useTicket(sessionId, view && (sent ? { sent } : { path: view.path }));
+  const big = Boolean(sent) && view !== undefined && (view.kind === "image" || view.kind === "pdf") && view.size > PREVIEW_MAX_BYTES;
   const outside = ticket?.url ?? url;
   // Without a live ticket (not yet issued, or run out while the app slept) a tap gets one; the next tap opens it.
   const onOutside = (e: React.MouseEvent) => {
@@ -315,7 +347,7 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
           <div className="min-w-0 flex-1 px-1">
             <div className="truncate text-[15px] font-semibold">{title}</div>
             {view && (
-              <div className="truncate font-mono text-[11.5px] text-muted" title={view.path}>
+              <div className="line-clamp-2 font-mono text-[11.5px] break-all text-muted" title={view.path}>
                 {shown(view.path, cwd)}
               </div>
             )}
@@ -337,12 +369,22 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
                 </button>
               </span>
             )}
-            <a href={ticket ? `${ticket.url}?download=1` : `${url}&download=1`} onClick={onOutside} download={view.name} className="ml-auto font-medium text-accent">
+            <a
+              href={ticket ? `${ticket.url}?download=1` : sent ? sentUrl(sessionId, sent, true, true) : `${url}&download=1`}
+              onClick={onOutside}
+              download={view.name}
+              className="ml-auto font-medium text-accent"
+            >
               내려받기
             </a>
           </div>
         )}
         {view?.fallback && <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn">{FALLBACK_TEXT[view.fallback]}</div>}
+        {view?.sent?.changed && (
+          <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn" data-sent-changed>
+            보낸 뒤 바뀐 파일입니다. 지금의 내용이 보입니다.
+          </div>
+        )}
         {view?.truncated && (
           <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn">파일이 커서 앞 1MB만 보입니다. 전체는 내려받아 보세요.</div>
         )}
@@ -355,11 +397,11 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
         )}
         {loaded && "error" in loaded && (
           <div className="m-4 rounded-xl bg-surface-2 px-3 py-3 text-sm">
-            <div className="text-danger">{ERROR_TEXT[loaded.error] ?? "파일을 읽지 못했습니다."}</div>
+            <div className="text-danger">{(sent && SENT_ERROR_TEXT[loaded.error] ? `${SENT_ERROR_TEXT[loaded.error]}.` : ERROR_TEXT[loaded.error]) ?? "파일을 읽지 못했습니다."}</div>
             <div className="mt-1 font-mono text-xs break-all text-muted">{loaded.path ? shown(loaded.path, cwd) : current.href}</div>
           </div>
         )}
-        {view && <Body view={view} raw={raw} url={url} openUrl={outside} onOpen={onOutside} onLink={onLink} image={image} />}
+        {view && <Body view={view} raw={raw} big={big} url={url} openUrl={outside} onOpen={onOutside} onLink={onLink} image={image} />}
       </div>
     </div>
   );

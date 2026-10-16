@@ -47,7 +47,7 @@ function observe(el: Element, cb: (near: boolean) => void): () => void {
   };
 }
 
-function useNear(ref: React.RefObject<Element | null>): boolean {
+export function useNear(ref: React.RefObject<Element | null>): boolean {
   const [near, setNear] = useState(false);
   useEffect(() => (ref.current ? observe(ref.current, setNear) : undefined), []);
   return near;

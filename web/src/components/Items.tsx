@@ -11,6 +11,7 @@ import { ToolInput, ToolOutput } from "./ToolInput.tsx";
 import { UserAttachments } from "./UserAttachments.tsx";
 import { AgentLinks } from "./agents/links.ts";
 import { Folded } from "./tools/parts.tsx";
+import { SentFiles } from "./tools/SentFiles.tsx";
 import { fullTime, stampTime, type Day } from "./stamps.ts";
 import { Icon, Spinner } from "./ui.tsx";
 
@@ -352,7 +353,7 @@ export const ItemView = memo(function ItemView({ item, running }: { item: Displa
     case "thinking":
       return <Thinking text={item.text} />;
     case "tool":
-      return <ToolItem item={item} running={running} />;
+      return item.name === "SendUserFile" ? <SentFiles item={item} running={running} /> : <ToolItem item={item} running={running} />;
     case "command":
       return <CommandCard item={item} />;
     case "message":

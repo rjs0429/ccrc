@@ -154,13 +154,13 @@ test("file kinds, served types and binary text", () => {
     "text",
     "text",
     "binary",
-    "text",
+    "image",
     "text",
   ]);
   assert.deepEqual(["a.png", "a.pdf", "a.svg", "a.html", "a.xml", "a.md"].map(servedType), [
     "image/png",
     "application/pdf",
-    "application/octet-stream",
+    "image/svg+xml",
     "application/octet-stream",
     "application/octet-stream",
     "application/octet-stream",

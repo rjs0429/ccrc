@@ -131,7 +131,22 @@ test("every broker start path runs Claude Code with the broker's entrypoint; a p
 
 test("the session environment replaces an inherited entrypoint and keeps an explicit artifact or feedback choice", () => {
   const env = sessionEnv({ PATH: "/bin", CLAUDE_CODE_ENTRYPOINT: "claude-vscode", CLAUDE_CODE_ARTIFACT: "1" });
-  assert.deepEqual(env, { PATH: "/bin", CLAUDE_CODE_ENTRYPOINT: ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP: ENTRYPOINT, CLAUDE_CODE_ARTIFACT: "1", CLAUDE_CODE_SEND_FEEDBACK: "0" });
+  assert.deepEqual(env, {
+    PATH: "/bin",
+    CLAUDE_CODE_ENTRYPOINT: ENTRYPOINT,
+    CLAUDE_AGENT_SDK_CLIENT_APP: ENTRYPOINT,
+    CLAUDE_CODE_ARTIFACT: "1",
+    CLAUDE_CODE_SEND_FEEDBACK: "0",
+    CLAUDE_CODE_ATTACHMENTS_BY_PATH: "1",
+  });
+});
+
+test("Claude may send files by path unless the environment turns it off or already says how", () => {
+  assert.equal(sessionEnv({ PATH: "/bin" }).CLAUDE_CODE_ATTACHMENTS_BY_PATH, "1");
+  const off = sessionEnv({ PATH: "/bin", CCRC_SEND_FILES: "0" });
+  assert.ok(!("CLAUDE_CODE_ATTACHMENTS_BY_PATH" in off), "CCRC_SEND_FILES=0 turns it off");
+  assert.equal(sessionEnv({ CLAUDE_CODE_ATTACHMENTS_BY_PATH: "" }).CLAUDE_CODE_ATTACHMENTS_BY_PATH, "", "a value already set stays");
+  assert.equal(sessionEnv({ CCRC_SEND_FILES: "1" }).CLAUDE_CODE_ATTACHMENTS_BY_PATH, "1");
 });
 
 test("a row's own entrypoint is retagged, not one inside its content", () => {

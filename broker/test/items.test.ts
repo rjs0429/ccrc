@@ -667,3 +667,106 @@ test("passed-on messages are not typed text, for search and for the queue", () =
   assert.deepEqual(typedContent([{ type: "text", text: handBack("a1") }]), { text: "", attachments: [] });
   assert.deepEqual(typedContent([{ type: "text", text: "<tick>1</tick>" }, { type: "text", text: "real words" }]), { text: "real words", attachments: [] });
 });
+
+const SEND_USE = (files: string[], input: Record<string, unknown> = {}) => ({
+  type: "assistant",
+  uuid: "a-send",
+  message: { content: [{ type: "tool_use", id: "toolu_send", name: "SendUserFile", input: { files, caption: "결과입니다", status: "normal", ...input } }] },
+});
+const SEND_RESULT = (text: string, output?: unknown, is_error = false) => ({
+  type: "user",
+  uuid: "u-send",
+  message: { content: [{ type: "tool_result", tool_use_id: "toolu_send", content: text, is_error }] },
+  ...(output ? { tool_use_result: output } : {}),
+});
+
+test("a SendUserFile result names the files it sent; one Claude Code did not deliver on this machine stays shut", () => {
+  const b = new ItemBuilder(cwd);
+  b.add(SEND_USE(["report.md", "/tmp/out/chart.svg"]));
+  b.add(
+    SEND_RESULT("4 files delivered to user.", {
+      caption: "결과입니다",
+      attachments: [
+        { path: `${cwd}/report.md`, size: 24, isImage: false, media_type: "text/markdown", pathValidated: true },
+        { path: "/tmp/out/chart.svg", size: 100, isImage: false, media_type: "image/svg+xml", pathValidated: true },
+        { path: "/tmp/out/shot.png", size: 2048, isImage: true, media_type: "image/png", pathValidated: true, upload_error: "upload failed: 413" },
+        { path: "uploaded.png", size: 5, isImage: true, file_uuid: "f1", pathValidated: false },
+        { path: "relative/name.txt", size: 1, isImage: false, pathValidated: true },
+        { path: `/tmp/${"x".repeat(5000)}.txt`, size: 1, isImage: false, pathValidated: true },
+        { size: 3, isImage: false },
+      ],
+    }),
+  );
+  const item = toolItem(b, "toolu_send");
+  assert.deepEqual(item.sent?.slice(0, 5), [
+    { name: "report.md", path: `${cwd}/report.md`, size: 24, mediaType: "text/markdown" },
+    { name: "chart.svg", path: "/tmp/out/chart.svg", size: 100, mediaType: "image/svg+xml" },
+    { name: "shot.png", path: "/tmp/out/shot.png", size: 2048, mediaType: "image/png", image: true, error: "upload failed: 413" },
+    { name: "uploaded.png", path: "uploaded.png", size: 5, image: true, error: "" },
+    { name: "name.txt", path: "relative/name.txt", size: 1, error: "" },
+  ]);
+  assert.equal(item.sent?.length, 6, "a row without a path is left out");
+  assert.equal(item.sent?.[5].error, "", "a path too long to be real is not served");
+  assert.ok((item.sent?.[5].path.length ?? 0) <= 4096);
+  assert.equal(item.summary, "report.md, chart.svg");
+
+  const many = new ItemBuilder(cwd);
+  many.add(SEND_USE(["a"]));
+  many.add(SEND_RESULT("ok", { attachments: Array.from({ length: 25 }, (_, n) => ({ path: `/tmp/f${n}.txt`, size: n, isImage: false, pathValidated: true })) }));
+  assert.equal(toolItem(many, "toolu_send").sent?.length, 20, "at most twenty files");
+
+  const refused = new ItemBuilder(cwd);
+  refused.add(SEND_USE(["/home/u/.ssh/id_rsa"]));
+  refused.add(SEND_RESULT("Permission to read was denied", { attachments: [{ path: "/home/u/.ssh/id_rsa", size: 1, isImage: false, pathValidated: true }] }, true));
+  assert.equal(toolItem(refused, "toolu_send").sent, undefined, "a failed call sends nothing");
+  assert.equal(toolItem(refused, "toolu_send").result?.isError, true);
+
+  const bare = new ItemBuilder(cwd);
+  bare.add(SEND_USE(["report.md"]));
+  bare.add(SEND_RESULT("1 file delivered to user."));
+  assert.equal(toolItem(bare, "toolu_send").sent, undefined, "without the structured output only the input names the files");
+
+  const other = new ItemBuilder(cwd);
+  other.add({ type: "assistant", uuid: "a1", message: { content: [{ type: "tool_use", id: "toolu_send", name: "Read", input: { file_path: "/x" } }] } });
+  other.add(SEND_RESULT("ok", { attachments: [{ path: "/x", size: 1, isImage: false, pathValidated: true }] }));
+  assert.equal(toolItem(other, "toolu_send").sent, undefined, "only SendUserFile sends files");
+});
+
+test("a file a subagent sends shows as an item of its own under the Agent call, and its result names the file", () => {
+  const b = new ItemBuilder(cwd);
+  agentTurn(b);
+  b.add(subTool("toolu_s1", "Read", { file_path: `${cwd}/a.ts` }));
+  const sent = b.add({ ...subTool("toolu_sub_send", "SendUserFile", { files: ["/tmp/out/plot.png"], status: "proactive" }), timestamp: "2026-10-16T05:00:00.000Z" });
+  assert.deepEqual(
+    sent.map((i) => i.id),
+    ["toolu_agent", "toolu_sub_send"],
+  );
+  assert.deepEqual(
+    b.items.map((i) => i.id),
+    ["u1", "toolu_agent", "toolu_sub_send"],
+  );
+  const lifted = toolItem(b, "toolu_sub_send");
+  assert.deepEqual(
+    { by: lifted.by, name: lifted.name, summary: lifted.summary, ts: lifted.ts, result: lifted.result },
+    { by: "toolu_agent", name: "SendUserFile", summary: "plot.png", ts: "2026-10-16T05:00:00.000Z", result: undefined },
+  );
+  assert.equal(toolItem(b, "toolu_agent").sub?.tools, 2, "the Agent card counts the call too");
+  const [done] = b.add({
+    type: "user",
+    uuid: "r-send",
+    parent_tool_use_id: "toolu_agent",
+    message: { content: [{ type: "tool_result", tool_use_id: "toolu_sub_send", content: "1 file delivered to user." }] },
+    tool_use_result: { attachments: [{ path: "/tmp/out/plot.png", size: 512, isImage: true, media_type: "image/png", pathValidated: true }] },
+  });
+  assert.equal(done.id, "toolu_sub_send");
+  assert.deepEqual(toolItem(b, "toolu_sub_send").sent, [{ name: "plot.png", path: "/tmp/out/plot.png", size: 512, mediaType: "image/png", image: true }]);
+  assert.equal(
+    b.add({ type: "user", uuid: "r-1", parent_tool_use_id: "toolu_agent", message: { content: [{ type: "tool_result", tool_use_id: "toolu_s1", content: "x" }] } }).length,
+    0,
+    "other calls of the subagent stay folded",
+  );
+  b.add(subTool("toolu_sub_send", "SendUserFile", { files: ["/tmp/out/plot.png"] }));
+  assert.equal(b.items.length, 3, "a call seen again is not shown twice");
+  b.add({ ...subTool("toolu_deep_send", "SendUserFile", { files: ["/tmp/deep.md"] }), parent_tool_use_id: "toolu_sub_unknown" });
+  assert.equal(b.items.length, 3, "a call of an unknown subagent is not shown");
+});

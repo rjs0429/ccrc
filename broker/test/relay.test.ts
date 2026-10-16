@@ -1139,3 +1139,16 @@ test("the broker renames the session through the wrapper, and Claude Code's anno
   for (const i of refused.keys()) await t.broker.frames.wait((f) => f.t === "rejected" && f.id === `ccrc-rn-bad-${i}` && f.reason === "invalid request", `refused ${i}`);
   assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code sees none of the answers");
 });
+
+test("Claude Code may send the user files by path unless VS Code's environment turns it off or already says how", async () => {
+  const script = `console.log(JSON.stringify({ type: "system", subtype: "env", value: process.env.CLAUDE_CODE_ATTACHMENTS_BY_PATH ?? null }))`;
+  const seen = async (env: Record<string, string>) => {
+    const logs: string[] = [];
+    const { host } = await setup({ relay: { args: ["-e", script], env: { PATH: process.env.PATH ?? "", ...env }, log: (m) => logs.push(m) } });
+    const m = await host.wait((m) => m.subtype === "env", "the environment Claude Code got");
+    return [m.value, logs.find((l) => l.startsWith("files sent to the user"))];
+  };
+  assert.deepEqual(await seen({}), ["1", "files sent to the user go by path: 1"]);
+  assert.deepEqual(await seen({ CCRC_SEND_FILES: "0" }), [null, "files sent to the user go by path: off"]);
+  assert.deepEqual(await seen({ CLAUDE_CODE_ATTACHMENTS_BY_PATH: "0" }), ["0", "files sent to the user go by path: 0"]);
+});

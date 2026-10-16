@@ -86,6 +86,29 @@ export interface UserAttachment {
   name?: string;
 }
 
+// A file Claude sent with SendUserFile, as the call's result names it: its path as Claude Code resolved it and its size
+// in bytes when sent. error: why it is not served, as Claude Code put it (empty when it said nothing); a file with an
+// error never opens. GET /api/sessions/:id/sent/:call/:n serves the others by their place in the call.
+export interface SentFile {
+  name: string;
+  path: string;
+  size: number;
+  mediaType?: string;
+  image?: boolean;
+  error?: string;
+}
+
+// The most a phone may fetch of a file Claude sent.
+export const SENT_MAX_BYTES = 50 * 1024 * 1024;
+
+// How the phone names a file Claude sent: its call, its place among the call's files, and the subagent whose transcript
+// holds the call when it is not the session's own.
+export interface SentRef {
+  call: string;
+  n: number;
+  agent?: string;
+}
+
 export type DisplayItem =
   | { kind: "user"; id: string; ts?: string; text: string; attachments?: UserAttachment[] }
   | { kind: "assistant"; id: string; ts?: string; text: string }
@@ -105,6 +128,9 @@ export type DisplayItem =
       patchCut?: number;
       sub?: SubagentActivity;
       reply?: ToolReply;
+      // SendUserFile: the files its result names. by: the Agent call whose subagent sent them, shown here while it runs.
+      sent?: SentFile[];
+      by?: string;
     }
   // "unsent": a message sent from here that Claude Code never took in; its text, and how many files it carried.
   | { kind: "note"; id: string; ts?: string; code: NoteCode; text?: string; attachments?: number }
@@ -352,6 +378,8 @@ export interface FileView {
   line?: number;
   endLine?: number;
   heading?: string;
+  // A file Claude sent: whether it changed after it was sent.
+  sent?: { changed: boolean };
 }
 
 // dialog: a confirmation Claude Code asks for outside a tool call; it can only be answered where the session is open.
