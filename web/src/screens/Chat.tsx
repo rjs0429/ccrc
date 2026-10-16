@@ -1,4 +1,4 @@
-import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, ModelOption, QueuedMessage } from "../../../broker/src/protocol.ts";
@@ -25,7 +25,7 @@ import { agentMap } from "../components/agents/tree.ts";
 import { ThreadSheet, type ShownThread } from "../components/sheets/Thread.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { WorktreeSheet } from "../components/sheets/Worktree.tsx";
-import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
+import { Choice, Icon, Sheet, Spinner, Tile, Tiles } from "../components/ui.tsx";
 import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import { dayLines, streamLine } from "../components/stamps.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
@@ -148,6 +148,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const renameTarget = { id: sessionId, title: named, state: kind, host: st?.host ?? summary?.host, archived, cwd };
   const worktree = worktreeOf(cwd);
   const renameRefused = renameBlocked(renameTarget);
+  // Why the menu's greyed actions cannot be used; they point to this line.
+  const unable = renameRefused ? `${host}에서 열려 있어 여기서는 이름을 바꿀 수 없습니다` : folderMissing ? "작업 폴더가 없어 갈래를 만들거나 되돌릴 수 없습니다" : undefined;
+  const unableId = useId();
   // The header's title and the line under it are one button to rename, its padding reaching over the header's height
   // as the back button's does. The sheet opens within the tap, so its field can take the keyboard on iOS.
   const rename = () => {
@@ -553,50 +556,42 @@ export function Chat({ sessionId }: { sessionId: string }) {
               onClick={() => (stop(), setMenu(false))}
             />
           )}
-          <Choice label="새로고침" onClick={() => (send({ t: "view", sessionId }), setMenu(false))} />
-          <Choice label="이름 바꾸기" hint={renameRefused} disabled={Boolean(renameRefused)} onClick={rename} />
-          <Choice
-            label={archived ? "보관 해제" : "보관하기"}
-            hint={archived ? "목록에 다시 보입니다" : "ccrc 목록에서만 숨깁니다"}
-            onClick={() => (!archived && worktree ? setArchiving(true) : setArchived(sessionId, !archived), setMenu(false))}
-          />
-          {worktree && <Choice label="worktree 정리" hint={`worktree ${worktree.name}의 남은 작업을 보고 지웁니다`} onClick={() => (setCleaning(true), setMenu(false))} />}
-          <Choice
-            label="갈래로 떼기"
-            hint={folderMissing ? "작업 폴더가 없어 만들 수 없습니다" : "지금까지의 대화를 새 세션으로 복사합니다"}
-            disabled={folderMissing}
-            onClick={() => (setFork({}), setMenu(false))}
-          />
+          <div className="mt-1 mb-2">
+            <Tiles>
+              <Tile icon={<Icon.refresh />} label="새로고침" onClick={() => (send({ t: "view", sessionId }), setMenu(false))} />
+              <Tile icon={<Icon.pencil />} label="이름 바꾸기" disabled={Boolean(renameRefused)} describedBy={renameRefused ? unableId : undefined} onClick={rename} />
+              <Tile
+                icon={archived ? <Icon.unarchive /> : <Icon.archive />}
+                label={archived ? "보관 해제" : "보관하기"}
+                onClick={() => (!archived && worktree ? setArchiving(true) : setArchived(sessionId, !archived), setMenu(false))}
+              />
+              <Tile icon={<Icon.branch />} label="갈래로 떼기" disabled={folderMissing} describedBy={folderMissing ? unableId : undefined} onClick={() => (setFork({}), setMenu(false))} />
+            </Tiles>
+            {unable && (
+              <p id={unableId} className="mt-2 px-3 text-xs text-muted" data-menu-unable>
+                {unable}
+              </p>
+            )}
+          </div>
           <Choice
             label="되돌리기"
-            hint={folderMissing ? "작업 폴더가 없어 되돌릴 수 없습니다" : "보낸 메시지 시점으로 대화와 코드를 되돌립니다"}
             disabled={folderMissing}
+            describedBy={folderMissing ? unableId : undefined}
             onClick={() => (setRewindAt(undefined), setSheet("rewind"), setMenu(false))}
           />
-          <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
-          <Choice label="Context와 사용량" hint="Context, 요금제 사용량, Compact" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
-          <Choice label="에이전트 지도" hint="에이전트와 백그라운드 작업 보기·중지" onClick={() => (setSheet("agents"), setMenu(false))} />
+          <Choice label="변경 사항" onClick={() => (setSheet("changes"), setMenu(false))} />
+          <Choice label="Context와 사용량" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
+          <Choice label="에이전트 지도" onClick={() => (setSheet("agents"), setMenu(false))} />
           {controllable && (
             <>
               <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
-              <Choice
-                label="출력 스타일"
-                hint={st?.outputStyle ? outputStyleLabel(st.outputStyle) : "응답 방식을 고릅니다"}
-                onClick={() => (setSheet("outputStyle"), setMenu(false))}
-              />
+              <Choice label="출력 스타일" value={st?.outputStyle && outputStyleLabel(st.outputStyle)} onClick={() => (setSheet("outputStyle"), setMenu(false))} />
             </>
           )}
+          {(worktree || kind === "owned") && <div className="mx-3 my-1.5 h-px bg-line" />}
+          {worktree && <Choice label="worktree 정리" onClick={() => (setCleaning(true), setMenu(false))} />}
           {kind === "owned" && (
-            <Choice
-              label="원격 실행 끝내기"
-              hint={
-                <>
-                  <span className="block">이 세션의 Claude Code 프로세스를 닫습니다.</span>
-                  <span className="block">대화 기록은 남습니다.</span>
-                </>
-              }
-              onClick={() => (send({ t: "release", sessionId }), setMenu(false))}
-            />
+            <Choice label="원격 실행 끝내기" hint="Claude Code 프로세스를 닫습니다. 대화 기록은 남습니다." onClick={() => (send({ t: "release", sessionId }), setMenu(false))} />
           )}
         </Sheet>
       )}

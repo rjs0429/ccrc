@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 type IconProps = { className?: string };
 
@@ -77,6 +77,37 @@ export const Icon = {
       <path d="M21 21l-4.3-4.3" />
     </>,
   ),
+  refresh: svg(
+    <>
+      <path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+    </>,
+  ),
+  pencil: svg(
+    <>
+      <path d="M17 3a2.85 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z" />
+      <path d="M15 5l4 4" />
+    </>,
+  ),
+  archive: svg(
+    <>
+      <rect x="2" y="3" width="20" height="5" rx="1" />
+      <path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8M10 12h4" />
+    </>,
+  ),
+  unarchive: svg(
+    <>
+      <rect x="2" y="3" width="20" height="5" rx="1" />
+      <path d="M4 8v11a2 2 0 002 2h2M20 8v11a2 2 0 01-2 2h-2M9 15l3-3 3 3M12 12v9" />
+    </>,
+  ),
+  branch: svg(
+    <>
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M6 3v12M18 9a9 9 0 01-9 9" />
+    </>,
+  ),
 };
 
 export function Spinner({ className = "size-4" }: IconProps) {
@@ -105,18 +136,67 @@ export function Sheet({ title, onClose, children, wide, tall }: { title?: string
   );
 }
 
-export function Choice({ label, hint, selected, disabled, onClick }: { label: string; hint?: ReactNode; selected?: boolean; disabled?: boolean; onClick: () => void }) {
+// value: the current setting, at the end of the line; the label alone names the button.
+export function Choice({
+  label,
+  hint,
+  value,
+  selected,
+  disabled,
+  describedBy,
+  onClick,
+}: {
+  label: string;
+  hint?: ReactNode;
+  value?: string;
+  selected?: boolean;
+  disabled?: boolean;
+  describedBy?: string;
+  onClick: () => void;
+}) {
+  const valueId = useId();
+  const described = [describedBy, value && valueId].filter(Boolean).join(" ");
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left disabled:opacity-50 ${selected ? "bg-accent-soft" : "enabled:hover:bg-surface-2"}`}
+      aria-label={value ? label : undefined}
+      aria-describedby={described || undefined}
+      className={`flex min-h-11 w-full items-center justify-between rounded-xl px-3 py-2.5 text-left disabled:opacity-50 ${selected ? "bg-accent-soft" : "enabled:hover:bg-surface-2"}`}
     >
       <span>
         <span className="block text-[15px]">{label}</span>
         {hint && <span className="block text-xs text-muted">{hint}</span>}
       </span>
+      {value && (
+        <span id={valueId} className="ml-3 truncate text-sm text-muted" data-choice-value>
+          {value}
+        </span>
+      )}
       {selected && <Icon.check className="size-4 text-accent" />}
+    </button>
+  );
+}
+
+// A sheet's most used actions side by side in equal tiles, each an icon above a short label.
+export function Tiles({ children }: { children: ReactNode }) {
+  return (
+    <div className="grid auto-cols-fr grid-flow-col gap-2" data-tiles>
+      {children}
+    </div>
+  );
+}
+
+export function Tile({ icon, label, disabled, describedBy, onClick }: { icon: ReactNode; label: string; disabled?: boolean; describedBy?: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      aria-describedby={describedBy}
+      className="flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-xl bg-surface-2 px-1 py-2.5 text-[13px] leading-tight enabled:hover:bg-line enabled:active:bg-line disabled:opacity-50"
+    >
+      {icon}
+      <span className="text-center">{label}</span>
     </button>
   );
 }
