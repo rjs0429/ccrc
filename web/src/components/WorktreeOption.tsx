@@ -63,14 +63,13 @@ export function WorktreeOption({ info, draft, onChange, error, disabled }: { inf
       <button
         role="switch"
         aria-checked={on}
-        aria-describedby={`${id}-hint`}
         disabled={Boolean(blocked) || disabled}
         onClick={() => onChange({ ...draft, on: !on })}
         className="group flex w-full items-center gap-3 py-2.5 text-left"
       >
         <span className="min-w-0 flex-1">
           <span className="block text-[15px] group-disabled:text-muted">새 worktree에서 시작</span>
-          <span id={`${id}-hint`} className={`block text-xs text-muted ${hint ? "break-keep" : "break-all"}`} data-worktree-hint>
+          <span className={`block text-xs text-muted ${hint ? "break-keep" : "break-all"}`} data-worktree-hint>
             {hint ?? (
               <>
                 <span className="block">.claude/worktrees/{worktreeFolder(name)}</span>

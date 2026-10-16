@@ -2,9 +2,12 @@
 // worktree-<name> as Claude Code does (from HEAD, or origin/HEAD when the --settings worktree.baseRef is not "head"),
 // locks it for this process and works in it; outside git it fails the way Claude Code does. FAKE_WT_HOOK_DIR stands for
 // a WorktreeCreate hook that made that folder. A resume goes back into the session's worktree, or says it is gone and
-// stays where it started. Each user message gets an init line naming the folder, is written to the transcript under
-// CLAUDE_CONFIG_DIR and answered "echo: <text>". FAKE_WT_FAIL fails the start with that stderr line, FAKE_WT_SLOW_MS
-// starts that much later. FAKE_REQUESTS=<file> gets a line with the arguments and the folders.
+// stays where it started. Each user message gets an init line naming the shell's folder, and with FAKE_ORIGINAL_CWD=1
+// also the folder Claude Code works from (original_cwd, as 2.1.301 sends), is written to the transcript under
+// CLAUDE_CONFIG_DIR and answered "echo: <text>". "cd <dir>" moves the shell as Claude's Bash tool does; "enter <name>"
+// and "exit" go into a new worktree and back as EnterWorktree and ExitWorktree do. FAKE_WT_FAIL fails the start with
+// that stderr line, FAKE_WT_SLOW_MS starts that much later. FAKE_REQUESTS=<file> gets a line with the arguments and the
+// folders.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -98,7 +101,10 @@ if (value("--resume")) {
     stateRow = { type: "worktree-state", sessionId: sid, worktreeSession: null };
   }
 }
-const cwd = process.cwd();
+let cwd = process.cwd();
+// The folder Claude Code works from, and where it goes back to when it leaves the worktree it started in or entered.
+let original = cwd;
+let entered = name ? { shell: launched, original: launched } : undefined;
 file ??= path.join(config, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sid}.jsonl`);
 record({ args, launched, cwd });
 let parent = null;
@@ -133,9 +139,11 @@ function handle(m) {
     const content = typeof m.message.content === "string" ? [{ type: "text", text: m.message.content }] : m.message.content;
     const text = content.map((c) => c.text ?? "").join("");
     const uuid = m.uuid ?? randomUUID();
-    out({ type: "system", subtype: "init", session_id: sid, cwd, model: "claude-haiku-5-5", permissionMode: "default", output_style: "default" });
+    const told = process.env.FAKE_ORIGINAL_CWD === "1" ? { original_cwd: original } : {};
+    out({ type: "system", subtype: "init", session_id: sid, cwd, ...told, model: "claude-haiku-5-5", permissionMode: "default", output_style: "default" });
     write({ type: "user", uuid, message: { role: "user", content } });
     out({ ...m, session_id: sid, uuid, isReplay: true });
+    act(text.trim());
     const reply = randomUUID();
     const message = { model: "claude-haiku-5-5", role: "assistant", content: [{ type: "text", text: `echo: ${text}` }] };
     write({ type: "assistant", uuid: reply, message });
@@ -146,4 +154,29 @@ function handle(m) {
   if (m.type !== "control_request") return;
   const extra = m.request.subtype === "initialize" ? { models: [], commands: [], output_style: "default", available_output_styles: ["default"] } : {};
   out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { subtype: m.request.subtype, ...extra } } });
+}
+
+// What a turn's tool use would do to the folders: a cd in Bash moves only the shell; entering a worktree moves both and
+// leaving it brings back the shell's folder and the one Claude Code worked from.
+function act(text) {
+  const cd = /^cd (\S+)$/.exec(text);
+  if (cd) {
+    process.chdir(path.resolve(cwd, cd[1]));
+    cwd = process.cwd();
+  }
+  const enter = /^enter (\S+)$/.exec(text);
+  if (enter) {
+    const root = path.dirname(git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+    const at = path.join(root, ".claude", "worktrees", enter[1]);
+    git(root, "worktree", "add", "-q", "--no-track", "-B", `worktree-${enter[1]}`, at, "HEAD");
+    entered = { shell: cwd, original };
+    process.chdir(at);
+    cwd = original = process.cwd();
+  }
+  if (text === "exit" && entered) {
+    process.chdir(entered.shell);
+    cwd = process.cwd();
+    original = entered.original;
+    entered = undefined;
+  }
 }

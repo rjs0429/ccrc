@@ -45,6 +45,16 @@ function repo(): string {
   return dir;
 }
 
+// A repository whose sub folder is in every worktree made from it.
+function repoWithSub(): string {
+  const dir = repo();
+  fs.mkdirSync(path.join(dir, "sub"));
+  fs.writeFileSync(path.join(dir, "sub", "inner.txt"), "inner\n");
+  git(dir, "add", ".");
+  git(dir, "commit", "-qm", "sub");
+  return dir;
+}
+
 type Recorded = { args: string[]; launched: string; cwd: string };
 const recorded = (): Recorded[] => (fs.existsSync(requests) ? fs.readFileSync(requests, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Recorded) : []);
 
@@ -84,6 +94,18 @@ function setup(t: { after: (fn: () => unknown) => void }, timing = {}) {
 
 const flagged = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 
+type Turned = { send(text: string): void; busy: boolean; builder: { items: { kind: string; text?: string }[] } };
+async function turn(s: Turned, text: string): Promise<void> {
+  s.send(text);
+  await until(() => !s.busy && s.builder.items.some((i) => i.kind === "assistant" && i.text === `echo: ${text}`), `reply to ${text}`);
+}
+
+// Claude Code 2.1.301 also names the folder it works from in the init line; the session follows the line with or without.
+const LINES: [string, boolean][] = [
+  ["the shell's folder only", false],
+  ["the folder Claude Code works from too", true],
+];
+
 test("a new session starts in the worktree Claude Code makes, from HEAD when asked, and is listed there", async (t) => {
   const { manager } = setup(t);
   const root = repo();
@@ -117,7 +139,59 @@ test("a fresh base is asked for as such, and Claude Code's init line moves the s
   s.send("go");
   await until(() => s.cwd === made, "init line's folder");
   assert.ok(changed > 0, "the list hears of the move");
+  fs.mkdirSync(path.join(made, "sub"));
+  await turn(s, "cd sub");
+  await turn(s, "inside");
+  assert.equal(s.cwd, made, "a cd inside the hook's worktree leaves the session in it");
+  await turn(s, "exit");
+  await turn(s, "out");
+  assert.equal(s.cwd, plain, "leaving the worktree brings the session back");
 });
+
+for (const [line, told] of LINES) {
+  test(`a cd in Bash leaves the session, its file links and @ search where it started (${line})`, async (t) => {
+    const { manager } = setup(t);
+    if (told) process.env.FAKE_ORIGINAL_CWD = "1";
+    t.after(() => delete process.env.FAKE_ORIGINAL_CWD);
+    const root = repoWithSub();
+    const s = await manager.create(root, {});
+    await turn(s, "cd sub");
+    await turn(s, "hello");
+    assert.equal(s.cwd, root);
+    assert.equal((await manager.snapshot(s.id)).state.cwd, root);
+    assert.deepEqual(await manager.fileAccess(s.id).then((a) => [a.start, a.latest]), [root, path.join(root, "sub")], "links still resolve from both folders");
+    assert.deepEqual(await manager.call(s.id, "files", { query: "a.txt" }), ["a.txt"]);
+  });
+
+  test(`a session follows Claude Code into a worktree it enters and back out, but not a cd inside it (${line})`, async (t) => {
+    const { manager } = setup(t);
+    if (told) process.env.FAKE_ORIGINAL_CWD = "1";
+    t.after(() => delete process.env.FAKE_ORIGINAL_CWD);
+    const root = repoWithSub();
+    const wt = path.join(root, ".claude", "worktrees", "x");
+    const s = await manager.create(root, {});
+    await turn(s, "cd sub");
+    await turn(s, "enter x");
+    assert.equal(s.cwd, root, "the line of the turn that enters still names the folder before");
+    await turn(s, "in");
+    assert.equal(s.cwd, wt, "the next one names the worktree");
+    await turn(s, "cd sub");
+    await turn(s, "deeper");
+    assert.equal(s.cwd, wt);
+    await turn(s, "exit");
+    await turn(s, "back");
+    assert.equal(s.cwd, root, "back where the session was, not where the shell had gone");
+
+    const started = await manager.create(root, { worktree: { name: "own", base: "head" } });
+    const own = path.join(root, ".claude", "worktrees", "own");
+    await turn(started, "cd sub");
+    await turn(started, "here");
+    assert.equal(started.cwd, own);
+    await turn(started, "exit");
+    await turn(started, "left");
+    assert.equal(started.cwd, root, "a session started in a worktree goes back to the folder it was made from");
+  });
+}
 
 test("a folder outside git without a hook, a bad name, a left branch or an empty repository start nothing", async (t) => {
   const { manager } = setup(t);

@@ -14,6 +14,7 @@ import {
 import { claudeSettingsFile } from "../claude-settings.ts";
 import { elicitInfo } from "../elicit.ts";
 import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput, WorktreeChoice } from "../protocol.ts";
+import { worktreeOf } from "../worktree-names.ts";
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
@@ -43,6 +44,8 @@ const LATER_WAIT_MS = 20_000;
 const PROBE_MS = 45_000;
 const STDERR_LINES = 20;
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+
+const inside = (dir: string, top: string) => dir === top || dir.startsWith(`${top}/`);
 
 type Requester = { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
 
@@ -134,6 +137,11 @@ export class BrokerSession extends SessionCore {
   // What Claude Code last wrote to stderr, where it says why it could not start.
   private stderrLines: string[] = [];
   private stderrPart = "";
+  // Asked to start in a worktree, whose folder a WorktreeCreate hook may choose; the worktree a hook made, and the
+  // folder the session worked in before it went into a worktree.
+  private worktreeStart = false;
+  private hooked?: string;
+  private before?: string;
 
   constructor(id: string, cwd: string, history: DisplayItem[] = [], title?: string) {
     super(id, cwd, history, title);
@@ -143,6 +151,7 @@ export class BrokerSession extends SessionCore {
     this.permissionMode = opts.mode;
     this.effort = opts.effort;
     this.claudePath = opts.claudePath;
+    this.worktreeStart = Boolean(opts.worktree);
     if (opts.fast) this.fastWanted = true;
     if (opts.thinking === false) this.thinking = false;
     const flags = {
@@ -222,8 +231,25 @@ export class BrokerSession extends SessionCore {
     this.stderrLines.splice(0, this.stderrLines.length - STDERR_LINES);
   }
 
-  protected initCwd(cwd: string): void {
-    this.moveTo(cwd);
+  // The init line's cwd is the shell's, which a cd in Bash moves. The session works from the folder Claude Code works
+  // from; without that in the line, it follows the shell only into a worktree, to the worktree's top, and out of one
+  // back to where it was.
+  protected initCwd(cwd: string, original?: string): void {
+    if (original) return this.moveTo(original);
+    if (this.worktreeStart && !worktreeOf(cwd) && cwd !== this.cwd) this.hooked = cwd;
+    this.worktreeStart = false;
+    const at = (dir: string) => worktreeOf(dir)?.path ?? (this.hooked && inside(dir, this.hooked) ? this.hooked : undefined);
+    const next = at(cwd);
+    const now = at(this.cwd);
+    if (next === now) return;
+    if (next) {
+      if (!now) this.before = this.cwd;
+      return this.moveTo(next);
+    }
+    const home = this.before ?? worktreeOf(this.cwd)?.root;
+    if (home && !inside(cwd, home) && !inside(home, cwd)) return;
+    this.moveTo(this.before ?? cwd);
+    this.before = this.hooked = undefined;
   }
 
   // Claude Code takes Ultracode only with a model that offers it and workflows on; the conversation says so when it did not.

@@ -604,7 +604,7 @@ export abstract class SessionCore extends EventEmitter {
         if (typeof m.effort === "string" && !this.appliedSeen) this.effort = m.effort;
         this.adoptStyles(m.output_style);
         this.adoptFast(m.fast_mode_state, m.fast_mode_disabled_reason, true);
-        if (typeof m.cwd === "string") this.initCwd(m.cwd);
+        if (typeof m.cwd === "string") this.initCwd(m.cwd, typeof m.original_cwd === "string" ? m.original_cwd : undefined);
         this.emit("state");
         this.onInit();
         this.refreshApplied();
@@ -654,8 +654,9 @@ export abstract class SessionCore extends EventEmitter {
 
   protected onInit(): void {}
 
-  // The folder a turn's init line says Claude Code works in; a process type that follows it overrides this.
-  protected initCwd(_cwd: string): void {}
+  // The folders a turn's init line names: where Claude Code's shell is, and, from Claude Code 2.1.301, the folder it
+  // works from. A process type that follows them overrides this.
+  protected initCwd(_cwd: string, _original?: string): void {}
 
   // Where Claude Code works now: a worktree it made or entered, or the folder it went back to.
   moveTo(cwd: string): void {

@@ -145,6 +145,7 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^worktree is in use$/, "다른 Claude Code가 이 worktree에서 실행 중이라 지울 수 없습니다"],
   [/^worktree is locked(?:: (.+))?$/, (m) => `직접 건 잠금이 있어 지우지 않았습니다${m[1] ? ` (${m[1]})` : ""}`],
   [/^worktree has work to keep$/, "바뀐 파일이나 커밋이 생겼습니다. 다시 확인한 뒤 지우세요"],
+  [/^worktree has commits on no branch$/, "detached HEAD에만 있는 커밋이 있어 지우지 않았습니다. 브랜치를 만든 뒤 다시 하세요"],
   [/^not a registered worktree: /, "git에 등록된 worktree가 아니라 지우지 않았습니다"],
   [/^git [\w ]+ failed: ([\s\S]+)$/, (m) => `git 명령이 실패했습니다: ${m[1]}`],
   [/^working folder is missing: (.+)$/, (m) => `작업 폴더가 없어 세션을 시작할 수 없습니다: ${shortPath(m[1])}`],

@@ -19,6 +19,13 @@ export function groupFolder(cwd: string): string {
   return worktreeOf(cwd)?.root ?? cwd;
 }
 
+// The folder the new-session screen lists for a session's: a worktree's repository when the broker offers that folder
+// too, else the worktree, which the broker allows as a folder where sessions ran.
+export function offeredFolder(cwd: string, offered: ReadonlySet<string>): string {
+  const root = groupFolder(cwd);
+  return offered.has(root) ? root : cwd;
+}
+
 export const NAME_PROBLEM: Record<WorktreeNameProblem, string> = {
   empty: "이름을 입력하세요",
   long: "64자까지 쓸 수 있습니다",

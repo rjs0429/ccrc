@@ -7,9 +7,9 @@ import { NEW_SESSION_SCOPE, takeAttachments } from "../components/composer/attac
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { WorktreeOption, worktreeBlocked, worktreeChoice, type FolderGit, type WorktreeDraft } from "../components/WorktreeOption.tsx";
-import { baseName, errorText, shortPath } from "../labels.ts";
+import { errorText, shortPath } from "../labels.ts";
 import { rememberSent } from "../sentPreviews.ts";
-import { groupFolder } from "../worktree.ts";
+import { offeredFolder, placeLabel } from "../worktree.ts";
 import { callFolder, navigate, onDraftFailed, onDraftStarted, openSettingsFrom, startNewSession, toast, useApp } from "../state.ts";
 
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
@@ -76,11 +76,13 @@ export function NewSession() {
   const [gits, setGits] = useState<Record<string, FolderGit>>({});
   const [worktreeError, setWorktreeError] = useState<string>();
 
-  // A worktree Claude Code made is offered as its repository, which its sessions keep recent.
+  // The broker's folders and the sessions', a worktree under its repository when that is offered too, latest first.
   const all = useMemo(() => {
+    const offered = new Set(options?.folders ?? []);
+    const place = (cwd: string) => offeredFolder(cwd, offered);
     const last = new Map<string, number>();
-    for (const s of sessions ?? []) last.set(groupFolder(s.cwd), Math.max(last.get(groupFolder(s.cwd)) ?? 0, s.lastModified));
-    return [...new Set([...(options?.folders ?? []).map(groupFolder), ...last.keys()])].filter(Boolean).sort((a, b) => (last.get(b) ?? 0) - (last.get(a) ?? 0));
+    for (const s of sessions ?? []) last.set(place(s.cwd), Math.max(last.get(place(s.cwd)) ?? 0, s.lastModified));
+    return [...new Set([...offered].map(place).concat([...last.keys()]))].filter(Boolean).sort((a, b) => (last.get(b) ?? 0) - (last.get(a) ?? 0));
   }, [options, sessions]);
   const folders = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -230,7 +232,7 @@ export function NewSession() {
           <div className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
             <div className="text-[15px] font-semibold">새 세션</div>
             <div className="truncate text-xs text-muted" data-new-folder>
-              {cwd ? `${baseName(cwd)} · ${shortPath(cwd)}` : "폴더를 고르세요"}
+              {cwd ? `${placeLabel(cwd)} · ${shortPath(cwd)}` : "폴더를 고르세요"}
             </div>
             {starting && (
               <div className="flex items-center gap-1.5 text-xs text-accent" data-start-note>
@@ -259,7 +261,7 @@ export function NewSession() {
                 >
                   <Icon.folder className="size-4 shrink-0 text-muted" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[15px]">{baseName(f)}</span>
+                    <span className="block truncate text-[15px]">{placeLabel(f)}</span>
                     <span className="block truncate text-xs text-muted">{shortPath(f)}</span>
                   </span>
                   {cwd === f && <Icon.check className="size-4 text-accent" />}

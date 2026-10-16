@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { errorText } from "../../web/src/labels.ts";
-import { NAME_PROBLEM, groupFolder, placeLabel, shownBranch } from "../../web/src/worktree.ts";
+import { NAME_PROBLEM, groupFolder, offeredFolder, placeLabel, shownBranch } from "../../web/src/worktree.ts";
 
 test("a session in a worktree reads as its repository and the worktree, without the branch named after it", () => {
   const wt = "/home/u/app/.claude/worktrees/feature+login";
@@ -13,6 +13,13 @@ test("a session in a worktree reads as its repository and the worktree, without 
   assert.equal(shownBranch("/home/u/app", "dev"), "dev");
   assert.equal(groupFolder(wt), "/home/u/app");
   assert.equal(groupFolder("/home/u/app"), "/home/u/app");
+});
+
+test("the new-session screen lists a worktree as its repository only when the broker offers the repository", () => {
+  const wt = "/home/u/app/.claude/worktrees/x";
+  assert.equal(offeredFolder(wt, new Set(["/home/u/app", wt])), "/home/u/app");
+  assert.equal(offeredFolder(wt, new Set([wt])), wt, "a repository where no session ran and no root lies is not offered");
+  assert.equal(offeredFolder("/home/u/lib", new Set()), "/home/u/lib");
 });
 
 test("every name problem and every worktree error reads in Korean", () => {
@@ -32,6 +39,7 @@ test("every name problem and every worktree error reads in Korean", () => {
     ["worktree is locked: moving disks", "직접 건 잠금이 있어 지우지 않았습니다 (moving disks)"],
     ["worktree is locked", "직접 건 잠금이 있어 지우지 않았습니다"],
     ["worktree has work to keep", "바뀐 파일이나 커밋이 생겼습니다. 다시 확인한 뒤 지우세요"],
+    ["worktree has commits on no branch", "detached HEAD에만 있는 커밋이 있어 지우지 않았습니다. 브랜치를 만든 뒤 다시 하세요"],
     ["not a registered worktree: /r/.claude/worktrees/x", "git에 등록된 worktree가 아니라 지우지 않았습니다"],
     ["git worktree remove failed: Permission denied", "git 명령이 실패했습니다: Permission denied"],
   ];

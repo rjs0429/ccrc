@@ -183,54 +183,73 @@ async function registered(t: WorktreeTarget): Promise<Registered | undefined> {
   return undefined;
 }
 
-// Commits of `ref` that no other branch and no remote has, `own` left out of the others.
-async function onlyHere(root: string, ref: string, own: string): Promise<number> {
-  const r = await git(root, ["rev-list", "--count", ref, "--not", `--exclude=${own}`, "--branches", "--remotes"], STATUS_MS);
+async function count(root: string, revs: string[]): Promise<number> {
+  const r = await git(root, ["rev-list", "--count", ...revs], STATUS_MS);
   if (r.code !== 0) throw gitError(r, "git rev-list failed");
   return Number(r.out.trim()) || 0;
 }
+
+// Commits of `ref` that no other branch and no remote has, `own` left out of the others.
+const onlyHere = (root: string, ref: string, own: string) => count(root, [ref, "--not", `--exclude=${own}`, "--branches", "--remotes"]);
 
 async function branchExists(root: string, branch: string): Promise<boolean> {
   return (await git(root, ["rev-parse", "-q", "--verify", `refs/heads/${branch}`])).code === 0;
 }
 
-// The worktree as it is now; `running` is the caller's to fill in.
-export async function worktreeStatus(t: WorktreeTarget): Promise<WorktreeStatus> {
+// The status, and the detached HEAD the worktree's own branch is set to before removal so that commits no branch has
+// stay on it. That is done only when the branch holds nothing the HEAD lacks and no other branch or remote has.
+async function inspect(t: WorktreeTarget): Promise<{ st: WorktreeStatus; keep?: string }> {
   const exists = isFolder(t.path);
   const reg = await registered(t);
-  const branch = reg?.branch ?? ((await branchExists(t.root, t.branch)) ? t.branch : undefined);
+  const own = await branchExists(t.root, t.branch);
   let changed = 0;
   if (exists && reg) {
-    const r = await git(t.path, ["status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=dirty"], STATUS_MS);
+    const r = await git(t.path, ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=dirty"], STATUS_MS);
     if (r.code !== 0) throw gitError(r, "git status failed");
     changed = r.out.split("\n").filter(Boolean).length;
   }
-  const ref = reg?.head ?? (branch ? `refs/heads/${branch}` : undefined);
-  const commits = ref ? await onlyHere(t.root, ref, branch ?? t.branch) : 0;
+  const detached = reg?.head && !reg.branch ? reg.head : undefined;
+  const loose = detached ? await count(t.root, [detached, "--not", "--branches", "--remotes"]) : 0;
+  const movable = loose > 0 && (!own || (await count(t.root, [`refs/heads/${t.branch}`, "--not", detached!, `--exclude=${t.branch}`, "--branches", "--remotes"])) === 0);
+  const keep = movable ? detached : undefined;
+  const commits = keep ? await onlyHere(t.root, keep, t.branch) : own ? await onlyHere(t.root, `refs/heads/${t.branch}`, t.branch) : 0;
   const ignored = (await git(t.root, ["check-ignore", "-q", `.claude/worktrees/${worktreeFolder(t.name)}`])).code === 0;
-  return {
+  const st: WorktreeStatus = {
     path: t.path,
     name: t.name,
     root: t.root,
-    ...(branch ? { branch } : {}),
+    ...(own || keep ? { branch: t.branch } : {}),
+    ...(reg?.branch && reg.branch !== t.branch ? { checkedOut: reg.branch } : {}),
     exists,
     registered: Boolean(reg),
     changed,
     commits,
+    ...(loose && !keep ? { stranded: loose } : {}),
     ...(reg?.locked !== undefined ? { lock: lockOf(reg.locked) } : {}),
     ignored,
   };
+  return { st, ...(keep ? { keep } : {}) };
+}
+
+// The worktree as it is now; `running` is the caller's to fill in.
+export async function worktreeStatus(t: WorktreeTarget): Promise<WorktreeStatus> {
+  return (await inspect(t)).st;
 }
 
 // Removes the worktree, unlocking Claude Code's lock when its process has ended; a lock someone else put stays and
-// so does the worktree. Changed files go only with `discard`, which commits only this branch holds also need; such a
-// branch is kept, any other is deleted.
+// so does the worktree. Changed files go only with `discard`, which commits only the worktree's own branch holds also
+// need; that branch is kept when it holds such commits and deleted otherwise. No other branch is touched.
 export async function removeWorktree(t: WorktreeTarget, discard: boolean): Promise<WorktreeRemoved> {
-  const st = await worktreeStatus(t);
+  const { st, keep } = await inspect(t);
   if (st.exists && !st.registered) throw Error(`not a registered worktree: ${t.path}`);
   if (st.lock && !st.lock.claude) throw Error(st.lock.reason ? `worktree is locked: ${st.lock.reason}` : "worktree is locked");
   if (st.lock?.alive) throw Error("worktree is in use");
+  if (st.stranded) throw Error("worktree has commits on no branch");
   if ((st.changed || st.commits) && !discard) throw Error("worktree has work to keep");
+  if (keep) {
+    const r = await git(t.root, ["branch", "-f", t.branch, keep], STATUS_MS);
+    if (r.code !== 0) throw gitError(r, "git branch failed");
+  }
   if (st.lock) {
     const r = await git(t.root, ["worktree", "unlock", t.path], STATUS_MS);
     if (r.code !== 0) throw gitError(r, "git worktree unlock failed");
@@ -239,11 +258,12 @@ export async function removeWorktree(t: WorktreeTarget, discard: boolean): Promi
     const r = await git(t.root, ["worktree", "remove", ...(st.changed ? ["--force"] : []), t.path], REMOVE_MS);
     if (r.code !== 0) throw gitError(r, "git worktree remove failed");
   }
+  const own = await branchExists(t.root, t.branch);
   let kept = false;
   let commits = 0;
-  if (st.branch && (await branchExists(t.root, st.branch))) {
-    commits = await onlyHere(t.root, `refs/heads/${st.branch}`, st.branch);
-    kept = commits > 0 || (await git(t.root, ["branch", "-D", st.branch], STATUS_MS)).code !== 0;
+  if (own) {
+    commits = await onlyHere(t.root, `refs/heads/${t.branch}`, t.branch);
+    kept = commits > 0 || (await git(t.root, ["branch", "-D", t.branch], STATUS_MS)).code !== 0;
   }
-  return { path: t.path, ...(st.branch ? { branch: st.branch } : {}), branchKept: kept, commits, discarded: st.changed };
+  return { path: t.path, ...(own ? { branch: t.branch } : {}), branchKept: kept, commits, discarded: st.changed, ...(st.checkedOut ? { checkedOut: st.checkedOut } : {}) };
 }

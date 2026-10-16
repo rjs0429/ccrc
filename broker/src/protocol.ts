@@ -273,29 +273,36 @@ export interface GitFolderInfo {
   blocked: string[];
 }
 
-// A session's worktree as it is now. changed: files git status lists; commits: commits no other branch or remote has;
-// lock: claude when Claude Code put it, alive while its process runs; running: where a process works in it.
+// A session's worktree as it is now. changed: files git status lists, each new file counted; commits: commits no other
+// branch or remote has that removal leaves on the own branch; lock: claude when Claude Code put it, alive while its
+// process runs; running: where a process works in it.
 export interface WorktreeStatus {
   path: string;
   name: string;
   root: string;
+  // The worktree's own branch, and another branch it has checked out, which removal leaves alone.
   branch?: string;
+  checkedOut?: string;
   exists: boolean;
   registered: boolean;
   changed: number;
   commits: number;
+  // Commits only a detached HEAD holds that the own branch cannot take; removal waits until a branch holds them.
+  stranded?: number;
   lock?: { claude: boolean; alive: boolean; reason?: string };
   running?: string;
   ignored: boolean;
 }
 
-// What removing a worktree did: the branch stays when it holds commits no other branch or remote has.
+// What removing a worktree did: its own branch stays when it holds commits no other branch or remote has; checkedOut
+// is the other branch it had checked out, left as it was.
 export interface WorktreeRemoved {
   path: string;
   branch?: string;
   branchKept: boolean;
   commits: number;
   discarded: number;
+  checkedOut?: string;
 }
 
 // The worktree calls: about a session's worktree, and (git) about a folder before a session starts in it.

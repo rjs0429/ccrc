@@ -206,6 +206,91 @@ test("a branch with commits no other branch or remote has stays", async () => {
   assert.deepEqual([gone.branchKept, gone.commits], [false, 0], "a pushed branch holds nothing only here");
 });
 
+test("each new file counts, also those in a new folder git lists as one", async () => {
+  const root = repo();
+  const wt = worktree(root, "newdir");
+  fs.mkdirSync(path.join(wt, "src", "feature"), { recursive: true });
+  for (let i = 0; i < 6; i++) fs.writeFileSync(path.join(wt, "src", "feature", `f${i}.ts`), `export const f${i} = ${i};\n`);
+  fs.writeFileSync(path.join(wt, "a.txt"), "edited\n");
+  assert.equal((await worktreeStatus(target(root, "newdir"))).changed, 7);
+  const done = await removeWorktree(target(root, "newdir"), true);
+  assert.equal(done.discarded, 7);
+});
+
+test("a branch of the user's checked out in the worktree stays; only the worktree's own branch is judged", async () => {
+  const root = repo();
+  git(root, "branch", "release-1.2");
+  const bare = path.join(home, `release${repos}.git`);
+  git(home, "init", "-q", "--bare", bare);
+  git(root, "remote", "add", "origin", bare);
+  git(root, "push", "-q", "-u", "origin", "release-1.2");
+  const wt = worktree(root, "fix");
+  git(wt, "checkout", "-q", "release-1.2");
+  const st = await worktreeStatus(target(root, "fix"));
+  assert.deepEqual([st.branch, st.checkedOut, st.commits, st.changed], ["worktree-fix", "release-1.2", 0, 0]);
+  const done = await removeWorktree(target(root, "fix"), false);
+  assert.deepEqual(done, { path: wt, branch: "worktree-fix", branchKept: false, commits: 0, discarded: 0, checkedOut: "release-1.2" });
+  assert.match(git(root, "branch", "--list", "release-1.2"), /release-1\.2/);
+  assert.equal(git(root, "config", "branch.release-1.2.merge").trim(), "refs/heads/release-1.2", "its upstream stays too");
+  assert.equal(git(root, "branch", "--list", "worktree-fix"), "");
+
+  const wt2 = worktree(root, "fix2");
+  fs.writeFileSync(path.join(wt2, "f.txt"), "f\n");
+  git(wt2, "add", "f.txt");
+  git(wt2, "commit", "-qm", "own work");
+  git(wt2, "checkout", "-q", "release-1.2");
+  const st2 = await worktreeStatus(target(root, "fix2"));
+  assert.deepEqual([st2.branch, st2.checkedOut, st2.commits], ["worktree-fix2", "release-1.2", 1], "the own branch's commit counts though another branch is checked out");
+  const kept = await removeWorktree(target(root, "fix2"), true);
+  assert.deepEqual([kept.branch, kept.branchKept, kept.commits, kept.checkedOut], ["worktree-fix2", true, 1, "release-1.2"]);
+});
+
+test("commits made on a detached HEAD stay on the worktree's own branch, or keep the worktree when it cannot take them", async () => {
+  const root = repo();
+  const wt = worktree(root, "detached");
+  git(wt, "checkout", "-q", "--detach");
+  fs.writeFileSync(path.join(wt, "work.txt"), "an hour of work\n");
+  git(wt, "add", "work.txt");
+  git(wt, "commit", "-qm", "detached work");
+  const sha = git(wt, "rev-parse", "HEAD").trim();
+  const st = await worktreeStatus(target(root, "detached"));
+  assert.deepEqual([st.branch, st.checkedOut, st.commits, st.stranded], ["worktree-detached", undefined, 1, undefined]);
+  await assert.rejects(removeWorktree(target(root, "detached"), false), /worktree has work to keep/);
+  const done = await removeWorktree(target(root, "detached"), true);
+  assert.deepEqual(done, { path: wt, branch: "worktree-detached", branchKept: true, commits: 1, discarded: 0 });
+  assert.equal(git(root, "rev-parse", "worktree-detached").trim(), sha);
+
+  const wt2 = worktree(root, "gone-branch");
+  git(wt2, "checkout", "-q", "--detach");
+  git(root, "branch", "-D", "worktree-gone-branch");
+  fs.writeFileSync(path.join(wt2, "w.txt"), "w\n");
+  git(wt2, "add", "w.txt");
+  git(wt2, "commit", "-qm", "work without a branch");
+  assert.deepEqual((await worktreeStatus(target(root, "gone-branch"))).branch, "worktree-gone-branch", "the branch to be made is named");
+  const made = await removeWorktree(target(root, "gone-branch"), true);
+  assert.deepEqual([made.branch, made.branchKept, made.commits], ["worktree-gone-branch", true, 1]);
+  assert.equal(git(root, "rev-parse", "worktree-gone-branch").trim(), git(root, "rev-list", "-1", "--all", "--grep=work without a branch").trim());
+
+  const wt3 = worktree(root, "split");
+  fs.writeFileSync(path.join(wt3, "b.txt"), "b\n");
+  git(wt3, "add", "b.txt");
+  git(wt3, "commit", "-qm", "on the branch");
+  git(wt3, "checkout", "-q", "--detach", "main");
+  fs.writeFileSync(path.join(wt3, "c.txt"), "c\n");
+  git(wt3, "add", "c.txt");
+  git(wt3, "commit", "-qm", "beside the branch");
+  const split = await worktreeStatus(target(root, "split"));
+  assert.deepEqual([split.branch, split.commits, split.stranded], ["worktree-split", 1, 1]);
+  await assert.rejects(removeWorktree(target(root, "split"), true), /worktree has commits on no branch/);
+  assert.equal(fs.existsSync(wt3), true);
+
+  const wt4 = worktree(root, "looked");
+  git(wt4, "checkout", "-q", "--detach");
+  const clean = await worktreeStatus(target(root, "looked"));
+  assert.deepEqual([clean.branch, clean.commits, clean.stranded], ["worktree-looked", 0, undefined], "a detached HEAD with nothing of its own is no work");
+  assert.deepEqual(await removeWorktree(target(root, "looked"), false), { path: wt4, branch: "worktree-looked", branchKept: false, commits: 0, discarded: 0 });
+});
+
 test("a lock Claude Code left behind is lifted; a person's lock or a live process keeps the worktree", async () => {
   const root = repo();
   const child = spawn(process.execPath, ["-e", ""]);
