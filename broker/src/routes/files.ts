@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { claudeSettingsFile } from "../claude-settings.ts";
-import type { FileView } from "../protocol.ts";
+import type { FileView, SentRef } from "../protocol.ts";
 import type { SessionCore } from "../sessions/core.ts";
 import {
   MAX_BINARY_BYTES,
@@ -22,12 +22,10 @@ import {
   servedType,
   type ReadErrorCode,
 } from "../sessions/file-read.ts";
+import { rawHeaders } from "./raw.ts";
+import { registerSent, sentRef } from "./sent.ts";
 import type { RouteDeps } from "./types.ts";
 
-// Served bytes never run as a page on this origin: only images and PDF keep their type, and all but
-// PDF (whose viewers a sandbox breaks) come sandboxed.
-const RAW_CSP = "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'";
-const PDF_CSP = "default-src 'none'; object-src 'self'; img-src 'self' data: blob:; style-src 'unsafe-inline'; frame-ancestors 'self'";
 const STATUS: Record<ReadErrorCode, number> = { invalid: 400, not_found: 404, denied: 403, too_large: 413, failed: 502 };
 const LOGGED_PATH_MAX = 1024;
 const OLD_WRAPPER = "rejected by the wrapper: request not allowed";
@@ -36,10 +34,11 @@ const TICKETS_MAX = 64;
 
 // Lets a page outside the app, which has no cookie (a new window from the home-screen app), fetch one
 // file: bound to the device and login that asked for it, reusable until it expires since PDF viewers
-// may fetch more than once.
+// may fetch more than once. A file Claude sent is named by its call, not by its path.
 interface Ticket {
   sessionId: string;
-  path: string;
+  path?: string;
+  sent?: SentRef;
   device: string;
   lease: string;
   expires: number;
@@ -187,15 +186,7 @@ export async function registerFiles(app: FastifyInstance, d: RouteDeps): Promise
       if (size > MAX_BINARY_BYTES) throw await tooLarge(a, p);
       const r = await readFile(a, p, MAX_BINARY_BYTES, true);
       log("ok", r.via);
-      const type = servedType(p);
-      const name = path.basename(p);
-      const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
-      const disposition = download || type === "application/octet-stream" ? "attachment" : "inline";
-      return reply
-        .header("Content-Security-Policy", type === "application/pdf" ? PDF_CSP : RAW_CSP)
-        .header("Content-Disposition", `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`)
-        .type(type)
-        .send(r.data);
+      return rawHeaders(reply, path.basename(p), servedType(p), download).send(r.data);
     } catch (e) {
       log(readFailure(e).code, a.session ? "claude" : "broker");
       return fail(reply, e);
@@ -213,23 +204,25 @@ export async function registerFiles(app: FastifyInstance, d: RouteDeps): Promise
     },
   );
 
+  const sent = await registerSent(app, d);
   const tickets = new Map<string, Ticket>();
   const prune = (now: number) => {
     for (const [k, t] of tickets) if (t.expires <= now) tickets.delete(k);
     while (tickets.size >= TICKETS_MAX) tickets.delete(tickets.keys().next().value!);
   };
 
-  app.post<{ Params: { id: string }; Body: { path?: unknown } }>("/api/sessions/:id/file/ticket", { preHandler: d.requireAuth }, async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { path?: unknown; sent?: unknown } }>("/api/sessions/:id/file/ticket", { preHandler: d.requireAuth }, async (req, reply) => {
     reply.header("Cache-Control", "no-store");
-    const p = absolute(req.body?.path);
-    if (!p) return reply.code(400).send({ error: "invalid" });
+    const ref = req.body?.sent === undefined ? undefined : sentRef(req.body.sent);
+    const p = req.body?.sent === undefined ? absolute(req.body?.path) : undefined;
+    if (!p && !ref) return reply.code(400).send({ error: "invalid" });
     if (!(await access(req.params.id))) return reply.code(404).send({ error: "unknown_session" });
     const lease = d.leases.current();
     if (!lease) return reply.code(401).send({ error: "unauthorized" });
     const now = Date.now();
     prune(now);
     const id = randomBytes(32).toString("base64url");
-    tickets.set(id, { sessionId: req.params.id, path: p, device: req.device, lease: lease.tokenHash, expires: now + TICKET_MS });
+    tickets.set(id, { sessionId: req.params.id, ...(ref ? { sent: ref } : { path: p }), device: req.device, lease: lease.tokenHash, expires: now + TICKET_MS });
     return { url: `/api/file-ticket/${id}`, expiresInMs: TICKET_MS };
   });
 
@@ -241,13 +234,14 @@ export async function registerFiles(app: FastifyInstance, d: RouteDeps): Promise
       if (t && t.expires <= now) tickets.delete(req.params.ticket);
       d.audit.log("file_read", {
         device: req.device,
-        ...(t ? { sessionId: t.sessionId, path: t.path.slice(0, LOGGED_PATH_MAX) } : {}),
+        ...(t ? { sessionId: t.sessionId, ...(t.path ? { path: t.path.slice(0, LOGGED_PATH_MAX) } : {}), ...(t.sent ? { sent: true, ...t.sent } : {}) } : {}),
         outcome: t && t.expires <= now ? "ticket_expired" : "ticket_invalid",
         raw: true,
         ticket: true,
       });
       return reply.code(401).header("Cache-Control", "no-store").send({ error: "unauthorized" });
     }
-    return serveRaw(req, reply, t.sessionId, t.path, req.query.download === "1", { ticket: true });
+    if (t.sent) return sent.raw(req, reply, t.sessionId, t.sent, req.query.download === "1", { ticket: true });
+    return serveRaw(req, reply, t.sessionId, t.path!, req.query.download === "1", { ticket: true });
   });
 }

@@ -309,6 +309,17 @@ export async function agentTranscript(sessionId: string, cwd: string, args: Obj)
   return { ...head, ...page(b, Math.max(0, to - PAGE), to) };
 }
 
+// One item of a subagent's transcript, as the agent map shows it.
+export async function agentItem(sessionId: string, cwd: string, agentId: string, itemId: string): Promise<DisplayItem | undefined> {
+  if (!ID.test(agentId)) return undefined;
+  const where = folderOf(sessionId, cwd);
+  const file = where && (await agentFile(where.dir, agentId));
+  if (!where || !file) return undefined;
+  const b = await current(sessionId, agentId, file, where.sdkDir, cwd);
+  const n = b.index.get(itemId);
+  return n === undefined ? undefined : b.items[n];
+}
+
 // The agents of a workflow run as its journal lists them, with their labels and phases.
 export async function workflowAgents(sessionId: string, cwd: string, runIdArg: unknown): Promise<WorkflowInfo> {
   const runId = idArg(runIdArg);

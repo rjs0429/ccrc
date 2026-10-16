@@ -4,6 +4,7 @@ import { attachmentsOf } from "./attachments.ts";
 import { classify } from "./outcome.ts";
 import { PLAN_LIMIT, toolReply } from "./replies.ts";
 import { contextDetail, usageReport } from "./reports.ts";
+import { sentCut, sentFiles } from "./sent-files.ts";
 
 const RESULT_LIMIT = 4000;
 const INPUT_STRING_LIMIT = 2000;
@@ -392,8 +393,8 @@ export class ItemBuilder {
   }
 
   add(m: RawMessage, fallbackTs?: string): DisplayItem[] {
-    if (m.parent_tool_use_id) return this.subagent(m, m.parent_tool_use_id);
     const ts = m.timestamp ?? fallbackTs;
+    if (m.parent_tool_use_id) return this.subagent(m, m.parent_tool_use_id, ts);
     switch (m.type) {
       case "user":
         return this.user(m, ts);
@@ -501,31 +502,45 @@ export class ItemBuilder {
     const known = { ...prev, result, ...(reply ? { reply } : {}), ...(ids ? { sub: { ...(prev.sub ?? { tools: 0, recent: [] }), ...ids } } : {}) };
     if (result.isError) return this.put(known);
     const sub = counted(known.sub, record(output)?.totalToolUseCount);
-    return this.put({ ...known, ...fileChange(output), ...(sub ? { sub } : {}) });
+    const sent = prev.name === "SendUserFile" ? sentFiles(output) : undefined;
+    const cut = sent ? sentCut(output) : 0;
+    return this.put({ ...known, ...fileChange(output), ...(sub ? { sub } : {}), ...(sent ? { sent } : {}), ...(cut ? { sentCut: cut } : {}) });
   }
 
   // Folds a subagent's messages into the call that started it: how many tools it used, the last few,
-  // and its latest text. Calls of subagents it starts in turn count toward the same item.
-  private subagent(m: RawMessage, parentId: string): DisplayItem[] {
+  // and its latest text. Calls of subagents it starts in turn count toward the same item. A file a subagent sends is
+  // for the user, so its call also shows as an item of its own, with its result.
+  private subagent(m: RawMessage, parentId: string, ts?: string): DisplayItem[] {
     const owner = this.tool(this.subCalls.get(parentId) ?? parentId);
+    if (owner && m.type === "user") return this.subagentResults(m);
     if (!owner || m.type !== "assistant" || !Array.isArray(m.message?.content)) return [];
     let sub: SubagentActivity = owner.sub ?? { tools: 0, recent: [] };
     let changed = false;
+    const sent: DisplayItem[] = [];
     for (const b of m.message.content) {
       if (b.type === "tool_use") {
         const id = String(b.id);
         if (this.subCalls.has(id)) continue;
         this.subCalls.set(id, owner.id);
         const name = String(b.name);
-        const recent = [...sub.recent, { name, summary: summarizeTool(name, b.input, this.cwd) }].slice(-SUB_RECENT);
+        const summary = summarizeTool(name, b.input, this.cwd);
+        const recent = [...sub.recent, { name, summary }].slice(-SUB_RECENT);
         sub = { ...sub, tools: sub.tools + 1, recent };
         changed = true;
+        if (name === "SendUserFile") sent.push(this.put({ kind: "tool", id, ts, name, summary, input: toolInput(name, b.input), by: owner.id }));
       } else if (b.type === "text" && String(b.text ?? "").trim()) {
         sub = { ...sub, text: clipped(String(b.text).trim(), SUB_TEXT_LIMIT) };
         changed = true;
       }
     }
-    return changed ? [this.put({ ...owner, sub })] : [];
+    return [...(changed ? [this.put({ ...owner, sub })] : []), ...sent];
+  }
+
+  // The results of the calls a subagent made that show as items of their own.
+  private subagentResults(m: RawMessage): DisplayItem[] {
+    const blocks = Array.isArray(m.message?.content) ? m.message.content.filter((b) => b.type === "tool_result") : [];
+    const output = blocks.length === 1 ? (m.tool_use_result ?? m.toolUseResult) : undefined;
+    return blocks.filter((b) => this.tool(String(b.tool_use_id))?.by).map((b) => this.toolResult(b, output));
   }
 
   private system(m: RawMessage, ts?: string): DisplayItem[] {

@@ -217,6 +217,8 @@ const IMAGE_TYPES: Record<string, string> = {
   bmp: "image/bmp",
   ico: "image/x-icon",
   heic: "image/heic",
+  // Shown only as an image, where it runs nothing; served under a sandbox.
+  svg: "image/svg+xml",
 };
 const BINARY_EXT = new Set(
   "zip gz tgz bz2 xz zst 7z rar tar exe dll so dylib bin o a class jar war wasm mp3 mp4 m4a mov avi mkv webm wav flac ogg ttf otf woff woff2 eot sqlite sqlite3 db pyc pyo npy npz pt pth onnx safetensors ckpt h5 pkl parquet xls xlsx doc docx ppt pptx key numbers pages psd ai dmg iso img deb rpm".split(

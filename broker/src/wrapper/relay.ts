@@ -7,6 +7,7 @@ import type { Readable, Writable } from "node:stream";
 import { LineSplitter, parseLine } from "../link/lines.ts";
 import { LINK_VERSION, REMOTE_PREFIX, isPrivateDir, type BrokerFrame, type Hello, type Party, type WrapperFrame } from "../link/protocol.ts";
 import { liveProcesses } from "../sessions/live.ts";
+import { sendFilesEnv } from "./send-files.ts";
 import type { TurnStore } from "./turns.ts";
 
 const NL = Buffer.from("\n");
@@ -393,7 +394,8 @@ export class Relay extends EventEmitter {
     });
     if (this.claim) this.gate = new Gate(this.o.claimAckMs ?? 3000, this.o.claimMaxMs ?? 45_000);
     this.connect();
-    let env = this.o.env;
+    let env = { ...this.o.env, ...sendFilesEnv(this.o.env) };
+    this.o.log(`files sent to the user go by path: ${env.CLAUDE_CODE_ATTACHMENTS_BY_PATH ?? "off"}`);
     if (this.gate) {
       const t0 = Date.now();
       await this.gate.opened;

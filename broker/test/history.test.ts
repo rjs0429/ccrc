@@ -431,3 +431,42 @@ test("a reload keeps the transcript ids of a background subagent and a workflow 
   assert.equal(sub("toolu_bg").sub?.agentId, "aec1e95a753adddd3");
   assert.equal(sub("toolu_wf").sub?.runId, "wf_5ef7f2d2-0c4");
 });
+
+test("a reload keeps the files a SendUserFile call sent", async () => {
+  const sid = "5a9b3d7f-2c4e-4f60-8b8c-1d3e5f7a9b2c";
+  const base = { isSidechain: false, userType: "external", cwd, sessionId: sid, version: "2.1.300", gitBranch: "HEAD" };
+  const attachments = [
+    { path: `${cwd}/report.md`, size: 24, isImage: false, media_type: "text/markdown", pathValidated: true },
+    { path: "/tmp/r4/chart.svg", size: 100, isImage: false, media_type: "image/svg+xml", pathValidated: true },
+  ];
+  const rows = [
+    { ...base, parentUuid: null, type: "user", uuid: "f1", timestamp: "2026-10-16T06:00:00.000Z", message: { role: "user", content: "Send me the report" } },
+    {
+      ...base,
+      parentUuid: "f1",
+      type: "assistant",
+      uuid: "f2",
+      timestamp: "2026-10-16T06:00:01.000Z",
+      message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_send", name: "SendUserFile", input: { files: ["report.md", "/tmp/r4/chart.svg"], caption: "r4 test", status: "normal" } }] },
+    },
+    {
+      ...base,
+      parentUuid: "f2",
+      type: "user",
+      uuid: "f3",
+      timestamp: "2026-10-16T06:00:02.000Z",
+      message: { role: "user", content: [{ tool_use_id: "toolu_send", type: "tool_result", content: "2 files delivered to user." }] },
+      toolUseResult: { caption: "r4 test", attachments },
+    },
+  ];
+  const dir = path.join(home, ".claude", "projects", projectDirName(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const items = await loadHistory(sid, cwd);
+  const send = items.find((i) => i.id === "toolu_send");
+  assert.deepEqual(send?.kind === "tool" && send.sent, [
+    { name: "report.md", path: `${cwd}/report.md`, size: 24, mediaType: "text/markdown" },
+    { name: "chart.svg", path: "/tmp/r4/chart.svg", size: 100, mediaType: "image/svg+xml" },
+  ]);
+  assert.equal(send?.ts, "2026-10-16T06:00:01.000Z");
+});

@@ -12,7 +12,7 @@ process.env.CLAUDE_CONFIG_DIR = path.join(home, ".claude");
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 
 const { projectDirName } = await import("../src/sessions/history.ts");
-const { agentTranscript, workflowAgents } = await import("../src/sessions/subagents.ts");
+const { agentItem, agentTranscript, workflowAgents } = await import("../src/sessions/subagents.ts");
 
 const SID = "5d2b8c1e-7f3a-4e6b-9c0d-1a2b3c4d5e6f";
 const cwd = path.join(home, "ws");
@@ -310,4 +310,23 @@ test("a workflow run's agents come from its journal, with their labels, phases a
     failed: 1,
   });
   assert.deepEqual(await workflowAgents(SID, cwd, "wf_none"), { phases: [], agents: [], total: 0, running: 0, done: 0, failed: 0 });
+});
+
+test("a file a subagent sent is found in its transcript by the call, with the files its result kept", async () => {
+  const attachments = [{ path: "/tmp/out/plot.png", size: 512, isImage: true, media_type: "image/png", pathValidated: true }];
+  write(
+    path.join(subagents, "agent-asend.jsonl"),
+    rows("asend", [
+      prompt("f1", "Draw the plot and send it"),
+      call("f2", "toolu_plot", "SendUserFile", { files: ["/tmp/out/plot.png"], status: "proactive" }),
+      result("f3", "toolu_plot", "1 file delivered to user.", { toolUseResult: { attachments } }),
+      say("f4", "Sent."),
+    ]),
+  );
+  const item = await agentItem(SID, cwd, "asend", "toolu_plot");
+  assert.deepEqual(item?.kind === "tool" && item.sent, [{ name: "plot.png", path: "/tmp/out/plot.png", size: 512, mediaType: "image/png", image: true }]);
+  assert.equal(item?.ts, "2026-10-16T03:00:01.000Z");
+  assert.equal(await agentItem(SID, cwd, "asend", "toolu_other"), undefined);
+  assert.equal(await agentItem(SID, cwd, "anone", "toolu_plot"), undefined);
+  assert.equal(await agentItem(SID, cwd, "../asend", "toolu_plot"), undefined, "an id that could leave the folder finds nothing");
 });

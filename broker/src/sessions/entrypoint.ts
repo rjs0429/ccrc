@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { paths } from "../config.ts";
+import { sendFilesEnv } from "../wrapper/send-files.ts";
 import { transcriptPath } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 
@@ -14,6 +15,7 @@ const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 // The environment of a broker session's Claude Code. Artifacts and drafted feedback stay off unless the
 // environment asks for them, as they are under an SDK entrypoint; the user agent names ccrc as the SDK's client app.
+// Claude may send the user files (sendFilesEnv).
 export function sessionEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string | undefined> {
   return {
     ...base,
@@ -21,6 +23,7 @@ export function sessionEnv(base: NodeJS.ProcessEnv = process.env): Record<string
     CLAUDE_AGENT_SDK_CLIENT_APP: ENTRYPOINT,
     CLAUDE_CODE_ARTIFACT: base.CLAUDE_CODE_ARTIFACT ?? "0",
     CLAUDE_CODE_SEND_FEEDBACK: base.CLAUDE_CODE_SEND_FEEDBACK ?? "0",
+    ...sendFilesEnv(base),
   };
 }
 

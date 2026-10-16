@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import type { Hub } from "../src/hub.ts";
-import type { LiveState, PendingKind, PendingRequest, ServerMsg, SessionSummary } from "../src/protocol.ts";
+import type { DisplayItem, LiveState, PendingKind, PendingRequest, SentFile, ServerMsg, SessionSummary } from "../src/protocol.ts";
 import { Notifier, endText, type Urgency } from "../src/push/rules.ts";
 import type { Subscription } from "../src/push/subscriptions.ts";
 import { DEFAULT_PREFS, type PushPayload, type PushPrefs } from "../src/push/types.ts";
@@ -347,4 +347,98 @@ test("closing stops what is waiting", async () => {
   manager.end();
   await sleep(100);
   assert.equal(sent.length, 0);
+});
+
+// A SendUserFile call's item as the conversation gets it once its result is in.
+function sendFiles(manager: FakeManager, id: string, status: string, files: Partial<SentFile>[], sessionId = A, sentCut = 0): void {
+  const sent = files.map((f, n) => ({ name: `file${n}.md`, path: `/tmp/file${n}.md`, size: 1, ...f }));
+  const item: DisplayItem = {
+    kind: "tool",
+    id,
+    name: "SendUserFile",
+    summary: "",
+    input: { files: sent.map((f) => f.path), status },
+    result: { text: "ok", isError: false, truncated: false },
+    sent,
+    ...(sentCut ? { sentCut } : {}),
+  };
+  manager.emit("event", sessionId, { t: "item", sessionId, item } satisfies ServerMsg);
+}
+
+test("a file Claude sends to reach the user is told almost at once, once per call, unless the user is looking", async () => {
+  const plain = setup();
+  plain.manager.state({ busy: true });
+  sendFiles(plain.manager, "toolu_f1", "proactive", [{ name: "report.md" }, { name: "chart.png" }]);
+  sendFiles(plain.manager, "toolu_f1", "proactive", [{ name: "report.md" }, { name: "chart.png" }]);
+  await sleep(40);
+  assert.deepEqual(plain.sent, [
+    { endpoint: ENDPOINT, urgency: "normal", payload: { title: "Fix the invoice export", body: "파일을 보냈습니다", tag: `${A}:file`, data: { url: `/#/s/${A}` }, badge: 1 } },
+  ]);
+  assert.deepEqual(plain.notifier.badgeFor(ENDPOINT), { badge: 1, unseen: [A] }, "a file nobody looked at counts on the badge");
+
+  const detailed = setup({ details: true });
+  sendFiles(detailed.manager, "toolu_f2", "proactive", [{ name: "report.md" }, { name: "chart.png" }, { name: "data.csv" }]);
+  sendFiles(detailed.manager, "toolu_f3", "proactive", [{ name: "only.pdf" }], B);
+  await sleep(40);
+  assert.deepEqual(detailed.bodies().sort(), ["파일을 보냈습니다 · only.pdf", "파일을 보냈습니다 · report.md 외 2개"]);
+
+  const watching = setup();
+  watching.hub.watching = true;
+  sendFiles(watching.manager, "toolu_f4", "proactive", [{}]);
+  await sleep(40);
+  assert.equal(watching.sent.length, 0, "the card is in front of the user");
+
+  const opened = setup();
+  sendFiles(opened.manager, "toolu_f5", "proactive", [{}]);
+  opened.manager.open();
+  await sleep(40);
+  assert.equal(opened.sent.length, 0, "the session was opened meanwhile");
+
+  const refused = setup();
+  sendFiles(refused.manager, "toolu_f6", "proactive", [{ error: "upload failed" }, { error: "" }]);
+  await sleep(40);
+  assert.equal(refused.sent.length, 0, "a call that sent nothing that opens");
+  for (const s of [plain, detailed, watching, opened, refused]) s.notifier.close();
+});
+
+test("other files sent in a turn are counted on its end's notice", async () => {
+  const { manager, hub, notifier, bodies } = setup();
+  hub.activity = Date.now();
+  manager.state({ busy: true });
+  sendFiles(manager, "toolu_n1", "normal", [{}, {}]);
+  sendFiles(manager, "toolu_n1", "normal", [{}, {}]);
+  sendFiles(manager, "toolu_n2", "normal", [{}, { error: "" }]);
+  sendFiles(manager, "toolu_p1", "proactive", [{}]);
+  manager.state({ busy: false });
+  manager.end({ queued: true });
+  manager.end();
+  await sleep(40);
+  assert.deepEqual(bodies().sort(), ["파일을 보냈습니다", "작업을 마쳤습니다 · 파일 3개"].sort(), "a turn that queued the next one hands its files on");
+  manager.end();
+  await sleep(40);
+  assert.equal(bodies().at(-1), "작업을 마쳤습니다", "counted once");
+  sendFiles(manager, "toolu_n3", "normal", [{}]);
+  manager.end({ outcome: "interrupted" });
+  manager.end({ outcome: "error", status: 529, reason: "api" });
+  await sleep(40);
+  assert.equal(bodies().at(-1), "오류로 끝났습니다 · API 529", "a turn the user stopped takes its files with it");
+  notifier.close();
+});
+
+test("files a long call's item leaves out still count", async () => {
+  const told = setup({ details: true });
+  sendFiles(told.manager, "toolu_l1", "proactive", [{ name: "first.md" }, { error: "" }], A, 5);
+  await sleep(40);
+  assert.deepEqual(told.bodies(), ["파일을 보냈습니다 · first.md 외 5개"]);
+  told.notifier.close();
+
+  const counted = setup();
+  counted.hub.activity = Date.now();
+  counted.manager.state({ busy: true });
+  sendFiles(counted.manager, "toolu_l2", "normal", [{}, {}], A, 3);
+  counted.manager.state({ busy: false });
+  counted.manager.end();
+  await sleep(40);
+  assert.deepEqual(counted.bodies(), ["작업을 마쳤습니다 · 파일 5개"]);
+  counted.notifier.close();
 });

@@ -71,8 +71,8 @@ interface FileRow {
 }
 
 // The structured tool outputs items are built from: file patches, subagent totals, question answers, edited plans,
-// and the ids a subagent's or workflow's transcript is kept under.
-const OUTPUT_KEYS = ["structuredPatch", "totalToolUseCount", "answers", "planWasEdited", "agentId", "runId"];
+// the ids a subagent's or workflow's transcript is kept under, and the files Claude sent.
+const OUTPUT_KEYS = ["structuredPatch", "totalToolUseCount", "answers", "planWasEdited", "agentId", "runId", "attachments"];
 
 export function usedOutput(out: unknown): boolean {
   return out !== null && typeof out === "object" && OUTPUT_KEYS.some((k) => k in out);
