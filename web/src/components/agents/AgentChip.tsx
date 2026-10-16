@@ -32,7 +32,7 @@ export function agentChipWidths(el: HTMLElement): { word: number; icon?: number 
 
 // Shows while the conversation has subagents or workflows. Without `word` the word stays laid out, hidden and out
 // of the row, so the chip's width with it can still be measured.
-export function AgentChip({ chip, word, onClick, ref }: { chip: Chip; word: boolean; onClick: () => void; ref?: Ref<HTMLButtonElement> }) {
+export function AgentChip({ chip, word, onClick, ref, className = "" }: { chip: Chip; word: boolean; onClick: () => void; ref?: Ref<HTMLButtonElement>; className?: string }) {
   return (
     <button
       ref={ref}
@@ -40,7 +40,7 @@ export function AgentChip({ chip, word, onClick, ref }: { chip: Chip; word: bool
       data-chip="agents"
       data-dot={chip.dot}
       aria-label={label(chip)}
-      className="relative flex min-h-8 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-1.5 py-1 text-[13px] text-muted hover:bg-surface-2"
+      className={`relative flex min-h-8 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-1.5 py-1 text-[13px] text-muted hover:bg-surface-2 ${className}`}
     >
       <span className="relative flex">
         <Icon.agents className="size-[18px]" />
