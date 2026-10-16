@@ -13,7 +13,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeSettingsFile } from "../claude-settings.ts";
 import { elicitInfo } from "../elicit.ts";
-import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput, WorktreeChoice } from "../protocol.ts";
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
@@ -41,6 +41,8 @@ const REQUEST_MS = 15_000;
 const LATER_WAIT_MS = 20_000;
 // A process started for one question still has to start up and sign in.
 const PROBE_MS = 45_000;
+const STDERR_LINES = 20;
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
 type Requester = { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
 
@@ -66,6 +68,8 @@ export interface StartOptions {
   thinking?: boolean;
   // Applied once Claude Code has started, the way a running session changes them.
   later?: { effort?: EffortName; ultracode?: boolean };
+  // Starts in a worktree Claude Code makes, or opens again, by this name.
+  worktree?: WorktreeChoice;
 }
 
 class InputQueue {
@@ -127,6 +131,9 @@ export class BrokerSession extends SessionCore {
   elicitMs = ELICIT_MS;
   // The Claude Code the process runs, while it runs.
   claudePath?: string;
+  // What Claude Code last wrote to stderr, where it says why it could not start.
+  private stderrLines: string[] = [];
+  private stderrPart = "";
 
   constructor(id: string, cwd: string, history: DisplayItem[] = [], title?: string) {
     super(id, cwd, history, title);
@@ -138,7 +145,11 @@ export class BrokerSession extends SessionCore {
     this.claudePath = opts.claudePath;
     if (opts.fast) this.fastWanted = true;
     if (opts.thinking === false) this.thinking = false;
-    const flags = { ...(opts.ultracode ? { ultracode: true } : {}), ...(opts.fast ? { fastMode: true } : {}) };
+    const flags = {
+      ...(opts.ultracode ? { ultracode: true } : {}),
+      ...(opts.fast ? { fastMode: true } : {}),
+      ...(opts.worktree ? { worktree: { baseRef: opts.worktree.base } } : {}),
+    };
     // The first message waits for the settings applied after start, so its turn already runs with them.
     let ready = () => {};
     if (opts.later) this.input.held = timed(new Promise<void>((r) => (ready = r)), LATER_WAIT_MS).catch(() => {});
@@ -161,11 +172,11 @@ export class BrokerSession extends SessionCore {
         perTaskStopAffordance: true,
         allowDangerouslySkipPermissions: false,
         enableFileCheckpointing: true,
-        extraArgs: { "replay-user-messages": null },
+        extraArgs: { "replay-user-messages": null, ...(opts.worktree ? { worktree: opts.worktree.name } : {}) },
         env: sessionEnv(),
         canUseTool: this.canUseTool,
         onElicitation: this.onElicitation,
-        stderr: () => {},
+        stderr: (data) => this.noteStderr(data),
       },
     });
     this.done = this.consume(this.q);
@@ -181,6 +192,38 @@ export class BrokerSession extends SessionCore {
         this.refreshContext();
       })
       .catch(() => ready());
+  }
+
+  // Resolves once Claude Code has started, or fails with the last line it wrote to stderr.
+  async started(ms: number): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    let late = false;
+    const wait = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        late = true;
+        reject(Error("late"));
+      }, ms);
+    });
+    try {
+      await Promise.race([this.query().initializationResult(), wait]);
+    } catch (e) {
+      const said = this.stderrLines.at(-1) ?? (this.stderrPart.trim() || undefined);
+      if (late) throw Error(`Claude Code did not start in ${Math.round(ms / 1000)}s${said ? `: ${said}` : ""}`);
+      throw said ? Error(`Claude Code could not start: ${said}`) : e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private noteStderr(data: string): void {
+    const lines = (this.stderrPart + data).replace(ANSI, "").split("\n");
+    this.stderrPart = lines.pop() ?? "";
+    this.stderrLines.push(...lines.map((l) => l.trim()).filter(Boolean));
+    this.stderrLines.splice(0, this.stderrLines.length - STDERR_LINES);
+  }
+
+  protected initCwd(cwd: string): void {
+    this.moveTo(cwd);
   }
 
   // Claude Code takes Ultracode only with a model that offers it and workflows on; the conversation says so when it did not.

@@ -3,6 +3,7 @@ import type { AuditEntry, AuditPage } from "../../../../broker/src/admin-protoco
 import { request } from "../../api.ts";
 import { Spinner } from "../../components/ui.tsx";
 import { EFFORT_LABEL, MODE_LABEL, baseName } from "../../labels.ts";
+import { placeLabel } from "../../worktree.ts";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
 
 const PAGE = 30;
@@ -40,6 +41,7 @@ const EVENT_LABEL: Record<string, string> = {
   push_unsubscribe: "알림 끔",
   doctor: "호환성 점검",
   archive: "보관 해제",
+  worktree_remove: "worktree 지우기",
 };
 
 const CALL_LABEL: Record<string, string> = {
@@ -122,11 +124,19 @@ function detail(e: AuditEntry): string {
       return [typeof e.path === "string" ? baseName(e.path) : "", e.ticket && e.outcome === "ok" ? "임시 링크" : "", named(e.outcome, READ_OUTCOME)].filter(Boolean).join(" · ");
     case "new_session":
       return [
-        typeof e.cwd === "string" ? baseName(e.cwd) : "",
+        typeof e.cwd === "string" ? placeLabel(e.cwd) : "",
         e.ultracode ? "Ultracode" : "",
         e.fast ? "Fast" : "",
         e.thinking === false ? "Thinking 끔" : "",
         typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    case "worktree_remove":
+      return [
+        typeof e.path === "string" ? placeLabel(e.path) : "",
+        typeof e.discarded === "number" && e.discarded > 0 ? `바뀐 파일 ${e.discarded}개 버림` : "",
+        typeof e.branchKept === "string" ? "브랜치 남김" : "",
       ]
         .filter(Boolean)
         .join(" · ");

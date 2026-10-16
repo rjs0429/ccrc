@@ -2,11 +2,13 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { SessionSummary } from "../../../broker/src/protocol.ts";
 import { TITLE_MAX, cleanTitle } from "../../../broker/src/titles.ts";
+import { worktreeOf } from "../../../broker/src/worktree-names.ts";
 import { errorText, hostLabel, sessionTitle } from "../labels.ts";
 import { call, patchSession, toast } from "../state.ts";
+import { ArchiveWorktree } from "./sheets/Worktree.tsx";
 import { Button, Choice, Sheet, Spinner } from "./ui.tsx";
 
-type Target = Pick<SessionSummary, "id" | "title" | "state" | "host" | "archived">;
+type Target = Pick<SessionSummary, "id" | "title" | "state" | "host" | "archived"> & { cwd?: string };
 
 const RENAME_HOW: Partial<Record<SessionSummary["state"], string>> = {
   owned: "Claude Code가 이름을 저장합니다.",
@@ -37,7 +39,8 @@ export function renameBlocked(s: Pick<SessionSummary, "state" | "host">): string
 
 // A session's actions: the menu a long press opens and the rename step, which a tap on the chat title opens directly.
 // The step that shows the field commits within the tap, as iOS raises the keyboard only for a focus made there.
-export function SessionActions({ session, step: first, onClose }: { session: Target; step: "menu" | "rename"; onClose: () => void }) {
+// Archiving a session in a worktree goes through a step that offers to remove the worktree too.
+export function SessionActions({ session, step: first, onClose }: { session: Target; step: "menu" | "rename" | "archive"; onClose: () => void }) {
   const [step, setStep] = useState(first);
   // The field starts from, and Save compares with, the name as Claude Code would keep it; a title the list made from
   // the first prompt can run past the limit.
@@ -90,6 +93,7 @@ export function SessionActions({ session, step: first, onClose }: { session: Tar
             )
           }
           onClick={() => {
+            if (!session.archived && session.cwd && worktreeOf(session.cwd)) return setStep("archive");
             setArchived(session.id, !session.archived);
             onClose();
           }}
@@ -97,6 +101,7 @@ export function SessionActions({ session, step: first, onClose }: { session: Tar
       </Sheet>
     );
   }
+  if (step === "archive") return <ArchiveWorktree sessionId={session.id} onClose={onClose} />;
   return (
     <Sheet title="이름 바꾸기" onClose={onClose}>
       <input

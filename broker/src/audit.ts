@@ -29,6 +29,7 @@ export type AuditEvent =
   | "agent_transcript"
   | "call"
   | "archive"
+  | "worktree_remove"
   | "folder_index"
   | "folder_denied"
   | "claude_settings"

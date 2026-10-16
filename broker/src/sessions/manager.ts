@@ -26,8 +26,12 @@ import {
   type SnapshotGap,
   type StartSettings,
   type UsageInfo,
+  type WorktreeChoice,
+  type WorktreeRemoved,
+  type WorktreeStatus,
 } from "../protocol.ts";
 import { cleanTitle } from "../titles.ts";
+import { worktreeBranch, worktreeNameProblem, worktreeOf, worktreePath } from "../worktree-names.ts";
 import { ArchiveStore, transcriptIds } from "./archive-store.ts";
 import { BrokerSession, probeModels, probeUsage, probeWindow, type StartOptions } from "./broker-session.ts";
 import { lastCommands, rememberCommands } from "./commands.ts";
@@ -42,6 +46,7 @@ import type { TurnEnd } from "./outcome.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { agentTranscript, workflowAgents } from "./subagents.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
+import { gitFolderInfo, removeWorktree, worktreeState, worktreeStatus, worktreeTarget, type WorktreeTarget } from "./worktrees.ts";
 import { WrappedSession } from "./wrapped.ts";
 
 const CATALOG_MS = 3000;
@@ -64,11 +69,14 @@ const USAGE_KEEP_MS = 30_000;
 const PROBE_RETRY_MS = 60_000;
 // How long a call waits for a process of this broker that is closing to end.
 const CLOSING_WAIT_MS = 3000;
+// Making a worktree may first fetch origin's default branch, then check the files out.
+const WORKTREE_START_MS = 60_000;
 
 export interface ManagerTiming {
   handoffTurnMs: number;
   handoffOtherMs: number;
   probeRetryMs: number;
+  worktreeStartMs: number;
 }
 
 export interface Snapshot {
@@ -125,6 +133,15 @@ function resumeIn(cwd: string, moved: string | undefined, infos: SDKSessionInfo[
   return (moved && infos.find((i) => i.cwd && projectDirName(i.cwd) === moved)?.cwd) || cwd;
 }
 
+// A session whose worktree is gone starts again in the folder it was made from, and Claude Code goes on there.
+async function worktreeOrigin(sessionId: string, cwd: string): Promise<string | undefined> {
+  const wt = worktreeOf(cwd);
+  if (!wt) return undefined;
+  const file = transcriptPath(sessionId, cwd);
+  const from = (file ? await worktreeState(file) : undefined)?.originalCwd;
+  return [from, wt.root].find((d): d is string => Boolean(d) && isFolder(d!));
+}
+
 // A probe loads no project settings, so any folder serves when the session's is gone.
 const probeDir = (cwd: string): string => (isFolder(cwd) ? cwd : os.homedir());
 
@@ -175,7 +192,7 @@ export class SessionManager extends EventEmitter {
     super();
     this.cfg = cfg;
     this.audit = audit;
-    this.timing = { handoffTurnMs: HANDOFF_TURN_MS, handoffOtherMs: HANDOFF_OTHER_MS, probeRetryMs: PROBE_RETRY_MS, ...timing };
+    this.timing = { handoffTurnMs: HANDOFF_TURN_MS, handoffOtherMs: HANDOFF_OTHER_MS, probeRetryMs: PROBE_RETRY_MS, worktreeStartMs: WORKTREE_START_MS, ...timing };
     this.cli = new ClaudeCli({ setting: cfg.claudePath });
     this.sweeper = setInterval(() => void this.sweep(), SWEEP_MS);
     this.sweeper.unref();
@@ -246,7 +263,11 @@ export class SessionManager extends EventEmitter {
       if (!folders.has(dir)) folders.set(dir, isFolder(dir));
       return folders.get(dir);
     };
-    const missing = (sessionId: string, cwd: string) => !exists(resumeIn(cwd, movedTo(sessionId, cwd), infos));
+    const missing = (sessionId: string, cwd: string) => {
+      const dir = resumeIn(cwd, movedTo(sessionId, cwd), infos);
+      const wt = worktreeOf(dir);
+      return !exists(dir) && !(wt && exists(wt.root));
+    };
     const out: SessionSummary[] = infos.map((info) => {
       const s = this.controlled(info.sessionId);
       if (s) return summary(s, info);
@@ -360,6 +381,8 @@ export class SessionManager extends EventEmitter {
     const ended = this.ended.get(sessionId);
     const context = await this.lastGauge(sessionId, cwd, () => void this.restate(sessionId));
     const start = l ? undefined : this.starts.get(sessionId);
+    const folder = await this.resumeFolder(sessionId, cwd);
+    const origin = l || isFolder(folder) ? undefined : await worktreeOrigin(sessionId, folder);
     return {
       sessionId,
       cwd,
@@ -370,7 +393,7 @@ export class SessionManager extends EventEmitter {
       ...(ended ? { closedReason: ended.reason } : {}),
       ...(context ? { context } : {}),
       ...(start ? { start } : {}),
-      ...(l || isFolder(await this.resumeFolder(sessionId, cwd)) ? {} : { folderMissing: true }),
+      ...(l || isFolder(folder) ? {} : origin ? { resumeIn: origin } : { folderMissing: true }),
     };
   }
 
@@ -466,7 +489,8 @@ export class SessionManager extends EventEmitter {
     const p = (async (): Promise<SessionCore> => {
       const info = await this.info(sessionId);
       if (!info?.cwd) throw Error("unknown session");
-      const cwd = await this.resumeFolder(sessionId, info.cwd);
+      const folder = await this.resumeFolder(sessionId, info.cwd);
+      const cwd = isFolder(folder) ? folder : ((await worktreeOrigin(sessionId, folder)) ?? folder);
       if (!isFolder(cwd)) throw Error(`working folder is missing: ${cwd}`);
       const history = await loadHistory(sessionId, cwd);
       const cli = await this.claude();
@@ -500,15 +524,42 @@ export class SessionManager extends EventEmitter {
 
   async create(
     cwd: string,
-    opts: { model?: string; mode?: PermissionModeName; effort?: EffortName; ultracode?: boolean; fast?: boolean; thinking?: boolean },
+    opts: { model?: string; mode?: PermissionModeName; effort?: EffortName; ultracode?: boolean; fast?: boolean; thinking?: boolean; worktree?: WorktreeChoice },
   ): Promise<BrokerSession> {
     const dir = await this.resolveFolder(cwd);
+    const made = opts.worktree ? await this.worktreeFor(dir, opts.worktree) : undefined;
     const cli = await this.claude();
     const s = new BrokerSession(randomUUID(), dir);
     this.adopt(s);
     s.start({ ...opts, claudePath: cli.path });
     this.logCli(s.id, cli);
+    if (opts.worktree) await this.inWorktree(s, made);
     return s;
+  }
+
+  // Where Claude Code will make the worktree: under the repository's root, or wherever a WorktreeCreate hook says. A name
+  // whose branch is left without its worktree is refused, since Claude Code would move that branch to the new base.
+  private async worktreeFor(dir: string, w: WorktreeChoice): Promise<string | undefined> {
+    const problem = worktreeNameProblem(w.name);
+    if (problem) throw Error(`invalid worktree name: ${problem}`);
+    const info = await gitFolderInfo(dir);
+    if (info.hook) return undefined;
+    if (!info.repo || !info.root) throw Error("not a git repository");
+    if (!info.head) throw Error("repository has no commits");
+    if (info.blocked.includes(w.name)) throw Error(`branch ${worktreeBranch(w.name)} already exists`);
+    return worktreePath(info.root, w.name);
+  }
+
+  // Claude Code makes the worktree before it answers initialize, and goes on in it. A start that fails leaves no session.
+  private async inWorktree(s: BrokerSession, place?: string): Promise<void> {
+    try {
+      await s.started(this.timing.worktreeStartMs);
+    } catch (e) {
+      await s.close("failed");
+      for (const d of ["file-history", "session-env"]) fs.rmSync(path.join(path.dirname(claudeSettingsFile()), d, s.id), { recursive: true, force: true });
+      throw e;
+    }
+    if (place && isFolder(place)) s.moveTo(place);
   }
 
   // The Claude Code to start now; the ones running sessions use stay.
@@ -636,7 +687,47 @@ export class SessionManager extends EventEmitter {
         return this.rename(sessionId, typeof args.title === "string" ? args.title : "");
       case "archive":
         return this.setArchived(sessionId, args.archived === true);
+      case "worktree_status":
+        return this.worktreeStatus(sessionId);
+      case "worktree_remove":
+        return this.worktreeRemove(sessionId, args.discard === true);
     }
+  }
+
+  // The worktree Claude Code made for the session, as its transcript records it or its folder shows.
+  private async worktreeOfSession(sessionId: string): Promise<WorktreeTarget> {
+    const cwd = await this.cwdOf(sessionId);
+    const file = transcriptPath(sessionId, cwd);
+    const t = worktreeTarget(cwd, file ? await worktreeState(file) : undefined);
+    if (!t) throw Error("not a worktree session");
+    return t;
+  }
+
+  // Where a process works in the worktree: this session's, or any other session's, here or elsewhere.
+  private worktreeUser(sessionId: string, dir: string): string | undefined {
+    const inside = (cwd?: string) => Boolean(cwd) && (cwd === dir || cwd!.startsWith(dir + "/"));
+    if (this.starting.has(sessionId) || this.claiming.has(sessionId)) return "ccrc";
+    for (const s of [...this.owned.values(), ...this.wrapped.values()]) if (!s.closed && (s.id === sessionId || inside(s.cwd))) return s.host;
+    return liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId || inside(l.cwd))?.host;
+  }
+
+  async worktreeStatus(sessionId: string): Promise<WorktreeStatus> {
+    const t = await this.worktreeOfSession(sessionId);
+    const st = await worktreeStatus(t);
+    const running = this.worktreeUser(sessionId, t.path);
+    return running ? { ...st, running } : st;
+  }
+
+  // Only by the user's hand, and never while a process works in the worktree.
+  async worktreeRemove(sessionId: string, discard: boolean): Promise<WorktreeRemoved> {
+    const t = await this.worktreeOfSession(sessionId);
+    const running = this.worktreeUser(sessionId, t.path);
+    if (running) throw Error(`worktree is in use in ${running}`);
+    const done = await removeWorktree(t, discard);
+    this.catalog = undefined;
+    this.emit("changed");
+    await this.restate(sessionId).catch(() => {});
+    return done;
   }
 
   // The new-session screen's calls about a folder resolveFolder allowed. `indexed` hears of a file listing made for it.
@@ -648,6 +739,8 @@ export class SessionManager extends EventEmitter {
         return lastCommands(dir);
       case "usage":
         return this.accountUsageFor(dir);
+      case "git":
+        return gitFolderInfo(dir);
     }
   }
 
@@ -909,6 +1002,10 @@ export class SessionManager extends EventEmitter {
       if (this.current(s)) this.emit("turn_end", s.id, end);
     });
     s.on("title", () => {
+      this.catalog = undefined;
+      this.emit("changed");
+    });
+    s.on("cwd", () => {
       this.catalog = undefined;
       this.emit("changed");
     });

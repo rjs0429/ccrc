@@ -20,14 +20,17 @@ import { AgentMapSheet } from "../components/sheets/AgentMap.tsx";
 import { agentMap } from "../components/agents/tree.ts";
 import { ThreadSheet, type ShownThread } from "../components/sheets/Thread.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
+import { WorktreeSheet } from "../components/sheets/Worktree.tsx";
 import { Choice, Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import { dayLines, streamLine } from "../components/stamps.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
-import { baseName, closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
+import { closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
 import { call, composerInsert, focusDone, navigate, openAt, openSettingsFrom, send, toast, useApp } from "../state.ts";
 import { takeSent } from "../sentPreviews.ts";
+import { worktreeOf } from "../../../broker/src/worktree-names.ts";
+import { placeLabel, shownBranch } from "../worktree.ts";
 
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
@@ -86,6 +89,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [starting, setStarting] = useState(false);
   const [sentStart, setSentStart] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   // A smooth scroll to the bottom from the jump button, until it lands or the user touches the list; a touch
@@ -132,7 +137,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const named = summary?.title || st?.title || "";
   const title = sessionTitle({ title: named });
   const archived = Boolean(summary?.archived);
-  const renameTarget = { id: sessionId, title: named, state: kind, host: st?.host ?? summary?.host, archived };
+  const renameTarget = { id: sessionId, title: named, state: kind, host: st?.host ?? summary?.host, archived, cwd };
+  const worktree = worktreeOf(cwd);
   const renameRefused = renameBlocked(renameTarget);
   // The header's title and the line under it are one button to rename, its padding reaching over the header's height
   // as the back button's does. The sheet opens within the tap, so its field can take the keyboard on iOS.
@@ -360,8 +366,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
               <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted">
                 {archived && <ArchivedBadge />}
                 <span className="truncate">
-                  {baseName(cwd)}
-                  {summary?.branch && summary.branch !== "HEAD" ? ` · ${summary.branch}` : ""} · {status}
+                  {placeLabel(cwd)}
+                  {shownBranch(cwd, summary?.branch) ? ` · ${summary?.branch}` : ""} · {status}
                 </span>
               </span>
             </span>
@@ -463,10 +469,17 @@ export function Chat({ sessionId }: { sessionId: string }) {
                     </p>
                   ) : (
                     <>
-                      <p className="min-w-0 flex-1 break-keep text-balance">
-                        <span className="block">{closedText(st?.closedReason) || "꺼져 있는 세션입니다."}</span>
-                        <span className="block">메시지를 보내면 이어서 실행합니다.</span>
-                      </p>
+                      {st?.resumeIn ? (
+                        <p className="min-w-0 flex-1 break-keep text-balance" data-resume-in>
+                          <span className="block">worktree가 지워져 원래{"\u00a0"}폴더에서 이어서 실행합니다.</span>
+                          <span className="mt-0.5 block text-xs break-all">{shortPath(st.resumeIn)}</span>
+                        </p>
+                      ) : (
+                        <p className="min-w-0 flex-1 break-keep text-balance">
+                          <span className="block">{closedText(st?.closedReason) || "꺼져 있는 세션입니다."}</span>
+                          <span className="block">메시지를 보내면 이어서 실행합니다.</span>
+                        </p>
+                      )}
                       <button onClick={startNow} disabled={starting} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent disabled:opacity-50">
                         {starting ? "시작하는 중…" : "지금 시작"}
                       </button>
@@ -528,8 +541,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
           <Choice
             label={archived ? "보관 해제" : "보관하기"}
             hint={archived ? "목록에 다시 보입니다" : "ccrc 목록에서만 숨깁니다"}
-            onClick={() => (setArchived(sessionId, !archived), setMenu(false))}
+            onClick={() => (!archived && worktree ? setArchiving(true) : setArchived(sessionId, !archived), setMenu(false))}
           />
+          {worktree && <Choice label="worktree 정리" hint={`worktree ${worktree.name}의 남은 작업을 보고 지웁니다`} onClick={() => (setCleaning(true), setMenu(false))} />}
           <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
           <Choice label="Context와 사용량" hint="Context, 요금제 사용량, Compact" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
           <Choice label="에이전트 지도" hint="에이전트와 백그라운드 작업 보기·중지" onClick={() => (setSheet("agents"), setMenu(false))} />
@@ -571,6 +585,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
       )}
       {thread && <ThreadSheet thread={thread} onClose={() => setThread(null)} />}
       {renaming && <SessionActions session={renameTarget} step="rename" onClose={() => setRenaming(false)} />}
+      {archiving && <SessionActions session={renameTarget} step="archive" onClose={() => setArchiving(false)} />}
+      {cleaning && <WorktreeSheet sessionId={sessionId} onClose={() => setCleaning(false)} />}
       {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "agents" && (
         <AgentMapSheet sessionId={sessionId} title={title} controllable={controllable} onClose={() => setSheet(null)} onJump={jumpTo} onPending={jumpToRequest} onFile={openFile} />

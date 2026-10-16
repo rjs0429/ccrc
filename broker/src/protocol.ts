@@ -251,6 +251,61 @@ export interface StartSettings {
   thinking?: boolean;
 }
 
+// A new session's own worktree, made by Claude Code (--worktree). base: what its branch starts from, origin's default
+// branch ("fresh", the local HEAD when there is none) or the folder's HEAD.
+export interface WorktreeChoice {
+  name: string;
+  base: "fresh" | "head";
+}
+
+// Whether a new session can start in a worktree of the folder. root: the checkout worktrees go under; origin: the ref
+// "fresh" starts from when known here, "origin" when only the remote is; hook: a WorktreeCreate hook makes it instead.
+// existing: worktrees Claude Code opens again by that name; blocked: names whose branch is left without its worktree.
+export interface GitFolderInfo {
+  repo: boolean;
+  root?: string;
+  branch?: string;
+  head?: string;
+  origin?: string;
+  hook: boolean;
+  suggested: string;
+  existing: string[];
+  blocked: string[];
+}
+
+// A session's worktree as it is now. changed: files git status lists; commits: commits no other branch or remote has;
+// lock: claude when Claude Code put it, alive while its process runs; running: where a process works in it.
+export interface WorktreeStatus {
+  path: string;
+  name: string;
+  root: string;
+  branch?: string;
+  exists: boolean;
+  registered: boolean;
+  changed: number;
+  commits: number;
+  lock?: { claude: boolean; alive: boolean; reason?: string };
+  running?: string;
+  ignored: boolean;
+}
+
+// What removing a worktree did: the branch stays when it holds commits no other branch or remote has.
+export interface WorktreeRemoved {
+  path: string;
+  branch?: string;
+  branchKept: boolean;
+  commits: number;
+  discarded: number;
+}
+
+// The worktree calls: about a session's worktree, and (git) about a folder before a session starts in it.
+export interface CallMap {
+  git: { args: Record<string, never>; data: GitFolderInfo };
+  worktree_status: { args: Record<string, never>; data: WorktreeStatus };
+  // discard: the user agreed a second time to drop changed files, or to leave commits on a kept branch.
+  worktree_remove: { args: { discard: boolean }; data: WorktreeRemoved };
+}
+
 // One of the plan's usage limits. kind: "session", "weekly_all", "weekly_scoped", ...; scope names the model
 // or surface a scoped limit is for; severity is Claude's reading of it ("normal", "warning", "critical").
 export interface UsageLimit {
@@ -321,11 +376,12 @@ export interface CallMap {
 export type CallOp = keyof CallMap;
 export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume", "output_style", "set_output_style", "unqueue", "rename", "archive"];
 // The calls the new-session screen makes about a folder before any session runs in it.
-export type FolderOp = "files" | "commands" | "usage";
-export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage"];
+export type FolderOp = "files" | "commands" | "usage" | "git";
+export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage", "git"];
 
 // The agent map's reads, about one session like the calls above.
 CALL_OPS.push("agent_transcript", "task_output", "workflow_agents");
+CALL_OPS.push("worktree_status", "worktree_remove");
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {
@@ -452,6 +508,8 @@ export interface LiveState {
   closedReason?: string;
   tasks?: TaskInfo[];
   folderMissing?: boolean;
+  // A session whose worktree is gone starts again here, the folder it was made from.
+  resumeIn?: string;
   // In the order Claude Code takes them in.
   queued?: QueuedMessage[];
   // Fast mode as Claude Code last reported it, with its reason when it cannot run; fastWanted: a change asked for here
@@ -485,6 +543,7 @@ export type ClientMsg =
       thinking?: boolean;
       attachments?: string[];
       draftId?: string;
+      worktree?: WorktreeChoice;
     }
   | { t: "answer"; sessionId: string; requestId: string; answer: Answer }
   | { t: "interrupt"; sessionId: string }
