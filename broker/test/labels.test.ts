@@ -67,3 +67,10 @@ test("taking back a message VS Code's wrapper no longer holds reads as already r
     assert.equal(errorText(message), "Claude Code가 이미 받은 메시지라 되돌릴 수 없습니다", message);
   }
 });
+
+test("a rename refused by the broker, Claude Code or an old wrapper reads in Korean", () => {
+  assert.equal(errorText("title must be non-empty"), "이름을 입력하세요");
+  assert.equal(errorText("cannot rename while open in Terminal"), "터미널에서 열려 있어 여기서는 이름을 바꿀 수 없습니다. 그곳에서 바꾸거나 닫은 뒤 다시 시도하세요");
+  assert.match(errorText("session_id is not the current session"), /^VS Code에서 이 세션이 다른 대화로 바뀌었습니다/);
+  assert.match(errorText("rejected by the wrapper: request not allowed"), /VS Code에서 세션을 다시 연 뒤/);
+});

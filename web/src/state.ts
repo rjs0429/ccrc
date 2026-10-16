@@ -179,6 +179,11 @@ export async function refreshSessions(): Promise<void> {
   }
 }
 
+// Changes a session of the list at once, ahead of the broker's next list.
+export function patchSession(sessionId: string, patch: Partial<SessionSummary>): void {
+  setState((s) => (s.sessions ? { sessions: s.sessions.map((x) => (x.id === sessionId ? { ...x, ...patch } : x)) } : {}));
+}
+
 export async function refreshOptions(): Promise<void> {
   try {
     setState({ options: await api.options() });

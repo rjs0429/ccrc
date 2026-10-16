@@ -139,6 +139,21 @@ test("title matches come first, then content matches by recency", async () => {
   assert.deepEqual(r.results[0].titleMarks, [[0, 4]]);
 });
 
+test("an archived session is found with its mark, by the name it was given", async () => {
+  const [a, b] = [sid(), sid()];
+  write(a, [row(a, "user", "처음 질문")]);
+  write(b, [row(b, "user", "다른 질문")]);
+  const list = [{ ...summary(a, "새로 붙인 이름표", 2), archived: true }, summary(b, "이름표 없음", 1)];
+  const r = await new SessionSearch().search("이름표", list);
+  assert.deepEqual(
+    r.results.map((x) => [x.id, x.archived]),
+    [
+      [a, true],
+      [b, undefined],
+    ],
+  );
+});
+
 test("every word must appear, in the title or the conversation; Korean in any normal form matches", async () => {
   const [a, b] = [sid(), sid()];
   write(a, [row(a, "user", "휴대폰에서 검색"), row(a, "assistant", [{ type: "text", text: "Index ready" }])]);

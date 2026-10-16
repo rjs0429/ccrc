@@ -23,6 +23,8 @@ export interface SessionSummary {
   pendingCount?: number;
   // A session without a process whose working folder is gone: Claude Code cannot start in it.
   folderMissing?: boolean;
+  // Archived in ccrc: left out of the full list here, and nowhere else.
+  archived?: boolean;
 }
 
 export interface ToolResult {
@@ -267,9 +269,13 @@ export interface CallMap {
   set_output_style: { args: { style: string }; data: OutputStyleInfo };
   // Takes back a message sent from here that Claude Code has not taken in yet.
   unqueue: { args: { messageId: string }; data: Record<string, never> };
+  // Names the session where Claude Code keeps names; data.title: the name as Claude Code keeps it.
+  rename: { args: { title: string }; data: { title: string } };
+  // Leaves the session out of ccrc's full list, or brings it back.
+  archive: { args: { archived: boolean }; data: { archived: boolean } };
 }
 export type CallOp = keyof CallMap;
-export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume", "output_style", "set_output_style", "unqueue"];
+export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume", "output_style", "set_output_style", "unqueue", "rename", "archive"];
 // The calls the new-session screen makes about a folder before any session runs in it.
 export type FolderOp = "files" | "commands" | "usage";
 export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage"];

@@ -1222,3 +1222,23 @@ test("messages Claude Code passes on never queue or show as the user's, and leav
     ],
   );
 });
+
+test("a rename goes to Claude Code as the user's own, and only this session's announced name is taken", async () => {
+  const { s, wrapper } = await session();
+  const asked: Msg[] = [];
+  wrapper.autoReply((r) => (asked.push(r), r.title === "old wrapper" ? Error("rejected by the wrapper: request not allowed") : {}));
+  const titles: string[] = [];
+  s.on("title", () => titles.push(s.title ?? ""));
+  await s.rename("새 이름");
+  assert.deepEqual(asked, [{ subtype: "rename_session", title: "새 이름", source: "host", session_id: SID }]);
+  assert.equal(s.title, "새 이름");
+  assert.equal(s.state().title, "새 이름");
+  await assert.rejects(s.rename("old wrapper"), /request not allowed/);
+  assert.equal(s.title, "새 이름");
+  wrapper.out({ type: "system", subtype: "session_title_changed", title: "다른 세션", session_id: "0b7cf2a4-0000-4000-8000-000000000000" });
+  wrapper.out({ type: "system", subtype: "session_title_changed", title: ` VS Code에서${String.fromCodePoint(0x200b)}바꾼 이름 `, session_id: SID });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(s.title, "VS Code에서 바꾼 이름");
+  assert.deepEqual(titles, ["새 이름", "VS Code에서 바꾼 이름"]);
+  assert.deepEqual(s.builder.items, [], "the announcements add nothing to the conversation");
+});

@@ -273,6 +273,7 @@ export class SessionSearch {
       titleMarks: inTitle.some(Boolean) ? marksIn(title, res) : [],
       hits: hits.size,
       snippets: e ? picked.map(([i]) => snippetOf(e, i, res)) : [],
+      ...(s.archived ? { archived: true } : {}),
     };
   }
 

@@ -46,6 +46,7 @@ const REMOTE_REQUESTS = new Set([
   "stop_task",
   "read_file",
   "cancel_async_message",
+  "rename_session",
 ]);
 // Broker requests after which VS Code is told to read the applied settings again.
 const SETTINGS_CHANGES = new Set(["set_model", "apply_flag_settings"]);
@@ -155,6 +156,23 @@ export function allowedReadFile(req: Record<string, unknown>): boolean {
     !path.includes("\0") &&
     (max === undefined || (Number.isSafeInteger(max) && (max as number) > 0 && (max as number) <= READ_FILE_MAX_BYTES)) &&
     (encoding === undefined || encoding === "utf-8" || encoding === "base64")
+  );
+}
+
+const RENAME_KEYS = new Set(["subtype", "title", "source", "session_id"]);
+const RENAME_TITLE_MAX = 1000;
+
+// rename_session names only the session this process runs now, as a rename the user made ("host").
+export function allowedRename(req: Record<string, unknown>, sessionId: string | undefined): boolean {
+  const { title } = req;
+  return (
+    Object.keys(req).every((k) => RENAME_KEYS.has(k)) &&
+    typeof title === "string" &&
+    title.length > 0 &&
+    title.length <= RENAME_TITLE_MAX &&
+    req.source === "host" &&
+    typeof sessionId === "string" &&
+    req.session_id === sessionId
   );
 }
 
@@ -644,6 +662,7 @@ export class Relay extends EventEmitter {
       if (req.subtype === "set_permission_mode" && req.mode === "bypassPermissions") return reject("mode not allowed", m.request_id);
       if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
       if (req.subtype === "read_file" && !allowedReadFile(req)) return reject("invalid request", m.request_id);
+      if (req.subtype === "rename_session" && !allowedRename(req, this.sessionId)) return reject("invalid request", m.request_id);
       if (req.subtype === "update_settings" && !allowedUpdateSettings(req, this.styles)) return reject("setting not allowed", m.request_id);
       // Only a message the broker sent may be taken back; VS Code shows a cancelled message of its own as sent.
       if (req.subtype === "cancel_async_message" && !this.cancellable(req)) return reject("message not allowed", m.request_id);

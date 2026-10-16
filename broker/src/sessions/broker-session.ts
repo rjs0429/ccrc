@@ -265,6 +265,12 @@ export class BrokerSession extends SessionCore {
     await timed(this.query().stopTask(this.runningTask(taskId)), REQUEST_MS);
   }
 
+  // "host": a rename made by the user in the program that runs Claude Code, as VS Code sends it.
+  async rename(title: string): Promise<void> {
+    await this.request({ subtype: "rename_session", title, source: "host", session_id: this.id });
+    this.setTitle(title);
+  }
+
   protected async cancelQueued(messageId: string): Promise<boolean> {
     if (this.input.remove(messageId)) {
       if (this.input.untouched) this.busy = false;
