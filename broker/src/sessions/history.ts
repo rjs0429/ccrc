@@ -70,6 +70,14 @@ interface FileRow {
   contextUsage?: unknown;
 }
 
+// The structured tool outputs items are built from: file patches, subagent totals, question answers, edited plans,
+// and the ids a subagent's or workflow's transcript is kept under.
+const OUTPUT_KEYS = ["structuredPatch", "totalToolUseCount", "answers", "planWasEdited", "agentId", "runId"];
+
+export function usedOutput(out: unknown): boolean {
+  return out !== null && typeof out === "object" && OUTPUT_KEYS.some((k) => k in out);
+}
+
 // A local command's result row, which the SDK's reader returns without its subtype and content.
 function commandRow(e: FileRow): Row["command"] {
   if (e.type !== "system" || e.subtype !== "local_command" || typeof e.content !== "string") return undefined;
@@ -77,8 +85,7 @@ function commandRow(e: FileRow): Row["command"] {
 }
 
 // The SDK's session reader resolves the conversation chain but drops timestamps, structured tool
-// output and local command results; take them from the file. Only the outputs items are built from
-// (file patches, subagent totals, question answers, edited plans) are kept.
+// output and local command results; take them from the file. Only the outputs items are built from are kept.
 async function rows(file: string): Promise<{ map: Map<string, Row>; after: Map<string, string> }> {
   const map = new Map<string, Row>();
   const after = new Map<string, string>();
@@ -88,7 +95,7 @@ async function rows(file: string): Promise<{ map: Map<string, Row>; after: Map<s
     try {
       const e = JSON.parse(line) as FileRow;
       const out = e.toolUseResult;
-      const used = out !== null && typeof out === "object" && ["structuredPatch", "totalToolUseCount", "answers", "planWasEdited"].some((k) => k in out);
+      const used = usedOutput(out);
       const command = commandRow(e);
       if (!e.uuid) continue;
       map.set(e.uuid, { timestamp: e.timestamp, ...(used ? { toolUseResult: out } : {}), ...(command ? { command } : {}) });

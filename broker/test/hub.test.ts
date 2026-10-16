@@ -222,3 +222,30 @@ test("a session counts as opened when it is viewed in a visible window, or the w
   assert.deepEqual(manager.seen, [A, B], "nothing is open");
   hub.close();
 });
+
+test("opening a subagent's transcript is written to the audit log; following it, paging back and reading output are not", async () => {
+  const manager = new FakeManager();
+  const leases = Object.assign(new EventEmitter(), { validate: () => true }) as unknown as Leases;
+  const logged: [string, Record<string, unknown>][] = [];
+  const audit = { log: (event: string, detail: Record<string, unknown>) => logged.push([event, detail]) } as unknown as Audit;
+  const hub = new Hub(manager as unknown as SessionManager, leases, audit, new Uploads(tempDir()));
+  const ws = new FakeSocket();
+  hub.attach(ws as never, "phone", "token");
+  const calls: [string, Record<string, unknown>][] = [
+    ["agent_transcript", { agentId: "a1b2" }],
+    ["agent_transcript", { agentId: "a1b2", after: { count: 3, lastId: "x" } }],
+    ["agent_transcript", { agentId: "a1b2", before: 150 }],
+    ["agent_transcript", { toolUseId: "toolu_9", agentId: "../x" }],
+    ["task_output", { taskId: "b1" }],
+    ["workflow_agents", { runId: "wf_1" }],
+  ];
+  calls.forEach(([op, args], n) => ws.emit("message", JSON.stringify({ t: "call", id: n + 1, sessionId: A, op, args })));
+  await sleep(50);
+  assert.deepEqual(logged, [
+    ["agent_transcript", { device: "phone", sessionId: A, agentId: "a1b2" }],
+    ["agent_transcript", { device: "phone", sessionId: A, toolUseId: "toolu_9" }],
+  ]);
+  const results = ws.sent.filter((m) => m.t === "call_result");
+  assert.ok(results.length === calls.length && results.every((r) => r.ok), JSON.stringify(results));
+  hub.close();
+});

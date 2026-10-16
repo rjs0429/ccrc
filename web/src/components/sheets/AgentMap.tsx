@@ -1,11 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ModelOption, TaskInfo, WorkflowAgent, WorkflowAgentState } from "../../../../broker/src/protocol.ts";
+import type { ModelOption, TaskInfo, WorkflowAgent, WorkflowAgentState, WorkflowInfo } from "../../../../broker/src/protocol.ts";
 import { duration, errorText, modelLabel, taskKindLabel } from "../../labels.ts";
 import { call, useApp } from "../../state.ts";
+import type { TranscriptRef } from "../agents/links.ts";
+import { SHELL_KINDS } from "../agents/output.ts";
+import { ShellOutput } from "../agents/ShellOutput.tsx";
+import { Transcript } from "../agents/Transcript.tsx";
 import { agentMap, elapsed, findNode, type AgentMap, type AgentNode, type NodeStatus } from "../agents/tree.ts";
 import { Icon, Sheet } from "../ui.tsx";
 import { tokens } from "./Context.tsx";
-import { SmallButton } from "./parts.tsx";
+import { SmallButton, Waiting } from "./parts.tsx";
 
 const NO_MODELS: ModelOption[] = [];
 // Deeper levels stay at this indent and name their depth.
@@ -22,6 +26,8 @@ const STATUS_LABEL: Record<NodeStatus, string> = {
   unknown: "결과 모름",
 };
 const AGENT_STATE_LABEL: Record<WorkflowAgentState, string> = { queued: "대기", running: "실행 중", done: "완료", failed: "실패" };
+const agentMark = (a: WorkflowAgent, ended?: boolean): NodeStatus | "queued" =>
+  a.state === "done" ? "completed" : a.state === "failed" ? "failed" : ended ? "stopped" : a.state;
 const TASK_STATUS: Record<TaskInfo["status"], NodeStatus> = { running: "running", completed: "completed", failed: "failed", stopped: "stopped" };
 
 function Mark({ status, small }: { status: NodeStatus | "queued"; small?: boolean }) {
@@ -91,17 +97,31 @@ function agentLine(n: AgentNode): string {
   return [kindText(n), n.tokens !== undefined ? `${tokens(n.tokens)} 토큰` : "", n.tools ? `도구 ${n.tools}회` : ""].filter(Boolean).join(" · ");
 }
 
-function WorkflowAgentRow({ a }: { a: WorkflowAgent }) {
-  return (
-    <div className="flex items-center gap-2 py-1 text-[13px]" data-workflow-agent={a.label}>
-      <Mark status={a.state === "done" ? "completed" : a.state === "failed" ? "failed" : a.state} small />
+// A workflow agent's row; one whose id is known opens its transcript.
+function WorkflowAgentRow({ a, onRead }: { a: WorkflowAgent; onRead: (r: TranscriptRef) => void }) {
+  const body = (
+    <>
+      <Mark status={agentMark(a)} small />
       <span className="min-w-0 flex-1 truncate">{a.label}</span>
       <span className="shrink-0 text-xs text-muted">{[a.tokens ? tokens(a.tokens) : "", a.state === "failed" ? "오류" : a.activity].filter(Boolean).join(" · ")}</span>
-    </div>
+    </>
+  );
+  if (!a.id) {
+    return (
+      <div className="flex items-center gap-2 py-1 text-[13px]" data-workflow-agent={a.label}>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <button onClick={() => onRead({ agentId: a.id, title: a.label })} className="flex min-h-9 w-full items-center gap-2 py-1 text-left text-[13px]" data-workflow-agent={a.label}>
+      {body}
+      <Icon.chevronRight className="size-3.5 shrink-0 text-muted" />
+    </button>
   );
 }
 
-function NodeRow({ node, level, clock, onOpen }: { node: AgentNode; level: number; clock: Clock; onOpen: (n: AgentNode) => void }) {
+function NodeRow({ node, level, clock, onOpen, onRead }: { node: AgentNode; level: number; clock: Clock; onOpen: (n: AgentNode) => void; onRead: (r: TranscriptRef) => void }) {
   const [all, setAll] = useState(false);
   const running = live(node);
   const agents = node.progress?.agents ?? [];
@@ -133,7 +153,7 @@ function NodeRow({ node, level, clock, onOpen }: { node: AgentNode; level: numbe
       {shownAgents.length > 0 && (
         <div className="mb-1 ml-8 border-l border-muted/40 pl-2">
           {shownAgents.map((a, n) => (
-            <WorkflowAgentRow key={`${a.label}-${n}`} a={a} />
+            <WorkflowAgentRow key={`${a.label}-${n}`} a={a} onRead={onRead} />
           ))}
         </div>
       )}
@@ -145,7 +165,7 @@ function NodeRow({ node, level, clock, onOpen }: { node: AgentNode; level: numbe
       {node.children.length > 0 && (
         <div className={deep || level >= MAX_INDENT ? "" : "ml-3 border-l border-muted/40 pl-1"}>
           {node.children.map((c) => (
-            <NodeRow key={c.key} node={c} level={level + 1} clock={clock} onOpen={onOpen} />
+            <NodeRow key={c.key} node={c} level={level + 1} clock={clock} onOpen={onOpen} onRead={onRead} />
           ))}
         </div>
       )}
@@ -228,13 +248,23 @@ interface DetailProps {
   onStop: (taskId: string) => void;
   onJump: (itemId: string) => void;
   onPending: (requestId: string) => void;
+  onRead: (r: TranscriptRef) => void;
 }
 
-function Actions({ node, canStop, stopping, onStop, onJump, stopLabel }: Pick<DetailProps, "canStop" | "stopping" | "onStop" | "onJump"> & { node: AgentNode; stopLabel: string }) {
+// The transcript of a subagent on the map: by its id, and by its Agent call for one whose id is not known.
+const transcriptOf = (n: AgentNode): TranscriptRef => ({ ...(n.agentId ? { agentId: n.agentId } : {}), ...(n.itemId ? { toolUseId: n.itemId } : {}), title: n.title });
+
+function Actions({ node, canStop, stopping, onStop, onJump, onRead, stopLabel }: Pick<DetailProps, "canStop" | "stopping" | "onStop" | "onJump" | "onRead"> & { node: AgentNode; stopLabel: string }) {
   const stoppable = canStop && node.task?.status === "running";
-  if (!node.itemId && !stoppable) return null;
+  const readable = !node.workflow && Boolean(node.agentId || node.itemId);
+  if (!node.itemId && !stoppable && !readable) return null;
   return (
     <div className="mt-4 flex items-center gap-2">
+      {readable && (
+        <SmallButton tall onClick={() => onRead(transcriptOf(node))}>
+          기록 보기
+        </SmallButton>
+      )}
       {node.itemId && (
         <SmallButton tall onClick={() => onJump(node.itemId!)}>
           대화에서 보기
@@ -259,7 +289,91 @@ function Back({ onBack }: { onBack: () => void }) {
   );
 }
 
-function AgentDetail({ node, gone, parent, clock, canStop, stopping, error, onBack, onStop, onJump, onPending }: DetailProps & { node: AgentNode }) {
+// A workflow's phases, each done once all its agents are, and the one it is in now.
+function Phases({ p }: { p: WorkflowInfo }) {
+  return (
+    <Field label="단계">
+      <ol className="space-y-0.5">
+        {p.phases.map((title, i) => {
+          const agents = p.agents.filter((a) => a.phase === i);
+          const done = agents.length > 0 && agents.every((a) => a.state === "done");
+          const current = i === p.phase && !done;
+          return (
+            <li key={i} className={`flex items-center gap-2 ${current ? "font-medium" : "text-muted"}`} data-phase={title}>
+              {done ? <Icon.check className="size-3.5 text-ok" /> : current ? <span className="mx-0.5 size-2.5 rounded-full bg-accent" /> : <span className="mx-0.5 size-2.5 rounded-full border border-muted" />}
+              {title}
+            </li>
+          );
+        })}
+      </ol>
+    </Field>
+  );
+}
+
+// A workflow's agents; one whose id is known opens its transcript. ended: the workflow is over, so an agent the
+// journal leaves running never finished.
+function WorkflowAgents({ p, ended, onRead }: { p: WorkflowInfo; ended?: boolean; onRead: (r: TranscriptRef) => void }) {
+  return (
+    <Field label={`에이전트 ${p.total}`}>
+      {p.agents.map((a, n) => {
+        const body = (
+          <>
+            <span className="mt-0.5">
+              <Mark status={agentMark(a, ended)} small />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{a.label}</span>
+              <span className="block text-xs text-muted">
+                {[ended && a.state === "running" ? "끝나지 않음" : AGENT_STATE_LABEL[a.state], ended && p.phases.length > 1 && a.phase !== undefined ? p.phases[a.phase] : "", a.tokens ? `${tokens(a.tokens)} 토큰` : "", a.tools ? `도구 ${a.tools}회` : "", a.activity]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+              {a.error && <span className="block text-xs text-danger">{a.error}</span>}
+            </span>
+          </>
+        );
+        return a.id ? (
+          <button key={`${a.id}-${n}`} onClick={() => onRead({ agentId: a.id, title: a.label })} className="flex min-h-11 w-full items-start gap-2 py-1 text-left" data-workflow-agent={a.label}>
+            {body}
+            <Icon.chevronRight className="mt-1 size-4 shrink-0 text-muted" />
+          </button>
+        ) : (
+          <div key={`${a.label}-${n}`} className="flex items-start gap-2 py-1" data-workflow-agent={a.label}>
+            {body}
+          </div>
+        );
+      })}
+      {p.total > p.agents.length && <div className="text-xs text-muted">외 {p.total - p.agents.length}개</div>}
+    </Field>
+  );
+}
+
+// The agents of a workflow no longer listed, from the journal Claude Code keeps of its run.
+function PastWorkflowAgents({ sessionId, runId, ended, onRead }: { sessionId: string; runId: string; ended: boolean; onRead: (r: TranscriptRef) => void }) {
+  const [p, setP] = useState<WorkflowInfo>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    let current = true;
+    call(sessionId, "workflow_agents", { runId }).then(
+      (w) => current && setP(w),
+      (e: Error) => current && setError(errorText(e.message)),
+    );
+    return () => {
+      current = false;
+    };
+  }, [sessionId, runId]);
+  if (error) return <div className="mt-3 text-sm text-danger">{error}</div>;
+  if (!p) return <Waiting text="에이전트 목록을 불러오는 중…" />;
+  if (!p.total) return <div className="mt-3 text-sm text-muted">이 워크플로의 에이전트 기록이 없습니다</div>;
+  return (
+    <div data-past-workflow-agents>
+      {p.phases.length > 0 && <Phases p={{ ...p, phase: undefined }} />}
+      <WorkflowAgents p={p} ended={ended} onRead={onRead} />
+    </div>
+  );
+}
+
+function AgentDetail({ sessionId, node, gone, parent, clock, canStop, stopping, error, onBack, onStop, onJump, onPending, onRead }: DetailProps & { sessionId: string; node: AgentNode }) {
   const running = live(node);
   const p = node.progress;
   const head = [STATUS_LABEL[node.status], kindText(node), node.model, node.background === undefined ? "" : node.background ? "백그라운드" : "포그라운드"].filter(Boolean);
@@ -299,42 +413,9 @@ function AgentDetail({ node, gone, parent, clock, canStop, stopping, error, onBa
           <div className="line-clamp-12 whitespace-pre-wrap">{node.result}</div>
         </Field>
       )}
-      {p && p.phases.length > 0 && (
-        <Field label="단계">
-          <ol className="space-y-0.5">
-            {p.phases.map((title, i) => {
-              const agents = p.agents.filter((a) => a.phase === i);
-              const done = agents.length > 0 && agents.every((a) => a.state === "done");
-              const current = i === p.phase && !done;
-              return (
-                <li key={i} className={`flex items-center gap-2 ${current ? "font-medium" : "text-muted"}`} data-phase={title}>
-                  {done ? <Icon.check className="size-3.5 text-ok" /> : current ? <span className="mx-0.5 size-2.5 rounded-full bg-accent" /> : <span className="mx-0.5 size-2.5 rounded-full border border-muted" />}
-                  {title}
-                </li>
-              );
-            })}
-          </ol>
-        </Field>
-      )}
-      {p && p.agents.length > 0 && (
-        <Field label={`에이전트 ${p.total}`}>
-          {p.agents.map((a, n) => (
-            <div key={`${a.label}-${n}`} className="flex items-start gap-2 py-1">
-              <span className="mt-0.5">
-                <Mark status={a.state === "done" ? "completed" : a.state === "failed" ? "failed" : a.state} small />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{a.label}</span>
-                <span className="block text-xs text-muted">
-                  {[AGENT_STATE_LABEL[a.state], a.tokens ? `${tokens(a.tokens)} 토큰` : "", a.tools ? `도구 ${a.tools}회` : "", a.activity].filter(Boolean).join(" · ")}
-                </span>
-                {a.error && <span className="block text-xs text-danger">{a.error}</span>}
-              </span>
-            </div>
-          ))}
-          {p.total > p.agents.length && <div className="text-xs text-muted">외 {p.total - p.agents.length}개</div>}
-        </Field>
-      )}
+      {p && p.phases.length > 0 && <Phases p={p} />}
+      {p && p.agents.length > 0 && <WorkflowAgents p={p} onRead={onRead} />}
+      {node.workflow && !p?.agents.length && node.runId && <PastWorkflowAgents key={node.runId} sessionId={sessionId} runId={node.runId} ended={!running} onRead={onRead} />}
       {node.workflow && <div className="mt-3 text-xs text-muted">워크플로 안의 에이전트는 하나씩 멈출 수 없습니다. 워크플로 전체만 멈춥니다.</div>}
       {node.recent && (
         <Field label="최근 도구">
@@ -356,13 +437,25 @@ function AgentDetail({ node, gone, parent, clock, canStop, stopping, error, onBa
           <div className="mt-1 max-h-60 overflow-y-auto rounded-lg bg-surface-2 px-3 py-2 text-[13px] whitespace-pre-wrap">{node.prompt}</div>
         </details>
       )}
-      <Actions node={node} canStop={canStop && !gone} stopping={stopping} onStop={onStop} onJump={onJump} stopLabel={node.workflow ? "워크플로 중지" : "중지"} />
+      <Actions node={node} canStop={canStop && !gone} stopping={stopping} onStop={onStop} onJump={onJump} onRead={onRead} stopLabel={node.workflow ? "워크플로 중지" : "중지"} />
       {error && <div className="mt-2 text-sm text-danger">{error}</div>}
     </div>
   );
 }
 
-function TaskDetail({ task, parent, clock, canStop, stopping, error, onBack, onStop }: Omit<DetailProps, "node" | "onJump" | "onPending" | "gone"> & { task: TaskInfo }) {
+function TaskDetail({
+  sessionId,
+  task,
+  parent,
+  clock,
+  canStop,
+  canRead,
+  stopping,
+  error,
+  onBack,
+  onStop,
+  onRead,
+}: Omit<DetailProps, "node" | "onJump" | "onPending" | "gone"> & { sessionId: string; task: TaskInfo; canRead: boolean }) {
   const running = task.status === "running";
   return (
     <div data-detail={`t:${task.id}`}>
@@ -378,6 +471,9 @@ function TaskDetail({ task, parent, clock, canStop, stopping, error, onBack, onS
       <div className="mt-1 text-sm tabular-nums">경과 {timeOf(task, running, clock)}</div>
       {running && task.activity && <Field label="지금 하는 일">{task.activity}</Field>}
       {(task.error || (task.status !== "completed" && task.summary)) && <div className="mt-3 text-sm text-danger">{task.error ?? task.summary}</div>}
+      {SHELL_KINDS.has(task.kind ?? "") && (canRead || task.background === false) && (
+        <ShellOutput key={task.id} sessionId={sessionId} task={task} onAgent={task.parentId ? () => onRead({ agentId: task.parentId, title: parent || "서브에이전트" }) : undefined} />
+      )}
       {canStop && running && (
         <div className="mt-4 flex justify-end">
           <SmallButton tall tone="text-danger" disabled={stopping} onClick={() => onStop(task.id)}>
@@ -411,11 +507,16 @@ interface Props {
   onClose: () => void;
   onJump: (itemId: string) => void;
   onPending: (requestId: string) => void;
+  onFile: (href: string) => void;
 }
 
+// A transcript open on the map, and where its scroller stood when another was opened over it.
+type Reading = { ref: TranscriptRef; scroll?: number };
+
 // The session's subagents, workflows and background tasks; tapping one shows its card beside the map on a wide
-// screen and in place of it on a narrow one.
-export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump, onPending }: Props) {
+// screen and in place of it on a narrow one. A subagent's transcript opens over its card, a nested one over that,
+// and takes the whole height of a narrow screen.
+export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump, onPending, onFile }: Props) {
   const chat = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat : undefined));
   const models = useApp((s) => s.options?.models ?? NO_MODELS);
   const st = chat?.state;
@@ -428,10 +529,14 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
   const [stopping, setStopping] = useState<ReadonlySet<string>>(new Set());
   const [failed, setFailed] = useState<{ id: string; text: string }>();
   const [now, setNow] = useState(Date.now());
+  const [reading, setReading] = useState<Reading[]>([]);
   const last = useRef<{ node?: AgentNode; task?: TaskInfo }>({});
   const detailRef = useRef<HTMLDivElement>(null);
   const listScroll = useRef(0);
+  // Where the sheet and the card column stood before the first transcript opened.
+  const beforeReading = useRef<{ panel: number; detail: number }>({ panel: 0, detail: 0 });
   const clock: Clock = { now, stateAt: chat?.stateAt };
+  const roots = useMemo(() => (st?.cwd ? [st.cwd] : []), [st?.cwd]);
 
   const ticking = map.nodes.some(live) || map.background.some((t) => t.status === "running");
   useEffect(() => {
@@ -480,12 +585,33 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
     }
   }
   const panel = () => detailRef.current?.closest<HTMLElement>('[role="dialog"]');
+  // The card column scrolls on its own on a wide screen; on a narrow one the sheet does.
+  const scroller = () => (detailRef.current && /(auto|scroll)/.test(getComputedStyle(detailRef.current).overflowY) ? detailRef.current : panel());
   const show = (sel: Selected) => {
-    if (!selected) listScroll.current = panel()?.scrollTop ?? 0;
+    if (!selected && !reading.length) listScroll.current = panel()?.scrollTop ?? 0;
+    setReading([]);
     setSelected(sel);
   };
   const open = (n: AgentNode) => show({ key: n.key, itemId: n.itemId });
   const back = () => setSelected(null);
+  // A subagent the broker lists under its Agent call: the task's id names its transcript.
+  const taskOfCall = (toolUseId?: string) => (toolUseId ? (st?.tasks ?? []).find((t) => t.toolUseId === toolUseId) : undefined);
+  const read = (ref: TranscriptRef) => {
+    if (!reading.length) beforeReading.current = { panel: panel()?.scrollTop ?? 0, detail: detailRef.current?.scrollTop ?? 0 };
+    const at = scroller()?.scrollTop;
+    const listed = ref.agentId ? undefined : taskOfCall(ref.toolUseId);
+    setReading((r) => [...r.slice(0, -1), ...r.slice(-1).map((x) => ({ ...x, scroll: at })), { ref: listed ? { ...ref, agentId: listed.id } : ref }]);
+  };
+  const unread = () => setReading((r) => r.slice(0, -1));
+  const top = reading.at(-1);
+  // Back on the card or the map, the sheet stands where it stood before the first transcript opened.
+  const notReading = reading.length === 0;
+  useLayoutEffect(() => {
+    if (!notReading) return;
+    const p = panel();
+    if (p) p.scrollTop = beforeReading.current.panel;
+    if (detailRef.current) detailRef.current.scrollTop = beforeReading.current.detail;
+  }, [notReading]);
   // A card opens at its top, with its way back in view; going back finds the map where it was left.
   const selectedKey = selected ? `${selected.key}|${selected.itemId ?? ""}` : "";
   useLayoutEffect(() => {
@@ -502,12 +628,22 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
     onStop: stop,
     onJump,
     onPending,
+    onRead: read,
+  };
+  // A transcript follows its subagent while the broker lists it running, or while its card does.
+  const runningOf = (r: TranscriptRef): boolean => {
+    const t = (r.agentId ? byTask.get(r.agentId) : undefined) ?? taskOfCall(r.toolUseId);
+    if (t) return t.status === "running";
+    const a = r.agentId ? (st?.tasks ?? []).flatMap((x) => x.workflow?.agents ?? []).find((w) => w.id === r.agentId) : undefined;
+    if (a) return a.state === "running";
+    const n = r.toolUseId ? [...map.nodes, ...map.past].find((x) => x.itemId === r.toolUseId) : undefined;
+    return n ? live(n) : false;
   };
 
   return (
-    <Sheet title="에이전트 지도" onClose={onClose} wide>
+    <Sheet title="에이전트 지도" onClose={onClose} wide tall={Boolean(top)}>
       <div className="sm:grid sm:grid-cols-12 sm:gap-4" data-agent-map>
-        <div className={`${selected ? "hidden sm:block" : ""} sm:col-span-5 sm:max-h-[calc(var(--vv-height,100dvh)-7rem)] sm:overflow-y-auto sm:overscroll-contain`} data-map-list>
+        <div className={`${selected || top ? "hidden sm:block" : ""} sm:col-span-5 sm:max-h-[calc(var(--vv-height,100dvh)-7rem)] sm:overflow-y-auto sm:overscroll-contain`} data-map-list>
           {summaryLine(map) && (
             <div className="mb-2 px-1 text-sm" data-map-summary>
               {summaryLine(map)}
@@ -521,7 +657,7 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
           </div>
           <div className="mt-1 ml-2 border-l border-muted/40 pl-1" data-map-tree>
             {map.tree.length ? (
-              map.tree.map((n) => <NodeRow key={n.key} node={n} level={1} clock={clock} onOpen={open} />)
+              map.tree.map((n) => <NodeRow key={n.key} node={n} level={1} clock={clock} onOpen={open} onRead={read} />)
             ) : (
               <div className="px-2 py-3 text-sm text-muted">{map.past.length ? "실행 중인 에이전트가 없습니다" : "이 대화에서 쓴 에이전트가 없습니다"}</div>
             )}
@@ -555,7 +691,7 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
               {showPast && (
                 <div>
                   {past.map((n) => (
-                    <NodeRow key={n.key} node={n} level={1} clock={clock} onOpen={open} />
+                    <NodeRow key={n.key} node={n} level={1} clock={clock} onOpen={open} onRead={read} />
                   ))}
                   {map.past.length > past.length && (
                     <button onClick={() => setPastLimit(pastLimit + PAST_SHOWN)} className="min-h-11 px-2 text-sm font-medium text-accent">
@@ -569,10 +705,29 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
           )}
           {controllable && <div className="mt-4 px-1 text-xs text-muted">입력창의 중지는 지금 턴만 멈춥니다. 백그라운드 에이전트는 여기서 하나씩 멈춥니다.</div>}
         </div>
-        <div className={`${selected ? "" : "hidden sm:block"} sm:col-span-7 sm:max-h-[calc(var(--vv-height,100dvh)-7rem)] sm:overflow-y-auto sm:overscroll-contain sm:border-l sm:border-line sm:pl-4`} data-map-detail ref={detailRef}>
-          {node ? (
+        <div className={`${selected || top ? "" : "hidden sm:block"} sm:col-span-7 sm:max-h-[calc(var(--vv-height,100dvh)-7rem)] sm:overflow-y-auto sm:overscroll-contain sm:border-l sm:border-line sm:pl-4`} data-map-detail ref={detailRef}>
+          {top ? (
+            // The transcript on screen comes first; those under it stay as they were, hidden.
+            reading
+              .map((r, n) => (
+                <Transcript
+                  key={`${n}|${r.ref.agentId ?? ""}|${r.ref.toolUseId ?? ""}`}
+                  sessionId={sessionId}
+                  target={r.ref}
+                  active={r === top}
+                  startAt={r.scroll}
+                  running={runningOf(r.ref)}
+                  roots={roots}
+                  onFile={onFile}
+                  onBack={unread}
+                  onOpen={read}
+                />
+              ))
+              .reverse()
+          ) : node ? (
             <AgentDetail
               {...detailProps}
+              sessionId={sessionId}
               node={node}
               gone={gone}
               parent={parentName(node.parentId) || "메인 에이전트"}
@@ -583,9 +738,11 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
             <>
               <TaskDetail
                 {...detailProps}
+                sessionId={sessionId}
                 task={task}
                 parent={parentName(task.parentId)}
                 canStop={controllable && !gone}
+                canRead={controllable && !gone}
                 stopping={stopping.has(task.id)}
                 error={failed?.id === task.id ? failed.text : undefined}
               />

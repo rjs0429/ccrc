@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useContext, useState } from "react";
 import { hideDialogCommands } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, QueuedMessage, SubagentActivity } from "../../../broker/src/protocol.ts";
 import { clock, noteText } from "../labels.ts";
@@ -9,6 +9,7 @@ import { ContextView } from "./sheets/Context.tsx";
 import { UsageView } from "./sheets/Usage.tsx";
 import { ToolInput, ToolOutput } from "./ToolInput.tsx";
 import { UserAttachments } from "./UserAttachments.tsx";
+import { AgentLinks } from "./agents/links.ts";
 import { Folded } from "./tools/parts.tsx";
 import { fullTime, stampTime, type Day } from "./stamps.ts";
 import { Icon, Spinner } from "./ui.tsx";
@@ -117,9 +118,12 @@ function SubActivity({ sub }: { sub: SubagentActivity }) {
 
 function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool" }>; running: boolean }) {
   const [open, setOpen] = useState(false);
+  const openAgent = useContext(AgentLinks);
   // A call that went on in the background is still running after its result arrived.
   const background = useApp((s) => Boolean(s.chat?.state?.tasks?.some((t) => t.toolUseId === item.id && t.status === "running")));
   const active = background || (!item.result && running);
+  // A subagent known by its id alone has done nothing to show yet.
+  const sub = item.sub && (item.sub.tools || item.sub.recent.length || item.sub.text) ? item.sub : undefined;
   const status =
     item.result && !background ? (
       item.result.isError ? (
@@ -139,10 +143,10 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
         <span className="shrink-0 text-sm font-medium">{item.name || "도구"}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted">{item.summary}</span>
         {item.patch && <PatchStats hunks={item.patch} />}
-        {item.sub && !active && !open && <span className="shrink-0 text-xs text-muted">도구 {item.sub.tools}회</span>}
+        {sub && !active && !open && <span className="shrink-0 text-xs text-muted">도구 {sub.tools}회</span>}
         <Icon.chevronDown className={`size-4 shrink-0 text-muted transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
-      {item.sub && (active || open) && <SubActivity sub={item.sub} />}
+      {sub && (active || open) && <SubActivity sub={sub} />}
       {open && (
         <div className="space-y-2 border-t border-line px-3 py-2.5">
           {item.patch ? (
@@ -154,6 +158,16 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
             <ToolOutput text={item.result.text + (item.result.truncated ? "\n…" : "")} isError={item.result.isError} />
           )}
         </div>
+      )}
+      {openAgent && (item.name === "Agent" || item.name === "Task") && (
+        <button
+          onClick={() => openAgent({ ...(item.sub?.agentId ? { agentId: item.sub.agentId } : {}), toolUseId: item.id, title: item.summary || "서브에이전트" })}
+          className="flex min-h-11 w-full items-center justify-between border-t border-line px-3 text-left text-sm font-medium text-accent"
+          data-open-transcript={item.id}
+        >
+          기록 보기
+          <Icon.chevronRight className="size-4" />
+        </button>
       )}
     </div>
   );

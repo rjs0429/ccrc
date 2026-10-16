@@ -304,7 +304,7 @@ export default function FileViewer({ sessionId, cwd, target, onClose }: { sessio
   const title = view?.name ?? current.href.split(/[?#]/)[0].split("/").pop() ?? current.href;
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-bg" role="dialog" aria-label="파일 보기">
+    <div className="fixed inset-0 z-50 flex flex-col bg-bg" role="dialog" aria-label="파일 보기">
       <header className="pt-safe border-b border-line bg-surface">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           {stack.length > 1 ? (

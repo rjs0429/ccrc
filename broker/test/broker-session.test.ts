@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import type { DisplayItem, PendingRequest } from "../src/protocol.ts";
 import { BrokerSession } from "../src/sessions/broker-session.ts";
+import { shellOutput } from "../src/sessions/core.ts";
 import type { TurnEnd } from "../src/sessions/outcome.ts";
 
 const SID = "3e7c9a10-5b2d-4f8e-9c1a-2d3e4f5a6b7c";
@@ -69,6 +70,41 @@ test("owned sessions refuse what the session did not report", async () => {
   s.busy = true;
   await assert.rejects(s.rewind(MSG, false), /session is busy/);
   assert.deepEqual(calls, [["mcpServerStatus"]]);
+});
+
+test("an owned session reads the output of a shell or monitor it lists, running or ended, and of nothing else", async () => {
+  const { s } = owned();
+  const asked: unknown[] = [];
+  Object.assign((s as unknown as { q: object }).q, {
+    request: async (r: unknown) => (asked.push(r), { response: { output: "\u001b[32mline1\u001b[0m\n", total_bytes: 14, truncated: false } }),
+  });
+  const started = (task_id: string, task_type: string) => s.tasks.on({ type: "system", subtype: "task_started", task_id, description: task_id, task_type });
+  started("b1", "local_bash");
+  started("m1", "monitor_mcp");
+  started("s1", "monitor_ws");
+  started("a1", "local_agent");
+  assert.deepEqual(await s.taskOutput("b1"), { text: "\u001b[32mline1\u001b[0m\n", totalBytes: 14, truncated: false });
+  await s.taskOutput("m1");
+  await s.taskOutput("s1");
+  await assert.rejects(s.taskOutput("a1"), /not a shell task/);
+  await assert.rejects(s.taskOutput("b9"), /not a shell task/);
+  s.tasks.on({ type: "system", subtype: "task_notification", task_id: "b1", status: "completed", summary: "done" });
+  await s.taskOutput("b1");
+  assert.deepEqual(asked, [
+    { subtype: "get_task_output", task_id: "b1" },
+    { subtype: "get_task_output", task_id: "m1" },
+    { subtype: "get_task_output", task_id: "s1" },
+    { subtype: "get_task_output", task_id: "b1" },
+  ]);
+  s.tasks.clear();
+});
+
+test("Claude Code's output answer keeps its end and says when it began earlier", () => {
+  assert.deepEqual(shellOutput(undefined), { text: "", totalBytes: 0, truncated: false });
+  assert.deepEqual(shellOutput({ output: 7, total_bytes: -1, truncated: "yes" }), { text: "", totalBytes: 0, truncated: false });
+  const long = shellOutput({ output: `${"a".repeat(70_000)}END`, total_bytes: 70_003, truncated: false });
+  assert.equal(long.text.length, 64 * 1024);
+  assert.ok(long.text.endsWith("END") && long.truncated);
 });
 
 test("a message still waiting in the broker is taken back here without asking Claude Code", async () => {

@@ -44,6 +44,7 @@ const REMOTE_REQUESTS = new Set([
   "mcp_reconnect",
   "rewind_files",
   "stop_task",
+  "get_task_output",
   "read_file",
   "cancel_async_message",
   "rename_session",
@@ -209,6 +210,13 @@ export function elicitAnswer(r: unknown): { action: string; content?: Record<str
   const entries = Object.entries(c);
   if (entries.length > ELICIT_FIELDS_MAX || !entries.every(([k, v]) => k.length <= ELICIT_KEY_MAX && elicitValue(v))) return undefined;
   return { action: "accept", content: Object.fromEntries(entries) };
+}
+
+const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+// get_task_output names one task by its id, nothing else; Claude Code answers only for this session's shells and monitors.
+export function allowedTaskOutput(req: Record<string, unknown>): boolean {
+  return Object.keys(req).every((k) => k === "subtype" || k === "task_id") && typeof req.task_id === "string" && TASK_ID.test(req.task_id);
 }
 
 // A user message written to Claude Code, reduced to what the conversation shows of it: its text and the kind
@@ -676,6 +684,7 @@ export class Relay extends EventEmitter {
       const req = m.request as Record<string, unknown> | undefined;
       if (typeof m.request_id !== "string" || !m.request_id.startsWith(REMOTE_PREFIX) || !req) return reject("invalid request", m.request_id);
       if (typeof req.subtype !== "string" || !REMOTE_REQUESTS.has(req.subtype)) return reject("request not allowed", m.request_id);
+      if (req.subtype === "get_task_output" && !allowedTaskOutput(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "set_permission_mode" && req.mode === "bypassPermissions") return reject("mode not allowed", m.request_id);
       if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
       if (req.subtype === "read_file" && !allowedReadFile(req)) return reject("invalid request", m.request_id);

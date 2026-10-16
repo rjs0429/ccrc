@@ -74,6 +74,9 @@ const SENDERS: Record<string, "agent" | "session" | "channel"> = { "agent-messag
 // notes of its own, indented the same way, may come before the notice.
 const HANDBACK = "[Subagent hand-back]";
 const SHELL_INPUT = /^<bash-input>([\s\S]*)<\/bash-input>$/;
+const TRANSCRIPT_ID = /^[A-Za-z0-9_-]{1,128}$/;
+// Claude Code ends a subagent's result text with a line naming its id.
+const AGENT_ID = /^agentId: ([A-Za-z0-9_-]+)/gm;
 const ENTITIES: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'" };
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
@@ -206,6 +209,19 @@ function fileChange(output: unknown): Pick<ToolItem, "file" | "patch" | "patchCu
   let all = hunks(r.structuredPatch);
   if (!all.length && r.type === "create" && typeof r.content === "string") all = [createdFile(r.content)];
   return all.length ? { file: r.filePath, ...capPatch(all) } : {};
+}
+
+// The ids an Agent call's subagent or a Workflow call's run keeps its transcripts under, from the call's output or,
+// for a subagent, from its result text.
+function transcriptIds(name: string, output: unknown, text: string): Pick<SubagentActivity, "agentId" | "runId"> | undefined {
+  const o = record(output);
+  const id = (v: unknown) => (typeof v === "string" && TRANSCRIPT_ID.test(v) ? v : undefined);
+  if (name === "Agent" || name === "Task") {
+    const agentId = id(o?.agentId) ?? id([...text.matchAll(AGENT_ID)].at(-1)?.[1]);
+    return agentId ? { agentId } : undefined;
+  }
+  const runId = name === "Workflow" ? id(o?.runId) : undefined;
+  return runId ? { runId } : undefined;
 }
 
 // The activity with the tool count Claude Code reports for a subagent, when that is more than was seen here.
@@ -476,9 +492,10 @@ export class ItemBuilder {
     const result: ToolResult = { text: text.text, isError: b.is_error === true, truncated: text.truncated };
     const prev: ToolItem = this.tool(id) ?? { kind: "tool", id, name: "", summary: "", input: null };
     const reply = toolReply(prev.name, prev.input, full, result.isError, output);
-    const known = { ...prev, result, ...(reply ? { reply } : {}) };
+    const ids = transcriptIds(prev.name, output, full);
+    const known = { ...prev, result, ...(reply ? { reply } : {}), ...(ids ? { sub: { ...(prev.sub ?? { tools: 0, recent: [] }), ...ids } } : {}) };
     if (result.isError) return this.put(known);
-    const sub = counted(prev.sub, record(output)?.totalToolUseCount);
+    const sub = counted(known.sub, record(output)?.totalToolUseCount);
     return this.put({ ...known, ...fileChange(output), ...(sub ? { sub } : {}) });
   }
 

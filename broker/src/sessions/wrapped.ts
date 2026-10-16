@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { elicitInfo } from "../elicit.ts";
 import type { Link } from "../link/server.ts";
-import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput } from "../protocol.ts";
 import { argValue } from "../wrapper/relay.ts";
 import { rememberCommands } from "./commands.ts";
 import {
@@ -15,6 +15,7 @@ import {
   commandInfo,
   mcpServers,
   rewindResult,
+  shellOutput,
   type ContentBlock,
   type Decision,
   type ElicitAnswer,
@@ -285,6 +286,10 @@ export class WrappedSession extends SessionCore {
     this.ensureOpen();
     await this.link.request({ subtype: "rename_session", title, source: "host", session_id: this.id });
     this.setTitle(title);
+  }
+
+  async taskOutput(taskId: string): Promise<TaskOutput> {
+    return shellOutput(await this.link.request({ subtype: "get_task_output", task_id: this.shellTask(taskId) }, READ_MS));
   }
 
   protected async cancelQueued(messageId: string): Promise<boolean> {
