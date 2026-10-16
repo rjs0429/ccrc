@@ -4,7 +4,7 @@ import { clock, errorText, hostLabel, shortPath } from "../../labels.ts";
 import { call, composerInsert, navigate, toast, useApp } from "../../state.ts";
 import { openNewSession } from "../../screens/NewSession.tsx";
 import { loadDraft, saveDraft } from "../Composer.tsx";
-import { actionable, excerpt, lastSeen, type UserMessage } from "../messageActions.ts";
+import { actionable, excerpt, filesBack, filesDone, filesError, lastSeen, type UserMessage } from "../messageActions.ts";
 import { Button, Sheet } from "../ui.tsx";
 import { newId, startOf } from "./Fork.tsx";
 import { Failed, Waiting } from "./parts.tsx";
@@ -145,26 +145,21 @@ export function RewindSheet({ sessionId, initial, onClose }: SheetProps & { init
   };
 
   const done = (r: RewindConversationResult) => {
-    const filesNote = r.files ? (r.files.canRewind ? ` · 파일 ${files.length}개` : "") : "";
-    const filesFailed = r.files && !r.files.canRewind ? errorText(r.files.error ?? "") : undefined;
+    const filesFailed = r.files && !r.files.canRewind ? filesError(r.files) : undefined;
     onClose();
     if (r.mode === "in_place") {
       if (r.prefill) composerInsert(r.prefill, true);
-      toast(filesFailed ? `대화는 되돌렸지만 파일은 되돌리지 못했습니다: ${filesFailed}` : `되돌렸습니다${filesNote}`);
-    } else if (r.mode === "draft") {
-      openNewSession(r.cwd, r.prefill, startOf(st));
-      toast("첫 메시지라 같은 폴더의 새 세션으로 엽니다");
-    } else {
+      toast(filesFailed ? `대화는 되돌렸지만 파일은 되돌리지 못했습니다: ${filesFailed}` : `되돌렸습니다${r.files?.canRewind ? filesDone(r.files, files.length) : ""}`);
+      return;
+    }
+    if (r.mode === "draft") openNewSession(r.cwd, r.prefill, startOf(st));
+    else {
       saveDraft(r.sessionId, r.prefill);
       navigate({ name: "chat", sessionId: r.sessionId });
-      toast(
-        r.fallback
-          ? "이 Claude Code는 제자리 되돌리기를 지원하지 않아 새 세션으로 열었습니다"
-          : filesFailed
-            ? `새 세션으로 열었지만 파일은 되돌리지 못했습니다: ${filesFailed}`
-            : `새 세션으로 열었습니다${filesNote}`,
-      );
     }
+    const opened =
+      r.mode === "draft" ? "첫 메시지라 같은 폴더의 새 세션으로 엽니다" : r.fallback ? "이 Claude Code는 제자리 되돌리기를 지원하지 않아 새 세션으로 열었습니다" : "새 세션으로 열었습니다";
+    toast(filesFailed ? `${opened}. 파일은 되돌리지 못했습니다: ${filesFailed}` : r.files?.canRewind ? `${opened}. ${filesBack(r.files, files.length)}` : opened);
   };
 
   const apply = (id: string, way: Way) => {
@@ -259,11 +254,8 @@ export function RewindSheet({ sessionId, initial, onClose }: SheetProps & { init
               <div className="space-y-2.5 border-t border-line px-3 py-2.5">
                 {controllable && !preview && <Waiting text="바뀔 파일을 확인하는 중입니다" />}
                 {controllable && preview && !applied && <Preview outcome={preview} cwd={cwd} outside={outside} />}
-                {applied?.result && (
-                  <div className="px-1 text-sm text-ok">
-                    파일 {files.length}개를 되돌렸습니다{applied.result.skippedLinks ? ` · 링크라서 건너뛴 파일 ${applied.result.skippedLinks}개` : ""}
-                  </div>
-                )}
+                {applied?.result?.canRewind && <div className="px-1 text-sm text-ok">{filesBack(applied.result, files.length)}</div>}
+                {applied?.result && !applied.result.canRewind && <Trouble text={`파일을 되돌리지 못했습니다: ${filesError(applied.result)}`} />}
                 {applied?.error && <Trouble text={applied.error} />}
                 {error && <Trouble text={error} />}
                 {busy && !applied && kind !== "live" && <div className="px-1 text-xs text-muted">Claude가 작업 중입니다. {inPlace ? "작업이 끝난 뒤 되돌릴 수 있습니다" : "코드는 작업이 끝난 뒤 되돌릴 수 있습니다"}</div>}

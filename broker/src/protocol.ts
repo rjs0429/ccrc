@@ -286,16 +286,19 @@ export interface RewindResult {
 }
 
 // id: the new session's id, chosen by the phone. before: the message the copy leaves out with all after it.
-// text and attachments (POST /api/upload ids): the fork's first message, which starts it at once.
+// text and attachments (POST /api/upload ids): the fork's first message, which starts it at once. name: the fork's name
+// in place of the original's with " (fork)".
 export type ForkArgs = {
   id: string;
   before?: string;
   text?: string;
   attachments?: string[];
+  name?: string;
 };
 
-// draft: the message starts the conversation, so nothing comes before it; a new session in its folder stands instead.
-export type ForkResult = { sessionId: string; cwd: string; title: string } | { draft: { cwd: string } };
+// sent: the fork has its first message, from this request or an earlier one with the same id. draft: the message starts
+// the conversation, so nothing comes before it; a new session in its folder stands instead.
+export type ForkResult = { sessionId: string; cwd: string; title: string; sent?: boolean } | { draft: { cwd: string } };
 
 // lastSeen: the latest message the phone shows; Claude Code refuses when a later turn came. forkId: the id of the new
 // session a rewind opens where it cannot happen in place.

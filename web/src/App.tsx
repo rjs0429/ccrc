@@ -21,25 +21,30 @@ function Toast() {
     const t = setTimeout(() => setHidden(true), toast.action ? ACTION_TOAST_MS : TOAST_MS);
     return () => clearTimeout(t);
   }, [toast]);
-  if (!toast || hidden) return null;
-  const action = toast.action;
+  const shown = hidden ? undefined : toast;
+  const action = shown?.action;
+  // The region stays on the page, so a screen reader reads out each toast that appears in it.
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(6rem+var(--sab))] z-50 flex justify-center px-safe-6">
-      <div className="flex items-center rounded-xl bg-fg text-sm text-bg shadow-lg" data-toast>
-        <span className="px-4 py-2.5">{errorText(toast.text)}</span>
-        {action && (
-          <button
-            onClick={() => {
-              setHidden(true);
-              action.run();
-            }}
-            className="pointer-events-auto -my-0.5 mr-1 min-h-11 shrink-0 border-l border-bg/25 px-4 font-semibold"
-            data-toast-action
-          >
-            {action.label}
-          </button>
-        )}
-      </div>
+    <div role="status" aria-live="polite">
+      {shown && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(6rem+var(--sab))] z-50 flex justify-center px-safe-6">
+          <div className="flex items-center rounded-xl bg-fg text-sm text-bg shadow-lg" data-toast>
+            <span className="px-4 py-2.5">{errorText(shown.text)}</span>
+            {action && (
+              <button
+                onClick={() => {
+                  setHidden(true);
+                  action.run();
+                }}
+                className="pointer-events-auto -my-0.5 mr-1 min-h-11 shrink-0 border-l border-bg/25 px-4 font-semibold"
+                data-toast-action
+              >
+                {action.label}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

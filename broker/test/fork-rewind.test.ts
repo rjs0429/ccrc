@@ -227,6 +227,78 @@ test("a fork of a session whose turn runs leaves that turn out", async (t) => {
   assert.deepEqual(texts((await manager.snapshot(id)).items), ["첫째", "첫째에 답", "둘째", "둘째에 답", "셋째", "셋째에 답"]);
 });
 
+test("a fork of a session whose turn runs elsewhere leaves out the whole turn, whatever came into it or started it", async (t) => {
+  const { call } = setup(t);
+  const stat = fs.readFileSync(`/proc/${process.pid}/stat`, "utf8");
+  const procStart = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+  const holder = path.join(sessionsDir, `${process.pid}.json`);
+  t.after(() => fs.rmSync(holder, { force: true }));
+  const base = { cwd, isSidechain: false, userType: "external", version: "2.1.301", gitBranch: "" };
+  const running = (src: string, rows: Record<string, unknown>[]) => {
+    fs.appendFileSync(path.join(project, `${src}.jsonl`), rows.map((r) => JSON.stringify({ sessionId: src, ...base, timestamp: "2026-10-16T01:00:09Z", ...r }) + "\n").join(""));
+    fs.writeFileSync(holder, JSON.stringify({ pid: process.pid, sessionId: src, cwd, procStart, entrypoint: "cli", status: "busy" }));
+  };
+  const tool = (uuid: string, parentUuid: string, id: string) => ({ parentUuid, uuid, type: "assistant", message: { id: `msg_${uuid}`, role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: {} }] } });
+  // Claude took in a message sent during the turn.
+  const src = randomUUID();
+  const ids = transcript(src);
+  const [u4, call4, done4, queued] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  running(src, [
+    { parentUuid: ids.a3, uuid: u4, type: "user", message: { role: "user", content: "넷째: 시험을 돌려" } },
+    tool(call4, u4, "toolu_1"),
+    { parentUuid: call4, uuid: done4, type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }] } },
+    { parentUuid: done4, uuid: queued, type: "attachment", attachment: { type: "queued_command", prompt: "lint 도", source_uuid: randomUUID(), commandMode: "prompt" } },
+    tool(randomUUID(), queued, "toolu_2"),
+  ]);
+  const id = randomUUID();
+  assert.equal((await call(src, "fork", { id })).ok, true);
+  assert.equal(arg(recorded().find((x) => x.sid === id && x.args)?.args, "--resume-session-at"), ids.a3);
+  // A command started the turn.
+  const other = randomUUID();
+  const more = transcript(other);
+  const command = randomUUID();
+  running(other, [{ parentUuid: more.a3, uuid: command, type: "user", message: { role: "user", content: "<command-message>review</command-message>\n<command-name>/review</command-name>" } }, tool(randomUUID(), command, "toolu_3")]);
+  const id2 = randomUUID();
+  assert.equal((await call(other, "fork", { id: id2 })).ok, true);
+  assert.equal(arg(recorded().find((x) => x.sid === id2 && x.args)?.args, "--resume-session-at"), more.a3);
+});
+
+test("a fork asked again with its id takes the first message the earlier request did not bring, once", async (t) => {
+  const { call } = setup(t);
+  const src = randomUUID();
+  transcript(src);
+  const id = randomUUID();
+  const opened = await call(src, "fork", { id });
+  assert.equal(opened.ok, true);
+  const started = await call(src, "fork", { id, text: "이제 시작해" });
+  assert.deepEqual(started.data, { ...(opened.data as object), sent: true });
+  assert.deepEqual((await call(src, "fork", { id, text: "이제 시작해" })).data, started.data, "a retry sends nothing more");
+  await until(() => recorded().filter((x) => x.sid === id && x.user === "이제 시작해").length === 1 && recorded().filter((x) => x.sid === id && x.user).length, "the message went");
+  await sleep(200);
+  assert.deepEqual(
+    recorded().filter((x) => x.sid === id && x.user).map((x) => x.user),
+    ["/rename 원래 세션 (fork)", "이제 시작해"],
+  );
+  // The other way round, the answer tells the fork has its message already.
+  const id2 = randomUUID();
+  assert.equal((await call(src, "fork", { id: id2, text: "바로 시작" })).ok, true);
+  assert.equal(((await call(src, "fork", { id: id2 })).data as { sent?: boolean }).sent, true);
+});
+
+test("a fork given a name is called by it, as Claude Code's /branch names one", async (t) => {
+  const { call } = setup(t);
+  const src = randomUUID();
+  transcript(src);
+  const id = randomUUID();
+  const r = await call(src, "fork", { id, name: "  실험\n이름 " });
+  assert.equal((r.data as { title: string }).title, "실험 이름");
+  assert.deepEqual(
+    recorded().filter((x) => x.sid === id && x.user).map((x) => x.user),
+    ["/rename 실험 이름"],
+  );
+  assert.equal((await call(src, "fork", { id: randomUUID(), name: "" })).error, "invalid request");
+});
+
 test("a fork that cannot start leaves nothing behind and says why", async (t) => {
   const { manager, call } = setup(t);
   const src = randomUUID();

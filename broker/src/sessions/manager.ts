@@ -38,7 +38,7 @@ import { ContextWindows, exactModel, gauge, lastModelId, lastUsage, widened, typ
 import type { ContentBlock, SessionCore } from "./core.ts";
 import { writeTitle } from "./custom-title.ts";
 import { searchFiles } from "./files.ts";
-import { PROJECTS, forkPoint, lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
+import { PROJECTS, forkPoint, lastCwd, loadHistory, projectDirName, transcriptPath, turnPoint } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
@@ -91,6 +91,7 @@ export interface ForkRequest {
   before?: string;
   text?: string;
   blocks?: ContentBlock[];
+  name?: string;
 }
 
 export interface Snapshot {
@@ -105,14 +106,10 @@ function titleOf(info: SDKSessionInfo): string {
   return info.customTitle || info.summary || info.firstPrompt || "";
 }
 
-// A fork is named as VS Code names one: the original's name on one short line, then " (fork)".
-function forkTitle(title: string): string {
-  return `${[...cleanTitle(title)].slice(0, FORK_TITLE_MAX).join("").trim()} (fork)`.trim();
-}
-
-// The message that started the turn running now, as the latest one the user sent.
-function turnStart(items: DisplayItem[]): string | undefined {
-  return items.findLast((i) => i.kind === "user" && UUID.test(i.id))?.id;
+// A fork is named as VS Code names one: the original's name on one short line, then " (fork)". A name given for it
+// stands instead, as Claude Code's /branch takes one.
+function forkTitle(title: string, name = ""): string {
+  return cleanTitle(name) || `${[...cleanTitle(title)].slice(0, FORK_TITLE_MAX).join("").trim()} (fork)`.trim();
 }
 
 const failed = (e: unknown): RewindResult => ({ canRewind: false, error: e instanceof Error ? e.message : String(e) });
@@ -189,8 +186,8 @@ export class SessionManager extends EventEmitter {
   private ultracodeModels = new UltracodeModels(path.join(paths.stateDir, "ultracode-models.json"));
   private archive = new ArchiveStore(path.join(paths.stateDir, "archived.json"));
   private probing = new Map<string, Promise<ContextWindow | undefined>>();
-  // Forks made here by the id the phone chose for them.
-  private forks = new Map<string, { at: number; done: Promise<ForkResult> }>();
+  // Forks made here by the id the phone chose for them; sent: a first message went to the fork.
+  private forks = new Map<string, { at: number; done: Promise<ForkResult>; sent: boolean }>();
   private exact = new Map<string, { size: number; model: string }>();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string) => Promise<UsageInfo> = probeUsage;
@@ -549,17 +546,34 @@ export class SessionManager extends EventEmitter {
 
   // A copy of the session's conversation that runs here. Claude Code copies the transcript up to the fork point with its
   // message ids and file checkpoints, and writes the copy once its first input comes, which names it. The same id gives
-  // the same fork; one before the conversation's first message gives a draft in the session's folder instead.
+  // the same fork, which takes a first message the earlier request for it did not bring; one before the conversation's
+  // first message gives a draft in the session's folder instead.
   fork(sourceId: string, req: ForkRequest): Promise<ForkResult> {
     if (!UUID.test(req.id) || req.id === sourceId || (req.before !== undefined && !UUID.test(req.before))) return Promise.reject(Error("invalid request"));
     const now = Date.now();
     for (const [id, f] of this.forks) if (now - f.at > FORK_KEEP_MS) this.forks.delete(id);
+    const first = Boolean(req.text || req.blocks?.length);
     const known = this.forks.get(req.id);
-    if (known) return known.done;
-    const done = this.makeFork(sourceId, req);
-    this.forks.set(req.id, { at: now, done });
-    done.catch(() => this.forks.delete(req.id));
-    return done;
+    if (known) return first && !known.sent ? this.sendToFork(known, req) : known.done;
+    const f = { at: now, done: this.makeFork(sourceId, req), sent: first };
+    this.forks.set(req.id, f);
+    f.done.catch(() => this.forks.delete(req.id));
+    return f.done;
+  }
+
+  private async sendToFork(f: { done: Promise<ForkResult>; sent: boolean }, req: ForkRequest): Promise<ForkResult> {
+    f.sent = true;
+    const r = await f.done;
+    if (!("sessionId" in r)) return r;
+    try {
+      await this.send(r.sessionId, req.text ?? "", req.blocks);
+    } catch (e) {
+      f.sent = false;
+      throw e;
+    }
+    const sent = { ...r, sent: true };
+    f.done = Promise.resolve(sent);
+    return sent;
   }
 
   // Without a message to cut at, a fork leaves out the turn running now.
@@ -574,11 +588,10 @@ export class SessionManager extends EventEmitter {
     const cwd = source ? source.cwd : await this.resumeFolder(sourceId, info!.cwd!);
     if (!isFolder(cwd)) throw Error(`working folder is missing: ${cwd}`);
     const busy = source ? source.busy : liveProcesses({ fresh: true }).find((l) => l.sessionId === sourceId)?.status === "busy";
-    const cut = req.before ?? (busy ? turnStart(source ? source.builder.items : await loadHistory(sourceId, cwd)) : undefined);
-    const point = cut ? await forkPoint(sourceId, cwd, cut) : {};
+    const point = req.before ? await forkPoint(sourceId, cwd, req.before) : busy ? await turnPoint(sourceId, cwd) : undefined;
     if (!point && req.before) throw Error("unknown message");
-    if (cut && point && point.at === undefined) return { draft: { cwd } };
-    const title = forkTitle((info ? titleOf(info) : "") || source?.title || "");
+    if (point && point.at === undefined) return { draft: { cwd } };
+    const title = forkTitle((info ? titleOf(info) : "") || source?.title || "", req.name);
     const cli = await this.claude();
     const s = new BrokerSession(req.id, cwd, [], title);
     this.adopt(s);
@@ -596,8 +609,9 @@ export class SessionManager extends EventEmitter {
     s.emit("state");
     this.catalog = undefined;
     this.emit("changed");
-    if (req.text || req.blocks?.length) s.send(req.text ?? "", req.blocks);
-    return { sessionId: s.id, cwd, title: s.title || title };
+    const first = Boolean(req.text || req.blocks?.length);
+    if (first) s.send(req.text ?? "", req.blocks);
+    return { sessionId: s.id, cwd, title: s.title || title, ...(first ? { sent: true } : {}) };
   }
 
   // What a fork starts with: the original's permission mode where it can run here, its model, Effort, Ultracode and
@@ -771,6 +785,7 @@ export class SessionManager extends EventEmitter {
           id: String(args.id),
           ...(typeof args.before === "string" ? { before: args.before } : {}),
           ...(typeof args.text === "string" ? { text: args.text } : {}),
+          ...(typeof args.name === "string" ? { name: args.name } : {}),
         });
       case "rewind_conversation":
         return this.rewindConversation(sessionId, args);

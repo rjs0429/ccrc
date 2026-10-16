@@ -407,6 +407,7 @@ export class Hub {
     const text = args.text ? str(args.text, MAX_TEXT) : "";
     const forkId = sid(args.id);
     const before = args.before === undefined ? undefined : sid(args.before);
+    const name = args.name === undefined ? undefined : str(args.name, TITLE_ARG_MAX);
     const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
     this.audit.log("fork", {
       device: this.device,
@@ -417,7 +418,7 @@ export class Hub {
       ...(ids.length ? { attachments: ids.length } : {}),
     });
     if (text || blocks) this.noteRemoteActivity(forkId);
-    const r = await this.manager.fork(sessionId, { id: forkId, before, text, blocks });
+    const r = await this.manager.fork(sessionId, { id: forkId, before, text, blocks, name });
     this.changed();
     return r;
   }

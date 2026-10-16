@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DisplayItem } from "../src/protocol.ts";
 import { bareCommandSheet, commandSheet } from "../../web/src/components/commandSheets.ts";
-import { actionable, excerpt, lastSeen } from "../../web/src/components/messageActions.ts";
+import { actionable, excerpt, filesBack, filesDone, filesError, lastSeen } from "../../web/src/components/messageActions.ts";
 import { errorText } from "../../web/src/labels.ts";
 
 const U1 = "8f0c1a52-3d4e-4b6a-9f20-1e5d7c9b2a41";
@@ -45,4 +45,14 @@ test("why a rewind or a fork did not happen reads in Korean", () => {
     "갈래를 만들지 못했습니다: 대화 기록을 찾지 못해 이 세션을 이어서 실행할 수 없습니다",
   );
   assert.equal(errorText("fork failed: Claude Code did not run /rename"), "갈래를 만들지 못했습니다: 갈래에 이름을 붙이지 못했습니다");
+});
+
+test("what a rewind did to the files reads once, with the files it left as links", () => {
+  assert.equal(filesError({ canRewind: false, error: "Failed to rewind: EACCES: permission denied, open 'src/a.txt'" }), "EACCES: permission denied, open 'src/a.txt'");
+  assert.equal(filesError({ canRewind: false, error: "No file checkpoint found for this message." }), "이 메시지 시점의 파일 기록이 없습니다");
+  assert.equal(filesError({ canRewind: false, error: "request not allowed" }), errorText("request not allowed"));
+  assert.equal(filesDone({ canRewind: true }, 2), " · 파일 2개");
+  assert.equal(filesDone({ canRewind: true, skippedLinks: 1 }, 2), " · 링크라서 건너뛴 파일 1개");
+  assert.equal(filesBack({ canRewind: true }, 2), "파일 2개를 되돌렸습니다");
+  assert.equal(filesBack({ canRewind: true, skippedLinks: 1 }, 2), "파일을 되돌렸습니다 · 링크라서 건너뛴 파일 1개");
 });

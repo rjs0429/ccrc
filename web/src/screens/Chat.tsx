@@ -9,6 +9,7 @@ import { commandSheet } from "../components/commandSheets.ts";
 import { PendingCard } from "../components/Pending.tsx";
 import { ArchivedBadge, SessionActions, renameBlocked, setArchived } from "../components/SessionActions.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
+import { TitleText } from "../components/TitleText.tsx";
 import { ChangesSheet } from "../components/sheets/Changes.tsx";
 import { CommandResultSheet, StoppedSheet } from "../components/sheets/Command.tsx";
 import { ContextSheet } from "../components/sheets/Context.tsx";
@@ -90,7 +91,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [sentStart, setSentStart] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [message, setMessage] = useState<UserMessage | null>(null);
-  const [fork, setFork] = useState<{ before?: UserMessage; text?: string } | null>(null);
+  // typed: the "/fork" or "/branch" message that opened the sheet, back in the composer when the sheet goes without a fork.
+  const [fork, setFork] = useState<{ before?: UserMessage; text?: string; name?: string; typed?: string } | null>(null);
   const [rewindAt, setRewindAt] = useState<string>();
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -184,10 +186,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   const sendText = (text: string, attachments: string[] = []) => {
     const c = attachments.length ? undefined : parseCommand(text);
-    // "/fork" and "/branch" open the fork sheet with what follows them as the fork's task; nothing is sent.
+    // "/fork" and "/branch" open the fork sheet with what follows them as the fork's task or, as Claude Code's /branch
+    // takes it, its name; nothing is sent.
     if (c && commandSheet(c.name)?.sheet === "fork") {
       (document.activeElement as HTMLElement | null)?.blur();
-      setFork({ text: c.args });
+      setFork({ ...(commandName(c.name) === "branch" ? { name: c.args } : { text: c.args }), typed: text });
       return true;
     }
     const before = new Set((chat?.items ?? []).filter((i) => i.kind === "command").map((i) => i.id));
@@ -369,7 +372,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           >
             <span className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
               <span className="block truncate text-[15px] font-semibold short:max-w-[60%] short:shrink-0" data-chat-title>
-                {title}
+                <TitleText text={title} />
               </span>
               <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted">
                 {archived && <ArchivedBadge />}
@@ -657,7 +660,19 @@ export function Chat({ sessionId }: { sessionId: string }) {
           onClose={() => setMessage(null)}
         />
       )}
-      {fork && <ForkSheet sessionId={sessionId} before={fork.before} text={fork.text} onClose={() => setFork(null)} />}
+      {fork && (
+        <ForkSheet
+          sessionId={sessionId}
+          before={fork.before}
+          text={fork.text}
+          name={fork.name}
+          onDone={() => setFork(null)}
+          onClose={() => {
+            if (fork.typed) composerInsert(fork.typed, true);
+            setFork(null);
+          }}
+        />
+      )}
     </div>
   );
 }

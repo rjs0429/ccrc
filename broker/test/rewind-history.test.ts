@@ -11,7 +11,7 @@ process.env.HOME = home;
 process.env.CLAUDE_CONFIG_DIR = path.join(home, ".claude");
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 
-const { currentMessages, forkPoint, loadHistory, projectDirName } = await import("../src/sessions/history.ts");
+const { currentMessages, forkPoint, loadHistory, projectDirName, turnPoint } = await import("../src/sessions/history.ts");
 const { ItemBuilder } = await import("../src/sessions/items.ts");
 
 const cwd = path.join(home, "ws");
@@ -164,6 +164,64 @@ test("a fork leaves out the message and all after it, ending at the row the mess
   assert.deepEqual(await forkPoint(sid, cwd, sent), { at: ids.a3 });
   assert.deepEqual(await forkPoint(sid, cwd, stood), { at: queued });
   assert.deepEqual(await forkPoint(sid, cwd, command), { at: ids.a3 });
+});
+
+test("a fork that leaves out the turn running now ends above the row that started it", async () => {
+  const sid = randomUUID();
+  const { ids, rows, base, at, user, reply } = conversation(sid);
+  const tool = (uuid: string, parentUuid: string, id: string): Row => ({ ...reply(uuid, parentUuid, ""), message: { role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: {} }] } });
+  const result = (uuid: string, parentUuid: string, id: string): Row => ({ ...user(uuid, parentUuid, ""), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
+  assert.equal(await turnPoint(sid, cwd), undefined, "no transcript");
+  // A message sent during the turn joins it.
+  const [call, done, queued, more] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  write(sid, [
+    ...rows.slice(0, 5),
+    tool(call, ids.u3, "toolu_1"),
+    result(done, call, "toolu_1"),
+    { ...base, parentUuid: done, uuid: queued, timestamp: at(), type: "attachment", attachment: { type: "queued_command", prompt: "also this", source_uuid: randomUUID(), commandMode: "prompt" } },
+    tool(more, queued, "toolu_2"),
+  ]);
+  assert.deepEqual(await turnPoint(sid, cwd), { at: ids.a2 });
+  // A command started it, the prompt it stands for following as a meta row.
+  const [command, prompt] = [randomUUID(), randomUUID()];
+  write(sid, [
+    ...rows.slice(0, 4),
+    user(command, ids.a2, "<command-message>review is running…</command-message>\n<command-name>/review</command-name>\n<command-args>src</command-args>"),
+    { ...user(prompt, command, "Review the code in src."), isMeta: true },
+    tool(randomUUID(), prompt, "toolu_3"),
+  ]);
+  assert.deepEqual(await turnPoint(sid, cwd), { at: ids.a2 });
+  // A notice of a finished task or a message from another session that came while Claude Code waited starts one too.
+  const notice = randomUUID();
+  write(sid, [...rows, { ...user(notice, ids.a3, "<task-notification>\n<status>completed</status>\n</task-notification>"), origin: { kind: "task-notification" } }, tool(randomUUID(), notice, "toolu_4")]);
+  assert.deepEqual(await turnPoint(sid, cwd), { at: ids.a3 });
+  const peer = randomUUID();
+  write(sid, [...rows, { ...user(peer, ids.a3, "Another Claude session sent a message"), isMeta: true, origin: { kind: "peer" } }, tool(randomUUID(), peer, "toolu_5")]);
+  assert.deepEqual(await turnPoint(sid, cwd), { at: ids.a3 });
+  // A local command and its output, then the turn; a local command running with its caveat row.
+  const [caveat, local, printed, asked] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  const commandRows: Row[] = [
+    { ...user(caveat, ids.a3, "<local-command-caveat>Caveat.</local-command-caveat>"), isMeta: true },
+    user(local, caveat, "<command-name>/context</command-name>"),
+    user(printed, local, "<local-command-stdout>Context</local-command-stdout>"),
+  ];
+  write(sid, [...rows, ...commandRows, user(asked, printed, "fourth"), tool(randomUUID(), asked, "toolu_6")]);
+  assert.deepEqual(await turnPoint(sid, cwd), { at: printed });
+  write(sid, [...rows, ...commandRows.slice(0, 2)]);
+  assert.deepEqual(await turnPoint(sid, cwd), { at: ids.a3 });
+  // A turn Claude Code compacted the conversation in reaches back across the boundary.
+  const [boundary, summary] = [randomUUID(), randomUUID()];
+  write(sid, [
+    ...rows.slice(0, 5),
+    tool(call, ids.u3, "toolu_7"),
+    { ...base, parentUuid: null, logicalParentUuid: call, uuid: boundary, timestamp: at(), type: "system", subtype: "compact_boundary", content: "Conversation compacted" },
+    { ...user(summary, boundary, "This session is being continued from a previous conversation."), isCompactSummary: true },
+    tool(randomUUID(), summary, "toolu_8"),
+  ]);
+  assert.deepEqual(await turnPoint(sid, cwd), { at: ids.a2 });
+  // The turn running is the conversation's first.
+  write(sid, [rows[0], tool(randomUUID(), ids.u1, "toolu_9")]);
+  assert.deepEqual(await turnPoint(sid, cwd), {});
 });
 
 test("cutting the conversation at an item leaves out it and everything after it", () => {

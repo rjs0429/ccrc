@@ -75,6 +75,10 @@ interface FileRow {
   source_uuid?: unknown;
   leafUuid?: string | null;
   explicit?: boolean;
+  isCompactSummary?: boolean;
+  isVisibleInTranscriptOnly?: boolean;
+  origin?: { kind?: unknown };
+  logicalParentUuid?: string | null;
 }
 
 // The rows Claude Code counts as the conversation's; one written after a rewind's last-prompt row ends the rewind.
@@ -207,6 +211,48 @@ export async function forkPoint(sessionId: string, cwd: string, messageId: strin
   const i = messages.findIndex((m) => m.uuid === messageId);
   if (i < 0) return undefined;
   return i > 0 ? { at: messages[i - 1].uuid } : {};
+}
+
+// Text Claude Code writes in a user row that starts no turn: an interruption's mark, a local or shell command's output.
+const NO_TURN = /^(?:\[Request interrupted by user[^\]]*\]$|<(?:local-command-std(?:out|err)|bash-std(?:out|err))>)/;
+
+// A row that starts a turn: what the user sent, a command among it, or a message or notice Claude Code took in while it
+// waited. A message sent while Claude worked joins the turn on an attachment row; tool results and context rows are its own.
+function startsTurn(e: FileRow): boolean {
+  if (e.type !== "user" || e.isCompactSummary || e.isVisibleInTranscriptOnly) return false;
+  if (e.isMeta && (e.origin?.kind === undefined || e.origin.kind === "human")) return false;
+  const c = e.message?.content;
+  const first = (typeof c === "string" ? { type: "text", text: c } : Array.isArray(c) ? c[0] : undefined) as { type?: unknown; text?: unknown } | undefined;
+  if (first?.type === "tool_result") return false;
+  return !(first?.type === "text" && typeof first.text === "string" && NO_TURN.test(first.text.trim()));
+}
+
+// Where a copy that leaves out the turn running now ends: the row above the one that started it, a local command with its
+// caveat row. `at` absent when that turn starts the conversation, undefined when the transcript shows no turn.
+export async function turnPoint(sessionId: string, cwd: string): Promise<{ at?: string } | undefined> {
+  const file = transcriptPath(sessionId, cwd);
+  if (!file) return undefined;
+  const found = new Map<string, { parent: string | null; caveat: boolean; starts: boolean }>();
+  let leaf: string | undefined;
+  for (const line of (await fs.promises.readFile(file, "utf8")).split("\n")) {
+    if (!line.includes('"uuid"')) continue;
+    try {
+      const e = JSON.parse(line) as FileRow;
+      if (!e.uuid || e.isSidechain) continue;
+      found.set(e.uuid, { parent: e.parentUuid ?? e.logicalParentUuid ?? null, caveat: caveat(e), starts: startsTurn(e) });
+      if (counts(e)) leaf = e.uuid;
+    } catch {}
+  }
+  const seen = new Set<string>();
+  for (let id = leaf; id && !seen.has(id); id = found.get(id)?.parent ?? undefined) {
+    seen.add(id);
+    const row = found.get(id);
+    if (!row?.starts) continue;
+    const above = row.parent ? found.get(row.parent) : undefined;
+    const at = above?.caveat ? above.parent : row.parent;
+    return at ? { at } : {};
+  }
+  return undefined;
 }
 
 export async function loadHistory(sessionId: string, cwd: string): Promise<DisplayItem[]> {

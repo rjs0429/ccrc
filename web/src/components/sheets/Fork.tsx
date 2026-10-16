@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { PERMISSION_MODES, type LiveState, type PermissionModeName, type StartSettings } from "../../../../broker/src/protocol.ts";
 import { errorText, shortPath } from "../../labels.ts";
 import { rememberSent } from "../../sentPreviews.ts";
@@ -42,8 +42,23 @@ export function startOf(st?: LiveState): StartSettings {
 }
 
 // Copies the conversation into a new session ccrc runs, up to a message or as it stands, and either starts it with a
-// message while the phone stays here or opens it with the message waiting in its composer.
-export function ForkSheet({ sessionId, before, text: given, onClose }: { sessionId: string; before?: UserMessage; text?: string; onClose: () => void }) {
+// message while the phone stays here or opens it with the message waiting in its composer. onDone: the fork is made and
+// the sheet goes; onClose: it goes without one.
+export function ForkSheet({
+  sessionId,
+  before,
+  text: given,
+  name,
+  onDone,
+  onClose,
+}: {
+  sessionId: string;
+  before?: UserMessage;
+  text?: string;
+  name?: string;
+  onDone: () => void;
+  onClose: () => void;
+}) {
   const chat = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat : undefined));
   const summary = useApp((s) => s.sessions?.find((x) => x.id === sessionId));
   const st = chat?.state;
@@ -54,6 +69,7 @@ export function ForkSheet({ sessionId, before, text: given, onClose }: { session
   const fast = st?.fastMode === "on" || st?.fastMode === "cooldown" || st?.fastWanted === true || (kind === "inactive" && st?.start?.fast === true);
   const scope = `fork:${sessionId}`;
   const [id] = useState(newId);
+  const hints = useId();
   const [text, setText] = useState(given ?? before?.text ?? "");
   const [going, setGoing] = useState<"open" | "start" | null>(null);
   const [error, setError] = useState<string>();
@@ -79,10 +95,16 @@ export function ForkSheet({ sessionId, before, text: given, onClose }: { session
     setError(undefined);
     const message = text.trim();
     const ids = start ? attachments.map((a) => a.uploaded!.id) : [];
-    const args = { id, ...(before ? { before: before.id } : {}), ...(start && message ? { text: message } : {}), ...(ids.length ? { attachments: ids } : {}) };
+    const args = {
+      id,
+      ...(before ? { before: before.id } : {}),
+      ...(start && message ? { text: message } : {}),
+      ...(ids.length ? { attachments: ids } : {}),
+      ...(name ? { name } : {}),
+    };
     call(sessionId, "fork", args, FORK_WAIT_MS).then(
       (r) => {
-        onClose();
+        onDone();
         if ("draft" in r) {
           moveAttachments(scope, NEW_SESSION_SCOPE);
           openNewSession(r.draft.cwd, text, startOf(st));
@@ -91,8 +113,12 @@ export function ForkSheet({ sessionId, before, text: given, onClose }: { session
           rememberSent(r.sessionId, message, takeAttachments(scope));
           toast("갈래를 시작했습니다", { label: "열기", run: () => navigate({ name: "chat", sessionId: r.sessionId }) });
         } else {
-          saveDraft(r.sessionId, text);
-          moveAttachments(scope, r.sessionId);
+          // A start asked for earlier in this sheet may have given the fork its first message; the text then stays sent.
+          if (r.sent) rememberSent(r.sessionId, message, takeAttachments(scope));
+          else {
+            saveDraft(r.sessionId, text);
+            moveAttachments(scope, r.sessionId);
+          }
           navigate({ name: "chat", sessionId: r.sessionId });
         }
       },
@@ -115,6 +141,11 @@ export function ForkSheet({ sessionId, before, text: given, onClose }: { session
       <p className="mt-1 px-1 text-xs text-muted">
         갈래는 원격 세션으로 돌며 권한 모드, 모델, Effort를 이어받습니다.{fast && " Fast 모드는 끄고 시작합니다."}
       </p>
+      {name && (
+        <p className="mt-1 px-1 text-xs break-all text-muted" data-fork-name>
+          갈래 이름: <span className="font-medium text-fg">{name}</span>
+        </p>
+      )}
       {folderMissing ? (
         <div className="mt-3">
           <Failed text={`작업 폴더가 없어 갈래를 만들 수 없습니다: ${shortPath(cwd)}`} />
@@ -165,14 +196,14 @@ export function ForkSheet({ sessionId, before, text: given, onClose }: { session
         </div>
       )}
       <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-1 text-center text-xs text-muted">
-        <Button disabled={blocked} onClick={() => go(false)}>
+        <Button disabled={blocked} onClick={() => go(false)} describedBy={`${hints}-open`}>
           {going === "open" ? <Spinner className="mx-auto size-5" /> : "갈래 열기"}
         </Button>
-        <Button kind="primary" disabled={blocked || !filled} onClick={() => go(true)}>
+        <Button kind="primary" disabled={blocked || !filled} onClick={() => go(true)} describedBy={`${hints}-start`}>
           {going === "start" ? <Spinner className="mx-auto size-5" /> : "백그라운드로 시작"}
         </Button>
-        <span>보내지 않고 갈래로 갑니다</span>
-        <span>보내고 이 화면에 남습니다</span>
+        <span id={`${hints}-open`}>보내지 않고 갈래로 갑니다</span>
+        <span id={`${hints}-start`}>보내고 이 화면에 남습니다</span>
       </div>
     </Sheet>
   );
