@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { PushPrefs, TurnEndMode } from "../../../../broker/src/push/types.ts";
 import { ApiError } from "../../api.ts";
 import { Button, Icon, Spinner } from "../../components/ui.tsx";
@@ -45,6 +45,7 @@ function Toggle({ label, hint, on, onChange }: { label: string; hint: string; on
 }
 
 function TurnEndChoice({ value, onChange }: { value: TurnEndMode; onChange: (mode: TurnEndMode) => void }) {
+  const id = useId();
   return (
     <div className="space-y-2 px-3.5 py-3">
       <div>
@@ -57,6 +58,8 @@ function TurnEndChoice({ value, onChange }: { value: TurnEndMode; onChange: (mod
             key={mode}
             role="radio"
             aria-checked={value === mode}
+            aria-label={mode === "remote" ? `${label} (기본)` : label}
+            aria-describedby={`${id}-${mode}`}
             onClick={() => onChange(mode)}
             className={`flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left ${value === mode ? "bg-accent-soft" : "active:bg-surface-2"}`}
           >
@@ -65,7 +68,7 @@ function TurnEndChoice({ value, onChange }: { value: TurnEndMode; onChange: (mod
                 {label}
                 {mode === "remote" && <span className="ml-1.5 text-xs text-muted">기본</span>}
               </span>
-              <span className="block text-xs break-keep text-pretty text-muted">{hint}</span>
+              <span id={`${id}-${mode}`} className="block text-xs break-keep text-pretty text-muted">{hint}</span>
             </span>
             <Icon.check className={`mt-0.5 size-4 shrink-0 text-accent ${value === mode ? "" : "invisible"}`} />
           </button>
@@ -184,7 +187,7 @@ export function NotificationsSection() {
               <div className="text-[15px]">VS Code 세션 알림</div>
               <div className="text-xs text-muted">노트북에서 먼저 답하거나 이어 할 수 있게 기다렸다가 알립니다</div>
             </div>
-            <div role="radiogroup" className="flex gap-1 rounded-xl bg-surface-2 p-1">
+            <div role="radiogroup" aria-label="VS Code 세션 알림" className="flex gap-1 rounded-xl bg-surface-2 p-1">
               {DELAYS.map(([sec, label]) => (
                 <button
                   key={sec}
