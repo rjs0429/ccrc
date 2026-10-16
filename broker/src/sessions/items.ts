@@ -376,6 +376,15 @@ export class ItemBuilder {
     for (const item of later) this.put(item);
   }
 
+  // Leaves out the item and everything after it, as a rewind leaves the conversation; false when no item has the id.
+  cut(id: string): boolean {
+    const at = this.pos.get(id);
+    if (at === undefined) return false;
+    this.seed(this.items.slice(0, at));
+    for (const [call, owner] of this.subCalls) if (!this.pos.has(owner)) this.subCalls.delete(call);
+    return true;
+  }
+
   note(code: NoteCode, text?: string, ts?: string, id?: string, attachments?: number): DisplayItem | undefined {
     const last = this.items.at(-1);
     if (code === "interrupted" && last?.kind === "note" && last.code === "interrupted") return undefined;

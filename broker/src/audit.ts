@@ -34,7 +34,9 @@ export type AuditEvent =
   | "claude_settings"
   | "push_subscribe"
   | "push_unsubscribe"
-  | "doctor";
+  | "doctor"
+  | "fork"
+  | "rewind_conversation";
 
 // Records who did what; message text and tool input are not recorded.
 export class Audit {

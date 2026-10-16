@@ -368,6 +368,14 @@ export class Hub {
       if (msg.op === "set_output_style") str(args.style);
       if (msg.op === "rename") str(args.title, TITLE_ARG_MAX);
       if (msg.op === "archive" && typeof args.archived !== "boolean") throw Error("invalid request");
+      if (msg.op === "fork") {
+        reply({ ok: true, data: await this.fork(sessionId, args) });
+        return;
+      }
+      if (msg.op === "rewind_conversation") {
+        reply({ ok: true, data: await this.rewindConversation(sessionId, args) });
+        return;
+      }
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
         const detail = Object.fromEntries(
           Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style", "messageId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
@@ -390,6 +398,46 @@ export class Hub {
     } catch (e) {
       reply({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }
+  }
+
+  // A fork given a first message runs it at once, which counts as the remote user's work.
+  private async fork(sessionId: string, args: Record<string, unknown>): Promise<unknown> {
+    const ids = args.attachments === undefined ? [] : args.attachments;
+    if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENTS || (args.text !== undefined && typeof args.text !== "string")) throw Error("invalid request");
+    const text = args.text ? str(args.text, MAX_TEXT) : "";
+    const forkId = sid(args.id);
+    const before = args.before === undefined ? undefined : sid(args.before);
+    const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
+    this.audit.log("fork", {
+      device: this.device,
+      sessionId,
+      forkId,
+      ...(before ? { before } : {}),
+      ...(text ? { chars: text.length } : {}),
+      ...(ids.length ? { attachments: ids.length } : {}),
+    });
+    if (text || blocks) this.noteRemoteActivity(forkId);
+    const r = await this.manager.fork(sessionId, { id: forkId, before, text, blocks });
+    this.changed();
+    return r;
+  }
+
+  // A rewind in place gives the window that shows the session the conversation as it now stands.
+  private async rewindConversation(sessionId: string, args: Record<string, unknown>): Promise<unknown> {
+    const userMessageId = sid(args.userMessageId);
+    const r = await this.manager.rewindConversation(sessionId, args);
+    this.audit.log("rewind_conversation", {
+      device: this.device,
+      sessionId,
+      userMessageId,
+      choice: args.choice,
+      mode: r.mode,
+      ...(r.mode === "forked" ? { forkId: r.sessionId, ...(r.fallback ? { fallback: true } : {}) } : {}),
+      ...(r.files ? { files: r.files.canRewind } : {}),
+    });
+    if (r.mode === "in_place" && this.viewing === sessionId) await this.setView(sessionId);
+    this.changed();
+    return r;
   }
 
   // A call about a folder no session runs in yet goes only to a folder a new session may start in. A listing

@@ -9,6 +9,8 @@ import { Settings } from "./screens/Settings.tsx";
 import { takeWindow, useApp } from "./state.ts";
 
 const TOAST_MS = 4000;
+// A toast with a button stays long enough to reach for it.
+const ACTION_TOAST_MS = 7000;
 
 function Toast() {
   const toast = useApp((s) => s.toast);
@@ -16,13 +18,28 @@ function Toast() {
   useEffect(() => {
     if (!toast) return;
     setHidden(false);
-    const t = setTimeout(() => setHidden(true), TOAST_MS);
+    const t = setTimeout(() => setHidden(true), toast.action ? ACTION_TOAST_MS : TOAST_MS);
     return () => clearTimeout(t);
   }, [toast]);
   if (!toast || hidden) return null;
+  const action = toast.action;
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-[calc(6rem+var(--sab))] z-50 flex justify-center px-safe-6">
-      <div className="rounded-xl bg-fg px-4 py-2.5 text-sm text-bg shadow-lg">{errorText(toast.text)}</div>
+      <div className="flex items-center rounded-xl bg-fg text-sm text-bg shadow-lg" data-toast>
+        <span className="px-4 py-2.5">{errorText(toast.text)}</span>
+        {action && (
+          <button
+            onClick={() => {
+              setHidden(true);
+              action.run();
+            }}
+            className="pointer-events-auto -my-0.5 mr-1 min-h-11 shrink-0 border-l border-bg/25 px-4 font-semibold"
+            data-toast-action
+          >
+            {action.label}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

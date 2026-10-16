@@ -16,6 +16,9 @@ import { ContextUsageSheet } from "../components/sheets/ContextUsage.tsx";
 import { McpSheet } from "../components/sheets/Mcp.tsx";
 import { OutputStyleSheet, outputStyleLabel } from "../components/sheets/OutputStyle.tsx";
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
+import { ForkSheet } from "../components/sheets/Fork.tsx";
+import { MessageActionsSheet } from "../components/sheets/MessageActions.tsx";
+import type { UserMessage } from "../components/messageActions.ts";
 import { AgentMapSheet } from "../components/sheets/AgentMap.tsx";
 import { agentMap } from "../components/agents/tree.ts";
 import { ThreadSheet, type ShownThread } from "../components/sheets/Thread.tsx";
@@ -86,6 +89,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [starting, setStarting] = useState(false);
   const [sentStart, setSentStart] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [message, setMessage] = useState<UserMessage | null>(null);
+  const [fork, setFork] = useState<{ before?: UserMessage; text?: string } | null>(null);
+  const [rewindAt, setRewindAt] = useState<string>();
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   // A smooth scroll to the bottom from the jump button, until it lands or the user touches the list; a touch
@@ -178,6 +184,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   const sendText = (text: string, attachments: string[] = []) => {
     const c = attachments.length ? undefined : parseCommand(text);
+    // "/fork" and "/branch" open the fork sheet with what follows them as the fork's task; nothing is sent.
+    if (c && commandSheet(c.name)?.sheet === "fork") {
+      (document.activeElement as HTMLElement | null)?.blur();
+      setFork({ text: c.args });
+      return true;
+    }
     const before = new Set((chat?.items ?? []).filter((i) => i.kind === "command").map((i) => i.id));
     const ok = send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
     if (ok) follow(true);
@@ -219,6 +231,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (target === "model" || target === "effort") setComposerSheet({ name: target, at: Date.now() });
     else if (target === "config") openSettingsFrom("claude");
     else if (target === "permissions") openSettingsFrom("claude", "permissions");
+    else if (target === "fork") setFork({});
     else if (target === "usage") {
       setUsageCommand(name);
       setSheet("usage");
@@ -277,6 +290,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const openFile = useCallback((href: string) => {
     if (!href.startsWith("#")) setFile({ href });
   }, []);
+  const openMessage = useCallback((m: UserMessage) => setMessage(m), []);
   const roots = useMemo(() => (cwd ? [cwd] : []), [cwd]);
 
   useLayoutEffect(() => {
@@ -408,7 +422,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
                     data-item={item.id}
                     className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
                   >
-                    <ItemView item={item} running={busy} />
+                    <ItemView item={item} running={busy} onMessage={openMessage} />
                   </div>
                 </Fragment>
               ))}
@@ -530,6 +544,18 @@ export function Chat({ sessionId }: { sessionId: string }) {
             hint={archived ? "목록에 다시 보입니다" : "ccrc 목록에서만 숨깁니다"}
             onClick={() => (setArchived(sessionId, !archived), setMenu(false))}
           />
+          <Choice
+            label="갈래로 떼기"
+            hint={folderMissing ? "작업 폴더가 없어 만들 수 없습니다" : "지금까지의 대화를 새 세션으로 복사합니다"}
+            disabled={folderMissing}
+            onClick={() => (setFork({}), setMenu(false))}
+          />
+          <Choice
+            label="되돌리기"
+            hint={folderMissing ? "작업 폴더가 없어 되돌릴 수 없습니다" : "보낸 메시지 시점으로 대화와 코드를 되돌립니다"}
+            disabled={folderMissing}
+            onClick={() => (setRewindAt(undefined), setSheet("rewind"), setMenu(false))}
+          />
           <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
           <Choice label="Context와 사용량" hint="Context, 요금제 사용량, Compact" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
           <Choice label="에이전트 지도" hint="에이전트와 백그라운드 작업 보기·중지" onClick={() => (setSheet("agents"), setMenu(false))} />
@@ -541,7 +567,6 @@ export function Chat({ sessionId }: { sessionId: string }) {
                 hint={st?.outputStyle ? outputStyleLabel(st.outputStyle) : "응답 방식을 고릅니다"}
                 onClick={() => (setSheet("outputStyle"), setMenu(false))}
               />
-              <Choice label="파일 되돌리기" hint="보낸 메시지 시점으로 파일을 되돌립니다" onClick={() => (setSheet("rewind"), setMenu(false))} />
             </>
           )}
           {kind === "owned" && (
@@ -612,7 +637,27 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {awaited && <CommandResultSheet title={awaited.title} item={result} late={awaited.late && !busy} onClose={() => setAwaited(undefined)} />}
       {sheet === "mcp" && <McpSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "outputStyle" && <OutputStyleSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
-      {sheet === "rewind" && <RewindSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {sheet === "rewind" && <RewindSheet sessionId={sessionId} initial={rewindAt} onClose={() => (setSheet(null), setRewindAt(undefined))} />}
+      {message && (
+        <MessageActionsSheet
+          message={message}
+          kind={kind}
+          busy={busy}
+          host={st?.host ?? summary?.host}
+          cannot={folderMissing ? "작업 폴더가 없어 할 수 없습니다" : undefined}
+          onFork={() => {
+            setMessage(null);
+            setFork({ before: message });
+          }}
+          onRedo={() => {
+            setMessage(null);
+            setRewindAt(message.id);
+            setSheet("rewind");
+          }}
+          onClose={() => setMessage(null)}
+        />
+      )}
+      {fork && <ForkSheet sessionId={sessionId} before={fork.before} text={fork.text} onClose={() => setFork(null)} />}
     </div>
   );
 }
