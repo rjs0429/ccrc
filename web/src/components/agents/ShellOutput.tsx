@@ -29,12 +29,13 @@ function Output({ sessionId, task }: { sessionId: string; task: TaskInfo }) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
-  usePolling(read, running, `${sessionId}|${task.id}`);
+  // A wrapper that refuses the request refuses it for as long as it runs.
+  const refused = error !== undefined && /request not allowed/.test(error);
+  usePolling(read, running, `${sessionId}|${task.id}`, !refused);
   useLayoutEffect(() => {
     if (pre.current && follow.current) pre.current.scrollTop = pre.current.scrollHeight;
   }, [shown?.text]);
 
-  const refused = error !== undefined && /request not allowed/.test(error);
   return (
     <div className="mt-4" data-shell-output>
       <div className="text-xs font-semibold text-muted">출력</div>

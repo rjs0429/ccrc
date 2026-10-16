@@ -118,6 +118,75 @@ test("a subagent's transcript reads as a conversation of its own, with the resul
   assert.equal(r.items[0].ts, "2026-10-16T03:00:00.000Z");
 });
 
+test("calls made side by side show in the order written while the transcript grows and once it is done", async () => {
+  const file = path.join(subagents, "agent-apar.jsonl");
+  // As Claude Code writes them: each call after the one before, each result hanging off its own call, and the
+  // conversation going on from the result written last.
+  const all = rows("apar", [
+    prompt("p0", "Check both"),
+    say("p1", "Running two commands."),
+    call("p2", "toolu_quick", "Bash", { command: "ls" }),
+    call("p3", "toolu_slow", "Bash", { command: "make" }),
+    result("p4", "toolu_quick", "a b c", { parentUuid: "p2" }),
+    result("p5", "toolu_slow", "built", { parentUuid: "p3" }),
+    say("p6", "Both done. Two more."),
+    call("p7", "toolu_first", "Bash", { command: "git status" }),
+    call("p8", "toolu_second", "Bash", { command: "git log -1" }),
+    result("p9", "toolu_second", "commit 1", { parentUuid: "p8" }),
+    result("p10", "toolu_first", "clean", { parentUuid: "p7" }),
+    say("p11", "All checked."),
+  ]);
+  const tools = (items: DisplayItem[]) => items.flatMap((i) => (i.kind === "tool" ? [`${i.id}${i.result ? "+" : ""}`] : []));
+  const grow = (n: number, at: string) => {
+    write(file, all.slice(0, n));
+    fs.utimesSync(file, new Date(at), new Date(at));
+  };
+  grow(4, "2026-10-16T05:00:00Z");
+  const held = await agentTranscript(SID, cwd, { agentId: "apar" });
+  assert.deepEqual(tools(held.items), ["toolu_quick", "toolu_slow"]);
+  grow(5, "2026-10-16T05:00:01Z");
+  const running = await agentTranscript(SID, cwd, { agentId: "apar" });
+  assert.equal(running.total, 4, "the quick result written last leaves the slow call in place");
+  assert.deepEqual(tools(running.items), ["toolu_quick+", "toolu_slow"]);
+  const next = await agentTranscript(SID, cwd, { agentId: "apar", after: { count: 4, lastId: "toolu_slow", open: ["toolu_quick", "toolu_slow"] } });
+  assert.equal(next.reset, undefined);
+  assert.deepEqual([next.items, tools(next.changed ?? [])], [[], ["toolu_quick+"]]);
+  grow(all.length, "2026-10-16T05:00:02Z");
+  const done = await agentTranscript(SID, cwd, { agentId: "apar" });
+  assert.deepEqual(kinds(done.items), [
+    ["user", "p0"],
+    ["assistant", "p1:0"],
+    ["tool", "toolu_quick"],
+    ["tool", "toolu_slow"],
+    ["assistant", "p6:0"],
+    ["tool", "toolu_first"],
+    ["tool", "toolu_second"],
+    ["assistant", "p11:0"],
+  ]);
+  assert.deepEqual(tools(done.items), ["toolu_quick+", "toolu_slow+", "toolu_first+", "toolu_second+"], "a call off the chain shows with its result");
+});
+
+test("what the main agent sends a running subagent shows as a message to it", async () => {
+  write(
+    path.join(subagents, "agent-aask.jsonl"),
+    rows("aask", [
+      prompt("q0", "Write the report"),
+      say("q1", "Writing."),
+      { type: "attachment", uuid: "q2", attachment: { type: "queued_command", prompt: "Add a section on hooks", source_uuid: "q-sent", origin: { kind: "coordinator" }, isMeta: true } },
+      say("q3", "Adding the hooks section."),
+    ]),
+  );
+  const r = await agentTranscript(SID, cwd, { agentId: "aask" });
+  assert.deepEqual(kinds(r.items), [
+    ["user", "q0"],
+    ["assistant", "q1:0"],
+    ["user", "q-sent"],
+    ["assistant", "q3:0"],
+  ]);
+  assert.equal(r.items[2].kind === "user" && r.items[2].text, "Add a section on hooks");
+  assert.equal(r.promptId, "q0");
+});
+
 test("an Agent call finds its subagent's transcript by the call when its id is not known, and a workflow agent in its run's folder", async () => {
   const r = await agentTranscript(SID, cwd, { toolUseId: "toolu_nested" });
   assert.equal(r.agentId, "anest");

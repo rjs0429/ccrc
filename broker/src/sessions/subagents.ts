@@ -133,37 +133,86 @@ async function agentOfCall(dir: string, toolUseId: string): Promise<string | und
   return ids.get(toolUseId);
 }
 
-// The subagent's conversation as items: the SDK's reader follows the chain of its messages, the file adds the tool
-// outputs items are built from. Without their Agent call the messages read as a conversation of their own. The result
-// of a call made beside others hangs off the chain on a branch of its own, so it is taken from the file by call id.
+// A transcript line the conversation is made of: a message, or an attachment the chain of messages runs through.
+type Line = Obj & { uuid: string; type: string };
+const LINE = /"type":"(?:user|assistant|attachment)"/;
+
+function linesOf(raw: string): Line[] {
+  const lines: Line[] = [];
+  for (const text of raw.split("\n")) {
+    if (!LINE.test(text)) continue;
+    try {
+      const e = JSON.parse(text) as unknown;
+      if (isObj(e) && typeof e.uuid === "string" && (e.type === "user" || e.type === "assistant" || e.type === "attachment")) lines.push(e as Line);
+    } catch {}
+  }
+  return lines;
+}
+
+// The messages in the order written. The SDK's reader follows the chain back from the last message and leaves out the
+// branches that hang off it, as calls made beside others and their results do; those, and lines it had not read yet,
+// come from the file. Lines before a compaction stay out: the chain does not reach them.
+function conversation(messages: RawMessage[], lines: Line[]): RawMessage[] {
+  const byUuid = new Map(lines.map((l) => [l.uuid, l]));
+  const at = new Map(lines.map((l, n) => [l.uuid, n]));
+  lines.forEach((l, n) => {
+    const queued = isObj(l.attachment) && l.attachment.type === "queued_command" ? l.attachment.source_uuid : undefined;
+    if (typeof queued === "string" && !at.has(queued)) at.set(queued, n);
+  });
+  const given = new Set(messages.map((m) => m.uuid));
+  const joined = new Set<string>();
+  let link = lines.findLast((x) => x.type !== "attachment");
+  while (link && !joined.has(link.uuid)) {
+    joined.add(link.uuid);
+    link = typeof link.parentUuid === "string" ? byUuid.get(link.parentUuid) : undefined;
+  }
+  for (const uuid of given) if (uuid) joined.add(uuid);
+  const extra: number[] = [];
+  lines.forEach((l, n) => {
+    if (!joined.has(l.uuid)) {
+      if (typeof l.parentUuid !== "string" || !joined.has(l.parentUuid)) return;
+      joined.add(l.uuid);
+    }
+    if (l.type !== "attachment" && !given.has(l.uuid)) extra.push(n);
+  });
+  const fromFile = (l: Line): RawMessage => ({
+    type: l.type,
+    uuid: l.uuid,
+    ...(typeof l.timestamp === "string" ? { timestamp: l.timestamp } : {}),
+    message: l.message as RawMessage["message"],
+    ...(l.isMeta === true || l.isCompactSummary === true || l.isVisibleInTranscriptOnly === true ? { is_meta: true } : {}),
+    ...(isObj(l.origin) ? { origin: l.origin } : {}),
+  });
+  const out: RawMessage[] = [];
+  let k = 0;
+  for (const m of messages) {
+    const n = m.uuid === undefined ? undefined : at.get(m.uuid);
+    while (n !== undefined && k < extra.length && extra[k] < n) out.push(fromFile(lines[extra[k++]]));
+    out.push(m);
+  }
+  while (k < extra.length) out.push(fromFile(lines[extra[k++]]));
+  return out;
+}
+
+// What the main agent sends a running subagent comes as a queued command Claude Code marks as its own; it shows as a
+// message.
+const fromMain = (m: RawMessage): boolean => (m as { isQueuedCommand?: unknown }).isQueuedCommand === true && isObj(m.origin) && m.origin.kind === "coordinator";
+
+// The subagent's conversation as items: the SDK's reader follows the chain of its messages, the file adds what the
+// chain leaves out and the tool outputs items are built from. Without their Agent call the messages read as a
+// conversation of their own.
 async function build(sessionId: string, agentId: string, file: string, sdkDir: string | undefined, cwd: string, st: fs.Stats): Promise<Built> {
   const [messages, raw, meta] = await Promise.all([
     getSubagentMessages(sessionId, agentId, sdkDir ? { dir: sdkDir } : undefined),
     fs.promises.readFile(file, "utf8"),
     readObj(file.replace(/\.jsonl$/, ".meta.json"), META_MAX),
   ]);
-  const outputs = new Map<string, unknown>();
-  const results = new Map<string, RawMessage>();
-  for (const line of raw.split("\n")) {
-    if (!line.includes('"tool_result"')) continue;
-    try {
-      const e = JSON.parse(line) as { type?: unknown; uuid?: unknown; timestamp?: unknown; message?: { content?: unknown }; toolUseResult?: unknown };
-      if (e.type !== "user" || typeof e.uuid !== "string") continue;
-      const output = usedOutput(e.toolUseResult) ? e.toolUseResult : undefined;
-      if (output) outputs.set(e.uuid, output);
-      const blocks = Array.isArray(e.message?.content) ? (e.message.content as unknown[]).filter((b) => isObj(b) && b.type === "tool_result" && typeof b.tool_use_id === "string") : [];
-      const timestamp = typeof e.timestamp === "string" ? e.timestamp : undefined;
-      for (const b of blocks as Obj[]) results.set(b.tool_use_id as string, { type: "user", uuid: e.uuid, timestamp, message: { content: [b as { type: string }] }, toolUseResult: blocks.length === 1 ? output : undefined });
-    } catch {}
-  }
+  const lines = linesOf(raw);
+  const outputs = new Map(lines.flatMap((l) => (l.type === "user" && usedOutput(l.toolUseResult) ? [[l.uuid, l.toolUseResult] as const] : [])));
   const builder = new ItemBuilder(cwd);
-  for (const m of messages) builder.add({ ...(m as unknown as RawMessage), parent_tool_use_id: null, toolUseResult: outputs.get(m.uuid) });
-  const chain = new Set(messages.map((m) => m.uuid));
-  const aside = builder.items.flatMap((i) => {
-    const r = i.kind === "tool" && !i.result ? results.get(i.id) : undefined;
-    return r && !chain.has(r.uuid!) ? [r] : [];
-  });
-  for (const m of aside) builder.add(m);
+  for (const m of conversation(messages as unknown as RawMessage[], lines)) {
+    builder.add({ ...m, parent_tool_use_id: null, toolUseResult: m.uuid ? outputs.get(m.uuid) : undefined, ...(fromMain(m) ? { is_meta: false } : {}) });
+  }
   const items = builder.items;
   const agentType = text(meta?.agentType, LABEL_MAX);
   const description = text(meta?.description, DESCRIPTION_MAX);

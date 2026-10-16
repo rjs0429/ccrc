@@ -3,11 +3,13 @@ import { useEffect, useRef } from "react";
 const POLL_MS = 2000;
 
 // Reads once, then again while `live` and the page is in front, each read starting once the last one is over; when
-// `live` ends it reads once more. `key` starts the reads over.
-export function usePolling(read: () => Promise<void>, live: boolean, key: string): void {
+// `live` ends it reads once more. `key` starts the reads over. Nothing is read while `on` is false; once it is true
+// again the reads start over.
+export function usePolling(read: () => Promise<void>, live: boolean, key: string, on = true): void {
   const fn = useRef(read);
   fn.current = read;
   useEffect(() => {
+    if (!on) return;
     let stopped = false;
     let busy = false;
     let timer: number | undefined;
@@ -32,5 +34,5 @@ export function usePolling(read: () => Promise<void>, live: boolean, key: string
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [live, key]);
+  }, [live, key, on]);
 }

@@ -415,7 +415,7 @@ function AgentDetail({ sessionId, node, gone, parent, clock, canStop, stopping, 
       )}
       {p && p.phases.length > 0 && <Phases p={p} />}
       {p && p.agents.length > 0 && <WorkflowAgents p={p} onRead={onRead} />}
-      {node.workflow && !p?.agents.length && node.runId && <PastWorkflowAgents sessionId={sessionId} runId={node.runId} ended={!running} onRead={onRead} />}
+      {node.workflow && !p?.agents.length && node.runId && <PastWorkflowAgents key={node.runId} sessionId={sessionId} runId={node.runId} ended={!running} onRead={onRead} />}
       {node.workflow && <div className="mt-3 text-xs text-muted">워크플로 안의 에이전트는 하나씩 멈출 수 없습니다. 워크플로 전체만 멈춥니다.</div>}
       {node.recent && (
         <Field label="최근 도구">
@@ -472,7 +472,7 @@ function TaskDetail({
       {running && task.activity && <Field label="지금 하는 일">{task.activity}</Field>}
       {(task.error || (task.status !== "completed" && task.summary)) && <div className="mt-3 text-sm text-danger">{task.error ?? task.summary}</div>}
       {SHELL_KINDS.has(task.kind ?? "") && (canRead || task.background === false) && (
-        <ShellOutput sessionId={sessionId} task={task} onAgent={task.parentId ? () => onRead({ agentId: task.parentId, title: parent || "서브에이전트" }) : undefined} />
+        <ShellOutput key={task.id} sessionId={sessionId} task={task} onAgent={task.parentId ? () => onRead({ agentId: task.parentId, title: parent || "서브에이전트" }) : undefined} />
       )}
       {canStop && running && (
         <div className="mt-4 flex justify-end">
@@ -594,10 +594,13 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
   };
   const open = (n: AgentNode) => show({ key: n.key, itemId: n.itemId });
   const back = () => setSelected(null);
+  // A subagent the broker lists under its Agent call: the task's id names its transcript.
+  const taskOfCall = (toolUseId?: string) => (toolUseId ? (st?.tasks ?? []).find((t) => t.toolUseId === toolUseId) : undefined);
   const read = (ref: TranscriptRef) => {
     if (!reading.length) beforeReading.current = { panel: panel()?.scrollTop ?? 0, detail: detailRef.current?.scrollTop ?? 0 };
     const at = scroller()?.scrollTop;
-    setReading((r) => [...r.slice(0, -1), ...r.slice(-1).map((x) => ({ ...x, scroll: at })), { ref }]);
+    const listed = ref.agentId ? undefined : taskOfCall(ref.toolUseId);
+    setReading((r) => [...r.slice(0, -1), ...r.slice(-1).map((x) => ({ ...x, scroll: at })), { ref: listed ? { ...ref, agentId: listed.id } : ref }]);
   };
   const unread = () => setReading((r) => r.slice(0, -1));
   const top = reading.at(-1);
@@ -629,7 +632,7 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
   };
   // A transcript follows its subagent while the broker lists it running, or while its card does.
   const runningOf = (r: TranscriptRef): boolean => {
-    const t = r.agentId ? byTask.get(r.agentId) : undefined;
+    const t = (r.agentId ? byTask.get(r.agentId) : undefined) ?? taskOfCall(r.toolUseId);
     if (t) return t.status === "running";
     const a = r.agentId ? (st?.tasks ?? []).flatMap((x) => x.workflow?.agents ?? []).find((w) => w.id === r.agentId) : undefined;
     if (a) return a.state === "running";
@@ -704,17 +707,23 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
         </div>
         <div className={`${selected || top ? "" : "hidden sm:block"} sm:col-span-7 sm:max-h-[calc(var(--vv-height,100dvh)-7rem)] sm:overflow-y-auto sm:overscroll-contain sm:border-l sm:border-line sm:pl-4`} data-map-detail ref={detailRef}>
           {top ? (
-            <Transcript
-              key={`${reading.length}|${top.ref.agentId ?? ""}|${top.ref.toolUseId ?? ""}`}
-              sessionId={sessionId}
-              target={top.ref}
-              startAt={top.scroll}
-              running={runningOf(top.ref)}
-              roots={roots}
-              onFile={onFile}
-              onBack={unread}
-              onOpen={read}
-            />
+            // The transcript on screen comes first; those under it stay as they were, hidden.
+            reading
+              .map((r, n) => (
+                <Transcript
+                  key={`${n}|${r.ref.agentId ?? ""}|${r.ref.toolUseId ?? ""}`}
+                  sessionId={sessionId}
+                  target={r.ref}
+                  active={r === top}
+                  startAt={r.scroll}
+                  running={runningOf(r.ref)}
+                  roots={roots}
+                  onFile={onFile}
+                  onBack={unread}
+                  onOpen={read}
+                />
+              ))
+              .reverse()
           ) : node ? (
             <AgentDetail
               {...detailProps}

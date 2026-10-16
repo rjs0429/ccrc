@@ -52,10 +52,12 @@ function Entry({ item, promptId, running }: { item: DisplayItem; promptId?: stri
   );
 }
 
+// active: shown, on top of the transcripts opened; one under a nested transcript stays as it was, hidden and not read.
 // startAt: where its scroller stood when the user left it for a nested transcript.
 interface Props {
   sessionId: string;
   target: TranscriptRef;
+  active: boolean;
   startAt?: number;
   running: boolean;
   roots: readonly string[];
@@ -66,15 +68,19 @@ interface Props {
 
 // A subagent's own conversation, read from its transcript: the latest page first, earlier pages on request, and while
 // it runs what it adds, following the end unless the user has scrolled up.
-export function Transcript({ sessionId, target, startAt, running, roots, onFile, onBack, onOpen }: Props) {
+export function Transcript({ sessionId, target, active, startAt, running, roots, onFile, onBack, onOpen }: Props) {
   const [h, setH] = useState<Held>();
   const [error, setError] = useState<string>();
   const [earlier, setEarlier] = useState(false);
   const [unseen, setUnseen] = useState(false);
+  const [away, setAway] = useState(false);
   const current = useRef<Held | undefined>(undefined);
   const rootRef = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const seen = useRef(-1);
+  const onTop = useRef(active);
+  const wasActive = useRef(active);
+  onTop.current = active;
   // Where the view stood from the bottom before an earlier page went in front.
   const anchor = useRef<number | undefined>(undefined);
 
@@ -98,7 +104,7 @@ export function Transcript({ sessionId, target, startAt, running, roots, onFile,
     }
   };
   const key = `${sessionId}|${target.agentId ?? ""}|${target.toolUseId ?? ""}`;
-  usePolling(read, running, key);
+  usePolling(read, running, key, active);
 
   const loadEarlier = async () => {
     const cur = current.current;
@@ -116,37 +122,55 @@ export function Transcript({ sessionId, target, startAt, running, roots, onFile,
     }
   };
 
+  const gapBelow = (s: HTMLElement) => s.scrollHeight - s.scrollTop - s.clientHeight;
+  const atEnd = (s: HTMLElement) => gapBelow(s) < NEAR_BOTTOM_PX;
+  // A smooth scroll to the end from the jump button counts as at the end until it lands or the user touches the list.
+  const glide = useRef(false);
   useEffect(() => {
     const onScroll = (e: Event) => {
       const s = scrollerOf(rootRef.current);
-      if (!s || e.target !== s) return;
-      follow.current = s.scrollHeight - s.scrollTop - s.clientHeight < NEAR_BOTTOM_PX;
+      if (!onTop.current || !s || e.target !== s) return;
+      if (gapBelow(s) < 2) glide.current = false;
+      if (glide.current) return;
+      follow.current = atEnd(s);
+      setAway(!follow.current);
       if (follow.current) setUnseen(false);
     };
     document.addEventListener("scroll", onScroll, true);
     return () => document.removeEventListener("scroll", onScroll, true);
   }, []);
+  const endGlide = () => {
+    const s = scrollerOf(rootRef.current);
+    if (!glide.current || !s) return;
+    glide.current = false;
+    s.scrollTo({ top: s.scrollTop });
+  };
 
   const count = h ? h.from + h.items.length : 0;
+  // Back from a nested transcript the view stands where the user left it; with an earlier page in front, where it was;
+  // while following, at the end.
   useLayoutEffect(() => {
+    const back = active && !wasActive.current;
+    wasActive.current = active;
     const s = scrollerOf(rootRef.current);
-    if (!s || !h) return;
-    if (seen.current < 0 && startAt !== undefined) {
-      s.scrollTop = startAt;
-      follow.current = s.scrollHeight - s.scrollTop - s.clientHeight < NEAR_BOTTOM_PX;
-    } else if (anchor.current !== undefined) {
-      s.scrollTop = s.scrollHeight - anchor.current;
-      anchor.current = undefined;
-    } else if (follow.current) s.scrollTop = s.scrollHeight;
+    if (!active || !s || !h) return;
+    if (back && startAt !== undefined) s.scrollTop = startAt;
+    else if (anchor.current !== undefined) s.scrollTop = s.scrollHeight - anchor.current;
+    else if (follow.current) s.scrollTop = s.scrollHeight;
     else if (count > seen.current) setUnseen(true);
+    anchor.current = undefined;
+    follow.current = atEnd(s);
+    setAway(!follow.current);
     seen.current = count;
-  }, [h, count]);
+  }, [h, count, active]);
 
   const toEnd = () => {
     const s = scrollerOf(rootRef.current);
     follow.current = true;
+    glide.current = !matchMedia("(prefers-reduced-motion: reduce)").matches;
     setUnseen(false);
-    s?.scrollTo({ top: s.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    setAway(false);
+    s?.scrollTo({ top: s.scrollHeight, behavior: glide.current ? "smooth" : "auto" });
   };
 
   const items = useMemo(() => shownItems(h?.items ?? []), [h?.items]);
@@ -154,7 +178,7 @@ export function Transcript({ sessionId, target, startAt, running, roots, onFile,
   const lost = error !== undefined && LOST.test(error);
 
   return (
-    <div ref={rootRef} data-transcript={h?.agentId || target.agentId || target.toolUseId}>
+    <div ref={rootRef} hidden={!active} onPointerDown={endGlide} onWheel={endGlide} data-transcript={h?.agentId || target.agentId || target.toolUseId}>
       <div className="sticky -top-4 z-10 -mx-4 -mt-4 mb-3 border-b border-line bg-surface px-4 pt-2 pb-2 sm:top-0 sm:mx-0 sm:mt-0 sm:px-0 sm:pt-0" data-transcript-head>
         <div className="flex items-start gap-1">
           <button onClick={onBack} aria-label="뒤로" className="-ml-2 flex size-11 shrink-0 items-center justify-center rounded-lg text-accent" data-transcript-back>
@@ -205,12 +229,22 @@ export function Transcript({ sessionId, target, startAt, running, roots, onFile,
           </AgentLinks.Provider>
         </FileRoots.Provider>
       </FileLinks.Provider>
-      {unseen && (
-        <div className="pointer-events-none sticky bottom-2 z-10 mt-2 flex justify-center">
-          <button onClick={toEnd} className="pointer-events-auto flex min-h-11 items-center gap-1.5 rounded-full bg-fg px-4 text-sm font-medium text-bg shadow-lg" data-transcript-new>
-            새 기록
-            <Icon.arrowDown className="size-4" />
-          </button>
+      {(away || unseen) && (
+        <div className="pointer-events-none sticky bottom-2 z-10 h-0">
+          <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
+            {unseen ? (
+              <button onClick={toEnd} className="pointer-events-auto flex min-h-11 items-center gap-1.5 rounded-full bg-fg px-4 text-sm font-medium whitespace-nowrap text-bg shadow-lg" data-transcript-new>
+                새 기록
+                <Icon.arrowDown className="size-4" />
+              </button>
+            ) : (
+              <button onClick={toEnd} aria-label="맨 아래로" className="group pointer-events-auto flex size-11 items-center justify-center" data-transcript-end>
+                <span className="flex size-9 items-center justify-center rounded-full border border-line bg-surface text-fg shadow-md group-active:bg-surface-2">
+                  <Icon.arrowDown className="size-[18px]" />
+                </span>
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
