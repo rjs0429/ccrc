@@ -12,8 +12,9 @@ export interface ChipWidths {
   right: number;
   // The round send or stop button with its margin.
   round: number;
-  // The agent chip with its word and, where its dot or count still shows without the word, without it.
-  agent?: { word: number; icon?: number };
+  // The agent chip with its word; without it, where its dot or count still shows; and with its word but no running
+  // count, as it reads once no agent runs.
+  agent?: { word: number; icon?: number; settled: number };
 }
 
 export interface ChipLayout {
@@ -23,14 +24,14 @@ export interface ChipLayout {
   word: boolean;
 }
 
-// One line in the order left group, agent chip, right group, round button when it all fits, the agent chip without its
-// word if that is what fits; else two lines. An idle chip has nothing to show without its word and always keeps it.
+// One line in the order left group, agent chip, right group, round button when it all fits with the agent chip as it
+// reads once no agent runs, so once the chip shows, agents starting, ending or leaving the list keep the lines; a
+// running count with no room beside the word takes its place. Else two lines. An idle chip always keeps its word.
 export function chipLayout(w: ChipWidths): ChipLayout {
   if (w.composer >= WIDE_PX) return { lines: "wide", word: true };
   const line = w.left + w.gap + w.right + w.gap + w.round;
   if (!w.agent) return { lines: line <= w.row ? "one" : "two", word: true };
-  if (line + w.gap + w.agent.word <= w.row) return { lines: "one", word: true };
-  if (w.agent.icon !== undefined && line + w.gap + w.agent.icon <= w.row) return { lines: "one", word: false };
+  if (line + w.gap + w.agent.settled <= w.row) return { lines: "one", word: w.agent.icon === undefined || line + w.gap + w.agent.word <= w.row };
   return { lines: "two", word: w.agent.icon === undefined || w.agent.word + w.gap + w.right <= w.row };
 }
 

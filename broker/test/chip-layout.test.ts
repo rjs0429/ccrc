@@ -7,7 +7,7 @@ import { chipLayout, sameLayout } from "../../web/src/components/composer/chipLa
 const base = { composer: 390, row: 340, gap: 4, left: 180, right: 84, round: 34 };
 
 test("from the sm breakpoint the chips stand on one line, the agent chip with its word", () => {
-  assert.deepEqual(chipLayout({ ...base, composer: 640, left: 400, right: 300, agent: { word: 90, icon: 44 } }), { lines: "wide", word: true });
+  assert.deepEqual(chipLayout({ ...base, composer: 640, left: 400, right: 300, agent: { word: 90, icon: 44, settled: 80 } }), { lines: "wide", word: true });
   assert.equal(chipLayout({ ...base, composer: 639.5, left: 400 }).lines, "two");
 });
 
@@ -17,24 +17,45 @@ test("narrow, everything shares one line when it fits", () => {
   assert.deepEqual(chipLayout({ ...base, left: 214.5 }), { lines: "two", word: true });
 });
 
-test("narrow, the agent chip joins the one line with its word, without it, or the chips take two lines", () => {
-  const one = (agent: { word: number; icon?: number }) => chipLayout({ ...base, agent });
-  assert.deepEqual(one({ word: 30, icon: 20 }), { lines: "one", word: true });
-  assert.deepEqual(one({ word: 31, icon: 30 }), { lines: "one", word: false });
-  assert.deepEqual(one({ word: 98, icon: 42 }), { lines: "two", word: true });
+test("narrow, the agent chip joins the one line when it fits there as it reads once no agent runs", () => {
+  const one = (agent: { word: number; icon?: number; settled: number }) => chipLayout({ ...base, agent });
+  assert.deepEqual(one({ word: 30, icon: 20, settled: 30 }), { lines: "one", word: true });
+  assert.deepEqual(one({ word: 30.5, icon: 20, settled: 30.5 }), { lines: "two", word: true });
+  assert.deepEqual(one({ word: 98, icon: 42, settled: 86 }), { lines: "two", word: true });
+});
+
+test("narrow, a running count with no room beside the word takes its place on the one line", () => {
+  const one = (agent: { word: number; icon?: number; settled: number }) => chipLayout({ ...base, agent });
+  assert.deepEqual(one({ word: 30, icon: 20, settled: 22 }), { lines: "one", word: true });
+  assert.deepEqual(one({ word: 30.5, icon: 20, settled: 22 }), { lines: "one", word: false });
+  assert.deepEqual(one({ word: 42, icon: 20, settled: 30 }), { lines: "one", word: false });
+  assert.deepEqual(one({ word: 42, icon: 20, settled: 30.5 }), { lines: "two", word: true });
+});
+
+test("a chip whose agents end and leave the list keeps the lines at every width", () => {
+  const running = { word: 52, icon: 30, settled: 40 };
+  const done = { word: 40, icon: 30, settled: 40 };
+  const idle = { word: 40, settled: 40 };
+  for (let row = 300; row <= 420; row += 0.25) {
+    const lines = [running, done, idle].map((agent) => chipLayout({ ...base, row, agent }).lines);
+    assert.ok(lines.every((l) => l === lines[0]), `row ${row}: ${lines.join(", ")}`);
+  }
+  assert.deepEqual(chipLayout({ ...base, row: 350, agent: running }), { lines: "one", word: false });
+  assert.deepEqual(chipLayout({ ...base, row: 350, agent: done }), { lines: "one", word: true });
+  assert.deepEqual(chipLayout({ ...base, row: 350, agent: idle }), { lines: "one", word: true });
 });
 
 test("an idle chip, with nothing to show without its word, keeps it on one line or takes the chips to two", () => {
-  assert.deepEqual(chipLayout({ ...base, agent: { word: 30 } }), { lines: "one", word: true });
-  assert.deepEqual(chipLayout({ ...base, agent: { word: 31 } }), { lines: "two", word: true });
-  assert.deepEqual(chipLayout({ ...base, right: 250, agent: { word: 200 } }), { lines: "two", word: true });
+  assert.deepEqual(chipLayout({ ...base, agent: { word: 30, settled: 30 } }), { lines: "one", word: true });
+  assert.deepEqual(chipLayout({ ...base, agent: { word: 31, settled: 31 } }), { lines: "two", word: true });
+  assert.deepEqual(chipLayout({ ...base, right: 250, agent: { word: 200, settled: 200 } }), { lines: "two", word: true });
 });
 
 test("on two lines the agent chip shares line 1 with the right group, with its word where that fits", () => {
-  const two = (agent: { word: number; icon?: number }) => chipLayout({ ...base, right: 175, agent });
-  assert.deepEqual(two({ word: 161, icon: 42 }), { lines: "two", word: true });
-  assert.deepEqual(two({ word: 161.5, icon: 42 }), { lines: "two", word: false });
-  assert.deepEqual(two({ word: 200, icon: 170 }), { lines: "two", word: false });
+  const two = (agent: { word: number; icon?: number; settled: number }) => chipLayout({ ...base, right: 175, agent });
+  assert.deepEqual(two({ word: 161, icon: 42, settled: 150 }), { lines: "two", word: true });
+  assert.deepEqual(two({ word: 161.5, icon: 42, settled: 150 }), { lines: "two", word: false });
+  assert.deepEqual(two({ word: 200, icon: 170, settled: 190 }), { lines: "two", word: false });
 });
 
 test("layouts compare by their lines and the agent chip's word", () => {
