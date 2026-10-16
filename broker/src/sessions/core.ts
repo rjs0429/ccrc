@@ -670,9 +670,9 @@ export abstract class SessionCore extends EventEmitter {
     };
   }
 
-  // Fast mode as an initialize answer, a turn's init line or a result reports it. Only an initialize answer or an init
-  // line settles a change asked for here, as a result may close a turn that began before it. A change that cannot go on
-  // is asked off again, so it does not come on by itself later, when it costs more, and noted once the turn is over.
+  // Fast mode as an initialize answer, a turn's init line or a result reports it. Only the first two settle a change
+  // asked for here, whatever they report, as a result may close a turn begun before it. A change that cannot go on is
+  // asked off again, so it does not come on by itself later, when it costs more, and noted once the turn is over.
   protected adoptFast(state: unknown, reason: unknown, settles = false): void {
     if (FAST_STATES.has(state)) {
       const before = JSON.stringify(this.toggles());
@@ -680,7 +680,7 @@ export abstract class SessionCore extends EventEmitter {
       this.fastReason = typeof reason === "string" && reason && reason.length <= NAME_MAX ? reason : undefined;
       if (state === "off") this.fastCredits = undefined;
       const wanted = this.fastWanted;
-      if (settles && wanted !== undefined && this.fastReason !== "pending" && (wanted || state === "off")) {
+      if (settles && wanted !== undefined && this.fastReason !== "pending") {
         this.fastWanted = undefined;
         if (wanted && state === "off" && this.fastReason) {
           this.fastRefused = this.fastReason;

@@ -54,10 +54,10 @@ export function saveDraft(scope: string | undefined, text: string): void {
   } catch {}
 }
 
-// Sessions where turning Fast mode on mid-conversation was confirmed; it is asked once per session.
+// Sessions where turning Fast mode on mid-conversation was confirmed on this device; it is asked once per session.
 function fastAsked(): string[] {
   try {
-    const v: unknown = JSON.parse(sessionStorage.getItem(FAST_ASKED_KEY) ?? "[]");
+    const v: unknown = JSON.parse(localStorage.getItem(FAST_ASKED_KEY) ?? "[]");
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
   } catch {
     return [];
@@ -66,7 +66,7 @@ function fastAsked(): string[] {
 
 function rememberFastAsked(sessionId: string): void {
   try {
-    sessionStorage.setItem(FAST_ASKED_KEY, JSON.stringify([...fastAsked().filter((id) => id !== sessionId), sessionId].slice(-100)));
+    localStorage.setItem(FAST_ASKED_KEY, JSON.stringify([...fastAsked().filter((id) => id !== sessionId), sessionId].slice(-100)));
   } catch {}
 }
 

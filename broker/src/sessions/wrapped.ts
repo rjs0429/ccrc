@@ -36,10 +36,11 @@ const obj = (v: unknown): Obj => (v !== null && typeof v === "object" && !Array.
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
 // The Thinking VS Code started Claude Code with; it always passes --thinking=disabled or a budget.
-export function thinkingArg(args: string[]): boolean {
-  const mode = argValue(args, "--thinking");
+export function thinkingArg(args: readonly unknown[]): boolean {
+  const named = args.filter((a): a is string => typeof a === "string");
+  const mode = argValue(named, "--thinking");
   if (mode) return mode !== "disabled";
-  const tokens = argValue(args, "--max-thinking-tokens");
+  const tokens = argValue(named, "--max-thinking-tokens");
   return tokens === undefined || Number(tokens) > 0;
 }
 
@@ -62,15 +63,15 @@ export class WrappedSession extends SessionCore {
   unwatchedMs = ELICIT_UNWATCHED_MS;
   private startThinking: boolean;
 
-  // A wrapper that does not pass on VS Code's Thinking changes leaves Thinking unknown here.
+  // Thinking starts as VS Code launched Claude Code; an older wrapper does not pass on VS Code's later changes.
   constructor(link: Link, id: string, cwd: string, title?: string) {
     super(id, cwd, [], title);
     this.link = link;
     this.lastActivity = 0;
-    const caps = link.hello?.caps ?? [];
+    const caps: unknown[] = Array.isArray(link.hello?.caps) ? link.hello.caps : [];
     this.optionsUnknown = !caps.includes("fast_mode") || !caps.includes("thinking");
     this.startThinking = thinkingArg(link.hello?.args ?? []);
-    if (!this.optionsUnknown) this.thinking = this.startThinking;
+    this.thinking = this.startThinking;
   }
 
   // Puts the conversation so far in front of what has arrived live, then applies, in arrival order,
@@ -115,7 +116,7 @@ export class WrappedSession extends SessionCore {
     if (r.subtype === "set_model" && typeof r.model === "string" && r.model !== "default") this.model = r.model;
     else if (r.subtype === "set_permission_mode" && typeof r.mode === "string") this.permissionMode = r.mode;
     else if (r.subtype === "apply_flag_settings" && typeof obj(r.settings).effortLevel === "string") this.effort = obj(r.settings).effortLevel as string;
-    else if (r.subtype === "set_max_thinking_tokens" && !this.optionsUnknown && (r.max_thinking_tokens === null || typeof r.max_thinking_tokens === "number")) {
+    else if (r.subtype === "set_max_thinking_tokens" && (r.max_thinking_tokens === null || typeof r.max_thinking_tokens === "number")) {
       this.thinking = r.max_thinking_tokens === null ? this.startThinking : r.max_thinking_tokens > 0;
     } else return;
     this.emit("state");
@@ -222,7 +223,6 @@ export class WrappedSession extends SessionCore {
     } catch (e) {
       if (!(e instanceof Error) || !/^rejected by the wrapper: (request|setting) not allowed$/.test(e.message)) throw e;
       this.optionsUnknown = true;
-      this.thinking = undefined;
       this.emit("state");
       throw Error(OLD_WRAPPER);
     }

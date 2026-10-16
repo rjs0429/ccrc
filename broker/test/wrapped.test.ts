@@ -370,6 +370,7 @@ test("Thinking starts as VS Code launched Claude Code", () => {
   assert.equal(thinkingArg(["--thinking=disabled"]), false);
   assert.equal(thinkingArg(["--thinking", "adaptive"]), true);
   assert.equal(thinkingArg(["--resume", SID]), true);
+  assert.equal(thinkingArg([1, null, "--thinking=disabled"]), false, "what is no string counts for nothing");
 });
 
 test("Thinking follows VS Code's own changes and the ones made here; Fast mode settles from VS Code's reports", async () => {
@@ -399,10 +400,10 @@ test("Thinking follows VS Code's own changes and the ones made here; Fast mode s
   assert.equal(s.state().fastWanted, undefined);
 });
 
-test("a wrapper that predates Fast mode and Thinking changes leaves Thinking unknown and is asked nothing", async () => {
-  const { s, wrapper, until } = await helloSession({ args: ["--max-thinking-tokens=31999", "--resume", SID] });
+test("a wrapper that predates Fast mode and Thinking changes keeps Thinking as VS Code started it and is asked nothing", async () => {
+  const { s, wrapper, until } = await helloSession({ args: ["--thinking=disabled", "--resume", SID] });
   assert.equal(s.state().optionsUnknown, true);
-  assert.equal(s.state().thinking, undefined);
+  assert.equal(s.state().thinking, false);
   wrapper.out({ type: "system", subtype: "init", session_id: SID, fast_mode_state: "on" });
   await until(() => s.fastMode === "on");
   assert.equal(s.state().fastMode, "on", "its state still shows");
@@ -411,7 +412,7 @@ test("a wrapper that predates Fast mode and Thinking changes leaves Thinking unk
   assert.ok(!wrapper.frames.some(optionRequest));
 });
 
-test("a wrapper that refuses a change after all marks Fast mode and Thinking unknown", async () => {
+test("a wrapper that refuses a change after all marks Fast mode and Thinking as not to be changed here", async () => {
   const { s, wrapper } = await helloSession({ caps: CAPS });
   wrapper.sock.on("data", () => {
     for (const f of wrapper.frames) {
@@ -425,8 +426,19 @@ test("a wrapper that refuses a change after all marks Fast mode and Thinking unk
   assert.equal(s.state().thinking, true);
   await assert.rejects(s.setFast(true), /request not allowed/);
   assert.equal(s.state().optionsUnknown, true);
-  assert.equal(s.state().thinking, undefined);
+  assert.equal(s.state().thinking, true, "Thinking stays as last known");
   assert.equal(s.state().fastWanted, undefined);
+});
+
+test("a hello whose caps or arguments are of another shape leaves the changes to VS Code", async () => {
+  const { s, wrapper, until } = await helloSession({ caps: 1, args: [1, "--thinking=disabled", "--resume", SID] });
+  assert.equal(s.state().optionsUnknown, true);
+  assert.equal(s.state().thinking, false);
+  const other = await helloSession({ caps: [1, "fast_mode"] });
+  assert.equal(other.s.state().optionsUnknown, true);
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, fast_mode_state: "on" });
+  await until(() => s.fastMode === "on");
+  assert.equal(s.state().fastMode, "on", "the session goes on");
 });
 
 test("in a VS Code session the usage credits notice is noted and turning Fast mode off is left to VS Code", async () => {

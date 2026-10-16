@@ -52,7 +52,7 @@ test("Fast mode follows what Claude Code last reported in an init line or a resu
   assert.deepEqual(fast(s.state()), { fastMode: "cooldown" }, "a line without a known state changes nothing");
 });
 
-test("a change asked for here shows until an init line confirms it; a result may close a turn begun before it", async () => {
+test("a change asked for here shows until an init line reports Fast mode either way; a result may close a turn begun before it", async () => {
   const { s, feed, flags } = owned();
   feed(init("off", "sdk_opt_in_required"), result("off", "sdk_opt_in_required"));
   await s.setFast(true);
@@ -63,11 +63,17 @@ test("a change asked for here shows until an init line confirms it; a result may
   feed(init("on"));
   assert.deepEqual(fast(s.state()), { fastMode: "on" });
   await s.setFast(false);
+  feed(result("on"));
+  assert.equal(s.state().fastWanted, false, "still asked off");
   feed(init("on"));
-  assert.equal(s.state().fastWanted, false, "an off change waits for a report of off");
+  assert.deepEqual(fast(s.state()), { fastMode: "on" }, "Claude Code runs it after all, as when VS Code turned it on again");
+  await s.setFast(false);
+  feed(init("cooldown"));
+  assert.deepEqual(fast(s.state()), { fastMode: "cooldown" });
+  await s.setFast(false);
   feed(init("off", "sdk_opt_in_required"));
   assert.deepEqual(fast(s.state()), { fastMode: "off", fastReason: "sdk_opt_in_required" });
-  assert.deepEqual(flags(), [{ fastMode: true }, { fastMode: false }]);
+  assert.deepEqual(flags(), [{ fastMode: true }, { fastMode: false }, { fastMode: false }, { fastMode: false }], "an off that did not hold is not asked again by itself");
 });
 
 test("a change that cannot go on is asked off again at once and noted when its turn is over", async () => {
