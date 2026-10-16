@@ -33,6 +33,7 @@ async function serve(): Promise<void> {
   const audit = new Audit();
   for (const r of retagTranscripts()) console.log(`ccrc: ${r.file} now lists in VS Code (original in ${r.backup})`);
   const manager = new SessionManager(config, audit);
+  manager.pruneArchived();
   const uploads = new Uploads(path.join(paths.stateDir, "uploads"));
   const hub = new Hub(manager, leases, audit, uploads);
   const push = new Push(paths.configDir);

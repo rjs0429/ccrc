@@ -15,8 +15,12 @@
 // get_settings reports a --model starting with "claude-" as the model; one naming "no-ultracode" does not offer Ultracode, which
 // --settings {"ultracode":true} asks for.
 // --version prints a version and exits.
+// rename_session is checked and saved as Claude Code saves a name (custom-title and agent-name rows when the transcript
+// under CLAUDE_CONFIG_DIR exists, the title file beside it) and announced with session_title_changed, which a resume
+// of a named session also sends before its init line.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const args = process.argv.slice(2);
@@ -57,6 +61,18 @@ try {
   style = JSON.parse(fs.readFileSync(LOCAL_SETTINGS, "utf8")).outputStyle;
 } catch {}
 
+const transcript = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects", process.cwd().replace(/[^a-zA-Z0-9]/g, "-"), `${sid}.jsonl`);
+const cleanTitle = (raw) => [...raw.trim().replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ")].slice(0, 200).join("").trim();
+const savedTitle = () => {
+  try {
+    const rows = fs.readFileSync(transcript(), "utf8").split("\n").filter((l) => l.includes('"custom-title"'));
+    return rows.length ? JSON.parse(rows.at(-1)).customTitle : undefined;
+  } catch {
+    return undefined;
+  }
+};
+const named = value("--resume") ? savedTitle() : undefined;
+if (named) out({ type: "system", subtype: "session_title_changed", title: named, uuid: randomUUID(), session_id: sid });
 out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: value("--permission-mode") || "default", output_style: style ?? "default", args, continueTurn: process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN ?? null });
 if (process.env.FAKE_BURST) {
   out({ type: "user", session_id: sid, message: { content: [{ type: "tool_result", content: "y".repeat(3_000_000) }] } });
@@ -202,6 +218,7 @@ function handle(m) {
       return;
     }
     if (init && process.env.FAKE_NO_INIT) return;
+    if (m.request.subtype === "rename_session") return rename(m.request_id, m.request);
     if (m.request.subtype === "read_file") {
       const r = m.request;
       const answer = (body) => out({ type: "control_response", response: { request_id: m.request_id, ...body } });
@@ -270,4 +287,21 @@ function handle(m) {
     const r = m.response.response;
     out({ type: "answered", request_id: m.response.request_id, behavior: r?.behavior, ...(r?.action ? { action: r.action, content: r.content, keys: Object.keys(r) } : {}) });
   }
+}
+
+function rename(request_id, r) {
+  const fail = (error) => out({ type: "control_response", response: { subtype: "error", request_id, error } });
+  if (typeof r.title !== "string") return fail("rename_session: title must be a string");
+  if (r.source != null && r.source !== "remote" && r.source !== "host") return fail("rename_session: source must be 'remote' or 'host'");
+  const title = cleanTitle(r.title);
+  if (!title) return fail("title must be non-empty");
+  if (r.session_id !== undefined && r.session_id !== sid) return fail("session_id is not the current session");
+  const file = transcript();
+  if (fs.existsSync(file)) {
+    fs.appendFileSync(file, [{ type: "custom-title", customTitle: title, sessionId: sid }, { type: "agent-name", agentName: title, sessionId: sid }].map((row) => JSON.stringify(row) + "\n").join(""));
+    fs.mkdirSync(path.join(path.dirname(file), sid), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(path.dirname(file), sid, "custom-title.json"), JSON.stringify({ customTitle: title }), { mode: 0o600 });
+  }
+  out({ type: "system", subtype: "session_title_changed", title, uuid: randomUUID(), session_id: sid });
+  out({ type: "control_response", response: { subtype: "success", request_id, response: {} } });
 }

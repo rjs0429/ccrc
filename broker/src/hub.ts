@@ -3,6 +3,7 @@ import type { Audit } from "./audit.ts";
 import type { Leases } from "./lease.ts";
 import { CALL_OPS, FOLDER_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg } from "./protocol.ts";
 import type { SessionManager } from "./sessions/manager.ts";
+import { cleanTitle } from "./titles.ts";
 import type { Uploads } from "./uploads.ts";
 
 const MAX_TEXT = 100_000;
@@ -12,7 +13,9 @@ const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const MAX_ATTACHMENTS = 10;
 const ELICIT_ACTIONS = new Set<unknown>(["accept", "decline", "cancel"]);
 // Calls that change something are recorded in the audit log.
-const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "resume", "set_output_style", "unqueue"]);
+const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "resume", "set_output_style", "unqueue", "rename", "archive"]);
+// The longest session name taken as typed; it is then cut to the length Claude Code keeps.
+const TITLE_ARG_MAX = 2000;
 // A folder call refused for a folder is recorded once in this long.
 const DENIED_LOG_MS = 60_000;
 const DENIED_KEEP = 100;
@@ -341,11 +344,15 @@ export class Hub {
       if (!CALL_OPS.includes(msg.op)) throw Error("unknown request");
       const args = msg.args && typeof msg.args === "object" && !Array.isArray(msg.args) ? msg.args : {};
       if (msg.op === "set_output_style") str(args.style);
+      if (msg.op === "rename") str(args.title, TITLE_ARG_MAX);
+      if (msg.op === "archive" && typeof args.archived !== "boolean") throw Error("invalid request");
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
         const detail = Object.fromEntries(
           Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style", "messageId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
         );
-        this.audit.log("call", { device: this.device, sessionId, op: msg.op, ...detail });
+        // Of a new name only its length is recorded.
+        const own = msg.op === "rename" ? { chars: [...cleanTitle(String(args.title))].length } : msg.op === "archive" ? { archived: args.archived } : {};
+        this.audit.log("call", { device: this.device, sessionId, op: msg.op, ...detail, ...own });
       }
       const data = await this.manager.call(sessionId, msg.op, args);
       if (msg.op === "resume") {

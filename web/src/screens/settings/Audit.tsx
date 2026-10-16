@@ -36,6 +36,7 @@ const EVENT_LABEL: Record<string, string> = {
   push_subscribe: "알림 켬",
   push_unsubscribe: "알림 끔",
   doctor: "호환성 점검",
+  archive: "보관 해제",
 };
 
 const CALL_LABEL: Record<string, string> = {
@@ -45,6 +46,7 @@ const CALL_LABEL: Record<string, string> = {
   stop_task: "작업 중지",
   resume: "이어서 실행",
   set_output_style: "출력 스타일 바꿈",
+  rename: "이름 바꿈",
 };
 
 const READ_OUTCOME: Record<string, string> = {
@@ -104,7 +106,9 @@ function detail(e: AuditEntry): string {
         ? ["입력 요청", named(e.action, WORD), named(e.server)].filter(Boolean).join(" · ")
         : named(e.decision, WORD, MODE_LABEL);
     case "call":
-      return [named(e.op, CALL_LABEL), named(e.server), named(e.style)].filter(Boolean).join(" · ");
+      return [e.op === "archive" ? (e.archived ? "보관" : "보관 해제") : named(e.op, CALL_LABEL), named(e.server), named(e.style)].filter(Boolean).join(" · ");
+    case "archive":
+      return e.by === "send" ? "메시지를 보내서" : "";
     case "claude_settings":
       return Array.isArray(e.keys) ? e.keys.join(", ") : "";
     case "file_read":

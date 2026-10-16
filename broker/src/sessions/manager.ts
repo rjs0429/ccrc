@@ -26,12 +26,15 @@ import {
   type StartSettings,
   type UsageInfo,
 } from "../protocol.ts";
+import { cleanTitle } from "../titles.ts";
+import { ArchiveStore, transcriptIds } from "./archive-store.ts";
 import { BrokerSession, probeModels, probeUsage, probeWindow, type StartOptions } from "./broker-session.ts";
 import { lastCommands, rememberCommands } from "./commands.ts";
 import { ContextWindows, exactModel, gauge, lastModelId, lastUsage, widened, type ContextWindow } from "./context-gauge.ts";
 import type { ContentBlock, SessionCore } from "./core.ts";
+import { writeTitle } from "./custom-title.ts";
 import { searchFiles } from "./files.ts";
-import { lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
+import { PROJECTS, lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
@@ -54,6 +57,8 @@ const ENDED_KEEP_MS = 10 * 60_000;
 const USAGE_KEEP_MS = 30_000;
 // A model whose window could not be asked is asked again after this long.
 const PROBE_RETRY_MS = 60_000;
+// How long a call waits for a process of this broker that is closing to end.
+const CLOSING_WAIT_MS = 3000;
 
 export interface ManagerTiming {
   handoffTurnMs: number;
@@ -142,6 +147,7 @@ export class SessionManager extends EventEmitter {
   private starts = new StartStore(path.join(paths.stateDir, "start-settings.json"));
   private windows = new ContextWindows(path.join(paths.stateDir, "context-windows.json"));
   private ultracodeModels = new UltracodeModels(path.join(paths.stateDir, "ultracode-models.json"));
+  private archive = new ArchiveStore(path.join(paths.stateDir, "archived.json"));
   private probing = new Map<string, Promise<ContextWindow | undefined>>();
   private exact = new Map<string, { size: number; model: string }>();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
@@ -198,12 +204,14 @@ export class SessionManager extends EventEmitter {
     return Boolean(this.controlled(sessionId));
   }
 
+  // A running session's title is the transcript's, which a name given anywhere reaches first; the one its process
+  // announced serves until the transcript has one.
   async list(): Promise<SessionSummary[]> {
     const infos = await this.infos();
     const live = new Map(liveProcesses().filter((l) => !this.controlled(l.sessionId)).map((l) => [l.sessionId, l]));
     const summary = (s: SessionCore, info?: SDKSessionInfo): SessionSummary => ({
       id: s.id,
-      title: s.title || (info ? titleOf(info) : ""),
+      title: (info ? titleOf(info) : "") || s.title || "",
       cwd: info?.cwd ?? s.cwd,
       branch: info?.gitBranch,
       lastModified: Math.max(info?.lastModified ?? 0, s.lastActivity),
@@ -212,6 +220,7 @@ export class SessionManager extends EventEmitter {
       host: s.host,
       busy: s.busy,
       pendingCount: s.pending.size || undefined,
+      ...this.archived(s.id),
     });
     const folders = new Map<string, boolean>();
     const exists = (dir: string) => {
@@ -235,6 +244,7 @@ export class SessionManager extends EventEmitter {
         liveStatus: l?.status,
         busy: l?.status === "busy",
         ...(!l && info.cwd && missing(info.sessionId, info.cwd) ? { folderMissing: true } : {}),
+        ...this.archived(info.sessionId),
       };
     });
     const listed = new Set(out.map((o) => o.id));
@@ -452,9 +462,73 @@ export class SessionManager extends EventEmitter {
     return s;
   }
 
+  // A message from here brings an archived session back to the list.
   async send(sessionId: string, text: string, blocks?: ContentBlock[]): Promise<void> {
     const s = this.controlled(sessionId) ?? (await this.activate(sessionId));
     s.send(text, blocks);
+    if (this.archive.set(sessionId, false)) {
+      this.audit?.log("archive", { sessionId, archived: false, by: "send" });
+      this.emit("changed");
+    }
+  }
+
+  // Names a session where Claude Code keeps names. A process this broker drives saves the name itself; a session
+  // without one gets the rows Claude Code writes, never while a program this broker cannot drive has it open.
+  async rename(sessionId: string, raw: string): Promise<{ title: string }> {
+    const title = cleanTitle(raw);
+    if (!title) throw Error("title must be non-empty");
+    await this.starting.get(sessionId)?.catch(() => {});
+    if (this.claiming.has(sessionId)) throw Error("session is opening in VS Code");
+    const running = await this.running(sessionId);
+    if (running) return this.renameRunning(running, title);
+    const info = await this.info(sessionId);
+    const file = info?.cwd ? transcriptPath(sessionId, info.cwd) : undefined;
+    if (!file) throw Error("unknown session");
+    // Checked again after the last wait, then written without one, so no start here comes in between.
+    const now = this.controlled(sessionId);
+    if (now && !now.closed) return this.renameRunning(now, title);
+    if (this.starting.has(sessionId) || this.claiming.has(sessionId)) throw Error("session is starting");
+    const other = liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId);
+    if (other) throw Error(`cannot rename while open in ${other.host}`);
+    writeTitle(file, sessionId, title);
+    this.catalog = undefined;
+    this.emit("changed");
+    await this.restate(sessionId).catch(() => {});
+    return { title };
+  }
+
+  private async renameRunning(s: SessionCore, title: string): Promise<{ title: string }> {
+    await s.rename(title);
+    this.catalog = undefined;
+    this.emit("changed");
+    return { title: s.title || title };
+  }
+
+  // The session's process here, once one that is closing has ended.
+  private async running(sessionId: string): Promise<SessionCore | undefined> {
+    const until = Date.now() + CLOSING_WAIT_MS;
+    let s = this.controlled(sessionId);
+    while (s?.closed && Date.now() < until) {
+      await sleep(250);
+      s = this.controlled(sessionId);
+    }
+    return s?.closed ? undefined : s;
+  }
+
+  async setArchived(sessionId: string, on: boolean): Promise<{ archived: boolean }> {
+    if (!this.controlled(sessionId) && !(await this.info(sessionId))) throw Error("unknown session");
+    if (this.archive.set(sessionId, on)) this.emit("changed");
+    return { archived: on };
+  }
+
+  private archived(sessionId: string): { archived?: true } {
+    return this.archive.has(sessionId) ? { archived: true } : {};
+  }
+
+  // Sessions whose transcript is gone, as Claude Code removes old ones, leave the archive.
+  pruneArchived(): void {
+    const ids = transcriptIds(PROJECTS);
+    if (ids) this.archive.prune((id) => ids.has(id));
   }
 
   // The web client's requests about one session (CallMap in protocol.ts).
@@ -493,6 +567,10 @@ export class SessionManager extends EventEmitter {
       case "unqueue":
         await this.get(sessionId).unqueue(String(args.messageId));
         return {};
+      case "rename":
+        return this.rename(sessionId, typeof args.title === "string" ? args.title : "");
+      case "archive":
+        return this.setArchived(sessionId, args.archived === true);
     }
   }
 
@@ -757,6 +835,10 @@ export class SessionManager extends EventEmitter {
     s.on("window", (model: string | undefined, w: ContextWindow) => this.windows.learn(model, w, s.id));
     s.on("models", (models: ModelInfo[]) => this.setModels(models));
     s.on("applied", (model: string, ultracode: boolean) => this.ultracodeModels.learn(model, ultracode));
+    s.on("title", () => {
+      this.catalog = undefined;
+      this.emit("changed");
+    });
     s.on("closed", (reason: string) => {
       if (!this.current(s)) return;
       if (this.owned.get(s.id) === s) this.owned.delete(s.id);

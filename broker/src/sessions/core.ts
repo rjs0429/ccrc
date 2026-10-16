@@ -20,6 +20,7 @@ import {
   type UsageInfo,
 } from "../protocol.ts";
 import { elicitResult } from "../elicit.ts";
+import { cleanTitle } from "../titles.ts";
 import { gaugeOf } from "./context-gauge.ts";
 import type { FileContents } from "./file-read.ts";
 import { ItemBuilder, clipInput, typedContent, type RawMessage } from "./items.ts";
@@ -137,7 +138,7 @@ interface StreamEvent {
 
 // A session whose Claude Code process the broker can drive: one it runs itself ("owned") or one
 // that runs in VS Code and is reached through the wrapper ("attached").
-// Events: item, stream, pending_add, pending_remove, state, models, window, applied (model, ultracodeAvailable), closed.
+// Events: item, stream, pending_add, pending_remove, state, models, window, applied (model, ultracodeAvailable), title, closed.
 export abstract class SessionCore extends EventEmitter {
   abstract readonly kind: "owned" | "attached";
   abstract readonly host: string;
@@ -245,6 +246,18 @@ export abstract class SessionCore extends EventEmitter {
 
   stopTask(_taskId: string): Promise<void> {
     return Promise.reject(Error("not available for this session"));
+  }
+
+  // Claude Code saves the name and announces it; `title` is already in its form.
+  rename(_title: string): Promise<void> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  protected setTitle(title: string): void {
+    if (!title || title === this.title) return;
+    this.title = title;
+    this.emit("state");
+    this.emit("title");
   }
 
   get outputStyle(): string | undefined {
@@ -542,6 +555,11 @@ export abstract class SessionCore extends EventEmitter {
           this.busy = busy;
           this.emit("state");
         }
+        return;
+      }
+      // The name a user gave the session, wherever it was given, as Claude Code starts and whenever it changes.
+      if (m.subtype === "session_title_changed") {
+        if (typeof m.title === "string" && (!m.session_id || m.session_id === this.id)) this.setTitle(cleanTitle(m.title));
         return;
       }
       if (TaskBook.handles(m.subtype)) this.tasks.on(m);

@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSummary } from "../../../broker/src/protocol.ts";
 import type { Mark, SearchResponse, SearchResult, SearchSnippet } from "../../../broker/src/search-protocol.ts";
 import { ApiError, api } from "../api.ts";
+import { SessionActions, setArchived } from "../components/SessionActions.tsx";
 import { Icon, Spinner } from "../components/ui.tsx";
 import { UpdateBanner } from "../components/UpdateBanner.tsx";
+import { useLongPress } from "../components/useLongPress.ts";
 import { baseName, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
 import { loggedOut, navigate, openAt, refreshSessions, useApp } from "../state.ts";
 
-type Filter = "all" | "running" | "waiting";
+// "all" leaves archived sessions out; what runs or waits for input shows archived or not.
+type Filter = "all" | "running" | "waiting" | "archived";
 const PAGE = 80;
 const REFRESH_MS = 10_000;
 const SEARCH_DELAY_MS = 250;
@@ -41,13 +44,27 @@ function openSnippet(sessionId: string, sn: SearchSnippet): void {
   openAt(sessionId, sn.itemId, sn.earlier);
 }
 
+function ArchivedBadge() {
+  return <span className="shrink-0 rounded border border-line px-1 text-[11px] leading-4">보관됨</span>;
+}
+
+function Meta({ text, archived }: { text: string; archived?: boolean }) {
+  if (!archived) return <span className="mt-0.5 block truncate text-xs text-muted">{text}</span>;
+  return (
+    <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted">
+      <ArchivedBadge />
+      <span className="truncate">{text}</span>
+    </span>
+  );
+}
+
 function SearchRow({ r }: { r: SearchResult }) {
   const meta = [baseName(r.cwd), relTime(r.lastModified), r.hits ? `메시지 ${r.hits}건` : ""].filter(Boolean).join(" · ");
   return (
     <div className="mx-auto max-w-3xl border-b border-line">
       <button onClick={() => openAt(r.id, r.snippets.find((sn) => !sn.earlier)?.itemId)} className="block w-full px-4 pt-3 pb-1 text-left active:bg-surface-2">
         <span className="block truncate text-[15px] font-medium">{r.title.trim() ? <Marked text={r.title} marks={r.titleMarks} /> : sessionTitle(r)}</span>
-        <span className="mt-0.5 block truncate text-xs text-muted">{meta}</span>
+        <Meta text={meta} archived={r.archived} />
       </button>
       <div className="pb-2">
         {r.snippets.map((sn) => (
@@ -120,25 +137,48 @@ function status(s: SessionSummary): { text: string; dot: string } {
   return { text: s.folderMissing ? "폴더 없음" : "", dot: "border border-line" };
 }
 
-function SessionRow({ s }: { s: SessionSummary }) {
+// A long press or a right click opens the session's actions; in the archived view the row also offers to restore it.
+function SessionRow({ s, view, onActions }: { s: SessionSummary; view: Filter; onActions: (s: SessionSummary) => void }) {
+  const press = useLongPress(() => onActions(s));
   const st = status(s);
   const meta = [st.text, baseName(s.cwd), s.branch && s.branch !== "HEAD" ? s.branch : "", relTime(s.lastModified)].filter(Boolean).join(" · ");
-  return (
-    <button onClick={() => navigate({ name: "chat", sessionId: s.id })} className={`flex w-full items-start gap-3 px-4 py-3 text-left active:bg-surface-2 ${CARD}`}>
+  const restore = view === "archived" && s.archived;
+  const row = (
+    <button
+      {...press}
+      onClick={() => navigate({ name: "chat", sessionId: s.id })}
+      className={`flex w-full items-start gap-3 px-4 py-3 text-left select-none [-webkit-touch-callout:none] active:bg-surface-2 ${restore ? "min-w-0 flex-1 sm:rounded-xl" : CARD}`}
+    >
       <span className={`mt-1.5 size-2.5 shrink-0 rounded-full ${st.dot}`} />
       <span className="min-w-0 flex-1">
         <span className={`block truncate text-[15px] ${s.pendingCount ? "font-semibold" : "font-medium"}`}>{sessionTitle(s)}</span>
-        <span className="mt-0.5 block truncate text-xs text-muted">{meta}</span>
+        <Meta text={meta} archived={s.archived && view !== "archived"} />
       </span>
     </button>
+  );
+  if (!restore) return row;
+  return (
+    <div className={`flex items-center ${CARD}`}>
+      {row}
+      <button onClick={() => setArchived(s.id, false)} className="mr-2 min-h-11 shrink-0 rounded-lg px-3 text-sm font-medium text-accent active:bg-surface-2">
+        보관 해제
+      </button>
+    </div>
   );
 }
 
 interface FolderGroup {
   cwd: string;
   count: number;
+  archived: number;
   running: number;
   last: number;
+}
+
+function inView(s: SessionSummary, filter: Filter): boolean {
+  if (filter === "running") return s.state !== "inactive";
+  if (filter === "waiting") return Boolean(s.pendingCount);
+  return filter === "archived" ? Boolean(s.archived) : !s.archived;
 }
 
 export function Home() {
@@ -149,6 +189,7 @@ export function Home() {
   const [folder, setFolder] = useState<string | null>(null);
   const [limit, setLimit] = useState(PAGE);
   const [q, setQ] = useState(lastSearch.q);
+  const [actions, setActions] = useState<string | null>(null);
   const searching = Boolean(q.trim());
   const { found, busy, failed, retry } = useSearch(q);
 
@@ -159,21 +200,14 @@ export function Home() {
     return () => clearInterval(timer);
   }, []);
 
-  const shown = useMemo(
-    () =>
-      (sessions ?? []).filter(
-        (s) =>
-          (!folder || s.cwd === folder) &&
-          (filter === "all" || (filter === "running" ? s.state !== "inactive" : Boolean(s.pendingCount))),
-      ),
-    [sessions, folder, filter],
-  );
+  const shown = useMemo(() => (sessions ?? []).filter((s) => (!folder || s.cwd === folder) && inView(s, filter)), [sessions, folder, filter]);
 
   const folders = useMemo(() => {
     const map = new Map<string, FolderGroup>();
     for (const s of sessions ?? []) {
-      const g = map.get(s.cwd) ?? { cwd: s.cwd, count: 0, running: 0, last: 0 };
-      g.count++;
+      const g = map.get(s.cwd) ?? { cwd: s.cwd, count: 0, archived: 0, running: 0, last: 0 };
+      if (s.archived) g.archived++;
+      else g.count++;
       if (s.state !== "inactive") g.running++;
       g.last = Math.max(g.last, s.lastModified);
       map.set(s.cwd, g);
@@ -182,6 +216,13 @@ export function Home() {
   }, [sessions]);
 
   const waiting = (sessions ?? []).filter((s) => s.pendingCount).length;
+  const archived = (sessions ?? []).filter((s) => s.archived).length;
+  const target = actions ? sessions?.find((s) => s.id === actions) : undefined;
+
+  // The archived view closes with its last session.
+  useEffect(() => {
+    if (sessions && filter === "archived" && !archived) setFilter("all");
+  }, [sessions, filter, archived]);
 
   return (
     <div className="flex h-dvh flex-col">
@@ -270,6 +311,7 @@ export function Home() {
                   ["all", "전체"],
                   ["running", "실행 중"],
                   ["waiting", waiting ? `입력 필요 ${waiting}` : "입력 필요"],
+                  ...(archived ? [["archived", `보관됨 ${archived}`]] : []),
                 ] as [Filter, string][]
               ).map(([f, label]) => (
                 <button
@@ -289,10 +331,10 @@ export function Home() {
             </div>
             <div className={CARDS}>
               {shown.slice(0, limit).map((s) => (
-                <SessionRow key={s.id} s={s} />
+                <SessionRow key={s.id} s={s} view={filter} onActions={(x) => setActions(x.id)} />
               ))}
             </div>
-            {shown.length === 0 && <div className="px-4 py-10 text-center text-sm text-muted">세션이 없습니다</div>}
+            {shown.length === 0 && <div className="px-4 py-10 text-center text-sm text-muted">{filter === "archived" ? "보관한 세션이 없습니다" : "세션이 없습니다"}</div>}
             {shown.length > limit && (
               <button onClick={() => setLimit(limit + PAGE)} className="w-full py-4 text-sm text-muted">
                 더 보기 ({shown.length - limit})
@@ -308,6 +350,8 @@ export function Home() {
                 key={g.cwd}
                 onClick={() => {
                   setFolder(g.cwd);
+                  if (!g.count && filter === "all") setFilter("archived");
+                  else if (!g.archived && filter === "archived") setFilter("all");
                   setTab("sessions");
                 }}
                 className={`flex w-full items-center gap-3 px-4 py-3 text-left active:bg-surface-2 ${CARD}`}
@@ -318,7 +362,7 @@ export function Home() {
                   <span className="block truncate text-xs text-muted">{shortPath(g.cwd)}</span>
                 </span>
                 <span className="shrink-0 text-right text-xs text-muted">
-                  <span className="block">세션 {g.count}</span>
+                  {g.count > 0 ? <span className="block">세션 {g.count}</span> : <span className="block opacity-60">보관 {g.archived}</span>}
                   {g.running > 0 && <span className="block text-info">실행 중 {g.running}</span>}
                 </span>
               </button>
@@ -326,6 +370,7 @@ export function Home() {
           </div>
         )}
       </main>
+      {target && <SessionActions session={target} step="menu" onClose={() => setActions(null)} />}
     </div>
   );
 }

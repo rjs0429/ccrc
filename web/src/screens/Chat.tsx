@@ -1,4 +1,5 @@
 import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, ModelOption, QueuedMessage } from "../../../broker/src/protocol.ts";
 import { DateLine, ItemView, QueuedItem, StreamPreview, shownItems } from "../components/Items.tsx";
@@ -6,6 +7,7 @@ import { Composer } from "../components/Composer.tsx";
 import { reattach } from "../components/composer/attachments.ts";
 import { commandSheet } from "../components/commandSheets.ts";
 import { PendingCard } from "../components/Pending.tsx";
+import { SessionActions, renameBlocked, setArchived } from "../components/SessionActions.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
 import { ChangesSheet } from "../components/sheets/Changes.tsx";
 import { CommandResultSheet, StoppedSheet } from "../components/sheets/Command.tsx";
@@ -83,6 +85,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [thread, setThread] = useState<ShownThread | null>(null);
   const [starting, setStarting] = useState(false);
   const [sentStart, setSentStart] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   // A smooth scroll to the bottom from the jump button, until it lands or the user touches the list; a touch
@@ -125,7 +128,20 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const busy = Boolean(st?.busy);
   const cwd = st?.cwd ?? summary?.cwd ?? "";
   const cannotStart = folderMissing ? `작업 폴더가 없어 이 세션을 시작할 수 없습니다: ${shortPath(cwd)}` : undefined;
-  const title = sessionTitle({ title: st?.title || summary?.title || "" });
+  // The list knows first of a name given anywhere: it reads the transcript.
+  const named = summary?.title || st?.title || "";
+  const title = sessionTitle({ title: named });
+  const archived = Boolean(summary?.archived);
+  const renameTarget = { id: sessionId, title: named, state: kind, host: st?.host ?? summary?.host, archived };
+  const renameRefused = renameBlocked(renameTarget);
+  // The rename sheet opens within the tap, so its field can take the keyboard on iOS.
+  const rename = () => {
+    if (renameRefused) return toast(renameRefused);
+    flushSync(() => {
+      setMenu(false);
+      setRenaming(true);
+    });
+  };
   const items = useMemo(() => shownItems(chat?.items ?? []), [chat?.items]);
   const days = useMemo(() => dayLines(items), [items]);
   // The first shown item of the latest part, when a far-back search hit left items out before it.
@@ -331,10 +347,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
             {othersWaiting && <span className="absolute top-2.5 right-2.5 size-2 rounded-full bg-warn" title="다른 세션에서 입력이 필요합니다" />}
           </button>
           <div className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
-            <div className="truncate text-[15px] font-semibold short:max-w-[60%] short:shrink-0">{title}</div>
+            <button onClick={rename} aria-haspopup="dialog" className="block max-w-full truncate text-left text-[15px] font-semibold short:max-w-[60%] short:shrink-0" data-chat-title>
+              {title}
+            </button>
             <div className="truncate text-xs text-muted short:min-w-0">
               {baseName(cwd)}
               {summary?.branch && summary.branch !== "HEAD" ? ` · ${summary.branch}` : ""} · {status}
+              {archived ? " · 보관됨" : ""}
             </div>
           </div>
           <button onClick={() => setMenu({ stop: busy && controllable })} aria-label="메뉴" className="rounded-lg p-2 text-muted">
@@ -414,6 +433,17 @@ export function Chat({ sessionId }: { sessionId: string }) {
                   />
                 </div>
               ))}
+              {chat?.loaded && archived && (
+                <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-archived-note>
+                  <p className="min-w-0 flex-1 break-keep text-balance">
+                    <span className="block">보관된 세션입니다.</span>
+                    {kind !== "live" && !folderMissing && <span className="block">메시지를 보내면 보관이 풀립니다.</span>}
+                  </p>
+                  <button onClick={() => setArchived(sessionId, false)} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent">
+                    보관 해제
+                  </button>
+                </div>
+              )}
               {chat?.loaded && kind === "inactive" && (
                 <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-stopped-note={folderMissing ? "folder-missing" : ""}>
                   {folderMissing ? (
@@ -481,6 +511,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
             />
           )}
           <Choice label="새로고침" onClick={() => (send({ t: "view", sessionId }), setMenu(false))} />
+          <Choice label="이름 바꾸기" hint={renameRefused} disabled={Boolean(renameRefused)} onClick={rename} />
+          <Choice
+            label={archived ? "보관 해제" : "보관하기"}
+            hint={archived ? "목록에 다시 보입니다" : "ccrc 목록에서만 숨깁니다"}
+            onClick={() => (setArchived(sessionId, !archived), setMenu(false))}
+          />
           <Choice label="변경 사항" hint="이 세션에서 바뀐 파일" onClick={() => (setSheet("changes"), setMenu(false))} />
           <Choice label="Context와 사용량" hint="Context, 요금제 사용량, Compact" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
           <Choice label="에이전트 지도" hint="에이전트와 백그라운드 작업 보기·중지" onClick={() => (setSheet("agents"), setMenu(false))} />
@@ -521,6 +557,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         </Suspense>
       )}
       {thread && <ThreadSheet thread={thread} onClose={() => setThread(null)} />}
+      {renaming && <SessionActions session={renameTarget} step="rename" onClose={() => setRenaming(false)} />}
       {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "agents" && (
         <AgentMapSheet sessionId={sessionId} title={title} controllable={controllable} onClose={() => setSheet(null)} onJump={jumpTo} onPending={jumpToRequest} />

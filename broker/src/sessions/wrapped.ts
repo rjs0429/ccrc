@@ -227,6 +227,13 @@ export class WrappedSession extends SessionCore {
     await this.link.request({ subtype: "stop_task", task_id: this.runningTask(taskId) });
   }
 
+  // Claude Code's announcement of the new name reaches VS Code too, which renames its tab and list entry.
+  async rename(title: string): Promise<void> {
+    this.ensureOpen();
+    await this.link.request({ subtype: "rename_session", title, source: "host", session_id: this.id });
+    this.setTitle(title);
+  }
+
   protected async cancelQueued(messageId: string): Promise<boolean> {
     return (await this.link.request({ subtype: "cancel_async_message", message_uuid: messageId })).cancelled === true;
   }

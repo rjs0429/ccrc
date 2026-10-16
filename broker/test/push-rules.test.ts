@@ -104,6 +104,19 @@ test("a VS Code session's kind is known even when its first event is the request
   notifier.close();
 });
 
+test("a renamed session is notified under the list's name, archived or not", async () => {
+  const { manager, sent, notifier } = setup();
+  manager.sessions = [{ ...manager.sessions[0], title: "청구서 내보내기 고치기", archived: true }];
+  manager.state({ busy: true, title: "Fix the invoice export" });
+  manager.ask("r1");
+  await sleep(50);
+  assert.deepEqual(
+    sent.map((s) => s.payload.title),
+    ["청구서 내보내기 고치기"],
+  );
+  notifier.close();
+});
+
 test("a request the user is looking at is notified only once they look away", async () => {
   const { manager, hub, sent, notifier } = setup();
   hub.watching = true;

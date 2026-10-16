@@ -9,6 +9,7 @@ import { LineSplitter, parseLine } from "../src/link/lines.ts";
 import {
   Relay,
   allowedFlagSettings,
+  allowedRename,
   allowedUpdateSettings,
   appliedAnswer,
   elicitAnswer,
@@ -1011,4 +1012,42 @@ test("messages written during a turn reach the broker at once, and only the brok
   t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-stop", request: { subtype: "interrupt" } } });
   await t.broker.frames.wait(frameOut((m) => m.type === "command_lifecycle" && m.command_uuid === "vs-q1" && m.state === "started"), "taken in");
   assert.deepEqual(await reconnect(3), [], "nothing is waiting any more");
+});
+
+test("rename_session names only the session the process runs now, as the user's rename", () => {
+  const ok = { subtype: "rename_session", title: "새 이름", source: "host", session_id: "s1" };
+  assert.ok(allowedRename(ok, "s1"));
+  assert.ok(allowedRename({ ...ok, title: "x".repeat(1000) }, "s1"));
+  assert.ok(!allowedRename(ok, undefined), "not before the session is known");
+  assert.ok(!allowedRename(ok, "s2"));
+  const bad: Msg[] = [
+    { ...ok, source: "remote" },
+    { subtype: "rename_session", title: "x", session_id: "s1" },
+    { subtype: "rename_session", title: "x", source: "host" },
+    { ...ok, title: "" },
+    { ...ok, title: "x".repeat(1001) },
+    { ...ok, title: 3 },
+    { ...ok, extra: true },
+  ];
+  for (const b of bad) assert.ok(!allowedRename(b, "s1"), JSON.stringify(b).slice(0, 80));
+});
+
+test("the broker renames the session through the wrapper, and Claude Code's announcement reaches VS Code and the broker", async () => {
+  const SID = "1d2e3f40-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+  const t = await setup({ args: ["--session-id", SID], env: { CLAUDE_CONFIG_DIR: tempDir() } });
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
+  request("ccrc-rn-ok", { subtype: "rename_session", title: "새 이름", source: "host", session_id: SID });
+  const reply = await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-rn-ok", "renamed");
+  assert.equal(((reply.m as Msg).response as Msg).subtype, "success");
+  await t.host.wait((m) => m.type === "system" && m.subtype === "session_title_changed" && m.title === "새 이름", "VS Code hears the name");
+  await t.broker.frames.wait(frameOut((m) => m.subtype === "session_title_changed" && m.title === "새 이름"), "the broker hears it");
+  const refused: Msg[] = [
+    { subtype: "rename_session", title: "x", source: "remote", session_id: SID },
+    { subtype: "rename_session", title: "x", source: "host", session_id: "00000000-0000-4000-8000-000000000000" },
+    { subtype: "rename_session", title: "x", source: "host", session_id: SID, tag: "y" },
+  ];
+  refused.forEach((r, i) => request(`ccrc-rn-bad-${i}`, r));
+  for (const i of refused.keys()) await t.broker.frames.wait((f) => f.t === "rejected" && f.id === `ccrc-rn-bad-${i}` && f.reason === "invalid request", `refused ${i}`);
+  assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code sees none of the answers");
 });

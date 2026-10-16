@@ -30,6 +30,7 @@ export interface SearchResult {
   // Messages that matched, counted up to a limit.
   hits: number;
   snippets: SearchSnippet[];
+  archived?: boolean;
 }
 
 export interface SearchResponse {
