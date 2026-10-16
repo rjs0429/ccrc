@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DoctorCheck, HealthInfo } from "../../../../broker/src/admin-protocol.ts";
+import { SEND_FILES_CLI, type DoctorCheck, type HealthInfo } from "../../../../broker/src/admin-protocol.ts";
 import { request } from "../../api.ts";
 import { Button, Icon, Spinner } from "../../components/ui.tsx";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
@@ -12,7 +12,19 @@ const CHECK_LABEL: Record<string, string> = {
   initialize: "initialize 응답",
   context: "context 조회",
   exit: "정상 종료",
+  broker_cli: "원격 세션 CLI",
 };
+
+const CLI_SOURCE: Record<string, string> = {
+  vscode: "VS Code",
+  global: "전역 설치",
+  config: "설정 경로",
+  sdk: "SDK 내장",
+};
+
+function cliText(c: HealthInfo["brokerCli"]): string {
+  return c ? `${c.version ?? "-"} · ${CLI_SOURCE[c.source] ?? c.source}` : "-";
+}
 
 const DETAIL: Record<string, string> = {
   "not found": "찾을 수 없음",
@@ -23,6 +35,12 @@ const DETAIL: Record<string, string> = {
 
 function detailText(c: DoctorCheck): string {
   const d = c.detail ?? "";
+  const cli = c.name === "broker_cli" ? d.match(/^(\S+) (\w+)$/) : null;
+  if (cli) {
+    const where = CLI_SOURCE[cli[2]] ?? cli[2];
+    if (cli[1] === "missing") return `${where} 실행 파일을 찾을 수 없음`;
+    return `${cli[1] === "unknown" ? "버전을 알 수 없음" : cli[1]} · ${where}${c.warn ? ` · 파일 보내기는 ${SEND_FILES_CLI} 이상` : ""}`;
+  }
   const counts = d.match(/^(\d+) models, (\d+) commands$/);
   if (counts) return `모델 ${counts[1]}개 · 명령 ${counts[2]}개`;
   return (
@@ -89,6 +107,7 @@ export function HealthSection() {
         <div className="divide-y divide-line rounded-xl bg-surface px-3.5">
           <Row label="VS Code 확장" value={info.extensionVersion ?? "없음"} />
           <Row label="Claude Code" value={info.cliVersion ?? "-"} />
+          <Row label="원격 세션 CLI" value={cliText(info.brokerCli)} />
           <Row label="ccrc" value={info.brokerVersion ?? "-"} />
           <Row label="VS Code 래퍼" value={wrapperText(info.wrapper)} />
         </div>
@@ -103,7 +122,15 @@ export function HealthSection() {
           <ul className="mt-2 space-y-1 text-[13px]">
             {last.checks.map((c) => (
               <li key={c.name} className="flex items-start gap-2">
-                {c.ok ? <Icon.check className="mt-0.5 size-4 shrink-0 text-ok" /> : <Icon.x className="mt-0.5 size-4 shrink-0 text-danger" />}
+                {!c.ok ? (
+                  <Icon.x className="mt-0.5 size-4 shrink-0 text-danger" />
+                ) : c.warn ? (
+                  <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-warn text-[11px] font-bold text-white" aria-label="확인 필요">
+                    !
+                  </span>
+                ) : (
+                  <Icon.check className="mt-0.5 size-4 shrink-0 text-ok" />
+                )}
                 <span className="shrink-0">{CHECK_LABEL[c.name] ?? c.name}</span>
                 {c.detail && <span className="min-w-0 flex-1 text-right text-muted">{detailText(c)}</span>}
               </li>

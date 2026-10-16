@@ -18,6 +18,8 @@ function settingsOf(v: unknown): StartSettings | undefined {
   if (PERMISSION_MODES.includes(o.mode as never)) out.mode = o.mode as StartSettings["mode"];
   if (EFFORTS.includes(o.effort as never)) out.effort = o.effort as EffortName;
   if (o.ultracode === true) out.ultracode = true;
+  if (o.fast === true) out.fast = true;
+  if (o.thinking === false) out.thinking = false;
   return Object.keys(out).length ? out : undefined;
 }
 

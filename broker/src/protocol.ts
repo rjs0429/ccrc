@@ -34,7 +34,8 @@ export interface ToolResult {
 }
 
 // "ultracode": Ultracode was asked for at the start but Claude Code could not turn it on.
-export type NoteCode = "interrupted" | "compacted" | "command" | "error" | "unsent" | "ultracode";
+// "fast": Fast mode asked for here could not go on (text: Claude Code's reason), or the usage credits ran out ("credits").
+export type NoteCode = "interrupted" | "compacted" | "command" | "error" | "unsent" | "ultracode" | "fast";
 
 // One hunk of a file change as Claude Code reports it; each line starts with " ", "-" or "+".
 export interface Hunk {
@@ -211,6 +212,9 @@ export interface StartSettings {
   mode?: PermissionModeName;
   effort?: EffortName;
   ultracode?: boolean;
+  // Fast mode on, or Thinking off, from the start; kept only when set that way.
+  fast?: boolean;
+  thinking?: boolean;
 }
 
 // One of the plan's usage limits. kind: "session", "weekly_all", "weekly_scoped", ...; scope names the model
@@ -379,6 +383,9 @@ export interface ModelOption {
   efforts?: EffortName[];
   // Whether Claude Code offered Ultracode with this model in an earlier session; absent when not known.
   ultracode?: boolean;
+  // Whether the model runs in Fast mode, and whether its Thinking can be turned off; absent when not known.
+  fast?: boolean;
+  thinkingOff?: boolean;
 }
 
 export interface LiveState {
@@ -404,6 +411,16 @@ export interface LiveState {
   folderMissing?: boolean;
   // In the order Claude Code takes them in.
   queued?: QueuedMessage[];
+  // Fast mode as Claude Code last reported it, with its reason when it cannot run; fastWanted: a change asked for here
+  // that no report has confirmed yet; fastCredits: the usage credits ran out.
+  fastMode?: "off" | "on" | "cooldown";
+  fastReason?: string;
+  fastWanted?: boolean;
+  fastCredits?: boolean;
+  // Thinking as the broker knows it; absent when it cannot know.
+  thinking?: boolean;
+  // The VS Code wrapper is too old to change Fast mode and Thinking.
+  optionsUnknown?: boolean;
 }
 
 export type ClientMsg =
@@ -421,6 +438,8 @@ export type ClientMsg =
       mode?: PermissionModeName;
       effort?: EffortName;
       ultracode?: boolean;
+      fast?: boolean;
+      thinking?: boolean;
       attachments?: string[];
       draftId?: string;
     }
@@ -430,6 +449,8 @@ export type ClientMsg =
   | { t: "set_model"; sessionId: string; model: string }
   | { t: "set_effort"; sessionId: string; effort: EffortName }
   | { t: "set_ultracode"; sessionId: string; on: boolean }
+  | { t: "set_fast"; sessionId: string; on: boolean }
+  | { t: "set_thinking"; sessionId: string; on: boolean }
   | { t: "release"; sessionId: string }
   | { t: "call"; id: number; sessionId: string; op: CallOp; args?: Record<string, unknown> }
   | { t: "call"; id: number; cwd: string; op: FolderOp; args?: Record<string, unknown> }

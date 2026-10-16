@@ -31,6 +31,20 @@ test("start settings are read back by the next broker, expire after a few days a
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), {});
 });
 
+test("Fast mode on and Thinking off are kept as start settings; their defaults are not", () => {
+  const file = path.join(tempDir(), "start-settings.json");
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      [A]: { at: 5, start: { fast: true, thinking: false } },
+      [B]: { at: 5, start: { effort: "low", fast: false, thinking: true } },
+    }),
+  );
+  const store = new StartStore(file, () => 10);
+  assert.deepEqual(store.get(A), { fast: true, thinking: false });
+  assert.deepEqual(store.get(B), { effort: "low" });
+});
+
 test("saved start settings that do not validate are ignored", () => {
   const file = path.join(tempDir(), "start-settings.json");
   fs.writeFileSync(

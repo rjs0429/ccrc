@@ -168,6 +168,75 @@ test("choices for a stopped session survive a broker restart and are used by the
   assert.equal(new SessionManager(config).startSettings(W), undefined, "used settings are gone from the state folder too");
 });
 
+test("Fast mode and Thinking chosen for a stopped session are kept, audited, given to Claude Code at the start, then changed in place", async (t) => {
+  const X = "8b4c5d65-9a0b-41c2-8d3e-4f5a6b7c8d9e";
+  writeTranscript(X, "claude-test-1");
+  const logged: [string, Record<string, unknown>][] = [];
+  const audit = { log: (event: string, detail: Record<string, unknown>) => logged.push([event, detail]) } as unknown as Audit;
+  const manager = new SessionManager(config, audit);
+  manager.windowProbe = async () => undefined;
+  const leases = Object.assign(new EventEmitter(), { validate: () => true }) as unknown as Leases;
+  const hub = new Hub(manager, leases, audit, new Uploads(fs.mkdtempSync(path.join(home, "up-"))));
+  const ws = new FakeSocket();
+  hub.attach(ws as never, "phone", "token");
+  const say = (m: Record<string, unknown>) => ws.emit("message", JSON.stringify(m));
+  t.after(async () => {
+    hub.close();
+    await manager.closeAll();
+  });
+  const settled = async (want: Record<string, unknown>) => {
+    for (let i = 0; i < 100 && JSON.stringify(manager.startSettings(X) ?? {}) !== JSON.stringify(want); i++) await sleep(20);
+  };
+  say({ t: "set_fast", sessionId: X, on: true });
+  await settled({ fast: true });
+  say({ t: "set_thinking", sessionId: X, on: false });
+  await settled({ fast: true, thinking: false });
+  say({ t: "set_thinking", sessionId: X, on: true });
+  await settled({ fast: true });
+  assert.deepEqual(manager.startSettings(X), { fast: true }, "Thinking on is how Claude Code starts anyway");
+  say({ t: "set_thinking", sessionId: X, on: false });
+  say({ t: "set_fast", sessionId: X, on: "yes" });
+  await settled({ fast: true, thinking: false });
+  await sleep(50);
+  assert.deepEqual(manager.startSettings(X), { fast: true, thinking: false });
+  assert.deepEqual(
+    ws.sent.filter((m) => m.t === "error").map((m) => (m as { message: string }).message),
+    ["invalid request"],
+  );
+  assert.deepEqual(
+    logged.filter(([e]) => e === "set_fast" || e === "set_thinking").map(([e, d]) => [e, d.on, d.start]),
+    [
+      ["set_fast", true, true],
+      ["set_thinking", false, true],
+      ["set_thinking", true, true],
+      ["set_thinking", false, true],
+    ],
+  );
+  fs.rmSync(requests, { force: true });
+  await manager.call(X, "resume", {});
+  for (let i = 0; i < 150 && !recorded().some((r) => r.args); i++) await sleep(20);
+  const args = recorded().find((r) => r.args)?.args as string[];
+  const settings = args[args.indexOf("--settings") + 1] ?? args.find((a) => a.startsWith("--settings="))?.slice(11);
+  assert.deepEqual(JSON.parse(settings.trim().startsWith("{") ? settings : fs.readFileSync(settings, "utf8")), { fastMode: true });
+  assert.ok(args.includes("--thinking=disabled"), JSON.stringify(args));
+  assert.equal(manager.startSettings(X), undefined);
+  assert.deepEqual(logged.find(([e]) => e === "start_settings")?.[1], { sessionId: X, fast: true, thinking: false });
+  say({ t: "set_fast", sessionId: X, on: false });
+  say({ t: "set_thinking", sessionId: X, on: true });
+  const asked = () => recorded().map((r) => r.request as { subtype?: string; settings?: Record<string, unknown>; max_thinking_tokens?: number } | undefined);
+  for (let i = 0; i < 150 && !asked().some((r) => r?.subtype === "set_max_thinking_tokens"); i++) await sleep(20);
+  assert.ok(asked().some((r) => r?.subtype === "apply_flag_settings" && r.settings?.fastMode === false));
+  assert.equal(asked().find((r) => r?.subtype === "set_max_thinking_tokens")?.max_thinking_tokens, 31999);
+  assert.equal(logged.at(-1)?.[1].start, undefined, "a running session changes at once");
+  let state = (await manager.snapshot(X)).state;
+  for (let i = 0; i < 100 && (state.thinking !== true || state.fastWanted !== false); i++) {
+    await sleep(20);
+    state = (await manager.snapshot(X)).state;
+  }
+  assert.equal(state.thinking, true);
+  assert.equal(state.fastWanted, false);
+});
+
 test("a message that starts a session goes out after the effort it starts with is applied", async () => {
   const manager = new SessionManager(config);
   manager.windowProbe = async () => undefined;

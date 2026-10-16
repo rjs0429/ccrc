@@ -9,7 +9,8 @@ export interface Config {
   allowedDevices: string[];
   // Requests without X-Forwarded-For come from this machine itself.
   allowLocal: boolean;
-  // Claude Code CLI for broker sessions. Unset means the CLI bundled with the Agent SDK.
+  // Claude Code CLI for broker sessions: a path, or "vscode" (or unset) for the one bundled in the newest VS Code
+  // extension, else ~/.local/bin/claude, else the one bundled with the Agent SDK.
   claudePath?: string;
   // New sessions may start in these folders and below, besides folders that already have sessions.
   roots: string[];
@@ -18,6 +19,7 @@ export interface Config {
 }
 
 const home = os.homedir();
+export const FOLLOW_VSCODE = "vscode";
 
 export const paths = {
   configDir: process.env.CCRC_CONFIG_DIR || path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), "ccrc"),
@@ -35,13 +37,12 @@ export const paths = {
 };
 
 function defaults(): Config {
-  const cli = path.join(home, ".local", "bin", "claude");
   return {
     host: "127.0.0.1",
     port: 8737,
     allowedDevices: [],
     allowLocal: true,
-    claudePath: fs.existsSync(cli) ? cli : undefined,
+    claudePath: FOLLOW_VSCODE,
     roots: [],
     leaseIdleMinutes: 720,
     sessionIdleMinutes: 15,

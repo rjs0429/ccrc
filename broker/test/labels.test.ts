@@ -1,11 +1,34 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ModelOption } from "../src/protocol.ts";
-import { effortLevels, errorText, findModel, modelLabel, noteText } from "../../web/src/labels.ts";
+import { effortLevels, errorText, fastReasonText, findModel, modelLabel, modelOffers, noteText } from "../../web/src/labels.ts";
 
 test("the errors a stopped session's chips can meet read in Korean", () => {
   for (const message of ["session is starting", "session started meanwhile", "unknown model"]) assert.match(errorText(message), /[가-힣]/, message);
   assert.equal(errorText("something new"), "something new");
+});
+
+test("Fast mode's notes and reasons read in Korean; a broker session's opt-in is no reason", () => {
+  assert.equal(noteText("fast", "credits"), "Fast 모드: 사용 크레딧이 다 떨어져 표준 속도로 보냅니다");
+  assert.equal(noteText("fast", "extra_usage_disabled"), "Fast 모드를 켜지 못했습니다. 사용 크레딧이 꺼져 있습니다 (claude.ai 설정 > 사용량)");
+  assert.equal(noteText("fast", "sdk_opt_in_required"), "Fast 모드를 켜지 못했습니다. 지금은 쓸 수 없습니다");
+  assert.equal(fastReasonText("sdk_opt_in_required"), undefined);
+  assert.equal(fastReasonText(undefined), undefined);
+  assert.equal(fastReasonText("brand_new"), "지금은 쓸 수 없습니다 (brand_new)");
+  for (const reason of ["free", "preference", "model_not_allowed", "network_error", "not_first_party", "disabled_by_env", "unknown", "pending"]) {
+    assert.match(fastReasonText(reason) ?? "", /[가-힣]/, reason);
+  }
+});
+
+test("a model's entry says whether it runs in Fast mode, can turn Thinking off, and holds Effort at High with Thinking off", () => {
+  const models: ModelOption[] = [
+    { value: "default", resolved: "claude-opus-5-5", label: "Default", fast: true, thinkingOff: false },
+    { value: "claude-opus-5", resolved: "claude-opus-5", label: "Opus 5", fast: true, thinkingOff: true },
+  ];
+  assert.deepEqual(modelOffers(models, "default"), { fast: true, thinkingOff: false, capped: false });
+  assert.deepEqual(modelOffers(models, "claude-opus-5[1m]"), { fast: true, thinkingOff: true, capped: true });
+  assert.deepEqual(modelOffers(models, "claude-other-1"), { fast: false, thinkingOff: undefined, capped: false });
+  assert.deepEqual(modelOffers(models), { fast: false, thinkingOff: undefined, capped: false });
 });
 
 const ALL = ["low", "medium", "high", "xhigh", "max"] as const;

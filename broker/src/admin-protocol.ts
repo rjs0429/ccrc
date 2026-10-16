@@ -80,9 +80,11 @@ export interface AuditPage {
   next?: number;
 }
 
+// warn: passes, with something to know.
 export interface DoctorCheck {
   name: string;
   ok: boolean;
+  warn?: boolean;
   detail?: string;
 }
 
@@ -92,6 +94,8 @@ export interface DoctorResult {
   extensionVersion?: string;
   cliVersion?: string;
   brokerVersion?: string;
+  // The Claude Code broker sessions ran with at the check, as "<version> <source>".
+  brokerCli?: string;
   checks: DoctorCheck[];
 }
 
@@ -101,6 +105,12 @@ export interface HealthInfo {
   cliVersion?: string;
   // VS Code's claudeCode.claudeProcessWrapper setting: whether it is in effect and points at this broker's wrapper.
   wrapper: { path?: string; on: boolean; thisBroker: boolean; unreadable?: boolean };
+  // The Claude Code a broker session starting now runs: set in the config, bundled in VS Code's extension, the global
+  // install or the Agent SDK's own.
+  brokerCli?: { source: "config" | "vscode" | "global" | "sdk"; version?: string; path?: string };
   last?: DoctorResult;
   running: boolean;
 }
+
+// Claude sends files to the phone from broker sessions only with this Claude Code or newer.
+export const SEND_FILES_CLI = "2.1.300";

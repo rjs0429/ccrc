@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { listSessions, type ModelInfo, type SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import type { Audit } from "../audit.ts";
+import { ClaudeCli, type CliChoice } from "../claude-cli.ts";
 import { claudeSettingsFile } from "../claude-settings.ts";
 import { paths, writeFileAtomic, type Config } from "../config.ts";
 import type { Hello } from "../link/protocol.ts";
@@ -36,6 +37,7 @@ import { writeTitle } from "./custom-title.ts";
 import { searchFiles } from "./files.ts";
 import { PROJECTS, lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
 import { liveProcesses } from "./live.ts";
+import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
@@ -164,12 +166,16 @@ export class SessionManager extends EventEmitter {
   modelProbe: (cwd: string, claudePath?: string) => Promise<ModelInfo[]> = probeModels;
   // Where a model's context window comes from when no session reported it: (cwd, model, Claude Code path).
   windowProbe: (cwd: string, model: string, claudePath?: string) => Promise<ContextWindow | undefined> = probeWindow;
+  // The Claude Code each session and probe starts with, picked again for each, and where the pick is told.
+  readonly cli: ClaudeCli;
+  cliLog: (line: string) => void = (line) => console.log(line);
 
   constructor(cfg: Config, audit?: Audit, timing: Partial<ManagerTiming> = {}) {
     super();
     this.cfg = cfg;
     this.audit = audit;
     this.timing = { handoffTurnMs: HANDOFF_TURN_MS, handoffOtherMs: HANDOFF_OTHER_MS, probeRetryMs: PROBE_RETRY_MS, ...timing };
+    this.cli = new ClaudeCli({ setting: cfg.claudePath });
     this.sweeper = setInterval(() => void this.sweep(), SWEEP_MS);
     this.sweeper.unref();
   }
@@ -285,7 +291,7 @@ export class SessionManager extends EventEmitter {
   async modelList(): Promise<ModelOption[]> {
     if (!this.models.length) {
       this.modelsAsked ??= this.folders()
-        .then((dirs) => this.modelProbe(probeDir(dirs[0] ?? os.homedir()), this.cfg.claudePath))
+        .then(async (dirs) => this.modelProbe(probeDir(dirs[0] ?? os.homedir()), (await this.claude()).path))
         .then(
           (list) => {
             if (!this.models.length) this.setModels(list);
@@ -294,18 +300,39 @@ export class SessionManager extends EventEmitter {
         );
       await this.modelsAsked;
     }
+    // A list that marks no model for Fast mode gets Claude Code's own rule for it.
+    const listsFast = this.models.some((m) => m.fast);
     return this.models.map((m) => {
       const ultracode = this.ultracodeModels.get(m.resolved ?? m.value);
-      return ultracode === undefined ? m : { ...m, ultracode };
+      const caps = modelCaps(m.resolved ?? m.value);
+      return {
+        ...m,
+        ...(ultracode === undefined ? {} : { ultracode }),
+        ...(!listsFast && caps.fast ? { fast: true } : {}),
+        ...(m.thinkingOff === undefined && caps.thinkingOff !== undefined ? { thinkingOff: caps.thinkingOff } : {}),
+      };
     });
   }
 
-  // Kept as Claude Code reported it, for the next broker run.
+  // Kept as Claude Code reported it, for the next broker run. A Claude Code that does not say whether a model's Thinking
+  // can be turned off keeps what an earlier list said.
   private setModels(list: ModelInfo[]): void {
-    const models = modelOptions(list);
+    const before = new Map(this.models.map((m) => [m.resolved ?? m.value, m.thinkingOff]));
+    const models = modelOptions(list).map((m) => {
+      const thinkingOff = m.thinkingOff ?? before.get(m.resolved ?? m.value);
+      return thinkingOff === undefined ? m : { ...m, thinkingOff };
+    });
     if (!models.length || JSON.stringify(models) === JSON.stringify(this.models)) return;
     this.models = models;
-    const saved = models.map((m) => ({ value: m.value, resolvedModel: m.resolved, displayName: m.label, description: m.description, supportedEffortLevels: m.efforts }));
+    const saved = models.map((m) => ({
+      value: m.value,
+      resolvedModel: m.resolved,
+      displayName: m.label,
+      description: m.description,
+      supportedEffortLevels: m.efforts,
+      supportsFastMode: m.fast,
+      supportsThinkingOff: m.thinkingOff,
+    }));
     try {
       writeFileAtomic(modelsFile(), JSON.stringify(saved) + "\n");
     } catch {}
@@ -389,11 +416,13 @@ export class SessionManager extends EventEmitter {
         setTimeout(() => this.probing.get(model) === asked && this.probing.delete(model), this.timing.probeRetryMs).unref();
         return undefined;
       };
-      asked = this.windowProbe(probeDir(cwd), model, this.cfg.claudePath).then((w) => {
-        if (!w) return forget();
-        this.windows.learn(model, w);
-        return w;
-      }, forget);
+      asked = this.claude()
+        .then((c) => this.windowProbe(probeDir(cwd), model, c.path))
+        .then((w) => {
+          if (!w) return forget();
+          this.windows.learn(model, w);
+          return w;
+        }, forget);
       this.probing.set(model, asked);
     }
     void asked.then((w) => w && found());
@@ -439,6 +468,7 @@ export class SessionManager extends EventEmitter {
       const cwd = await this.resumeFolder(sessionId, info.cwd);
       if (!isFolder(cwd)) throw Error(`working folder is missing: ${cwd}`);
       const history = await loadHistory(sessionId, cwd);
+      const cli = await this.claude();
       const now = this.controlled(sessionId);
       if (now) return now;
       if (this.claiming.has(sessionId)) throw Error("session is opening in VS Code");
@@ -447,7 +477,8 @@ export class SessionManager extends EventEmitter {
       const start = this.starts.get(sessionId);
       const s = new BrokerSession(sessionId, cwd, history, titleOf(info));
       this.adopt(s);
-      s.start({ resume: true, claudePath: this.cfg.claudePath, ...startOptions(start) });
+      s.start({ resume: true, claudePath: cli.path, ...startOptions(start) });
+      this.logCli(s.id, cli);
       this.starts.delete(sessionId);
       if (start) this.audit?.log("start_settings", { sessionId, ...start });
       this.seedGauge(s);
@@ -466,12 +497,27 @@ export class SessionManager extends EventEmitter {
     return moved ? resumeIn(cwd, moved, await this.infos()) : cwd;
   }
 
-  async create(cwd: string, opts: { model?: string; mode?: PermissionModeName; effort?: EffortName; ultracode?: boolean }): Promise<BrokerSession> {
+  async create(
+    cwd: string,
+    opts: { model?: string; mode?: PermissionModeName; effort?: EffortName; ultracode?: boolean; fast?: boolean; thinking?: boolean },
+  ): Promise<BrokerSession> {
     const dir = await this.resolveFolder(cwd);
+    const cli = await this.claude();
     const s = new BrokerSession(randomUUID(), dir);
     this.adopt(s);
-    s.start({ ...opts, claudePath: this.cfg.claudePath });
+    s.start({ ...opts, claudePath: cli.path });
+    this.logCli(s.id, cli);
     return s;
+  }
+
+  // The Claude Code to start now; the ones running sessions use stay.
+  private claude(): Promise<CliChoice> {
+    return this.cli.choose([...this.owned.values()].map((s) => s.claudePath));
+  }
+
+  private logCli(sessionId: string, c: CliChoice): void {
+    const from = c.from ? ` from ${c.from}` : "";
+    this.cliLog(`ccrc: session ${sessionId} starts Claude Code ${c.version ?? "(version unknown)"} (${c.source}) ${c.path ?? "bundled with the Agent SDK"}${from}`);
   }
 
   // A message from here brings an archived session back to the list.
@@ -631,7 +677,7 @@ export class SessionManager extends EventEmitter {
         return { limits: (await s.usage()).limits };
       } catch {}
     }
-    return this.usageProbe(probeDir(cwd), this.cfg.claudePath);
+    return this.usageProbe(probeDir(cwd), (await this.claude()).path);
   }
 
   // What reading a linked file needs: the folder the session started in, the one it last worked in,
@@ -690,6 +736,14 @@ export class SessionManager extends EventEmitter {
     return this.controlled(sessionId)?.setUltracode(on) ?? this.setStart(sessionId, { ultracode: on });
   }
 
+  setFast(sessionId: string, on: boolean): Promise<void> {
+    return this.controlled(sessionId)?.setFast(on) ?? this.setStart(sessionId, { fast: on });
+  }
+
+  setThinking(sessionId: string, on: boolean): Promise<void> {
+    return this.controlled(sessionId)?.setThinking(on) ?? this.setStart(sessionId, { thinking: on });
+  }
+
   private async setStart(sessionId: string, change: StartSettings): Promise<void> {
     if (this.starting.has(sessionId)) throw Error("session is starting");
     const info = await this.info(sessionId);
@@ -699,6 +753,8 @@ export class SessionManager extends EventEmitter {
     if (this.controlled(sessionId)) throw Error("session started meanwhile");
     const next: StartSettings = { ...this.starts.get(sessionId), ...change };
     if (!next.ultracode) delete next.ultracode;
+    if (!next.fast) delete next.fast;
+    if (next.thinking !== false) delete next.thinking;
     this.starts.set(sessionId, next);
     await this.restate(sessionId);
   }
@@ -869,7 +925,7 @@ export class SessionManager extends EventEmitter {
 function startOptions(start?: StartSettings): Partial<StartOptions> {
   if (!start) return {};
   const later = start.effort || start.ultracode ? { effort: start.effort, ultracode: start.ultracode } : undefined;
-  return { model: start.model, mode: start.mode, ...(later ? { later } : {}) };
+  return { model: start.model, mode: start.mode, ...(later ? { later } : {}), ...(start.fast ? { fast: true } : {}), ...(start.thinking === false ? { thinking: false } : {}) };
 }
 
 // The model the user's settings start Claude Code with.
@@ -884,6 +940,12 @@ function settingsModel(): string | undefined {
 
 const modelsFile = () => path.join(paths.stateDir, "models.json");
 
+// Claude Code lists this from 2.1.300 on; the SDK does not declare it.
+function thinkingOffOf(m: ModelInfo): boolean | undefined {
+  const v = (m as { supportsThinkingOff?: unknown }).supportsThinkingOff;
+  return typeof v === "boolean" ? v : undefined;
+}
+
 function modelOptions(list: unknown): ModelOption[] {
   if (!Array.isArray(list)) return [];
   return list
@@ -894,6 +956,8 @@ function modelOptions(list: unknown): ModelOption[] {
       label: typeof m.displayName === "string" && m.displayName ? m.displayName : m.value,
       description: typeof m.description === "string" ? m.description : undefined,
       efforts: Array.isArray(m.supportedEffortLevels) ? m.supportedEffortLevels : undefined,
+      ...(m.supportsFastMode === true ? { fast: true } : {}),
+      ...(thinkingOffOf(m) === undefined ? {} : { thinkingOff: thinkingOffOf(m) }),
     }));
 }
 

@@ -131,6 +131,30 @@ test("without Ultracode a new session starts with no flag settings", async (t) =
   assert.equal(flag(args, "--effort"), "low");
 });
 
+test("a new session asked to start in Fast mode with Thinking off gets fastMode as a flag setting and Thinking disabled", async (t) => {
+  const { say, started, logged } = setup(t);
+  say({ t: "new_session", cwd, text: "fast start", fast: true, thinking: false });
+  const s = await until(started, "session_started");
+  await until(() => recorded().some((r) => r.user === "fast start"), "first message");
+  const args = recorded().find((r) => r.args)!.args!;
+  assert.deepEqual(startSettings(args), { fastMode: true });
+  assert.ok(args.includes("--thinking=disabled"), JSON.stringify(args));
+  assert.deepEqual(logged.find(([e]) => e === "new_session")?.[1], { device: "phone", sessionId: s.sessionId, cwd: fs.realpathSync(cwd), fast: true, thinking: false });
+});
+
+test("Fast mode off and Thinking on start a new session as Claude Code would anyway, and they must be booleans", async (t) => {
+  const { ws, say, started } = setup(t);
+  say({ t: "new_session", cwd, text: "x", fast: "yes" });
+  say({ t: "new_session", cwd, text: "x", thinking: 0 });
+  await until(() => ws.sent.filter((m) => m.t === "error").length === 2, "errors");
+  say({ t: "new_session", cwd, text: "plain", fast: false, thinking: true });
+  await until(started, "session_started");
+  await until(() => recorded().some((r) => r.user === "plain"), "first message");
+  const args = recorded().find((r) => r.args)!.args!;
+  assert.equal(startSettings(args), undefined);
+  assert.ok(!args.some((a) => a.startsWith("--thinking") || a.startsWith("--max-thinking-tokens")), JSON.stringify(args));
+});
+
 test("the conversation says so when the model could not take Ultracode at the start", async (t) => {
   const { manager, say, started } = setup(t);
   say({ t: "new_session", cwd, text: "go", model: "claude-no-ultracode-1", ultracode: true });
@@ -249,6 +273,37 @@ test("which models offered Ultracode is learnt from the sessions and shown with 
       ["haiku", undefined],
     ],
   );
+});
+
+test("which models offer Fast mode and Thinking off comes from Claude Code's list, then an earlier list, then the model's name", async (t) => {
+  fs.rmSync(path.join(home, "state", "models.json"), { force: true });
+  const { manager } = setup(t);
+  const set = (list: unknown[]) => (manager as unknown as { setModels(l: unknown[]): void }).setModels(list);
+  const row = (value: string, more: Record<string, unknown> = {}) => ({ value, resolvedModel: value, displayName: value, description: "", ...more });
+  set([row("claude-opus-5-5", { supportsFastMode: true, supportsThinkingOff: false }), row("claude-new-1", { supportsThinkingOff: true }), row("claude-new-2")]);
+  const offers = async () => Object.fromEntries((await manager.modelList()).map((m) => [m.value, [m.fast, m.thinkingOff]]));
+  assert.deepEqual(await offers(), { "claude-opus-5-5": [true, false], "claude-new-1": [undefined, true], "claude-new-2": [undefined, undefined] });
+  set([row("claude-opus-5-5", { supportsFastMode: true }), row("claude-new-1"), row("claude-new-2"), row("claude-sonnet-5")]);
+  assert.deepEqual(
+    await offers(),
+    { "claude-opus-5-5": [true, false], "claude-new-1": [undefined, true], "claude-new-2": [undefined, undefined], "claude-sonnet-5": [undefined, true] },
+    "a list that does not say keeps what the last one said, and a known name fills the rest",
+  );
+  const kept = JSON.parse(fs.readFileSync(path.join(home, "state", "models.json"), "utf8")) as Record<string, unknown>[];
+  assert.deepEqual(
+    kept.map((m) => [m.value, m.supportsFastMode, m.supportsThinkingOff]),
+    [
+      ["claude-opus-5-5", true, false],
+      ["claude-new-1", undefined, true],
+      ["claude-new-2", undefined, undefined],
+      ["claude-sonnet-5", undefined, undefined],
+    ],
+  );
+  manager.models = [
+    { value: "default", resolved: "claude-opus-5-5", label: "Default" },
+    { value: "sonnet", resolved: "claude-sonnet-5-5", label: "Sonnet" },
+  ];
+  assert.deepEqual(await offers(), { default: [true, false], sonnet: [undefined, false] }, "a list kept without Fast mode gets it by name");
 });
 
 test("the kept list ignores what is not a model name and keeps the latest answer", () => {

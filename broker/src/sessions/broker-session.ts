@@ -21,6 +21,7 @@ import {
   MCP_CHANGE_MS,
   READ_MS,
   SessionCore,
+  THINKING_TOKENS,
   commandInfo,
   mcpServers,
   rewindResult,
@@ -59,6 +60,9 @@ export interface StartOptions {
   claudePath?: string;
   // Starts with Ultracode asked for, as a flag setting, so the first message waits for nothing.
   ultracode?: boolean;
+  // Starts with Fast mode asked for, or with Thinking off.
+  fast?: boolean;
+  thinking?: boolean;
   // Applied once Claude Code has started, the way a running session changes them.
   later?: { effort?: EffortName; ultracode?: boolean };
 }
@@ -120,6 +124,8 @@ export class BrokerSession extends SessionCore {
   private resolvers = new Map<string, (result: PermissionResult) => void>();
   private elicits = new Map<string, (result: ElicitAnswer) => void>();
   elicitMs = ELICIT_MS;
+  // The Claude Code the process runs, while it runs.
+  claudePath?: string;
 
   constructor(id: string, cwd: string, history: DisplayItem[] = [], title?: string) {
     super(id, cwd, history, title);
@@ -128,6 +134,10 @@ export class BrokerSession extends SessionCore {
   start(opts: StartOptions): void {
     this.permissionMode = opts.mode;
     this.effort = opts.effort;
+    this.claudePath = opts.claudePath;
+    if (opts.fast) this.fastWanted = true;
+    if (opts.thinking === false) this.thinking = false;
+    const flags = { ...(opts.ultracode ? { ultracode: true } : {}), ...(opts.fast ? { fastMode: true } : {}) };
     // The first message waits for the settings applied after start, so its turn already runs with them.
     let ready = () => {};
     if (opts.later) this.input.held = timed(new Promise<void>((r) => (ready = r)), LATER_WAIT_MS).catch(() => {});
@@ -140,7 +150,8 @@ export class BrokerSession extends SessionCore {
         permissionMode: opts.mode,
         model: opts.model,
         effort: opts.effort,
-        ...(opts.ultracode ? { settings: { ultracode: true } } : {}),
+        ...(Object.keys(flags).length ? { settings: flags } : {}),
+        ...(opts.thinking === false ? { thinking: { type: "disabled" as const } } : {}),
         settingSources: ["user", "project", "local"],
         systemPrompt: { type: "preset", preset: "claude_code" },
         includePartialMessages: true,
@@ -161,6 +172,7 @@ export class BrokerSession extends SessionCore {
       .initializationResult()
       .then(async (r) => {
         this.adoptStyles(r.output_style, r.available_output_styles);
+        this.adoptFast(r.fast_mode_state, r.fast_mode_disabled_reason, true);
         if (opts.later) await this.applyLater(opts.later).catch(() => {});
         ready();
         if (opts.ultracode || opts.later?.ultracode) await this.confirmUltracode();
@@ -230,6 +242,19 @@ export class BrokerSession extends SessionCore {
     await this.query().applyFlagSettings({ ultracode: on ? true : null });
     this.touch();
     this.refreshApplied();
+  }
+
+  protected async applyFast(on: boolean): Promise<void> {
+    await timed(this.query().applyFlagSettings({ fastMode: on }), REQUEST_MS);
+  }
+
+  protected async applyThinking(on: boolean): Promise<void> {
+    await timed(this.query().setMaxThinkingTokens(on ? THINKING_TOKENS : 0), REQUEST_MS);
+  }
+
+  // As VS Code does: Claude Code keeps Fast mode on and tells again on every turn.
+  protected creditsOut(): void {
+    this.setFast(false).catch(() => {});
   }
 
   async contextDetail(summary = false): Promise<ContextDetail> {
@@ -359,12 +384,26 @@ export class BrokerSession extends SessionCore {
     return timed(q.request({ subtype: "read_file", path, max_bytes: maxBytes, encoding }), READ_MS).then((r) => fileContents(r.response));
   }
 
-  // Reduced to what the wrapper passes on for a VS Code session.
+  // Reduced to what the wrapper passes on for a VS Code session, and the Thinking the settings start Claude Code with.
   protected async readApplied(): Promise<Record<string, unknown>> {
     const [r, init] = await Promise.all([this.request({ subtype: "get_settings" }), this.query().initializationResult()]);
     const settings = r.response ?? {};
     const style = (settings.effective as Record<string, unknown> | undefined)?.outputStyle;
-    return { applied: settings.applied, ...(typeof style === "string" ? { outputStyle: style } : {}), outputStyles: init.available_output_styles };
+    return {
+      applied: settings.applied,
+      ...(typeof style === "string" ? { outputStyle: style } : {}),
+      outputStyles: init.available_output_styles,
+      thinking: thinkingDefault(settings.effective),
+    };
+  }
+
+  // Thinking stays as the start or a change here set it.
+  protected adoptSettings(r: Record<string, unknown>): void {
+    if (this.thinking === undefined && typeof r.thinking === "boolean") {
+      this.thinking = r.thinking;
+      this.emit("state");
+    }
+    super.adoptSettings(r);
   }
 
   protected async writeOutputStyle(style: string): Promise<void> {
@@ -439,6 +478,14 @@ export class BrokerSession extends SessionCore {
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+
+// Whether Claude Code thinks when nothing at the start said: MAX_THINKING_TOKENS (0 is off) over alwaysThinkingEnabled.
+export function thinkingDefault(effective: unknown, env: NodeJS.ProcessEnv = process.env): boolean {
+  const e = isObject(effective) ? effective : {};
+  const set = isObject(e.env) && typeof e.env.MAX_THINKING_TOKENS === "string" ? e.env.MAX_THINKING_TOKENS : env.MAX_THINKING_TOKENS;
+  const tokens = set === undefined ? NaN : Number.parseInt(set, 10);
+  return Number.isFinite(tokens) ? tokens > 0 : e.alwaysThinkingEnabled !== false;
+}
 
 // What a probe takes from the user's settings without loading them (and so their hooks or Remote Control): the
 // env, which may name where the account's credentials are, and the auto-compact window.

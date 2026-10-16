@@ -6,7 +6,7 @@ import { LineSplitter, parseLine } from "../src/link/lines.ts";
 import { LinkServer, type Link } from "../src/link/server.ts";
 import type { Answer, DisplayItem, PendingRequest } from "../src/protocol.ts";
 import type { TurnEnd } from "../src/sessions/outcome.ts";
-import { WrappedSession } from "../src/sessions/wrapped.ts";
+import { WrappedSession, thinkingArg } from "../src/sessions/wrapped.ts";
 import { tempDir } from "./helpers.ts";
 
 type Msg = Record<string, unknown>;
@@ -335,6 +335,127 @@ test("a wrapper too old for get_settings marks the applied state unknown until V
   for (let i = 0; i < 50 && s.state().appliedUnknown; i++) await new Promise((r) => setTimeout(r, 10));
   assert.equal(s.state().appliedUnknown, undefined);
   assert.equal(s.state().ultracodeAvailable, true);
+});
+
+// A VS Code session behind a wrapper whose hello carries these fields.
+async function helloSession(hello: Msg) {
+  const server = new LinkServer(path.join(tempDir(), "link.sock"));
+  servers.push(server);
+  await server.listen();
+  const linked = new Promise<Link>((resolve) => server.once("link", resolve));
+  const sock = net.createConnection(server.socketPath);
+  await new Promise((r) => sock.once("connect", r));
+  const wrapper = new FakeWrapper(sock);
+  const link = await linked;
+  const said = new Promise((r) => link.once("hello", r));
+  wrapper.send({ t: "hello", v: 1, wpid: 4242, cwd: "/tmp/project", args: ["--resume", SID], sessionId: SID, ...hello });
+  await said;
+  const s = new WrappedSession(link, SID, "/tmp/project");
+  link.on("out", (m: Msg) => s.onOut(m));
+  link.on("in", (m: Msg) => s.onIn(m));
+  s.seed([]);
+  const until = async (fn: () => boolean) => {
+    for (let i = 0; i < 100 && !fn(); i++) await new Promise((r) => setTimeout(r, 10));
+  };
+  return { s, wrapper, until };
+}
+const CAPS = ["fast_mode", "thinking"];
+const optionRequest = (f: Msg) => {
+  const r = (f.m as Msg | undefined)?.request as Msg | undefined;
+  return f.t === "to_cli" && (r?.subtype === "set_max_thinking_tokens" || (r?.subtype === "apply_flag_settings" && "fastMode" in (r.settings as Msg)));
+};
+
+test("Thinking starts as VS Code launched Claude Code", () => {
+  assert.equal(thinkingArg(["--max-thinking-tokens=31999"]), true);
+  assert.equal(thinkingArg(["--max-thinking-tokens", "0"]), false);
+  assert.equal(thinkingArg(["--thinking=disabled"]), false);
+  assert.equal(thinkingArg(["--thinking", "adaptive"]), true);
+  assert.equal(thinkingArg(["--resume", SID]), true);
+  assert.equal(thinkingArg([1, null, "--thinking=disabled"]), false, "what is no string counts for nothing");
+});
+
+test("Thinking follows VS Code's own changes and the ones made here; Fast mode settles from VS Code's reports", async () => {
+  const { s, wrapper, until } = await helloSession({ caps: CAPS, args: ["--thinking=disabled", "--resume", SID] });
+  assert.equal(s.state().thinking, false);
+  assert.equal(s.state().optionsUnknown, undefined);
+  const think = (v: unknown) => wrapper.send({ m: { type: "control_request", request_id: "vs-t", request: { subtype: "set_max_thinking_tokens", max_thinking_tokens: v, thinking_display: "summarized" } }, t: "in" });
+  think(31999);
+  await until(() => s.thinking === true);
+  assert.equal(s.state().thinking, true);
+  think(null);
+  await until(() => s.thinking === false);
+  assert.equal(s.state().thinking, false, "null goes back to how it started");
+  const seen: Msg[] = [];
+  wrapper.autoReply((r) => (seen.push(r), {}));
+  await s.setThinking(true);
+  await s.setFast(true);
+  assert.deepEqual(seen, [
+    { subtype: "set_max_thinking_tokens", max_thinking_tokens: 31999 },
+    { subtype: "apply_flag_settings", settings: { fastMode: true } },
+  ]);
+  assert.equal(s.state().thinking, true);
+  assert.equal(s.state().fastWanted, true);
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "init", response: { models: [{ value: "default" }], fast_mode_state: "on" } } });
+  await until(() => s.fastWanted === undefined);
+  assert.equal(s.state().fastMode, "on");
+  assert.equal(s.state().fastWanted, undefined);
+});
+
+test("a wrapper that predates Fast mode and Thinking changes keeps Thinking as VS Code started it and is asked nothing", async () => {
+  const { s, wrapper, until } = await helloSession({ args: ["--thinking=disabled", "--resume", SID] });
+  assert.equal(s.state().optionsUnknown, true);
+  assert.equal(s.state().thinking, false);
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, fast_mode_state: "on" });
+  await until(() => s.fastMode === "on");
+  assert.equal(s.state().fastMode, "on", "its state still shows");
+  await assert.rejects(s.setFast(false), /^Error: rejected by the wrapper: request not allowed$/);
+  await assert.rejects(s.setThinking(false), /request not allowed/);
+  assert.ok(!wrapper.frames.some(optionRequest));
+});
+
+test("a wrapper that refuses a change after all marks Fast mode and Thinking as not to be changed here", async () => {
+  const { s, wrapper } = await helloSession({ caps: CAPS });
+  wrapper.sock.on("data", () => {
+    for (const f of wrapper.frames) {
+      const m = f.m as Msg | undefined;
+      if (f.t === "to_cli" && m?.type === "control_request" && !f.answered) {
+        f.answered = true;
+        wrapper.send({ t: "rejected", id: m.request_id, reason: "setting not allowed" });
+      }
+    }
+  });
+  assert.equal(s.state().thinking, true);
+  await assert.rejects(s.setFast(true), /request not allowed/);
+  assert.equal(s.state().optionsUnknown, true);
+  assert.equal(s.state().thinking, true, "Thinking stays as last known");
+  assert.equal(s.state().fastWanted, undefined);
+});
+
+test("a hello whose caps or arguments are of another shape leaves the changes to VS Code", async () => {
+  const { s, wrapper, until } = await helloSession({ caps: 1, args: [1, "--thinking=disabled", "--resume", SID] });
+  assert.equal(s.state().optionsUnknown, true);
+  assert.equal(s.state().thinking, false);
+  const other = await helloSession({ caps: [1, "fast_mode"] });
+  assert.equal(other.s.state().optionsUnknown, true);
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, fast_mode_state: "on" });
+  await until(() => s.fastMode === "on");
+  assert.equal(s.state().fastMode, "on", "the session goes on");
+});
+
+test("in a VS Code session the usage credits notice is noted and turning Fast mode off is left to VS Code", async () => {
+  const { s, wrapper, until } = await helloSession({ caps: CAPS });
+  const notes: DisplayItem[] = [];
+  s.on("item", (i: DisplayItem) => i.kind === "note" && notes.push(i));
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, fast_mode_state: "on" });
+  wrapper.out({ type: "system", subtype: "notification", key: "fast-mode-overage-rejected", text: "Fast mode disabled", session_id: SID });
+  await until(() => notes.length > 0);
+  assert.deepEqual(
+    notes.map((n) => n.kind === "note" && [n.code, n.text]),
+    [["fast", "credits"]],
+  );
+  assert.equal(s.state().fastCredits, true);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(!wrapper.frames.some(optionRequest));
 });
 
 test("turn state follows session_state_changed and result", async () => {

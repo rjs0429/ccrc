@@ -41,7 +41,7 @@ async function serve(): Promise<void> {
   push.watch(manager, hub);
   manager.remoteReachable = () => hub.connected || push.reaches(leases.current()?.device);
   manager.remoteWatching = () => hub.connected;
-  const doctor = new Doctor();
+  const doctor = new Doctor({ brokerCli: () => manager.cli.peek() });
   doctor.start();
   const links = new LinkServer(linkSocketPath());
   links.on("link", (link) => manager.attachLink(link));
