@@ -308,7 +308,7 @@ export function Composer({
     .filter(Boolean)
     .join(", ");
 
-  const [layout, setLayout] = useState<ChipLayout>({ lines: "two", agent: "above", word: true });
+  const [layout, setLayout] = useState<ChipLayout>({ lines: "two", word: true });
   const barRef = useRef<HTMLDivElement>(null);
   const rowsRef = useRef<HTMLDivElement>(null);
   const leftRef = useRef<HTMLDivElement>(null);
@@ -316,17 +316,19 @@ export function Composer({
   const modelRef = useRef<HTMLSpanElement>(null);
   const modeRef = useRef<HTMLSpanElement>(null);
   const agentRef = useRef<HTMLButtonElement>(null);
+  const roundRef = useRef<HTMLButtonElement>(null);
   // The chip lines follow from the chips' widths with every name in full, measured after each render before it
   // paints, and again when the composer's width changes or fonts load.
   const measure = (): ChipLayout | undefined => {
-    const [bar, rows, left, right] = [barRef.current, rowsRef.current, leftRef.current, rightRef.current];
-    if (!bar || !rows || !left || !right) return undefined;
+    const [bar, rows, left, right, round] = [barRef.current, rowsRef.current, leftRef.current, rightRef.current, roundRef.current];
+    if (!bar || !rows || !left || !right || !round) return undefined;
     return chipLayout({
       composer: bar.getBoundingClientRect().width,
       row: rows.getBoundingClientRect().width,
       gap: parseFloat(getComputedStyle(left.parentElement!).columnGap) || 0,
       left: groupWidth(left, modelRef.current),
       right: groupWidth(right, modeRef.current),
+      round: round.getBoundingClientRect().width + (parseFloat(getComputedStyle(round).marginLeft) || 0),
       agent: agentRef.current ? agentChipWidths(agentRef.current) : undefined,
     });
   };
@@ -550,11 +552,12 @@ export function Composer({
     return <div className="pb-safe border-t border-line bg-bg px-safe-4 pt-3 text-center text-sm text-muted short:pt-2">{disabledReason}</div>;
   }
 
-  const agentChip = agents && onAgents && <AgentChip ref={agentRef} chip={agents} word={layout.word} onClick={openAgents} />;
   const two = layout.lines === "two";
+  const agentChip = agents && onAgents && <AgentChip ref={agentRef} chip={agents} word={layout.word} onClick={openAgents} className={two ? "col-start-1 row-start-1" : ""} />;
   // Sharing a line with the right group, the left group never shrinks: a longer name is measured in full and takes
-  // the chips to two lines instead of being cut.
-  const leftFit = two ? "basis-full" : layout.lines === "wide" ? "flex-1" : "shrink-0";
+  // the chips to two lines instead of being cut. On two lines the agent chip and the right group take line 1, the left
+  // group and the round button line 2.
+  const leftFit = two ? "col-[1/3] row-start-2" : layout.lines === "wide" ? "min-w-0" : "shrink-0";
 
   return (
     <div ref={barRef} className={`pb-safe border-t border-line bg-bg px-safe-3 ${fastMark || thinkingMark ? "pt-2.5 short:pt-2" : "pt-2 short:pt-1"}`}>
@@ -601,8 +604,7 @@ export function Composer({
             </div>
           )}
           <div ref={rowsRef} className="mt-1 short:mt-0.5" data-chip-rows={layout.lines}>
-            {agentChip && layout.agent === "above" && <div className="mb-1 flex short:mb-0.5">{agentChip}</div>}
-            <div className={`flex items-center gap-x-1 gap-y-1 short:gap-y-0.5 ${two ? "flex-wrap" : ""}`}>
+            <div className={`items-center gap-x-1 ${two ? "grid grid-cols-[auto_minmax(0,1fr)_auto] gap-y-1 short:gap-y-0.5" : "flex"}`}>
               <div ref={leftRef} className={`flex min-w-0 items-center ${leftFit}`} data-chip-group="left">
                 {scope && (
                   <span className="relative shrink-0">
@@ -638,30 +640,35 @@ export function Composer({
                 {(efforts || fastRow || thinkingRow) && (
                   <Chip name="effort" label={effortName} disabled={!choosable} onClick={() => setSheet("effort")}>
                     {chipText}
-                    {ultracode && <span className="ml-0.5 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">Ultracode</span>}
+                    {ultracode && (
+                      <span title="Ultracode" data-ultracode className="ml-0.5 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">
+                        U
+                      </span>
+                    )}
                     <Icon.chevronDown className="size-3" />
                   </Chip>
                 )}
               </div>
-              {agentChip && layout.agent === "inline" && agentChip}
-              <div ref={rightRef} className="ml-auto flex max-w-full shrink-0 items-center" data-chip-group="right">
+              {agentChip}
+              <div ref={rightRef} className={`flex min-w-0 items-center justify-end ${two ? "col-[2/4] row-start-1" : "ml-auto shrink-0"}`} data-chip-group="right">
+                {onContext && <ContextRing gauge={state?.context} onClick={onContext} className="mr-0.5" />}
                 <Chip name="mode" className="min-w-0" disabled={!choosable} onClick={() => setSheet("mode")}>
                   <span ref={modeRef} className="truncate">{MODE_LABEL[mode ?? ""] ?? "권한 모드"}</span>
                   <Icon.chevronDown className="size-3 shrink-0" />
                 </Chip>
-                {onContext && <ContextRing gauge={state?.context} onClick={onContext} className="ml-0.5" />}
-                <button
-                  onPointerDown={() => (pressed.current = meant())}
-                  onPointerCancel={() => (pressed.current = null)}
-                  onClick={tapRound}
-                  disabled={!stops && !canSend}
-                  aria-label={locked ? "시작하는 중" : stops ? "중지" : draft ? "시작" : busy ? "대기열에 추가" : "보내기"}
-                  data-starting={locked || undefined}
-                  className={`ml-1.5 flex size-8 shrink-0 items-center justify-center rounded-full ${ROUND_TAP} ${stops ? "bg-surface-2 text-fg" : `bg-accent text-white ${locked ? "" : "disabled:opacity-30"}`}`}
-                >
-                  {locked ? <Spinner className="size-4" /> : stops ? <Icon.stop className="size-5" /> : <Icon.send className="size-4 [stroke-width:2.5]" />}
-                </button>
               </div>
+              <button
+                ref={roundRef}
+                onPointerDown={() => (pressed.current = meant())}
+                onPointerCancel={() => (pressed.current = null)}
+                onClick={tapRound}
+                disabled={!stops && !canSend}
+                aria-label={locked ? "시작하는 중" : stops ? "중지" : draft ? "시작" : busy ? "대기열에 추가" : "보내기"}
+                data-starting={locked || undefined}
+                className={`ml-0.5 flex size-8 shrink-0 items-center justify-center rounded-full ${ROUND_TAP} ${two ? "col-start-3 row-start-2" : ""} ${stops ? "bg-surface-2 text-fg" : `bg-accent text-white ${locked ? "" : "disabled:opacity-30"}`}`}
+              >
+                {locked ? <Spinner className="size-4" /> : stops ? <Icon.stop className="size-5" /> : <Icon.send className="size-4 [stroke-width:2.5]" />}
+              </button>
             </div>
           </div>
         </div>
