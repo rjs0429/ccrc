@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import path from "node:path";
 import {
   PERMISSION_MODES,
   type Answer,
@@ -160,7 +161,7 @@ interface StreamEvent {
 
 // A session whose Claude Code process the broker can drive: one it runs itself ("owned") or one
 // that runs in VS Code and is reached through the wrapper ("attached").
-// Events: item, stream, pending_add, pending_remove, state, models, window, applied (model, ultracodeAvailable), turn_end (TurnEnd), title, closed.
+// Events: item, stream, pending_add, pending_remove, state, models, window, applied (model, ultracodeAvailable), turn_end (TurnEnd), title, cwd, closed.
 export abstract class SessionCore extends EventEmitter {
   abstract readonly kind: "owned" | "attached";
   abstract readonly host: string;
@@ -603,6 +604,7 @@ export abstract class SessionCore extends EventEmitter {
         if (typeof m.effort === "string" && !this.appliedSeen) this.effort = m.effort;
         this.adoptStyles(m.output_style);
         this.adoptFast(m.fast_mode_state, m.fast_mode_disabled_reason, true);
+        if (typeof m.cwd === "string") this.initCwd(m.cwd, typeof m.original_cwd === "string" ? m.original_cwd : undefined);
         this.emit("state");
         this.onInit();
         this.refreshApplied();
@@ -651,6 +653,19 @@ export abstract class SessionCore extends EventEmitter {
   }
 
   protected onInit(): void {}
+
+  // The folders a turn's init line names: where Claude Code's shell is, and, from Claude Code 2.1.301, the folder it
+  // works from. A process type that follows them overrides this.
+  protected initCwd(_cwd: string, _original?: string): void {}
+
+  // Where Claude Code works now: a worktree it made or entered, or the folder it went back to.
+  moveTo(cwd: string): void {
+    if (!path.isAbsolute(cwd) || cwd === this.cwd) return;
+    this.cwd = cwd;
+    this.builder.setCwd(cwd);
+    this.emit("state");
+    this.emit("cwd");
+  }
 
   // Claude Code's get_settings answer reduced to `applied`, the effective `outputStyle` and the style names
   // (`outputStyles`); a process type that can ask overrides this.

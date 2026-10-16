@@ -8,6 +8,7 @@ import { UpdateBanner } from "../components/UpdateBanner.tsx";
 import { useLongPress } from "../components/useLongPress.ts";
 import { baseName, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
 import { loggedOut, navigate, openAt, refreshSessions, useApp } from "../state.ts";
+import { groupFolder, placeLabel, shownBranch } from "../worktree.ts";
 
 // "all" leaves archived sessions out; what runs or waits for input shows archived or not.
 type Filter = "all" | "running" | "waiting" | "archived";
@@ -55,7 +56,7 @@ function Meta({ text, archived }: { text: string; archived?: boolean }) {
 }
 
 function SearchRow({ r }: { r: SearchResult }) {
-  const meta = [baseName(r.cwd), relTime(r.lastModified), r.hits ? `메시지 ${r.hits}건` : ""].filter(Boolean).join(" · ");
+  const meta = [placeLabel(r.cwd), relTime(r.lastModified), r.hits ? `메시지 ${r.hits}건` : ""].filter(Boolean).join(" · ");
   return (
     <div className="mx-auto max-w-3xl border-b border-line">
       <button onClick={() => openAt(r.id, r.snippets.find((sn) => !sn.earlier)?.itemId)} className="block w-full px-4 pt-3 pb-1 text-left active:bg-surface-2">
@@ -137,7 +138,7 @@ function status(s: SessionSummary): { text: string; dot: string } {
 function SessionRow({ s, view, onActions }: { s: SessionSummary; view: Filter; onActions: (s: SessionSummary) => void }) {
   const press = useLongPress(() => onActions(s));
   const st = status(s);
-  const meta = [st.text, baseName(s.cwd), s.branch && s.branch !== "HEAD" ? s.branch : "", relTime(s.lastModified)].filter(Boolean).join(" · ");
+  const meta = [st.text, placeLabel(s.cwd), shownBranch(s.cwd, s.branch) ?? "", relTime(s.lastModified)].filter(Boolean).join(" · ");
   const restore = view === "archived" && s.archived;
   const row = (
     <button
@@ -196,17 +197,19 @@ export function Home() {
     return () => clearInterval(timer);
   }, []);
 
-  const shown = useMemo(() => (sessions ?? []).filter((s) => (!folder || s.cwd === folder) && inView(s, filter)), [sessions, folder, filter]);
+  const shown = useMemo(() => (sessions ?? []).filter((s) => (!folder || groupFolder(s.cwd) === folder) && inView(s, filter)), [sessions, folder, filter]);
 
+  // A session in a worktree goes with its repository.
   const folders = useMemo(() => {
     const map = new Map<string, FolderGroup>();
     for (const s of sessions ?? []) {
-      const g = map.get(s.cwd) ?? { cwd: s.cwd, count: 0, archived: 0, running: 0, last: 0 };
+      const cwd = groupFolder(s.cwd);
+      const g = map.get(cwd) ?? { cwd, count: 0, archived: 0, running: 0, last: 0 };
       if (s.archived) g.archived++;
       else g.count++;
       if (s.state !== "inactive") g.running++;
       g.last = Math.max(g.last, s.lastModified);
-      map.set(s.cwd, g);
+      map.set(cwd, g);
     }
     return [...map.values()].sort((a, b) => b.last - a.last);
   }, [sessions]);

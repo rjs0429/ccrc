@@ -258,6 +258,8 @@ function ask(msg: (id: number) => ClientMsg, ms: number): Promise<unknown> {
 }
 
 const START_WAIT_MS = 60_000;
+// A start in a new worktree also waits for Claude Code to make it, which the broker allows a minute.
+const WORKTREE_START_WAIT_MS = 90_000;
 type NewSessionMsg = Extract<ClientMsg, { t: "new_session" }>;
 type Start = { id: string; msg: NewSessionMsg };
 // The new session being started from here, by the draftId the broker answers with. It outlasts a reconnect,
@@ -270,6 +272,13 @@ let draftStarted: ((sessionId: string, text: string) => void) | undefined;
 // Called when the new session asked for from here has started, before the chat opens.
 export function onDraftStarted(fn: (sessionId: string, text: string) => void): void {
   draftStarted = fn;
+}
+
+let draftFailed: ((message: string, start: NewSessionMsg) => boolean) | undefined;
+
+// Called when the broker refused the new session asked for from here; true when the caller shows why itself.
+export function onDraftFailed(fn: typeof draftFailed): void {
+  draftFailed = fn;
 }
 
 function startDone(): void {
@@ -294,7 +303,7 @@ export function startNewSession(start: Omit<NewSessionMsg, "draftId">): boolean 
   if (unanswered && sameStart(unanswered.msg, msg)) msg.draftId = unanswered.id;
   if (!send(msg)) return false;
   unanswered = undefined;
-  startingSent = { id: msg.draftId!, msg, timer: window.setTimeout(startTimedOut, START_WAIT_MS) };
+  startingSent = { id: msg.draftId!, msg, timer: window.setTimeout(startTimedOut, msg.worktree ? WORKTREE_START_WAIT_MS : START_WAIT_MS) };
   setState({ starting: msg.draftId });
   return true;
 }
@@ -410,11 +419,13 @@ function onServer(msg: ServerMsg): void {
       void refreshSessions();
       badgeSoon();
       return;
-    case "error":
+    case "error": {
+      const failed = msg.draftId ? [startingSent, unanswered].find((d) => d?.id === msg.draftId) : undefined;
       if (msg.draftId && msg.draftId === startingSent?.id) startDone();
       if (msg.draftId && msg.draftId === unanswered?.id) unanswered = undefined;
-      toast(msg.message);
+      if (!(failed && draftFailed?.(msg.message, failed.msg))) toast(msg.message);
       return;
+    }
     case "call_result": {
       const c = calls.get(msg.id);
       if (!c) return;

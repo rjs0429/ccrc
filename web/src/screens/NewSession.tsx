@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { commandName } from "../../../broker/src/dialog-commands.ts";
 import type { EffortName, ModelOption, StartSettings } from "../../../broker/src/protocol.ts";
 import { Composer, saveDraft } from "../components/Composer.tsx";
@@ -6,9 +6,11 @@ import { commandSheet } from "../components/commandSheets.ts";
 import { NEW_SESSION_SCOPE, takeAttachments } from "../components/composer/attachments.ts";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Icon, Sheet, Spinner } from "../components/ui.tsx";
-import { baseName, shortPath } from "../labels.ts";
+import { WorktreeOption, worktreeBlocked, worktreeChoice, type FolderGit, type WorktreeDraft } from "../components/WorktreeOption.tsx";
+import { errorText, shortPath } from "../labels.ts";
 import { rememberSent } from "../sentPreviews.ts";
-import { navigate, onDraftStarted, openSettingsFrom, startNewSession, toast, useApp } from "../state.ts";
+import { offeredFolder, placeLabel } from "../worktree.ts";
+import { callFolder, navigate, onDraftFailed, onDraftStarted, openSettingsFrom, startNewSession, toast, useApp } from "../state.ts";
 
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const NO_MODELS: ModelOption[] = [];
@@ -22,19 +24,24 @@ const AFTER_START: Record<string, string> = {
 // The folder and start settings chosen here last a visit to the settings page and a reload, like the message the
 // composer keeps.
 const KEPT_KEY = "ccrc.newSession";
-type Kept = { cwd: string | null; start: StartSettings };
+type Kept = { cwd: string | null; start: StartSettings; worktree?: WorktreeDraft };
+const NO_WORKTREE: WorktreeDraft = { on: false, base: "fresh" };
 
 function loadKept(): Kept {
   try {
     const v = JSON.parse(sessionStorage.getItem(KEPT_KEY) ?? "null") as Partial<Kept> | null;
-    if (v && typeof v === "object") return { cwd: typeof v.cwd === "string" ? v.cwd : null, start: v.start && typeof v.start === "object" ? v.start : {} };
+    if (v && typeof v === "object") {
+      const w = v.worktree;
+      const worktree = w && typeof w === "object" && (w.base === "fresh" || w.base === "head") ? { on: w.on === true, base: w.base, ...(typeof w.name === "string" ? { name: w.name } : {}) } : undefined;
+      return { cwd: typeof v.cwd === "string" ? v.cwd : null, start: v.start && typeof v.start === "object" ? v.start : {}, ...(worktree ? { worktree } : {}) };
+    }
   } catch {}
   return { cwd: null, start: {} };
 }
 
 function saveKept(k: Kept | null): void {
   try {
-    if (k && (k.cwd || Object.keys(k.start).length)) sessionStorage.setItem(KEPT_KEY, JSON.stringify(k));
+    if (k && (k.cwd || Object.keys(k.start).length || k.worktree?.on)) sessionStorage.setItem(KEPT_KEY, JSON.stringify(k));
     else sessionStorage.removeItem(KEPT_KEY);
   } catch {}
 }
@@ -64,11 +71,18 @@ export function NewSession() {
   const [composerSheet, setComposerSheet] = useState<{ name: "model" | "effort"; at: number }>();
   const [usage, setUsage] = useState(false);
   const [later, setLater] = useState<{ title: string; text: string } | null>(null);
+  const conn = useApp((s) => s.conn);
+  const [worktree, setWorktree] = useState<WorktreeDraft>(kept.worktree ?? NO_WORKTREE);
+  const [gits, setGits] = useState<Record<string, FolderGit>>({});
+  const [worktreeError, setWorktreeError] = useState<string>();
 
+  // The broker's folders and the sessions', a worktree under its repository when that is offered too, latest first.
   const all = useMemo(() => {
+    const offered = new Set(options?.folders ?? []);
+    const place = (cwd: string) => offeredFolder(cwd, offered);
     const last = new Map<string, number>();
-    for (const s of sessions ?? []) last.set(s.cwd, Math.max(last.get(s.cwd) ?? 0, s.lastModified));
-    return [...new Set([...(options?.folders ?? []), ...last.keys()])].filter(Boolean).sort((a, b) => (last.get(b) ?? 0) - (last.get(a) ?? 0));
+    for (const s of sessions ?? []) last.set(place(s.cwd), Math.max(last.get(place(s.cwd)) ?? 0, s.lastModified));
+    return [...new Set([...offered].map(place).concat([...last.keys()]))].filter(Boolean).sort((a, b) => (last.get(b) ?? 0) - (last.get(a) ?? 0));
   }, [options, sessions]);
   const folders = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -82,9 +96,43 @@ export function NewSession() {
   const cwd = chosen ?? fallback ?? all[0] ?? null;
 
   useEffect(() => {
-    kept = { cwd: chosen, start };
+    kept = { cwd: chosen, start, ...(worktree.on || worktree.base !== "fresh" || worktree.name !== undefined ? { worktree } : {}) };
     saveKept(kept);
-  }, [chosen, start]);
+  }, [chosen, start, worktree]);
+
+  // Whether the chosen folder can have a worktree of its own, asked once per folder while the screen is open.
+  const git: FolderGit = (cwd && gits[cwd]) || "loading";
+  const unknown = git === "loading" || "failed" in git;
+  useEffect(() => {
+    if (!cwd || conn !== "ready" || !unknown) return;
+    let live = true;
+    callFolder(cwd, "git").then(
+      (info) => live && setGits((g) => ({ ...g, [cwd]: info })),
+      (e: Error) => live && setGits((g) => ({ ...g, [cwd]: { failed: e.message } })),
+    );
+    return () => {
+      live = false;
+    };
+  }, [cwd, conn, unknown]);
+  useEffect(() => setWorktreeError(undefined), [cwd, worktree]);
+
+  // A start in a worktree that failed says why under the switch, and the folder is asked about again.
+  useEffect(() => {
+    onDraftFailed((message, failed) => {
+      if (!failed.worktree) return false;
+      setWorktreeError(errorText(message));
+      setGits((g) => {
+        const next = { ...g };
+        delete next[failed.cwd];
+        return next;
+      });
+      return true;
+    });
+    return () => onDraftFailed(undefined);
+  }, []);
+  const worktreeOn = worktree.on && !worktreeBlocked(git);
+  const picked = worktreeOn ? worktreeChoice(git as Exclude<FolderGit, "loading" | { failed: string }>, worktree) : undefined;
+  const worktreeHold = worktree.on && git === "loading" ? "worktree를 쓸 수 있는지 확인하는 중입니다" : picked && "problem" in picked ? picked.problem : undefined;
 
   const change = (p: StartSettings) => setStart((s) => ({ ...s, ...p }));
   const reset = (key: keyof StartSettings) =>
@@ -164,7 +212,15 @@ export function NewSession() {
       ...(start.fast ? { fast: true } : {}),
       ...(start.thinking === false ? { thinking: false } : {}),
       ...(attachments.length ? { attachments } : {}),
+      ...(picked && "choice" in picked ? { worktree: picked.choice } : {}),
     });
+
+  // A worktree asked for and not yet possible holds the start; the composer keeps the message.
+  const sendOrHold = (text: string, attachments: string[]) => {
+    if (!worktreeHold) return send(text, attachments);
+    toast(worktreeHold);
+    return true;
+  };
 
   return (
     <div className="flex h-dvh flex-col">
@@ -176,11 +232,11 @@ export function NewSession() {
           <div className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
             <div className="text-[15px] font-semibold">새 세션</div>
             <div className="truncate text-xs text-muted" data-new-folder>
-              {cwd ? `${baseName(cwd)} · ${shortPath(cwd)}` : "폴더를 고르세요"}
+              {cwd ? `${placeLabel(cwd)} · ${shortPath(cwd)}` : "폴더를 고르세요"}
             </div>
             {starting && (
               <div className="flex items-center gap-1.5 text-xs text-accent" data-start-note>
-                <Spinner className="size-3" /> 시작하는 중…
+                <Spinner className="size-3" /> {picked && "choice" in picked ? "worktree를 만드는 중…" : "시작하는 중…"}
               </div>
             )}
           </div>
@@ -194,22 +250,24 @@ export function NewSession() {
             <Icon.search className="size-4 text-muted" />
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="폴더 찾기" className="w-full bg-transparent py-2.5 text-[16px] outline-none" />
           </div>
-          <div className="rounded-xl border border-line bg-surface">
+          <div className="overflow-hidden rounded-xl border border-line bg-surface">
             {folders.map((f) => (
-              <button
-                key={f}
-                onClick={() => setChosen(f)}
-                disabled={starting}
-                data-folder={f}
-                className={`flex w-full items-center gap-3 border-b border-line px-3 py-2.5 text-left last:border-0 ${cwd === f ? "bg-accent-soft" : ""}`}
-              >
-                <Icon.folder className="size-4 shrink-0 text-muted" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[15px]">{baseName(f)}</span>
-                  <span className="block truncate text-xs text-muted">{shortPath(f)}</span>
-                </span>
-                {cwd === f && <Icon.check className="size-4 text-accent" />}
-              </button>
+              <Fragment key={f}>
+                <button
+                  onClick={() => setChosen(f)}
+                  disabled={starting}
+                  data-folder={f}
+                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left ${cwd === f ? "bg-accent-soft" : "border-b border-line last:border-0"}`}
+                >
+                  <Icon.folder className="size-4 shrink-0 text-muted" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px]">{placeLabel(f)}</span>
+                    <span className="block truncate text-xs text-muted">{shortPath(f)}</span>
+                  </span>
+                  {cwd === f && <Icon.check className="size-4 text-accent" />}
+                </button>
+                {cwd === f && <WorktreeOption info={git} draft={worktree} onChange={setWorktree} error={worktreeError} disabled={starting} />}
+              </Fragment>
             ))}
             {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">폴더가 없습니다</div>}
           </div>
@@ -223,7 +281,7 @@ export function NewSession() {
         starting={starting}
         disabledReason={cwd ? undefined : "폴더를 고르세요"}
         placeholder="무엇을 할까요?"
-        onSend={send}
+        onSend={sendOrHold}
         onStop={() => {}}
         onMode={(mode) => change({ mode })}
         onModel={(model) => change({ model })}

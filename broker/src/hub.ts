@@ -1,11 +1,12 @@
 import type { WebSocket } from "ws";
 import type { Audit } from "./audit.ts";
 import type { Leases } from "./lease.ts";
-import { CALL_OPS, FOLDER_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg } from "./protocol.ts";
+import { CALL_OPS, FOLDER_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg, type WorktreeChoice, type WorktreeRemoved } from "./protocol.ts";
 import { RemoteActivity } from "./remote-activity.ts";
 import type { SessionManager } from "./sessions/manager.ts";
 import { cleanTitle } from "./titles.ts";
 import type { Uploads } from "./uploads.ts";
+import { WORKTREE_NAME_MAX } from "./worktree-names.ts";
 
 const MAX_TEXT = 100_000;
 const PING_MS = 30_000;
@@ -31,6 +32,12 @@ function send(ws: WebSocket, msg: ServerMsg): void {
 function str(v: unknown, max = 200): string {
   if (typeof v !== "string" || !v || v.length > max) throw Error("invalid request");
   return v;
+}
+
+function worktreeArg(v: unknown): WorktreeChoice {
+  const w = v as Partial<WorktreeChoice> | null;
+  if (!w || typeof w !== "object" || (w.base !== "fresh" && w.base !== "head")) throw Error("invalid request");
+  return { name: str(w.name, WORKTREE_NAME_MAX), base: w.base };
 }
 
 function startFlag(m: SessionManager, sessionId: string): { start?: true } {
@@ -204,6 +211,7 @@ export class Hub {
 
   private async startSession(msg: Extract<ClientMsg, { t: "new_session" }>, ids: string[], text: string, device: string): Promise<string> {
     const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
+    const worktree = msg.worktree === undefined ? undefined : worktreeArg(msg.worktree);
     const s = await this.manager.create(str(msg.cwd, 4096), {
       model: msg.model === undefined ? undefined : str(msg.model),
       mode: msg.mode,
@@ -211,11 +219,13 @@ export class Hub {
       ultracode: msg.ultracode === true,
       fast: msg.fast === true,
       ...(msg.thinking === false ? { thinking: false } : {}),
+      ...(worktree ? { worktree } : {}),
     });
     this.audit.log("new_session", {
       device,
       sessionId: s.id,
       cwd: s.cwd,
+      ...(worktree ? { worktree } : {}),
       ...(msg.ultracode ? { ultracode: true } : {}),
       ...(msg.fast ? { fast: true } : {}),
       ...(msg.thinking === false ? { thinking: false } : {}),
@@ -268,6 +278,7 @@ export class Hub {
         if (msg.ultracode !== undefined && typeof msg.ultracode !== "boolean") throw Error("invalid ultracode");
         if ((msg.fast !== undefined && typeof msg.fast !== "boolean") || (msg.thinking !== undefined && typeof msg.thinking !== "boolean")) throw Error("invalid request");
         if (msg.draftId !== undefined && (typeof msg.draftId !== "string" || !DRAFT_ID.test(msg.draftId))) throw Error("invalid request");
+        if (msg.worktree !== undefined) worktreeArg(msg.worktree);
         const draftId = msg.draftId;
         const now = Date.now();
         for (const [k, d] of this.drafts) if (now - d.at > DRAFT_KEEP_MS) this.drafts.delete(k);
@@ -382,6 +393,11 @@ export class Hub {
         this.audit.log("agent_transcript", { device: this.device, sessionId, ...Object.fromEntries(ids) });
       }
       const data = await this.manager.call(sessionId, msg.op, args);
+      // A worktree removal is recorded once done, with what went with it.
+      if (msg.op === "worktree_remove") {
+        const w = data as WorktreeRemoved;
+        this.audit.log("worktree_remove", { device: this.device, sessionId, path: w.path, discarded: w.discarded, ...(w.branchKept ? { branchKept: w.branch } : {}) });
+      }
       if (msg.op === "resume") {
         if (this.viewing === sessionId) await this.setView(sessionId);
         this.changed();

@@ -364,6 +364,11 @@ export class ItemBuilder {
     return this.pos.has(id);
   }
 
+  // Paths in tool summaries are shown relative to this folder from now on.
+  setCwd(cwd: string): void {
+    this.cwd = cwd;
+  }
+
   seed(items: DisplayItem[]): void {
     this.items = [...items];
     this.pos = new Map(this.items.map((item, i) => [item.id, i]));
