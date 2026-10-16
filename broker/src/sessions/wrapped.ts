@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { elicitInfo } from "../elicit.ts";
 import type { Link } from "../link/server.ts";
 import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult } from "../protocol.ts";
+import { argValue } from "../wrapper/relay.ts";
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
@@ -10,6 +11,7 @@ import {
   MCP_CHANGE_MS,
   READ_MS,
   SessionCore,
+  THINKING_TOKENS,
   commandInfo,
   mcpServers,
   rewindResult,
@@ -27,9 +29,19 @@ type Held = { from: "out" | "in" | "settled"; v: unknown; at: string };
 // The extension's own MCP server inside Claude Code; the extension leaves it out of its server list too.
 const HOST_SERVER = "claude-vscode";
 const ELICIT_SEEN_MAX = 100;
+// How a wrapper that predates Fast mode and Thinking changes refuses them; the web client explains it.
+const OLD_WRAPPER = "rejected by the wrapper: request not allowed";
 
 const obj = (v: unknown): Obj => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+// The Thinking VS Code started Claude Code with; it always passes --thinking=disabled or a budget.
+export function thinkingArg(args: string[]): boolean {
+  const mode = argValue(args, "--thinking");
+  if (mode) return mode !== "disabled";
+  const tokens = argValue(args, "--max-thinking-tokens");
+  return tokens === undefined || Number(tokens) > 0;
+}
 
 // A conversation that runs in VS Code and is reached through the wrapper between VS Code and Claude Code.
 // Remote input goes in as the same messages VS Code sends. Permission prompts show on both sides and the
@@ -48,11 +60,17 @@ export class WrappedSession extends SessionCore {
   watched: () => boolean = () => false;
   elicitMs = ELICIT_MS;
   unwatchedMs = ELICIT_UNWATCHED_MS;
+  private startThinking: boolean;
 
+  // A wrapper that does not pass on VS Code's Thinking changes leaves Thinking unknown here.
   constructor(link: Link, id: string, cwd: string, title?: string) {
     super(id, cwd, [], title);
     this.link = link;
     this.lastActivity = 0;
+    const caps = link.hello?.caps ?? [];
+    this.optionsUnknown = !caps.includes("fast_mode") || !caps.includes("thinking");
+    this.startThinking = thinkingArg(link.hello?.args ?? []);
+    if (!this.optionsUnknown) this.thinking = this.startThinking;
   }
 
   // Puts the conversation so far in front of what has arrived live, then applies, in arrival order,
@@ -97,7 +115,9 @@ export class WrappedSession extends SessionCore {
     if (r.subtype === "set_model" && typeof r.model === "string" && r.model !== "default") this.model = r.model;
     else if (r.subtype === "set_permission_mode" && typeof r.mode === "string") this.permissionMode = r.mode;
     else if (r.subtype === "apply_flag_settings" && typeof obj(r.settings).effortLevel === "string") this.effort = obj(r.settings).effortLevel as string;
-    else return;
+    else if (r.subtype === "set_max_thinking_tokens" && !this.optionsUnknown && (r.max_thinking_tokens === null || typeof r.max_thinking_tokens === "number")) {
+      this.thinking = r.max_thinking_tokens === null ? this.startThinking : r.max_thinking_tokens > 0;
+    } else return;
     this.emit("state");
   }
 
@@ -183,6 +203,29 @@ export class WrappedSession extends SessionCore {
     await this.link.request({ subtype: "apply_flag_settings", settings: { ultracode: on ? true : null } });
     this.touch();
     this.refreshApplied();
+  }
+
+  protected applyFast(on: boolean): Promise<void> {
+    return this.option({ subtype: "apply_flag_settings", settings: { fastMode: on } });
+  }
+
+  protected applyThinking(on: boolean): Promise<void> {
+    return this.option({ subtype: "set_max_thinking_tokens", max_thinking_tokens: on ? THINKING_TOKENS : 0 });
+  }
+
+  // A wrapper too old for these changes refuses them; from then on they wait for VS Code to start Claude Code again.
+  private async option(request: Record<string, unknown>): Promise<void> {
+    this.ensureOpen();
+    if (this.optionsUnknown) throw Error(OLD_WRAPPER);
+    try {
+      await this.link.request(request);
+    } catch (e) {
+      if (!(e instanceof Error) || !/^rejected by the wrapper: (request|setting) not allowed$/.test(e.message)) throw e;
+      this.optionsUnknown = true;
+      this.thinking = undefined;
+      this.emit("state");
+      throw Error(OLD_WRAPPER);
+    }
   }
 
   async contextDetail(summary = false): Promise<ContextDetail> {
@@ -348,6 +391,7 @@ export class WrappedSession extends SessionCore {
     if (Array.isArray(r.available_output_styles)) this.adoptStyles(r.output_style, r.available_output_styles);
     if (Array.isArray(r.models)) {
       this.emit("models", r.models);
+      this.adoptFast(r.fast_mode_state, r.fast_mode_disabled_reason, true);
       this.refreshApplied();
     }
     if (Array.isArray(r.commands)) {

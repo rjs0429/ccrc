@@ -37,6 +37,9 @@ const QUEUE_MAX = 100;
 const UNQUEUED = new Set<unknown>(["cancelled", "discarded", "refused"]);
 // An approved plan continues in the chosen mode, so only modes offered remotely may be named.
 const PLAN_DECISIONS = new Set<unknown>(["auto", "acceptEdits", "default", "keep_planning"]);
+const FAST_STATES = new Set<unknown>(["off", "on", "cooldown"]);
+// Claude Code's notice, on every turn while Fast mode stays on, that the usage credits ran out.
+const FAST_CREDITS = "fast-mode-overage-rejected";
 
 // How long Claude Code may take to answer: counting the context by category calls the token-count API,
 // and turning on or reconnecting an MCP server waits for the server to connect.
@@ -48,6 +51,8 @@ export const ELICIT_MS = 15 * 60_000;
 export const ELICIT_UNWATCHED_MS = 2 * 60_000;
 // A file of up to 10MB travels base64-encoded in one line.
 export const READ_MS = 30_000;
+// The budget VS Code turns Thinking on with; a model that thinks adaptively ignores it.
+export const THINKING_TOKENS = 31_999;
 
 type Obj = Record<string, unknown>;
 
@@ -158,6 +163,12 @@ export abstract class SessionCore extends EventEmitter {
   effort?: string;
   ultracode?: boolean;
   ultracodeAvailable?: boolean;
+  fastMode?: "off" | "on" | "cooldown";
+  fastReason?: string;
+  fastWanted?: boolean;
+  fastCredits?: boolean;
+  thinking?: boolean;
+  optionsUnknown?: boolean;
   outputStyles?: string[];
   context?: ContextGauge;
   // The last turn was a local command ("/compact", "/model x", ...), which runs no model turn of its own.
@@ -174,6 +185,7 @@ export abstract class SessionCore extends EventEmitter {
   private settingsStyle?: string;
   private initStyle?: string;
   private appliedRefused = false;
+  private fastRefused?: string;
   private streamText = "";
   private streamThinking = false;
   private streamTimer?: NodeJS.Timeout;
@@ -193,6 +205,8 @@ export abstract class SessionCore extends EventEmitter {
   abstract setEffort(effort: EffortName): Promise<void>;
   abstract setUltracode(on: boolean): Promise<void>;
   protected abstract applyMode(mode: PermissionModeName): Promise<void>;
+  protected abstract applyFast(on: boolean): Promise<void>;
+  protected abstract applyThinking(on: boolean): Promise<void>;
   protected abstract settle(requestId: string, decision: Decision): void;
   protected abstract refreshContext(): void;
 
@@ -210,6 +224,7 @@ export abstract class SessionCore extends EventEmitter {
       ...(this.ultracodeAvailable !== undefined ? { ultracode: this.ultracode === true, ultracodeAvailable: this.ultracodeAvailable } : {}),
       ...(this.outputStyle !== undefined ? { outputStyle: this.outputStyle } : {}),
       ...(this.appliedRefused && this.ultracodeAvailable === undefined ? { appliedUnknown: true } : {}),
+      ...this.toggles(),
       ...(this.context ? { context: this.context } : {}),
       costUsd: this.costUsd,
       closedReason: this.closedReason,
@@ -524,6 +539,7 @@ export abstract class SessionCore extends EventEmitter {
         if (typeof m.permissionMode === "string") this.permissionMode = m.permissionMode;
         if (typeof m.effort === "string" && !this.appliedSeen) this.effort = m.effort;
         this.adoptStyles(m.output_style);
+        this.adoptFast(m.fast_mode_state, m.fast_mode_disabled_reason, true);
         this.emit("state");
         this.onInit();
         this.refreshApplied();
@@ -544,6 +560,10 @@ export abstract class SessionCore extends EventEmitter {
         }
         return;
       }
+      if (m.subtype === "notification" && m.key === FAST_CREDITS) {
+        this.outOfCredits();
+        return;
+      }
       if (TaskBook.handles(m.subtype)) this.tasks.on(m);
     }
     if (m.type === "assistant" && !m.parent_tool_use_id) this.endStream();
@@ -551,6 +571,7 @@ export abstract class SessionCore extends EventEmitter {
       this.busy = false;
       this.localTurn = typeof m.local_command === "string";
       if (typeof m.total_cost_usd === "number") this.costUsd = m.total_cost_usd;
+      this.adoptFast(m.fast_mode_state, m.fast_mode_disabled_reason);
       this.endStream();
       this.refreshContext();
       this.refreshApplied();
@@ -621,6 +642,71 @@ export abstract class SessionCore extends EventEmitter {
   protected checkUltracode(on: boolean): void {
     if (on && this.ultracodeAvailable === false) throw Error("ultracode is not available for this session");
   }
+
+  // For this session only: Claude Code takes Fast mode from the next turn, and the next report settles it.
+  async setFast(on: boolean): Promise<void> {
+    this.ensureOpen();
+    await this.applyFast(on);
+    this.fastWanted = on;
+    if (on) this.fastCredits = undefined;
+    this.touch();
+  }
+
+  async setThinking(on: boolean): Promise<void> {
+    this.ensureOpen();
+    await this.applyThinking(on);
+    this.thinking = on;
+    this.touch();
+  }
+
+  private toggles(): Partial<LiveState> {
+    return {
+      ...(this.fastMode ? { fastMode: this.fastMode } : {}),
+      ...(this.fastReason ? { fastReason: this.fastReason } : {}),
+      ...(this.fastWanted !== undefined ? { fastWanted: this.fastWanted } : {}),
+      ...(this.fastCredits ? { fastCredits: true } : {}),
+      ...(this.thinking !== undefined ? { thinking: this.thinking } : {}),
+      ...(this.optionsUnknown ? { optionsUnknown: true } : {}),
+    };
+  }
+
+  // Fast mode as an initialize answer, a turn's init line or a result reports it. Only an initialize answer or an init
+  // line settles a change asked for here, as a result may close a turn that began before it. A change that cannot go on
+  // is asked off again, so it does not come on by itself later, when it costs more, and noted once the turn is over.
+  protected adoptFast(state: unknown, reason: unknown, settles = false): void {
+    if (FAST_STATES.has(state)) {
+      const before = JSON.stringify(this.toggles());
+      this.fastMode = state as "off" | "on" | "cooldown";
+      this.fastReason = typeof reason === "string" && reason && reason.length <= NAME_MAX ? reason : undefined;
+      if (state === "off") this.fastCredits = undefined;
+      const wanted = this.fastWanted;
+      if (settles && wanted !== undefined && this.fastReason !== "pending" && (wanted || state === "off")) {
+        this.fastWanted = undefined;
+        if (wanted && state === "off" && this.fastReason) {
+          this.fastRefused = this.fastReason;
+          this.applyFast(false).catch(() => {});
+        }
+      }
+      if (JSON.stringify(this.toggles()) !== before) this.emit("state");
+    }
+    if (this.fastRefused && !this.busy) {
+      const item = this.builder.note("fast", this.fastRefused, new Date().toISOString());
+      this.fastRefused = undefined;
+      if (item) this.emit("item", item);
+    }
+  }
+
+  private outOfCredits(): void {
+    if (this.fastCredits) return;
+    this.fastCredits = true;
+    const item = this.builder.note("fast", "credits", new Date().toISOString());
+    if (item) this.emit("item", item);
+    this.emit("state");
+    this.creditsOut();
+  }
+
+  // What a session does once the usage credits ran out with Fast mode on.
+  protected creditsOut(): void {}
 
   private onStream(ev: StreamEvent): void {
     if (ev.type === "content_block_start") {

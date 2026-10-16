@@ -459,6 +459,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onModel={(model) => send({ t: "set_model", sessionId, model })}
         onEffort={(effort) => send({ t: "set_effort", sessionId, effort })}
         onUltracode={(on) => send({ t: "set_ultracode", sessionId, on })}
+        onFast={(on) => send({ t: "set_fast", sessionId, on })}
+        onThinking={(on) => send({ t: "set_thinking", sessionId, on })}
+        inConversation={items.some((i) => i.kind === "user" || i.kind === "assistant")}
         onContext={() => setSheet("contextUsage")}
         agents={agentChip}
         onAgents={() => setSheet("agents")}

@@ -199,12 +199,16 @@ export class Hub {
       mode: msg.mode,
       effort: msg.effort,
       ultracode: msg.ultracode === true,
+      fast: msg.fast === true,
+      ...(msg.thinking === false ? { thinking: false } : {}),
     });
     this.audit.log("new_session", {
       device,
       sessionId: s.id,
       cwd: s.cwd,
       ...(msg.ultracode ? { ultracode: true } : {}),
+      ...(msg.fast ? { fast: true } : {}),
+      ...(msg.thinking === false ? { thinking: false } : {}),
       ...(ids.length ? { attachments: ids.length } : {}),
     });
     this.remoteSends.set(s.id, Date.now());
@@ -251,6 +255,7 @@ export class Hub {
         if (msg.mode !== undefined && !PERMISSION_MODES.includes(msg.mode)) throw Error("invalid mode");
         if (msg.effort !== undefined && !EFFORTS.includes(msg.effort)) throw Error("invalid effort");
         if (msg.ultracode !== undefined && typeof msg.ultracode !== "boolean") throw Error("invalid ultracode");
+        if ((msg.fast !== undefined && typeof msg.fast !== "boolean") || (msg.thinking !== undefined && typeof msg.thinking !== "boolean")) throw Error("invalid request");
         if (msg.draftId !== undefined && (typeof msg.draftId !== "string" || !DRAFT_ID.test(msg.draftId))) throw Error("invalid request");
         const draftId = msg.draftId;
         const now = Date.now();
@@ -313,6 +318,14 @@ export class Hub {
         const id = sid(msg.sessionId);
         this.audit.log("set_ultracode", { device, sessionId: id, on: msg.on, ...startFlag(m, id) });
         await m.setUltracode(id, msg.on);
+        return;
+      }
+      case "set_fast":
+      case "set_thinking": {
+        if (typeof msg.on !== "boolean") throw Error("invalid request");
+        const id = sid(msg.sessionId);
+        this.audit.log(msg.t, { device, sessionId: id, on: msg.on, ...startFlag(m, id) });
+        await (msg.t === "set_fast" ? m.setFast(id, msg.on) : m.setThinking(id, msg.on));
         return;
       }
       case "release":

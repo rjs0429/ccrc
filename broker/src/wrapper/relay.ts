@@ -28,7 +28,7 @@ const REPLAY = Buffer.from('"isReplay":true');
 // broker took, may be answered remotely), the answer to VS Code's initialize, the applied part of its get_settings answers, and these
 // settings changes from VS Code; other control traffic between VS Code and Claude Code stays between them.
 const SHOWN = new Set(["can_use_tool", "elicitation", "request_user_dialog"]);
-const HOST_SETTINGS = new Set(["set_model", "set_permission_mode", "apply_flag_settings"]);
+const HOST_SETTINGS = new Set(["set_model", "set_permission_mode", "apply_flag_settings", "set_max_thinking_tokens"]);
 // Control requests the broker may send.
 const REMOTE_REQUESTS = new Set([
   "interrupt",
@@ -46,7 +46,10 @@ const REMOTE_REQUESTS = new Set([
   "stop_task",
   "read_file",
   "cancel_async_message",
+  "set_max_thinking_tokens",
 ]);
+// Told to the broker in the hello, so it offers what this wrapper passes on.
+const CAPS = ["fast_mode", "thinking"];
 // Broker requests after which VS Code is told to read the applied settings again.
 const SETTINGS_CHANGES = new Set(["set_model", "apply_flag_settings"]);
 const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
@@ -113,14 +116,23 @@ export function launchSession(args: string[]): { sessionId?: string; claim?: str
   return {};
 }
 
-// Settings the broker may change for the session: effort and ultracode, nothing that persists.
+// Settings the broker may change for the session: effort, ultracode and fast mode, nothing that persists.
 export function allowedFlagSettings(settings: unknown): boolean {
   if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return false;
   const entries = Object.entries(settings);
   return (
     entries.length > 0 &&
-    entries.every(([k, v]) => (k === "effortLevel" ? EFFORT_LEVELS.has(v as string) : k === "ultracode" && (v === true || v === false || v === null)))
+    entries.every(([k, v]) => (k === "effortLevel" ? EFFORT_LEVELS.has(v as string) : (k === "ultracode" || k === "fastMode") && (v === true || v === false || v === null)))
   );
+}
+
+const THINKING_KEYS = new Set(["subtype", "max_thinking_tokens"]);
+const THINKING_MAX = 128_000;
+
+// set_max_thinking_tokens turns Thinking off (0), on with a budget, or back to how the session started (null), nothing else.
+export function allowedThinking(req: Record<string, unknown>): boolean {
+  const v = req.max_thinking_tokens;
+  return Object.keys(req).every((k) => THINKING_KEYS.has(k)) && (v === null || v === 0 || (Number.isSafeInteger(v) && (v as number) >= 1024 && (v as number) <= THINKING_MAX));
 }
 
 const UPDATE_KEYS = new Set(["subtype", "source", "settings"]);
@@ -281,8 +293,8 @@ function ask(set: Set<string>, id: string): void {
   if (set.size > ASKED_KEEP) set.delete(set.values().next().value!);
 }
 
-function askFor(map: Map<string, string>, id: string, subtype: string): void {
-  map.set(id, subtype);
+function askFor<T>(map: Map<string, T>, id: string, value: T): void {
+  map.set(id, value);
   if (map.size > ASKED_KEEP) map.delete(map.keys().next().value!);
 }
 
@@ -306,6 +318,8 @@ export class Relay extends EventEmitter {
   // get_settings and get_usage only to it.
   private hostAsked = new Set<string>();
   private remoteAsked = new Map<string, string>();
+  // The broker's Thinking changes Claude Code has not answered yet; one it takes is kept like VS Code's own.
+  private thinkingAsked = new Map<string, Buffer>();
   // The output styles Claude Code last listed, which the broker may switch the project to.
   private styles?: string[];
   private state = new Map<string, { seq: number; t: "out" | "in"; line: Buffer }>();
@@ -485,6 +499,8 @@ export class Relay extends EventEmitter {
         if (typeof id === "string" && id.startsWith(REMOTE_PREFIX)) {
           const asked = this.remoteAsked.get(id);
           this.remoteAsked.delete(id);
+          const thinking = this.thinkingAsked.get(id);
+          this.thinkingAsked.delete(id);
           const usage = asked === "get_usage" || (!asked && line.includes(RATE_LIMITS));
           const reduced = asked === "get_usage" || asked === "get_settings";
           const out =
@@ -497,6 +513,7 @@ export class Relay extends EventEmitter {
                   : line;
           this.copy("reply", out);
           if (asked && SETTINGS_CHANGES.has(asked) && (msg.response as Record<string, unknown> | undefined)?.subtype === "success") this.refreshHost();
+          if (thinking && (msg.response as Record<string, unknown> | undefined)?.subtype === "success") this.remember("in:set_max_thinking_tokens", "in", thinking);
           return;
         }
         if (line.includes(STYLES)) this.styles = styleNames(plainObj(plainObj(msg?.response).response).available_output_styles) ?? this.styles;
@@ -645,11 +662,13 @@ export class Relay extends EventEmitter {
       if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
       if (req.subtype === "read_file" && !allowedReadFile(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "update_settings" && !allowedUpdateSettings(req, this.styles)) return reject("setting not allowed", m.request_id);
+      if (req.subtype === "set_max_thinking_tokens" && !allowedThinking(req)) return reject("invalid request", m.request_id);
       // Only a message the broker sent may be taken back; VS Code shows a cancelled message of its own as sent.
       if (req.subtype === "cancel_async_message" && !this.cancellable(req)) return reject("message not allowed", m.request_id);
       if (req.subtype === "get_settings" || req.subtype === "get_usage" || req.subtype === "update_settings" || SETTINGS_CHANGES.has(req.subtype)) {
         askFor(this.remoteAsked, m.request_id, req.subtype);
       }
+      if (req.subtype === "set_max_thinking_tokens") askFor(this.thinkingAsked, m.request_id, Buffer.from(JSON.stringify(m)));
       this.toChild(Buffer.from(JSON.stringify(m)));
       return;
     }
@@ -769,6 +788,7 @@ export class Relay extends EventEmitter {
         args: this.o.args,
         ...(this.sessionId ? { sessionId: this.sessionId } : {}),
         ...(claiming ? { claim: this.claim } : {}),
+        caps: CAPS,
       };
       this.send(hello);
       if (this.child?.pid) this.send({ t: "spawned", cpid: this.child.pid });

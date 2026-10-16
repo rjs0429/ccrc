@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
+import type { CliChoice } from "../src/claude-cli.ts";
 import { Doctor, type DoctorOptions } from "../src/doctor.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -103,6 +104,28 @@ test("checks again only when the extension or the broker changed, or the last ch
   assert.ok(await new Doctor({ stateDir, extensionsDir, stepTimeoutMs: 10_000 }).checkIfDue(), "after a broker update");
   fs.writeFileSync(path.join(stateDir, "doctor.json"), JSON.stringify({ ...stale, extensionVersion: "2.1.300", ok: false }));
   assert.ok(await new Doctor({ stateDir, extensionsDir, stepTimeoutMs: 10_000 }).checkIfDue(), "after a failed check");
+});
+
+test("names the Claude Code broker sessions run, and warns without failing when it is too old to send files", async () => {
+  let cli: CliChoice = { source: "vscode", path: FAKE, version: "2.1.300" };
+  const { doctor, extensionsDir } = setup({ brokerCli: () => cli });
+  const ok = await doctor.run();
+  assert.deepEqual(ok.checks.at(-1), { name: "broker_cli", ok: true, detail: "2.1.300 vscode" });
+  assert.equal(ok.brokerCli, "2.1.300 vscode");
+  assert.deepEqual((await doctor.info()).brokerCli, { source: "vscode", version: "2.1.300", path: FAKE });
+  assert.equal(await doctor.checkIfDue(), undefined);
+  cli = { source: "global", path: FAKE, version: "2.1.296" };
+  const old = await doctor.checkIfDue();
+  assert.ok(old, "checked again once broker sessions run another Claude Code");
+  assert.deepEqual(old.checks.at(-1), { name: "broker_cli", ok: true, warn: true, detail: "2.1.296 global" });
+  assert.equal(old.ok, true);
+  cli = { source: "config", path: path.join(extensionsDir, "anthropic.claude-code-2.1.296-linux-x64", "resources", "native-binary", "claude") };
+  assert.equal((await doctor.run()).checks.at(-1)?.detail, "2.1.296 config", "the version Claude Code gives when its path does not say");
+  cli = { source: "config", path: path.join(extensionsDir, "missing", "claude") };
+  const gone = await doctor.run();
+  assert.deepEqual(gone.checks.at(-1), { name: "broker_cli", ok: false, detail: "missing config" });
+  assert.equal(gone.ok, false);
+  assert.deepEqual((await new Doctor({ extensionsDir: tempDir() }).info()).brokerCli, undefined);
 });
 
 test("runs one check at a time", async () => {

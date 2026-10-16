@@ -18,6 +18,8 @@ export type AuditEvent =
   | "set_model"
   | "set_effort"
   | "set_ultracode"
+  | "set_fast"
+  | "set_thinking"
   | "start_settings"
   | "release"
   | "attach"

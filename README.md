@@ -48,7 +48,7 @@ Run `npm run build` after updating; until then the wrapper runs from its TypeScr
 | `allowedDevices` | Tailnet machine names allowed through `tailscale serve` |
 | `allowLocal` | Allow requests from this machine itself |
 | `roots` | Extra folders where new sessions may start (folders with sessions are always allowed) |
-| `claudePath` | Claude Code CLI used for remote sessions |
+| `claudePath` | Claude Code CLI used for remote sessions: a path, or `"vscode"` (the default) for the one bundled in the newest VS Code extension, picked again at each session start; without one, `~/.local/bin/claude` |
 | `leaseIdleMinutes` | Remote login ends after this long without activity |
 | `sessionIdleMinutes` | Remote session processes nobody is viewing close after this long idle |
 

@@ -161,6 +161,8 @@ export function NewSession() {
       mode: start.mode,
       effort: start.effort,
       ...(start.ultracode ? { ultracode: true } : {}),
+      ...(start.fast ? { fast: true } : {}),
+      ...(start.thinking === false ? { thinking: false } : {}),
       ...(attachments.length ? { attachments } : {}),
     });
 
@@ -227,6 +229,8 @@ export function NewSession() {
         onModel={(model) => change({ model })}
         onEffort={(effort) => change({ effort })}
         onUltracode={(on) => (on ? change({ ultracode: true }) : reset("ultracode"))}
+        onFast={(on) => (on ? change({ fast: true }) : reset("fast"))}
+        onThinking={(on) => (on ? reset("thinking") : change({ thinking: false }))}
         onReset={reset}
         onCommand={openCommand}
         openSheet={composerSheet}

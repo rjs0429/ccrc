@@ -3,12 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DoctorCheck, DoctorResult, HealthInfo } from "./admin-protocol.ts";
+import { SEND_FILES_CLI, type DoctorCheck, type DoctorResult, type HealthInfo } from "./admin-protocol.ts";
+import { bundledClaude, extensionFolders, versionBelow, type CliChoice } from "./claude-cli.ts";
 import { ensureDir, paths, writeFileAtomic } from "./config.ts";
 import { LineSplitter, parseLine } from "./link/lines.ts";
 import { readSettings } from "./wrapper/vscode.ts";
 
-const EXTENSION = /^anthropic\.claude-code-(\d+)\.(\d+)\.(\d+)-(.+)$/;
 // The options VS Code starts a conversation process with, less the ones about the conversation itself.
 const LAUNCH_ARGS = [
   "--output-format",
@@ -40,6 +40,8 @@ export interface DoctorOptions {
   stepTimeoutMs: number;
   intervalMs: number;
   startDelayMs: number;
+  // The Claude Code a broker session starting now runs.
+  brokerCli?: () => CliChoice;
 }
 
 function defaults(): DoctorOptions {
@@ -59,11 +61,6 @@ function defaults(): DoctorOptions {
   };
 }
 
-function newer(a: number[], b: number[]): boolean {
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i];
-  return false;
-}
-
 function samePath(a: string, b: string): boolean {
   const real = (p: string) => {
     try {
@@ -73,6 +70,16 @@ function samePath(a: string, b: string): boolean {
     }
   };
   return real(a) === real(b);
+}
+
+function cliKey(c: HealthInfo["brokerCli"]): string | undefined {
+  return c && `${c.version ?? "unknown"} ${c.source}`;
+}
+
+// A broker CLI too old to send files still runs everything else, so it only warns.
+function brokerCheck(c: NonNullable<HealthInfo["brokerCli"]>): DoctorCheck {
+  if (c.path && !fs.existsSync(c.path)) return { name: "broker_cli", ok: false, detail: `missing ${c.source}` };
+  return { name: "broker_cli", ok: true, ...(versionBelow(c.version, SEND_FILES_CLI) ? { warn: true } : {}), detail: cliKey(c) };
 }
 
 function isResult(v: unknown): v is DoctorResult {
@@ -120,7 +127,8 @@ export class Doctor {
 
   async checkIfDue(): Promise<DoctorResult | undefined> {
     const last = this.last();
-    if (last?.ok && last.extensionVersion === this.extension()?.version && last.brokerVersion === this.brokerVersion()) return undefined;
+    const same = last?.ok && last.extensionVersion === this.extension()?.version && last.brokerVersion === this.brokerVersion();
+    if (same && last.brokerCli === cliKey(await this.brokerCli())) return undefined;
     return this.run();
   }
 
@@ -136,6 +144,7 @@ export class Doctor {
       extensionVersion: ext?.version,
       cliVersion: ext ? await this.cliVersion(this.claudeOf(ext.dir)) : undefined,
       wrapper: this.wrapperSetting(),
+      brokerCli: await this.brokerCli(),
       last: this.last(),
       running: Boolean(this.running),
     };
@@ -155,25 +164,14 @@ export class Doctor {
 
   // The newest Claude Code extension for this platform, leaving out versions VS Code marked for removal.
   extension(): { version: string; dir: string } | undefined {
-    let names: string[];
-    try {
-      names = fs.readdirSync(this.o.extensionsDir);
-    } catch {
-      return undefined;
-    }
-    let obsolete: Obj = {};
-    try {
-      const v: unknown = JSON.parse(fs.readFileSync(path.join(this.o.extensionsDir, ".obsolete"), "utf8"));
-      if (isObject(v)) obsolete = v;
-    } catch {}
-    let best: { v: number[]; name: string } | undefined;
-    for (const name of names) {
-      const m = EXTENSION.exec(name);
-      if (!m || m[4] !== this.o.platform || obsolete[name]) continue;
-      const v = m.slice(1, 4).map(Number);
-      if (!best || newer(v, best.v)) best = { v, name };
-    }
-    return best && { version: best.v.join("."), dir: path.join(this.o.extensionsDir, best.name) };
+    return extensionFolders(this.o.extensionsDir, this.o.platform)[0];
+  }
+
+  private async brokerCli(): Promise<HealthInfo["brokerCli"]> {
+    const c = this.o.brokerCli?.();
+    if (!c) return undefined;
+    const version = c.version ?? (c.path ? await this.cliVersion(c.path) : undefined);
+    return { source: c.source, ...(version ? { version } : {}), ...(c.path ? { path: c.path } : {}) };
   }
 
   // The git commit the broker started from, read once.
@@ -208,7 +206,7 @@ export class Doctor {
   }
 
   private claudeOf(extDir: string): string {
-    return path.join(extDir, "resources", "native-binary", "claude");
+    return bundledClaude(extDir);
   }
 
   private env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -252,12 +250,15 @@ export class Doctor {
         checks.push(...smoke);
       }
     }
+    const broker = await this.brokerCli();
+    if (broker) checks.push(brokerCheck(broker));
     const result: DoctorResult = {
       ok: checks.every((c) => c.ok),
       at: new Date().toISOString(),
       extensionVersion: ext?.version,
       cliVersion,
       brokerVersion: this.brokerVersion(),
+      ...(broker ? { brokerCli: cliKey(broker) } : {}),
       checks,
     };
     this.result = result;

@@ -28,6 +28,11 @@ export const Icon = {
       <path d="M14 2v6h6M16 13H8M16 17H8" />
     </>,
   ),
+  zap: ({ className = "size-3" }: IconProps) => (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <path d="M13.5 2 4 13.5h6.5L9.5 22 20 9.5h-6.5z" fill="currentColor" />
+    </svg>
+  ),
   stop: ({ className = "size-4" }: IconProps) => (
     <svg viewBox="0 0 24 24" className={className} aria-hidden>
       <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />

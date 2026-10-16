@@ -23,6 +23,8 @@ const EVENT_LABEL: Record<string, string> = {
   set_model: "모델 바꿈",
   set_effort: "Effort 바꿈",
   set_ultracode: "Ultracode 바꿈",
+  set_fast: "Fast 모드 바꿈",
+  set_thinking: "Thinking 바꿈",
   start_settings: "시작 설정 적용",
   release: "원격 실행 끝냄",
   attach: "VS Code 세션 연결",
@@ -96,9 +98,13 @@ function detail(e: AuditEntry): string {
     case "set_effort":
       return changed(named(e.effort, EFFORT_LABEL), e);
     case "set_ultracode":
+    case "set_fast":
+    case "set_thinking":
       return changed(e.on ? "켬" : "끔", e);
     case "start_settings":
-      return [named(e.model), named(e.mode, MODE_LABEL), named(e.effort, EFFORT_LABEL), e.ultracode ? "Ultracode" : ""].filter(Boolean).join(" · ");
+      return [named(e.model), named(e.mode, MODE_LABEL), named(e.effort, EFFORT_LABEL), e.ultracode ? "Ultracode" : "", e.fast ? "Fast" : "", e.thinking === false ? "Thinking 끔" : ""]
+        .filter(Boolean)
+        .join(" · ");
     case "answer":
       return e.kind === "elicitation"
         ? ["입력 요청", named(e.action, WORD), named(e.server)].filter(Boolean).join(" · ")
@@ -110,7 +116,13 @@ function detail(e: AuditEntry): string {
     case "file_read":
       return [typeof e.path === "string" ? baseName(e.path) : "", e.ticket && e.outcome === "ok" ? "임시 링크" : "", named(e.outcome, READ_OUTCOME)].filter(Boolean).join(" · ");
     case "new_session":
-      return [typeof e.cwd === "string" ? baseName(e.cwd) : "", e.ultracode ? "Ultracode" : "", typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : ""]
+      return [
+        typeof e.cwd === "string" ? baseName(e.cwd) : "",
+        e.ultracode ? "Ultracode" : "",
+        e.fast ? "Fast" : "",
+        e.thinking === false ? "Thinking 끔" : "",
+        typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : "",
+      ]
         .filter(Boolean)
         .join(" · ");
     case "folder_index":

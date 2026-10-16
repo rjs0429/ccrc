@@ -9,6 +9,7 @@ import { LineSplitter, parseLine } from "../src/link/lines.ts";
 import {
   Relay,
   allowedFlagSettings,
+  allowedThinking,
   allowedUpdateSettings,
   appliedAnswer,
   elicitAnswer,
@@ -416,6 +417,49 @@ test("apply_flag_settings from the broker allows only effort and ultracode with 
     { ultracode: true, env: { A: "1" } },
   ];
   for (const b of bad) assert.ok(!allowedFlagSettings(b), JSON.stringify(b));
+});
+
+test("the broker may also turn fast mode on or off for the session, and set Thinking to a budget, off or back", () => {
+  for (const ok of [{ fastMode: true }, { fastMode: false }, { fastMode: null }, { effortLevel: "high", fastMode: true }]) assert.ok(allowedFlagSettings(ok), JSON.stringify(ok));
+  for (const bad of [{ fastMode: "on" }, { fastMode: true, model: "opus" }, { alwaysThinkingEnabled: false }, { viewMode: "focus" }, { fastModePerSessionOptIn: false }]) {
+    assert.ok(!allowedFlagSettings(bad), JSON.stringify(bad));
+  }
+  for (const ok of [0, 31999, null, 1024, 128_000]) assert.ok(allowedThinking({ subtype: "set_max_thinking_tokens", max_thinking_tokens: ok }), String(ok));
+  const bad: Msg[] = [
+    {},
+    { max_thinking_tokens: -1 },
+    { max_thinking_tokens: 500 },
+    { max_thinking_tokens: 128_001 },
+    { max_thinking_tokens: 2048.5 },
+    { max_thinking_tokens: "0" },
+    { max_thinking_tokens: 0, thinking_display: "highlights" },
+  ];
+  for (const b of bad) assert.ok(!allowedThinking({ subtype: "set_max_thinking_tokens", ...b }), JSON.stringify(b));
+});
+
+test("Thinking changes from either side reach Claude Code, and a reconnecting broker gets the latest; the hello names what passes", async () => {
+  const t = await setup();
+  const hello = await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  assert.deepEqual(hello.caps, ["fast_mode", "thinking"]);
+  const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
+  const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
+  const thinking = (f: Msg) => f.t === "in" && ((f.m as Msg).request as Msg)?.subtype === "set_max_thinking_tokens";
+  request("ccrc-th-bad", { subtype: "set_max_thinking_tokens", max_thinking_tokens: 0, thinking_display: "highlights" });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-th-bad" && f.reason === "invalid request", "a display change refused");
+  request("ccrc-fast", { subtype: "apply_flag_settings", settings: { fastMode: true } });
+  await t.broker.frames.wait(replied("ccrc-fast"), "fast mode answered");
+  t.write({ type: "control_request", request_id: "vs-th", request: { subtype: "set_max_thinking_tokens", max_thinking_tokens: 31999, thinking_display: "summarized" } });
+  await t.broker.frames.wait((f) => thinking(f) && (f.m as Msg).request_id === "vs-th", "VS Code's change copied");
+  request("ccrc-th", { subtype: "set_max_thinking_tokens", max_thinking_tokens: 0 });
+  await t.broker.frames.wait(replied("ccrc-th"), "the broker's change answered");
+  assert.ok(!t.host.has((m) => m.type === "control_response" && String((m.response as Msg).request_id).startsWith("ccrc-")), "VS Code sees none of the answers");
+  t.broker.frames = new Inbox();
+  t.broker.dropConnections();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello again");
+  const again = await t.broker.frames.wait(thinking, "the latest Thinking again");
+  assert.equal((again.m as Msg).request_id, "ccrc-th", "the broker's change came last");
+  await t.broker.frames.wait(frameOut((m) => m.type === "system" && m.subtype === "init"), "the rest of the state");
+  assert.equal(t.broker.frames.items.filter(thinking).length, 1);
 });
 
 test("only the applied part of VS Code's get_settings answers reaches the broker, and VS Code gets the whole answer", async () => {

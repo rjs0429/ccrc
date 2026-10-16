@@ -115,6 +115,8 @@ export function noteText(code: NoteCode, text?: string, attachments?: number): s
       return "이전 대화를 요약했습니다";
     case "ultracode":
       return "Ultracode를 켜지 못했습니다. 이 모델이나 지금 설정에서는 쓸 수 없습니다";
+    case "fast":
+      return text === "credits" ? "Fast 모드: 사용 크레딧이 다 떨어져 표준 속도로 보냅니다" : `Fast 모드를 켜지 못했습니다. ${fastReasonText(text) ?? FAST_REASON.unknown}`;
     case "error":
       return `오류: ${errorText(text ?? "")}`;
     default:
@@ -281,4 +283,31 @@ export const TASK_KIND_LABEL: Record<string, string> = {
 
 export function taskKindLabel(kind?: string): string {
   return kind ? (TASK_KIND_LABEL[kind] ?? kind) : "";
+}
+
+// What the model offers: Fast mode, turning Thinking off (unknown when absent), and whether Claude Code holds its Effort at
+// High while Thinking is off.
+export function modelOffers(models: ModelOption[], model?: string): { fast: boolean; thinkingOff?: boolean; capped: boolean } {
+  const known = findModel(models, model) ?? baseModel(models, model);
+  const id = (known?.resolved ?? model ?? "").replace(/\[1m\]$/i, "");
+  return { fast: known?.fast === true, thinkingOff: known?.thinkingOff, capped: id === "claude-opus-5" };
+}
+
+const FAST_REASON: Record<string, string> = {
+  extra_usage_disabled: "사용 크레딧이 꺼져 있습니다 (claude.ai 설정 > 사용량)",
+  free: "유료 요금제나 사용 크레딧이 필요합니다",
+  preference: "조직에서 Fast 모드를 꺼 두었습니다",
+  model_not_allowed: "조직의 허용 모델에 Fast 모드용 Opus가 없습니다",
+  network_error: "가능 여부를 확인하지 못했습니다 (네트워크)",
+  not_first_party: "Anthropic API에 바로 연결할 때만 쓸 수 있습니다",
+  disabled_by_env: "CLAUDE_CODE_DISABLE_FAST_MODE가 켜져 있습니다",
+  unknown: "지금은 쓸 수 없습니다",
+  pending: "쓸 수 있는지 확인하는 중입니다",
+};
+
+// Why Claude Code says Fast mode cannot run. A broker session reports sdk_opt_in_required until Fast mode is first asked
+// for, which says nothing of the account.
+export function fastReasonText(reason?: string): string | undefined {
+  if (!reason || reason === "sdk_opt_in_required") return undefined;
+  return FAST_REASON[reason] ?? `지금은 쓸 수 없습니다 (${reason})`;
 }
