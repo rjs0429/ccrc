@@ -1,13 +1,14 @@
 // Stands in for Claude Code in relay tests. Reads stream-json lines and answers in a fixed way:
 // a user message is replayed and answered; "ASK" opens a permission prompt; "CANCEL" opens one and
 // withdraws it; "ELICIT" asks for MCP input and "ELICIT_CANCEL" withdraws that shortly after; "MCP" sends VS Code an MCP request; "BIG" answers with a very long line; "HOLD" leaves
-// the turn running. Its init line reports whether it was asked to continue a cut-off turn. Control
+// the turn running; "CRASH" exits with code 1 mid-turn; "FAIL" and "LIMIT" end the turn on an API error and on a usage
+// limit as Claude Code reports them. Its init line reports whether it was asked to continue a cut-off turn. Control
 // requests get a success response, and each control_response it receives is reported back as
 // {"type":"answered"}. FAKE_BURST=1 writes a long line and an error result at start and exits at once;
 // FAKE_LINGER_MS keeps it running that long after its input ends.
 // The answer to initialize lists models and commands; FAKE_NO_INIT=1 leaves initialize unanswered.
 // While a "HOLD" turn runs, user messages are queued with command_lifecycle lines as Claude Code reports them;
-// cancel_async_message drops one and "interrupt" ends the turn after taking the queued ones in.
+// cancel_async_message drops one and "interrupt" ends the turn after taking the queued ones in, as a stop the user made.
 // "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data, and
 // "/status" the same way with text only; "/help" as a command headless Claude Code cannot open, with no name; get_usage fails while the working folder holds a file named .fake-no-usage.
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
@@ -148,6 +149,18 @@ function handle(m) {
       holding = true;
       return;
     }
+    if (text === "CRASH") {
+      setTimeout(() => process.exit(1), 50);
+      return;
+    }
+    if (text === "FAIL" || text === "LIMIT") {
+      const limit = text === "LIMIT";
+      if (limit) out({ type: "rate_limit_event", session_id: sid, uuid: randomUUID(), rate_limit_info: { status: "rejected", resetsAt: 1792095600, rateLimitType: "five_hour" } });
+      const said = limit ? "You've hit your limit" : "API Error: 529 Overloaded";
+      out({ type: "assistant", session_id: sid, uuid: randomUUID(), parent_tool_use_id: null, error: limit ? "rate_limit" : "overloaded", message: { model: "<synthetic>", content: [{ type: "text", text: said }] } });
+      out({ type: "result", subtype: "success", session_id: sid, is_error: true, terminal_reason: "api_error", api_error_status: limit ? 429 : 529, result: said, total_cost_usd: 0 });
+      return;
+    }
     if (text === "COMPACTING") {
       out({ type: "system", subtype: "status", status: "compacting", session_id: sid });
       return;
@@ -198,7 +211,8 @@ function handle(m) {
         if (q.uuid) lifecycle(q.uuid, "started");
       }
       out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: {} } });
-      out({ type: "result", subtype: "success", session_id: sid, is_error: false, total_cost_usd: 0.001, queued_turn_count: 0 });
+      out({ type: "user", session_id: sid, uuid: randomUUID(), parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] } });
+      out({ type: "result", subtype: "error_during_execution", session_id: sid, is_error: true, terminal_reason: "aborted_streaming", errors: [], total_cost_usd: 0.001, queued_turn_count: 0 });
       return;
     }
     if (init && process.env.FAKE_NO_INIT) return;

@@ -23,6 +23,7 @@ import { elicitResult } from "../elicit.ts";
 import { gaugeOf } from "./context-gauge.ts";
 import type { FileContents } from "./file-read.ts";
 import { ItemBuilder, clipInput, typedContent, type RawMessage } from "./items.ts";
+import { classify, noteFact, type TurnEnd, type TurnFacts } from "./outcome.ts";
 import { TaskBook } from "./tasks.ts";
 
 const STREAM_FLUSH_MS = 80;
@@ -73,6 +74,8 @@ export interface Ask {
   blockedPath?: string;
   suppressAlwaysAllowRule?: boolean;
   localOnly?: boolean;
+  personOnly?: boolean;
+  defaultToNo?: boolean;
   elicitation?: ElicitInfo;
   agentId?: unknown;
 }
@@ -137,7 +140,7 @@ interface StreamEvent {
 
 // A session whose Claude Code process the broker can drive: one it runs itself ("owned") or one
 // that runs in VS Code and is reached through the wrapper ("attached").
-// Events: item, stream, pending_add, pending_remove, state, models, window, applied (model, ultracodeAvailable), closed.
+// Events: item, stream, pending_add, pending_remove, state, models, window, applied (model, ultracodeAvailable), turn_end (TurnEnd), closed.
 export abstract class SessionCore extends EventEmitter {
   abstract readonly kind: "owned" | "attached";
   abstract readonly host: string;
@@ -160,8 +163,6 @@ export abstract class SessionCore extends EventEmitter {
   ultracodeAvailable?: boolean;
   outputStyles?: string[];
   context?: ContextGauge;
-  // The last turn was a local command ("/compact", "/model x", ...), which runs no model turn of its own.
-  localTurn = false;
   costUsd?: number;
   lastActivity = Date.now();
   closed = false;
@@ -177,6 +178,10 @@ export abstract class SessionCore extends EventEmitter {
   private streamText = "";
   private streamThinking = false;
   private streamTimer?: NodeJS.Timeout;
+  private turnStartedAt?: number;
+  private facts: TurnFacts = {};
+  // When VS Code last wrote a message to Claude Code.
+  protected hostInputAt?: number;
 
   constructor(id: string, cwd: string, history: DisplayItem[] = [], title?: string) {
     super();
@@ -413,7 +418,7 @@ export abstract class SessionCore extends EventEmitter {
           : {
               behavior: "allow",
               updatedInput: entry.input,
-              ...(answer.decision === "allow_always" && entry.suggestions ? { updatedPermissions: entry.suggestions } : {}),
+              ...(answer.decision === "allow_always" && entry.request.allowAlways && entry.suggestions ? { updatedPermissions: entry.suggestions } : {}),
             };
     } else if (answer.kind === "question") {
       decision = { behavior: "allow", updatedInput: { ...entry.input, answers: answer.answers } };
@@ -474,8 +479,10 @@ export abstract class SessionCore extends EventEmitter {
       blockedPath: a.blockedPath,
       input: kind === "plan" ? a.input : (clipInput(a.input) as Record<string, unknown>),
       suggestions: a.suggestions,
-      allowAlways: Boolean(a.suggestions?.length) && !a.suppressAlwaysAllowRule,
+      allowAlways: Boolean(a.suggestions?.length) && !a.suppressAlwaysAllowRule && !a.personOnly,
       ...(a.localOnly && (kind === "permission" || kind === "dialog") ? { localOnly: true } : {}),
+      ...(a.personOnly && kind === "permission" ? { personOnly: true } : {}),
+      ...(a.defaultToNo && kind === "permission" ? { defaultToNo: true } : {}),
       ...(kind === "elicitation" && a.elicitation ? { elicitation: a.elicitation } : {}),
       ...(typeof a.agentId === "string" && a.agentId && a.agentId.length <= NAME_MAX ? { agentId: a.agentId } : {}),
     };
@@ -506,9 +513,25 @@ export abstract class SessionCore extends EventEmitter {
     this.emit("closed", reason);
   }
 
+  // Claude Code ended in the middle of a turn without being asked to.
+  protected crashed(): void {
+    this.emit("turn_end", this.turnEnd({ outcome: "crashed" }));
+  }
+
+  private turnEnd(how: Pick<TurnEnd, "outcome" | "reason" | "status" | "resetsAt">, startedAt = this.turnStartedAt ?? Date.now(), queued = false): TurnEnd {
+    return {
+      ...how,
+      startedAt,
+      attached: this.kind === "attached",
+      ...(this.hostInputAt !== undefined ? { hostInputAt: this.hostInputAt } : {}),
+      ...(queued ? { queued: true } : {}),
+    };
+  }
+
   // at: when the broker received the message, the time of its items when Claude Code gives the message none.
   protected onMessage(m: RawMessage & Record<string, unknown>, at = new Date().toISOString()): void {
     if (m.type === "assistant" || m.type === "user" || m.type === "result" || m.type === "stream_event") this.lastActivity = Date.now();
+    noteFact(this.facts, m);
     if (m.type === "stream_event") {
       if (!m.parent_tool_use_id) this.onStream(m.event as StreamEvent);
       return;
@@ -520,6 +543,8 @@ export abstract class SessionCore extends EventEmitter {
     if (m.type === "system") {
       if (m.subtype === "init") {
         this.busy = true;
+        this.turnStartedAt = Date.now();
+        this.facts = {};
         if (typeof m.model === "string" && !this.appliedSeen) this.model = m.model;
         if (typeof m.permissionMode === "string") this.permissionMode = m.permissionMode;
         if (typeof m.effort === "string" && !this.appliedSeen) this.effort = m.effort;
@@ -549,12 +574,13 @@ export abstract class SessionCore extends EventEmitter {
     if (m.type === "assistant" && !m.parent_tool_use_id) this.endStream();
     if (m.type === "result") {
       this.busy = false;
-      this.localTurn = typeof m.local_command === "string";
       if (typeof m.total_cost_usd === "number") this.costUsd = m.total_cost_usd;
       this.endStream();
       this.refreshContext();
       this.refreshApplied();
       this.emit("state");
+      const queued = typeof m.queued_turn_count === "number" && m.queued_turn_count > 0;
+      this.emit("turn_end", this.turnEnd(classify(m, this.facts), typeof m.duration_ms === "number" ? Date.now() - m.duration_ms : undefined, queued));
     }
     for (const item of this.builder.add(m, at)) this.emit("item", item);
     if (m.type === "user" && m.isReplay === true && typeof m.uuid === "string") this.dequeue(m.uuid);

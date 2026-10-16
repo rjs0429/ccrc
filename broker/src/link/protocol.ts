@@ -39,7 +39,8 @@ export type WrapperFrame =
   | { t: "rejected"; id?: string; reason: string }
   // An MCP input request the wrapper keeps from VS Code, which would decline it, until the broker takes or passes it.
   | { t: "held"; id: string }
-  | { t: "exit"; code: number | null; signal: string | null };
+  // hostLeft: VS Code closed Claude Code's input or passed it a signal; running: a turn was under way. Older wrappers send neither.
+  | { t: "exit"; code: number | null; signal: string | null; hostLeft?: boolean; running?: boolean };
 
 export type BrokerFrame =
   | { t: "claim_wait"; ms: number }

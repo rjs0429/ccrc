@@ -350,6 +350,10 @@ export interface PendingRequest {
   allowAlways: boolean;
   // Claude Code allows this answer only where the session is open.
   localOnly?: boolean;
+  // The auto-mode classifier blocked the call and handed it to a person: allow or deny, never a lasting rule.
+  personOnly?: boolean;
+  // The answer must not be an approval by a stray tap.
+  defaultToNo?: boolean;
   elicitation?: ElicitInfo;
   // The task id of the subagent that asks, when one does.
   agentId?: string;

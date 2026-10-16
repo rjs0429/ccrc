@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 import type { Audit } from "../src/audit.ts";
 import { Hub } from "../src/hub.ts";
 import type { Leases } from "../src/lease.ts";
 import type { ServerMsg } from "../src/protocol.ts";
+import { RemoteActivity } from "../src/remote-activity.ts";
 import type { SessionManager, Snapshot } from "../src/sessions/manager.ts";
 import { Uploads } from "../src/uploads.ts";
 import { tempDir } from "./helpers.ts";
@@ -31,7 +34,11 @@ class FakeManager extends EventEmitter {
   delay = 0;
   watchers = 0;
   focuses: (string | undefined)[] = [];
+  seen: string[] = [];
   setViewed(): void {}
+  markSeen(sessionId: string): void {
+    this.seen.push(sessionId);
+  }
   isControlled(): boolean {
     return this.controlled;
   }
@@ -165,5 +172,53 @@ test("a focused view keeps its focus while the same session is shown again", asy
   await sleep(20);
   assert.deepEqual(manager.focuses, ["u1", "u1", "u1", undefined]);
   assert.ok(ws.sent.some((m) => m.t === "error"));
+  hub.close();
+});
+
+test("sending, starting a session and answering a request are the remote user's activity, kept across a restart", async () => {
+  const B = "7c2d1b90-3e4f-4a5b-8c6d-9e0f1a2b3c4d";
+  const C = "0f1e2d3c-4b5a-4968-8776-655443322110";
+  const manager = Object.assign(new FakeManager(), {
+    send: async () => {},
+    answer: async () => {},
+    pendingRequest: () => undefined,
+    create: async (cwd: string) => ({ id: C, cwd, send: () => {} }),
+  });
+  const leases = Object.assign(new EventEmitter(), { validate: () => true }) as unknown as Leases;
+  const audit = { log: () => {} } as unknown as Audit;
+  const file = path.join(tempDir(), "remote-activity.json");
+  const hub = new Hub(manager as unknown as SessionManager, leases, audit, new Uploads(tempDir()), new RemoteActivity(file));
+  const ws = new FakeSocket();
+  hub.attach(ws as never, "phone", "token");
+  const before = Date.now();
+  ws.emit("message", JSON.stringify({ t: "send", sessionId: A, text: "go on" }));
+  ws.emit("message", JSON.stringify({ t: "answer", sessionId: B, requestId: "r1", answer: { kind: "permission", decision: "allow" } }));
+  ws.emit("message", JSON.stringify({ t: "new_session", cwd: "/work", text: "start" }));
+  await sleep(50);
+  for (const id of [A, B, C]) assert.ok((hub.remoteActivity(id) ?? 0) >= before, id);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, "utf8"))).sort(), [A, B, C].sort());
+  const D = "1a2b3c4d-5e6f-4789-8abc-def012345678";
+  hub.noteRemoteActivity(D);
+  assert.ok(new RemoteActivity(file).get(D), "another way to start work notes it the same way");
+  hub.close();
+});
+
+test("a session counts as opened when it is viewed in a visible window, or the window comes back to it", async () => {
+  const { manager, hub, ws, view } = setup();
+  const B = "7c2d1b90-3e4f-4a5b-8c6d-9e0f1a2b3c4d";
+  view(A);
+  await sleep(20);
+  assert.deepEqual(manager.seen, [A]);
+  ws.emit("message", JSON.stringify({ t: "visibility", visible: false }));
+  view(B);
+  await sleep(20);
+  assert.deepEqual(manager.seen, [A], "a hidden window does not open it");
+  ws.emit("message", JSON.stringify({ t: "visibility", visible: true }));
+  await sleep(20);
+  assert.deepEqual(manager.seen, [A, B]);
+  view(null);
+  ws.emit("message", JSON.stringify({ t: "visibility", visible: true }));
+  await sleep(20);
+  assert.deepEqual(manager.seen, [A, B], "nothing is open");
   hub.close();
 });

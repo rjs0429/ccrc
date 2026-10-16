@@ -2,6 +2,7 @@ import path from "node:path";
 import type { Hub } from "../hub.ts";
 import type { LiveState, PendingKind, PendingRequest, ServerMsg } from "../protocol.ts";
 import type { SessionManager } from "../sessions/manager.ts";
+import type { ErrorReason, TurnEnd, TurnOutcome } from "../sessions/outcome.ts";
 import type { Subscription } from "./subscriptions.ts";
 import type { PushPayload } from "./types.ts";
 
@@ -22,22 +23,51 @@ export interface PushTiming {
 
 export const TIMING: PushTiming = { ownedMs: 1000, secondMs: 1000, recheckMs: 15_000, doneMs: 1500, retryMs: 20_000 };
 
+// What the remote user did this long before a turn started still makes the turn theirs.
 const REMOTE_WINDOW_MS = 2 * 3600_000;
+const UNSEEN_KEEP_MS = 24 * 3600_000;
+const UNSEEN_MAX = 200;
 const TITLE_MAX = 80;
 const TOOL_MAX = 60;
 
-const BODY: Record<PendingKind | "done", string> = {
+const BODY: Record<PendingKind, string> = {
   permission: "권한 요청",
   question: "질문이 있습니다",
   plan: "계획 승인 요청",
   dialog: "확인 요청",
   elicitation: "입력 요청",
-  done: "작업을 마쳤습니다",
 };
+const LOCAL_ONLY = "VS Code에서 답변하기";
+const ENDED: Record<Exclude<TurnOutcome, "interrupted" | "local">, string> = {
+  done: "작업을 마쳤습니다",
+  error: "오류로 끝났습니다",
+  limit: "사용 한도에 걸렸습니다",
+  crashed: "Claude Code가 비정상 종료되었습니다",
+};
+const REASON: Record<Exclude<ErrorReason, "api">, string> = { context: "문맥 한도", login: "로그인 필요", model: "모델 없음" };
 
 function clip(s: string, max: number): string {
   const chars = [...s.replace(/\s+/g, " ").trim()];
   return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("");
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+// In the broker's time zone, with the date when it is not today.
+function resetText(at: number, now: number): string {
+  const d = new Date(at);
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return d.toDateString() === new Date(now).toDateString() ? time : `${d.getMonth() + 1}/${d.getDate()} ${time}`;
+}
+
+// The kind of stop goes along, never anything Claude Code or the user wrote.
+export function endText(end: TurnEnd, now = Date.now()): string {
+  const text = ENDED[end.outcome as keyof typeof ENDED];
+  if (end.outcome === "error") {
+    const why = end.reason === "api" ? `API ${end.status}` : end.reason ? REASON[end.reason] : "";
+    return why ? `${text} · ${why}` : text;
+  }
+  return end.outcome === "limit" && end.resetsAt ? `${text} · ${resetText(end.resetsAt, now)} 초기화` : text;
 }
 
 export interface NotifierDeps {
@@ -47,16 +77,18 @@ export interface NotifierDeps {
   log: (line: string) => void;
 }
 
-// Turns session events into notifications for the subscribed devices: a request that needs an answer
-// on a session the user is not looking at, and the end of a model turn the remote user started (a local
-// command such as /compact is not one).
+// Turns session events into notifications for the subscribed devices: a request that needs an answer on a session the
+// user is not looking at, and the end of a model turn as each device asks for it. A turn the user stopped or a local
+// command such as /compact is not notified.
 export class Notifier {
   private manager: SessionManager;
   private hub: Hub;
   private d: NotifierDeps;
-  // Timers by `<session> <request id>` for a request and `<session> done` for a finished turn.
+  // Timers by `<session> <request id>` for a request, `<session> end` for a turn that ended and `<session> crash`.
   private timers = new Map<string, Set<NodeJS.Timeout>>();
   private states = new Map<string, LiveState>();
+  // Sessions whose turn end went to a device and that were not opened since, with those devices' endpoints.
+  private unseen = new Map<string, { at: number; endpoints: Set<string> }>();
   private listener = (sessionId: string, msg: ServerMsg) => {
     try {
       this.onEvent(sessionId, msg);
@@ -64,17 +96,36 @@ export class Notifier {
       this.fail(e);
     }
   };
+  private ended = (sessionId: string, end: TurnEnd) => void this.onEnd(sessionId, end).catch((e) => this.fail(e));
+  private seen = (sessionId: string) => {
+    this.unseen.delete(sessionId);
+    this.cancel(`${sessionId} end`);
+    this.cancel(`${sessionId} crash`);
+  };
 
   constructor(manager: SessionManager, hub: Hub, deps: NotifierDeps) {
     this.manager = manager;
     this.hub = hub;
     this.d = deps;
     manager.on("event", this.listener);
+    manager.on("turn_end", this.ended);
+    manager.on("seen", this.seen);
   }
 
   close(): void {
     this.manager.off("event", this.listener);
+    this.manager.off("turn_end", this.ended);
+    this.manager.off("seen", this.seen);
     for (const key of [...this.timers.keys()]) this.cancel(key);
+  }
+
+  // The number for a device's app icon: sessions with a request waiting for an answer and sessions whose turn end the
+  // device was told of and that nobody opened since, each counted once.
+  badgeFor(endpoint: string): { badge: number; unseen: string[] } {
+    const now = Date.now();
+    for (const [id, u] of this.unseen) if (now - u.at > UNSEEN_KEEP_MS) this.unseen.delete(id);
+    const unseen = [...this.unseen].filter(([, u]) => u.endpoints.has(endpoint)).map(([id]) => id);
+    return { badge: new Set([...this.manager.waitingSessions(), ...unseen]).size, unseen };
   }
 
   private onEvent(sessionId: string, msg: ServerMsg): void {
@@ -99,7 +150,7 @@ export class Notifier {
       const sub = this.d.subscriptions().find((s) => s.endpoint === endpoint);
       if (!sub) return;
       const tool = (request.kind === "permission" || request.kind === "elicitation") && sub.prefs.details ? request.toolName : undefined;
-      this.d.deliver(sub, this.payload(sessionId, request.kind, title, tool), "high");
+      this.d.deliver(sub, { ...this.requestPayload(sessionId, request, title, tool), badge: this.badgeFor(endpoint).badge }, "high");
     };
     for (const sub of this.d.subscriptions()) {
       const wait = attached && request.kind !== "elicitation" ? sub.prefs.vscodeDelaySec * this.d.timing.secondMs : this.d.timing.ownedMs;
@@ -107,59 +158,78 @@ export class Notifier {
     }
   }
 
+  // A new turn makes the last one's end old news. A process that ends takes the notice of its finished turn with it,
+  // not the notice of a crash.
   private onState(sessionId: string, state: LiveState): void {
-    const key = `${sessionId} done`;
     const wasBusy = this.states.get(sessionId)?.busy;
     if (state.state === "inactive") {
       this.states.delete(sessionId);
-      return this.cancel(key);
+      return this.cancel(`${sessionId} end`);
     }
     this.states.set(sessionId, state);
-    if (state.busy) return this.cancel(key);
-    if (!wasBusy || !this.remoteSentRecently(sessionId) || !this.d.subscriptions().length) return;
+    if (!state.busy) return;
+    this.cancel(`${sessionId} end`);
+    this.cancel(`${sessionId} crash`);
+    if (!wasBusy) this.unseen.delete(sessionId);
+  }
+
+  // "remote" devices hear of a turn the remote user sent, started or answered in since REMOTE_WINDOW_MS before it
+  // started; "all" devices of every turn. A VS Code turn waits the device's delay unless the remote user gave the last
+  // word, and no notice goes once a new turn starts or the user looks at the session.
+  private async onEnd(sessionId: string, end: TurnEnd): Promise<void> {
+    if (end.outcome === "interrupted" || end.outcome === "local" || end.queued || !this.d.subscriptions().length) return;
+    const key = `${sessionId} ${end.outcome === "crashed" ? "crash" : "end"}`;
     const timers = new Set<NodeJS.Timeout>();
     this.cancel(key);
     this.timers.set(key, timers);
-    void this.describe(sessionId)
-      .then(({ title }) => {
-        if (this.timers.get(key) !== timers) return;
-        for (const sub of this.d.subscriptions()) {
-          if (!sub.prefs.turnDone) continue;
-          this.arm(key, this.d.timing.doneMs, () => {
-            if (this.states.get(sessionId)?.busy || this.hub.isWatching(sessionId) || this.manager.lastTurnLocal(sessionId)) return;
-            const now = this.d.subscriptions().find((s) => s.endpoint === sub.endpoint);
-            if (now?.prefs.turnDone) this.d.deliver(now, this.payload(sessionId, "done", title), "normal");
-          });
-        }
-      })
-      .catch((e) => this.fail(e));
+    const { title } = await this.describe(sessionId, this.states.get(sessionId));
+    if (this.timers.get(key) !== timers) return;
+    const at = this.hub.remoteActivity(sessionId);
+    const recent = at !== undefined && at >= end.startedAt - REMOTE_WINDOW_MS;
+    const remoteLast = at !== undefined && at >= (end.hostInputAt ?? 0);
+    const wants = (s: Subscription) => s.prefs.turnEnd === "all" || (s.prefs.turnEnd === "remote" && recent);
+    for (const sub of this.d.subscriptions()) {
+      if (!wants(sub)) continue;
+      const wait = end.attached && !remoteLast ? sub.prefs.vscodeDelaySec * this.d.timing.secondMs : this.d.timing.doneMs;
+      this.arm(key, wait, () => {
+        if (end.outcome !== "crashed" && this.states.get(sessionId)?.busy) return;
+        if (this.hub.isWatching(sessionId)) return;
+        const now = this.d.subscriptions().find((s) => s.endpoint === sub.endpoint);
+        if (!now || !wants(now)) return;
+        this.markUnseen(sessionId, now.endpoint);
+        this.d.deliver(now, { ...this.endPayload(sessionId, end, title), badge: this.badgeFor(now.endpoint).badge }, end.outcome === "done" ? "normal" : "high");
+      });
+    }
   }
 
-  private remoteSentRecently(sessionId: string): boolean {
-    const at = this.hub.remoteSent(sessionId);
-    return at !== undefined && Date.now() - at <= REMOTE_WINDOW_MS;
+  private markUnseen(sessionId: string, endpoint: string): void {
+    const endpoints = this.unseen.get(sessionId)?.endpoints ?? new Set<string>();
+    this.unseen.delete(sessionId);
+    this.unseen.set(sessionId, { at: Date.now(), endpoints: endpoints.add(endpoint) });
+    for (const old of [...this.unseen.keys()].slice(0, -UNSEEN_MAX)) this.unseen.delete(old);
   }
 
   // The session's title, or its folder's name, and whether it runs in VS Code. The live state is read once
-  // the session list has arrived, so a state that came right after the event counts.
-  private async describe(sessionId: string): Promise<{ title: string; attached: boolean }> {
+  // the session list has arrived, so a state that came right after the event counts; `known` stands in for a
+  // session that has ended meanwhile.
+  private async describe(sessionId: string, known?: LiveState): Promise<{ title: string; attached: boolean }> {
     const listed = await this.manager.list().then(
       (list) => list.find((s) => s.id === sessionId),
       () => undefined,
     );
-    const live = this.states.get(sessionId);
+    const live = this.states.get(sessionId) ?? known;
     const title = listed?.title.trim() || live?.title?.trim() || path.basename(listed?.cwd || live?.cwd || "") || "ccrc";
     return { title: clip(title, TITLE_MAX), attached: (live?.state ?? listed?.state) === "attached" };
   }
 
   // The tag joins the session and the kind, so a newer notification replaces the older one on the device.
-  private payload(sessionId: string, kind: PendingKind | "done", title: string, tool?: string): PushPayload {
-    return {
-      title,
-      body: tool ? `${BODY[kind]} · ${clip(tool, TOOL_MAX)}` : BODY[kind],
-      tag: `${sessionId}:${kind}`,
-      data: { url: `/#/s/${sessionId}` },
-    };
+  private requestPayload(sessionId: string, request: PendingRequest, title: string, tool?: string): PushPayload {
+    const text = request.localOnly ? `${LOCAL_ONLY} · ${BODY[request.kind]}` : BODY[request.kind];
+    return { title, body: tool ? `${text} · ${clip(tool, TOOL_MAX)}` : text, tag: `${sessionId}:${request.kind}`, data: { url: `/#/s/${sessionId}` } };
+  }
+
+  private endPayload(sessionId: string, end: TurnEnd, title: string): PushPayload {
+    return { title, body: endText(end), tag: `${sessionId}:end`, data: { url: `/#/s/${sessionId}` } };
   }
 
   private arm(key: string, ms: number, fn: () => void): void {

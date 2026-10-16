@@ -33,6 +33,7 @@ import type { ContentBlock, SessionCore } from "./core.ts";
 import { searchFiles } from "./files.ts";
 import { lastCwd, loadHistory, projectDirName, transcriptPath } from "./history.ts";
 import { liveProcesses } from "./live.ts";
+import type { TurnEnd } from "./outcome.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
 import { WrappedSession } from "./wrapped.ts";
@@ -51,6 +52,7 @@ const HANDOFF_TURN_MS = 10_000;
 const HANDOFF_OTHER_MS = 9_000;
 const EARLY_LINES_MAX = 500;
 const ENDED_KEEP_MS = 10 * 60_000;
+const CRASHED_KEEP_MS = 24 * 3600_000;
 const USAGE_KEEP_MS = 30_000;
 // A model whose window could not be asked is asked again after this long.
 const PROBE_RETRY_MS = 60_000;
@@ -121,7 +123,8 @@ const probeDir = (cwd: string): string => (isFolder(cwd) ? cwd : os.homedir());
 // Owns the broker's Claude Code processes, tracks the VS Code ones reached through wrappers, and
 // answers questions about every session on the machine.
 // Emits "event" (sessionId, ServerMsg) for one session, "changed" when the session list changed, and
-// "attached" / "detached" (sessionId) when a session gains or loses a process the broker can drive.
+// "attached" / "detached" (sessionId) when a session gains or loses a process the broker can drive;
+// "turn_end" (sessionId, TurnEnd) when a turn of one ends, and "seen" (sessionId) when the remote user opens one.
 export class SessionManager extends EventEmitter {
   models: ModelOption[] = loadModels();
   private modelsAsked?: Promise<void>;
@@ -169,6 +172,15 @@ export class SessionManager extends EventEmitter {
     this.viewed = sessionId;
     const s = sessionId ? this.owned.get(sessionId) : undefined;
     if (s) s.lastActivity = Date.now();
+  }
+
+  markSeen(sessionId: string): void {
+    this.emit("seen", sessionId);
+  }
+
+  // Sessions with a request waiting for an answer.
+  waitingSessions(): string[] {
+    return [...this.owned.values(), ...this.wrapped.values()].filter((s) => s.pending.size > 0).map((s) => s.id);
   }
 
   private async infos(): Promise<SDKSessionInfo[]> {
@@ -576,11 +588,6 @@ export class SessionManager extends EventEmitter {
     return this.get(sessionId).interrupt();
   }
 
-  // Whether the session's last turn was a local command rather than a model turn.
-  lastTurnLocal(sessionId: string): boolean {
-    return this.controlled(sessionId)?.localTurn === true;
-  }
-
   // Model, mode, effort and ultracode change a running session at once; a session without a process keeps
   // them for when the broker next starts it.
   async setMode(sessionId: string, mode: PermissionModeName): Promise<void> {
@@ -696,7 +703,7 @@ export class SessionManager extends EventEmitter {
     link.on("settled", (id: unknown) => (session ? session.onSettled(id) : keep("settled", id)));
     link.on("held", (id: unknown) => (session ? session.onHeld(id) : keep("held", id)));
     link.on("rejected", (id: unknown, reason: unknown) => session?.onRejected(id, reason));
-    link.on("exit", () => session?.end("vscode_closed"));
+    link.on("exit", (code: unknown, signal: unknown, hostLeft: unknown, running: unknown) => session?.exited(code, signal, hostLeft, running));
     link.on("close", () => session?.end("vscode_closed"));
   }
 
@@ -734,7 +741,7 @@ export class SessionManager extends EventEmitter {
       if (s.id === this.viewed || s.busy || s.pending.size || s.tasks.running()) continue;
       if (Date.now() - s.lastActivity > limit) await s.close("idle");
     }
-    for (const [id, e] of this.ended) if (Date.now() - e.at > ENDED_KEEP_MS) this.ended.delete(id);
+    for (const [id, e] of this.ended) if (Date.now() - e.at > (e.reason === "crashed" ? CRASHED_KEEP_MS : ENDED_KEEP_MS)) this.ended.delete(id);
   }
 
   private adopt(s: SessionCore): void {
@@ -757,6 +764,9 @@ export class SessionManager extends EventEmitter {
     s.on("window", (model: string | undefined, w: ContextWindow) => this.windows.learn(model, w, s.id));
     s.on("models", (models: ModelInfo[]) => this.setModels(models));
     s.on("applied", (model: string, ultracode: boolean) => this.ultracodeModels.learn(model, ultracode));
+    s.on("turn_end", (end: TurnEnd) => {
+      if (this.current(s)) this.emit("turn_end", s.id, end);
+    });
     s.on("closed", (reason: string) => {
       if (!this.current(s)) return;
       if (this.owned.get(s.id) === s) this.owned.delete(s.id);

@@ -3,7 +3,7 @@ import path from "node:path";
 import { ECDH } from "node:crypto";
 import { writeFileAtomic } from "../config.ts";
 import type { ClientKeys } from "./encrypt.ts";
-import { DEFAULT_PREFS, VSCODE_DELAYS, type PushPrefs } from "./types.ts";
+import { DEFAULT_PREFS, TURN_END_MODES, VSCODE_DELAYS, type PushPrefs, type TurnEndMode } from "./types.ts";
 import { generateVapidKeys, type VapidKeys } from "./vapid.ts";
 
 export interface Subscription {
@@ -74,7 +74,10 @@ export function parseSubscription(v: unknown, allow: (url: URL) => boolean): { e
   return { endpoint, keys: { p256dh: p256dh.toString("base64url"), auth: auth.toString("base64url") } };
 }
 
-// Applies the fields given in `v` over `base`; unknown fields are ignored.
+const isTurnEnd = (v: unknown): v is TurnEndMode => TURN_END_MODES.includes(v as TurnEndMode);
+
+// Applies the fields given in `v` over `base`; unknown fields are ignored. A screen from before the turn-end choice
+// sends its on/off switch, turnDone, which stands for "remote" and "off".
 export function parsePrefs(v: unknown, base: PushPrefs): PushPrefs {
   if (v === undefined) return base;
   const o = obj(v);
@@ -84,12 +87,24 @@ export function parsePrefs(v: unknown, base: PushPrefs): PushPrefs {
     if (typeof o.vscodeDelaySec !== "number" || !VSCODE_DELAYS.includes(o.vscodeDelaySec)) throw new PushError("invalid_prefs");
     out.vscodeDelaySec = o.vscodeDelaySec;
   }
-  for (const name of ["turnDone", "details"] as const) {
-    if (o[name] === undefined) continue;
-    if (typeof o[name] !== "boolean") throw new PushError("invalid_prefs");
-    out[name] = o[name];
+  if (o.turnEnd !== undefined) {
+    if (!isTurnEnd(o.turnEnd)) throw new PushError("invalid_prefs");
+    out.turnEnd = o.turnEnd;
+  } else if (o.turnDone !== undefined) {
+    if (typeof o.turnDone !== "boolean") throw new PushError("invalid_prefs");
+    out.turnEnd = o.turnDone ? "remote" : "off";
+  }
+  if (o.details !== undefined) {
+    if (typeof o.details !== "boolean") throw new PushError("invalid_prefs");
+    out.details = o.details;
   }
   return out;
+}
+
+// Settings as saved, those from before the turn-end choice included: turnDone on became "remote", off became "off".
+function storedPrefs(p: Partial<PushPrefs> & { turnDone?: unknown } = {}): PushPrefs {
+  const { turnDone, ...rest } = p;
+  return { ...DEFAULT_PREFS, ...rest, turnEnd: isTurnEnd(rest.turnEnd) ? rest.turnEnd : turnDone === false ? "off" : "remote" };
 }
 
 interface PushFile {
@@ -111,7 +126,7 @@ export class PushStore {
     const raw = fs.existsSync(this.file) ? (JSON.parse(fs.readFileSync(this.file, "utf8")) as Partial<PushFile>) : {};
     this.data = {
       vapid: raw.vapid,
-      subscriptions: (raw.subscriptions ?? []).map((s) => ({ ...s, prefs: { ...DEFAULT_PREFS, ...s.prefs } })),
+      subscriptions: (raw.subscriptions ?? []).map((s) => ({ ...s, prefs: storedPrefs(s.prefs) })),
     };
     return this.data;
   }

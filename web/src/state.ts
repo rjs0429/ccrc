@@ -12,6 +12,7 @@ import type {
   SnapshotGap,
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, type Me, type Options } from "./api.ts";
+import { syncBadge } from "./push.ts";
 import { bindSent } from "./sentPreviews.ts";
 
 export type SettingsPage = "claude" | "alerts" | "account" | "status";
@@ -155,8 +156,20 @@ function onRoute(): void {
   if (!viewing) setState({ chat: undefined });
   send(viewMsg());
   if (route.name === "home" || route.name === "new") void refreshSessions();
+  badgeSoon();
 }
 window.addEventListener("hashchange", onRoute);
+
+// The app icon's number is asked for a moment after something changed, once the broker has taken the new view, which
+// counts as opening that session.
+const BADGE_MS = 500;
+let badgeTimer: number | undefined;
+
+function badgeSoon(): void {
+  if (!state.me?.loggedIn) return;
+  clearTimeout(badgeTimer);
+  badgeTimer = window.setTimeout(() => void syncBadge().catch(() => {}), BADGE_MS);
+}
 
 export async function refreshSessions(): Promise<void> {
   try {
@@ -321,6 +334,7 @@ document.addEventListener("visibilitychange", () => {
     retry = 0;
     connect();
   }
+  if (document.visibilityState === "visible") badgeSoon();
 });
 
 function upsert(items: DisplayItem[], item: DisplayItem): DisplayItem[] {
@@ -343,6 +357,7 @@ function onServer(msg: ServerMsg): void {
       send({ t: "visibility", visible: document.visibilityState === "visible" });
       send(viewMsg());
       if (startingSent) send(startingSent.msg);
+      badgeSoon();
       return;
     case "window_conflict":
       setState({ conn: "conflict" });
@@ -388,6 +403,7 @@ function onServer(msg: ServerMsg): void {
     }
     case "sessions_changed":
       void refreshSessions();
+      badgeSoon();
       return;
     case "error":
       if (msg.draftId && msg.draftId === startingSent?.id) startDone();

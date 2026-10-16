@@ -367,6 +367,26 @@ test("exits with Claude Code's status after VS Code closes its input", async () 
   await t.broker.frames.wait((f) => f.t === "exit" && f.code === 0, "exit reported");
 });
 
+test("the exit report says whether VS Code ended Claude Code and whether a turn was under way", async () => {
+  const crashed = await setup();
+  await crashed.broker.frames.wait((f) => f.t === "hello", "hello");
+  crashed.user("ok");
+  await crashed.host.wait((m) => m.type === "result", "a first turn");
+  crashed.user("CRASH");
+  assert.deepEqual(await crashed.exited, [1, null]);
+  const a = await crashed.broker.frames.wait((f) => f.t === "exit", "exit after the crash");
+  assert.deepEqual([a.code, a.signal, a.hostLeft, a.running], [1, null, false, true]);
+
+  const left = await setup({ env: { FAKE_EXIT_CODE: "1" } });
+  await left.broker.frames.wait((f) => f.t === "hello", "hello");
+  left.user("HOLD");
+  await left.host.wait((m) => m.type === "user" && m.isReplay === true, "turn started");
+  left.hostIn.end();
+  await left.exited;
+  const b = await left.broker.frames.wait((f) => f.t === "exit", "exit after VS Code left");
+  assert.deepEqual([b.code, b.hostLeft, b.running], [1, true, true]);
+});
+
 test("only the conversation, prompts and settings reach the broker", async () => {
   const t = await setup();
   await t.broker.frames.wait((f) => f.t === "hello", "hello");

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { PushPrefs } from "../../../../broker/src/push/types.ts";
+import type { PushPrefs, TurnEndMode } from "../../../../broker/src/push/types.ts";
 import { ApiError } from "../../api.ts";
-import { Button, Spinner } from "../../components/ui.tsx";
+import { Button, Icon, Spinner } from "../../components/ui.tsx";
 import { relTime } from "../../labels.ts";
 import { isIos, loadDevice, pushBlock, pushErrorText, savePrefs, sendTest, turnOff, turnOn, type PushBlock, type PushDevice } from "../../push.ts";
 import { loggedOut, toast } from "../../state.ts";
@@ -20,6 +20,12 @@ const DELAYS: [number, string][] = [
   [120, "2분 뒤"],
 ];
 
+const TURN_ENDS: [TurnEndMode, string, string][] = [
+  ["remote", "휴대폰에서 보낸 세션", "최근 2시간 안에 휴대폰에서 보내거나 답한 세션만 알립니다"],
+  ["all", "모든 세션", "VS Code에서 시킨 작업도 알립니다. 그 작업은 위에서 고른 시간만큼 기다렸다가 알립니다"],
+  ["off", "끔", "작업이 끝나도 알리지 않습니다. 권한 요청과 질문은 그대로 알립니다"],
+];
+
 function Note({ children }: { children: ReactNode }) {
   return <p className="rounded-xl bg-surface p-3.5 text-sm text-muted">{children}</p>;
 }
@@ -35,6 +41,37 @@ function Toggle({ label, hint, on, onChange }: { label: string; hint: string; on
         <span className={`absolute top-0.5 left-0 size-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-[18px]" : "translate-x-0.5"}`} />
       </span>
     </button>
+  );
+}
+
+function TurnEndChoice({ value, onChange }: { value: TurnEndMode; onChange: (mode: TurnEndMode) => void }) {
+  return (
+    <div className="space-y-2 px-3.5 py-3">
+      <div>
+        <div className="text-[15px]">작업 완료 알림</div>
+        <div className="text-xs text-muted">작업을 마치거나 오류로 멈추면 알립니다</div>
+      </div>
+      <div role="radiogroup" aria-label="작업 완료 알림" className="space-y-0.5">
+        {TURN_ENDS.map(([mode, label, hint]) => (
+          <button
+            key={mode}
+            role="radio"
+            aria-checked={value === mode}
+            onClick={() => onChange(mode)}
+            className={`flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left ${value === mode ? "bg-accent-soft" : "active:bg-surface-2"}`}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px]">
+                {label}
+                {mode === "remote" && <span className="ml-1.5 text-xs text-muted">기본</span>}
+              </span>
+              <span className="block text-xs break-keep text-pretty text-muted">{hint}</span>
+            </span>
+            <Icon.check className={`mt-0.5 size-4 shrink-0 text-accent ${value === mode ? "" : "invisible"}`} />
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -96,7 +133,7 @@ export function NotificationsSection() {
   else if (!device.status.subscribed || !device.status.prefs)
     body = (
       <>
-        <Note>권한 요청이나 질문이 오거나 원격에서 보낸 작업이 끝나면 이 기기로 알립니다.</Note>
+        <Note>권한 요청이나 질문이 오거나, 보낸 작업이 끝나거나 멈추면 이 기기로 알립니다.</Note>
         <Button kind="primary" className="w-full" disabled={busy} onClick={() => void run(async () => setDevice(await turnOn(device)))}>
           알림 켜기
         </Button>
@@ -145,7 +182,7 @@ export function NotificationsSection() {
           <div className="space-y-2 px-3.5 py-3">
             <div>
               <div className="text-[15px]">VS Code 세션 알림</div>
-              <div className="text-xs text-muted">노트북에서 먼저 답할 수 있게 기다렸다가 알립니다</div>
+              <div className="text-xs text-muted">노트북에서 먼저 답하거나 이어 할 수 있게 기다렸다가 알립니다</div>
             </div>
             <div role="radiogroup" className="flex gap-1 rounded-xl bg-surface-2 p-1">
               {DELAYS.map(([sec, label]) => (
@@ -161,7 +198,7 @@ export function NotificationsSection() {
               ))}
             </div>
           </div>
-          <Toggle label="작업 완료 알림" hint="원격에서 보낸 작업이 끝나면 알립니다" on={prefs.turnDone} onChange={(on) => update({ turnDone: on })} />
+          <TurnEndChoice value={prefs.turnEnd} onChange={(turnEnd) => update({ turnEnd })} />
           <Toggle label="도구 이름 표시" hint="권한 요청 알림에 도구 이름을, 입력 요청 알림에 MCP 서버 이름을 함께 보여 줍니다. 잠금 화면에도 보입니다" on={prefs.details} onChange={(on) => update({ details: on })} />
         </div>
         <div className="flex gap-2">

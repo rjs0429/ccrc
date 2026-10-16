@@ -174,6 +174,23 @@ test("an interruption is noted once", () => {
   );
 });
 
+test("a result that names why its turn ended is noted as a stop only when the user made it", () => {
+  const b = new ItemBuilder(cwd);
+  b.add({ type: "user", uuid: "u1", message: { content: "[Request interrupted by user]" } });
+  b.add({ type: "result", subtype: "error_during_execution", is_error: true, terminal_reason: "aborted_streaming", errors: ["[ede_diagnostic] result_type=user"] });
+  b.add({ type: "result", subtype: "error_during_execution", is_error: true, terminal_reason: "turn_setup_failed", errors: ["could not set up the turn"] });
+  b.add({ type: "result", subtype: "success", is_error: true, terminal_reason: "api_error", result: "API Error: 529 Overloaded" });
+  b.add({ type: "result", subtype: "success", is_error: false, terminal_reason: "completed", result: "done" });
+  assert.deepEqual(
+    b.items.map((i) => i.kind === "note" && [i.code, i.text]),
+    [
+      ["interrupted", undefined],
+      ["error", "could not set up the turn"],
+      ["error", "API Error: 529 Overloaded"],
+    ],
+  );
+});
+
 test("subagent messages stay out of the main conversation", () => {
   const b = new ItemBuilder(cwd);
   b.add({ type: "assistant", uuid: "a1", parent_tool_use_id: "task-1", message: { content: [{ type: "text", text: "inner" }] } });
