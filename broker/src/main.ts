@@ -11,6 +11,7 @@ import { Leases } from "./lease.ts";
 import { linkSocketPath } from "./link/protocol.ts";
 import { LinkServer } from "./link/server.ts";
 import { Push } from "./push/index.ts";
+import { RemoteActivity } from "./remote-activity.ts";
 import { buildServer } from "./server.ts";
 import { retagTranscripts } from "./sessions/entrypoint.ts";
 import { SessionManager } from "./sessions/manager.ts";
@@ -34,7 +35,7 @@ async function serve(): Promise<void> {
   for (const r of retagTranscripts()) console.log(`ccrc: ${r.file} now lists in VS Code (original in ${r.backup})`);
   const manager = new SessionManager(config, audit);
   const uploads = new Uploads(path.join(paths.stateDir, "uploads"));
-  const hub = new Hub(manager, leases, audit, uploads);
+  const hub = new Hub(manager, leases, audit, uploads, new RemoteActivity(path.join(paths.stateDir, "remote-activity.json")));
   const push = new Push(paths.configDir);
   push.watch(manager, hub);
   manager.remoteReachable = () => hub.connected || push.reaches(leases.current()?.device);

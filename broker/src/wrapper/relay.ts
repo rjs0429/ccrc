@@ -828,7 +828,7 @@ export class Relay extends EventEmitter {
     this.held.clear();
     this.gate?.open();
     this.o.log(`claude exited code=${code} signal=${signal}`);
-    this.send({ t: "exit", code, signal });
+    this.send({ t: "exit", code, signal, hostLeft: this.hostLeft, running: this.running });
     let done = false;
     const end = () => {
       if (done) return;

@@ -43,23 +43,27 @@ function DenyBox({ placeholder, label, onSend }: { placeholder: string; label: s
   );
 }
 
+// A request that must not be approved by a stray tap puts deny first and offers allow without emphasis.
 function PermissionCard({ request, reply, agent }: { request: PendingRequest; reply: Reply; agent?: string }) {
+  const deny = <DenyBox placeholder="Claude에게 대신 할 일 (선택)" label="거부" onSend={(message) => reply({ kind: "permission", decision: "deny", message })} />;
   return (
     <Card title="권한 요청" sub={`${agent ? `${agent} · ` : ""}${request.toolName}${request.description ? ` · ${request.description}` : ""}`}>
       {request.title && <div className="text-sm">{request.title}</div>}
       {request.decisionReason && <div className="text-xs text-muted">{request.decisionReason}</div>}
       <ToolInput name={request.toolName} input={request.input} />
+      {request.personOnly && <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted">자동 모드가 막은 동작입니다. 직접 정하세요.</div>}
       {request.localOnly ? (
         <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted">이 요청은 VS Code에서만 응답할 수 있습니다.</div>
       ) : (
         <div className="grid gap-2">
-          <Button kind="primary" onClick={() => reply({ kind: "permission", decision: "allow" })}>
+          {request.defaultToNo && deny}
+          <Button kind={request.defaultToNo ? undefined : "primary"} onClick={() => reply({ kind: "permission", decision: "allow" })}>
             허용
           </Button>
           {request.allowAlways && (
             <Button onClick={() => reply({ kind: "permission", decision: "allow_always" })}>{allowAlwaysLabel(request.suggestions)}</Button>
           )}
-          <DenyBox placeholder="Claude에게 대신 할 일 (선택)" label="거부" onSend={(message) => reply({ kind: "permission", decision: "deny", message })} />
+          {!request.defaultToNo && deny}
         </div>
       )}
     </Card>

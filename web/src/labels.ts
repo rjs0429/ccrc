@@ -100,6 +100,8 @@ export function closedText(reason?: string): string {
       return "한동안 쓰지 않아 원격 실행을 끝냈습니다.";
     case "released":
       return "원격 실행을 끝냈습니다.";
+    case "crashed":
+      return "Claude Code가 비정상 종료되었습니다.";
     default:
       return "";
   }

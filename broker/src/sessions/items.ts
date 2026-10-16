@@ -1,6 +1,7 @@
 import type { DisplayItem, Hunk, NoteCode, SubagentActivity, ToolResult, UserAttachment } from "../protocol.ts";
 import { workflowMeta } from "../tools.ts";
 import { attachmentsOf } from "./attachments.ts";
+import { classify } from "./outcome.ts";
 import { PLAN_LIMIT, toolReply } from "./replies.ts";
 import { contextDetail, usageReport } from "./reports.ts";
 
@@ -46,6 +47,7 @@ export interface RawMessage {
   is_error?: boolean;
   result?: string;
   errors?: string[];
+  terminal_reason?: string;
   // A tool's structured output next to its tool_result: tool_use_result live, toolUseResult in a transcript.
   tool_use_result?: unknown;
   toolUseResult?: unknown;
@@ -560,12 +562,12 @@ export class ItemBuilder {
     return this.put({ kind: "task", id, ts, ...(status ? { status } : {}), summary, ...(detail ? { text: clipped(detail, COMMAND_TEXT_LIMIT) } : {}) });
   }
 
+  // A CLI that names why the turn ended tells a stop the user made from a failure; for an older one an
+  // error_during_execution result is a stop.
   private result(m: RawMessage, ts?: string): DisplayItem[] {
     if (!m.is_error) return [];
-    const item =
-      m.subtype === "error_during_execution"
-        ? this.note("interrupted", undefined, ts)
-        : this.note("error", m.result || m.errors?.join("\n") || m.subtype, ts);
+    const stopped = typeof m.terminal_reason === "string" ? classify({ ...m }, {}).outcome === "interrupted" : m.subtype === "error_during_execution";
+    const item = stopped ? this.note("interrupted", undefined, ts) : this.note("error", m.result || m.errors?.join("\n") || m.subtype, ts);
     return item ? [item] : [];
   }
 }

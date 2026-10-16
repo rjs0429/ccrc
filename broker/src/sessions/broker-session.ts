@@ -388,6 +388,7 @@ export class BrokerSession extends SessionCore {
         decisionReason: opts.decisionReason,
         blockedPath: opts.blockedPath,
         suppressAlwaysAllowRule: opts.suppressAlwaysAllowRule,
+        defaultToNo: opts.defaultToNo,
         agentId: opts.agentID,
       });
       opts.signal.addEventListener(
@@ -415,6 +416,7 @@ export class BrokerSession extends SessionCore {
       this.ask({ requestId: id, kind: "elicitation", toolName: elicitation.server, input: {}, elicitation });
     });
 
+  // Claude Code ending on its own during a turn is a crash; one ccrc closes is not.
   private async consume(q: Query): Promise<void> {
     try {
       for await (const m of q) this.onMessage(m as unknown as RawMessage & Record<string, unknown>);
@@ -424,7 +426,9 @@ export class BrokerSession extends SessionCore {
         if (item) this.emit("item", item);
       }
     }
-    this.finish(this.closedReason ?? "ended");
+    const crashed = !this.closed && this.busy;
+    if (crashed) this.crashed();
+    this.finish(this.closedReason ?? (crashed ? "crashed" : "ended"));
   }
 }
 

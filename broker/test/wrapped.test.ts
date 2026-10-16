@@ -5,6 +5,7 @@ import { after, test } from "node:test";
 import { LineSplitter, parseLine } from "../src/link/lines.ts";
 import { LinkServer, type Link } from "../src/link/server.ts";
 import type { Answer, DisplayItem, PendingRequest } from "../src/protocol.ts";
+import type { TurnEnd } from "../src/sessions/outcome.ts";
 import { WrappedSession } from "../src/sessions/wrapped.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -546,15 +547,97 @@ test("context details ask for the full count and map Claude Code's answer", asyn
   assert.equal(s.state().context?.percent, 3);
 });
 
-test("a local command's result marks the turn as local until a model turn ends", async () => {
+test("each result ends a turn, told with how it ended: a local command's, a finished one, a stopped one", async () => {
   const { s, wrapper } = await session();
   wrapper.autoReply(() => ({}));
+  const ends: TurnEnd[] = [];
+  s.on("turn_end", (e: TurnEnd) => ends.push(e));
   wrapper.out({ type: "result", subtype: "success", is_error: false, num_turns: 0, local_command: "compact", session_id: SID });
-  for (let i = 0; i < 50 && !s.localTurn; i++) await new Promise((r) => setTimeout(r, 10));
-  assert.equal(s.localTurn, true);
+  wrapper.out({ type: "system", subtype: "init", session_id: SID });
+  wrapper.out({ type: "result", subtype: "success", is_error: false, terminal_reason: "completed", duration_ms: 60_000, queued_turn_count: 1, session_id: SID });
+  wrapper.out({ type: "system", subtype: "init", session_id: SID });
+  wrapper.out({ type: "user", parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] }, session_id: SID });
+  wrapper.out({ type: "result", subtype: "error_during_execution", is_error: true, session_id: SID });
+  for (let i = 0; i < 50 && ends.length < 3; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(
+    ends.map((e) => [e.outcome, e.attached, e.queued ?? false]),
+    [
+      ["local", true, false],
+      ["done", true, true],
+      ["interrupted", true, false],
+    ],
+  );
+  assert.ok(Math.abs(ends[1].startedAt - (Date.now() - 60_000)) < 1000, "the start is the result's duration counted back");
+});
+
+test("the time VS Code last wrote a message goes with the turn's end; a message from here does not count", async () => {
+  const { s, wrapper } = await session();
+  wrapper.autoReply(() => ({}));
+  const ends: TurnEnd[] = [];
+  s.on("turn_end", (e: TurnEnd) => ends.push(e));
   wrapper.out({ type: "result", subtype: "success", is_error: false, session_id: SID });
-  for (let i = 0; i < 50 && s.localTurn; i++) await new Promise((r) => setTimeout(r, 10));
-  assert.equal(s.localTurn, false);
+  const at = "2026-10-16T01:02:03.000Z";
+  wrapper.send({ m: { type: "user", uuid: "vs-1", timestamp: at, message: { role: "user", content: [{ type: "text", text: "from VS Code" }] } }, t: "in" });
+  wrapper.send({ m: { type: "user", uuid: "ph-1", remote: true, timestamp: new Date().toISOString(), message: { role: "user", content: [{ type: "text", text: "from the phone" }] } }, t: "in" });
+  wrapper.out({ type: "result", subtype: "success", is_error: false, session_id: SID });
+  for (let i = 0; i < 50 && ends.length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(ends[0].hostInputAt, undefined);
+  assert.equal(ends[1].hostInputAt, Date.parse(at));
+});
+
+test("Claude Code ending on its own during a turn is a crash; VS Code closing it, or a wrapper that does not say, is not", async () => {
+  const cases: [unknown[], string][] = [
+    [[1, null, false, true], "crashed"],
+    [[null, "SIGKILL", false, true], "crashed"],
+    [[1, null, true, true], "vscode_closed"],
+    [[null, "SIGTERM", true, true], "vscode_closed"],
+    [[1, null, false, false], "vscode_closed"],
+    [[0, null, false, true], "vscode_closed"],
+    [[1, null], "vscode_closed"],
+  ];
+  for (const [[code, signal, hostLeft, running], reason] of cases) {
+    const { s, wrapper } = await session();
+    const ends: TurnEnd[] = [];
+    s.on("turn_end", (e: TurnEnd) => ends.push(e));
+    wrapper.out({ type: "system", subtype: "init", session_id: SID });
+    for (let i = 0; i < 50 && !s.busy; i++) await new Promise((r) => setTimeout(r, 10));
+    s.exited(code, signal, hostLeft, running);
+    const label = JSON.stringify([code, signal, hostLeft, running]);
+    assert.equal(s.closedReason, reason, label);
+    assert.deepEqual(
+      ends.map((e) => [e.outcome, e.attached]),
+      reason === "crashed" ? [["crashed", true]] : [],
+      label,
+    );
+  }
+});
+
+test("a call the auto-mode classifier handed to a person is answered here by allow or deny; other asks VS Code must answer stay there", async () => {
+  const { s, wrapper } = await session();
+  const added: PendingRequest[] = [];
+  s.on("pending_add", (r: PendingRequest) => added.push(r));
+  const suggestions = [{ type: "addRules", rules: [{ toolName: "mcp__chrome__navigate" }], behavior: "allow", destination: "localSettings" }];
+  wrapper.out(
+    ask("c1", { requires_user_interaction: true, decision_reason_type: "classifier", suppress_always_allow_rule: true, default_to_no: true, permission_suggestions: suggestions }),
+  );
+  wrapper.out(ask("c2", { requires_user_interaction: true, decision_reason_type: "classifier", permission_suggestions: suggestions }));
+  wrapper.out(ask("c3", { requires_user_interaction: true, decision_reason_type: "safetyCheck" }));
+  wrapper.out(ask("c4", { requires_user_interaction: true }));
+  wrapper.out(ask("c5", { decision_reason_type: "classifier" }));
+  for (let i = 0; i < 50 && added.length < 5; i++) await new Promise((r) => setTimeout(r, 10));
+  const shown = Object.fromEntries(added.map((r) => [r.id, [r.localOnly ?? false, r.personOnly ?? false, r.defaultToNo ?? false, r.allowAlways]]));
+  assert.deepEqual(shown, {
+    c1: [false, true, true, false],
+    c2: [false, true, false, false],
+    c3: [true, false, false, false],
+    c4: [true, false, false, false],
+    c5: [false, false, false, false],
+  });
+  await assert.rejects(s.answer("c3", { kind: "permission", decision: "allow" }), /only be answered where the session is open/);
+  await s.answer("c2", { kind: "permission", decision: "allow_always" });
+  const f = await wrapper.wait((x) => x.t === "to_cli" && ((x.m as Msg).response as Msg | undefined)?.request_id === "c2", "answer to c2");
+  assert.deepEqual(((f.m as Msg).response as Msg).response, { behavior: "allow", updatedInput: { file_path: "a.txt", content: "hi" }, toolUseID: "toolu_c2" }, "never a lasting rule");
+  await s.answer("c1", { kind: "permission", decision: "deny", message: "no" });
 });
 
 test("MCP servers are listed without VS Code's own and changed only by a name Claude Code reported", async () => {

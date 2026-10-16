@@ -202,6 +202,7 @@ test("a resume from the phone is audited and the viewed session is shown again",
   let controlled = false;
   const manager = Object.assign(new EventEmitter(), {
     setViewed() {},
+    markSeen() {},
     isControlled: () => controlled,
     snapshot: async (sessionId: string) => ({ items: [], pending: [], hasMore: false, state: { sessionId, cwd: "/", state: controlled ? "owned" : "inactive", busy: false } }),
     watch: () => () => {},

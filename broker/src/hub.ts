@@ -2,6 +2,7 @@ import type { WebSocket } from "ws";
 import type { Audit } from "./audit.ts";
 import type { Leases } from "./lease.ts";
 import { CALL_OPS, FOLDER_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg } from "./protocol.ts";
+import { RemoteActivity } from "./remote-activity.ts";
 import type { SessionManager } from "./sessions/manager.ts";
 import type { Uploads } from "./uploads.ts";
 
@@ -49,7 +50,7 @@ export class Hub {
   private audit: Audit;
   private uploads: Uploads;
   private visible = true;
-  private remoteSends = new Map<string, number>();
+  private activity: RemoteActivity;
   private active?: WebSocket;
   private device = "";
   private standby = new Map<WebSocket, string>();
@@ -66,11 +67,12 @@ export class Hub {
   private deniedLogged = new Map<string, number>();
   private drafts = new Map<string, { at: number; started: Promise<string> }>();
 
-  constructor(manager: SessionManager, leases: Leases, audit: Audit, uploads: Uploads) {
+  constructor(manager: SessionManager, leases: Leases, audit: Audit, uploads: Uploads, activity = new RemoteActivity()) {
     this.manager = manager;
     this.leases = leases;
     this.audit = audit;
     this.uploads = uploads;
+    this.activity = activity;
     manager.on("event", (sessionId: string, msg: ServerMsg) => {
       if (this.active && sessionId === this.viewing) send(this.active, msg);
     });
@@ -113,9 +115,14 @@ export class Hub {
     return Boolean(this.active) && this.visible && this.viewing === sessionId;
   }
 
-  // When the remote user last sent a message to the session.
-  remoteSent(sessionId: string): number | undefined {
-    return this.remoteSends.get(sessionId);
+  // When the remote user last sent a message to the session, started it or answered one of its requests.
+  remoteActivity(sessionId: string): number | undefined {
+    return this.activity.get(sessionId);
+  }
+
+  // Every way the remote user starts or continues a session's work calls this, so the end of that work is theirs to hear of.
+  noteRemoteActivity(sessionId: string): void {
+    this.activity.note(sessionId);
   }
 
   close(): void {
@@ -207,7 +214,7 @@ export class Hub {
       ...(msg.ultracode ? { ultracode: true } : {}),
       ...(ids.length ? { attachments: ids.length } : {}),
     });
-    this.remoteSends.set(s.id, Date.now());
+    this.noteRemoteActivity(s.id);
     s.send(text, blocks);
     return s.id;
   }
@@ -225,6 +232,7 @@ export class Hub {
         return;
       case "visibility":
         this.visible = msg.visible === true;
+        if (this.visible && this.viewing) this.manager.markSeen(this.viewing);
         return;
       case "call":
         await this.call(msg, ws);
@@ -237,7 +245,7 @@ export class Hub {
         const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
         const wasControlled = m.isControlled(id);
         this.audit.log("send", { device, sessionId: id, chars: text.length, ...(ids.length ? { attachments: ids.length } : {}) });
-        this.remoteSends.set(id, Date.now());
+        this.noteRemoteActivity(id);
         await m.send(id, text, blocks);
         if (!wasControlled && this.viewing === id) await this.setView(id);
         this.changed();
@@ -279,6 +287,7 @@ export class Hub {
             ? { action: ELICIT_ACTIONS.has(answer.action) ? answer.action : "invalid", server: m.pendingRequest(id, requestId)?.elicitation?.server }
             : { decision: answer && "decision" in answer ? answer.decision : undefined };
         this.audit.log("answer", { device, sessionId: id, kind: answer?.kind, ...detail });
+        this.noteRemoteActivity(id);
         await m.answer(id, requestId, answer);
         return;
       }
@@ -394,6 +403,7 @@ export class Hub {
     this.viewing = sessionId;
     this.manager.setViewed(sessionId);
     if (!sessionId) return;
+    if (this.active && this.visible) this.manager.markSeen(sessionId);
     const controlled = this.manager.isControlled(sessionId);
     const snap = await this.manager.snapshot(sessionId, this.focus);
     if (seq !== this.viewSeq || !this.active) return;

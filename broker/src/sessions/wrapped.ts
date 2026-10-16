@@ -89,6 +89,8 @@ export class WrappedSession extends SessionCore {
   onIn(m: Obj): void {
     if (this.hold("in", m)) return;
     if (m.type === "user" && typeof m.uuid === "string") {
+      const now = Date.now();
+      if (m.remote !== true) this.hostInputAt = Math.min(Date.parse(str(m.timestamp) ?? "") || now, now);
       this.enqueue(m.uuid, obj(m.message).content, m.remote === true ? "remote" : "host", str(m.timestamp));
       return;
     }
@@ -125,6 +127,14 @@ export class WrappedSession extends SessionCore {
     if (typeof requestId !== "string") return;
     if (reason === "not held" && this.elicitTimers.has(requestId)) this.drop(requestId);
     else if (reason === "invalid answer") this.settleElicitation(requestId, { action: "cancel" });
+  }
+
+  // Claude Code crashed when it ended on its own during a turn, other than cleanly; VS Code closing it, or a wrapper too
+  // old to say either, ends the session as closed in VS Code.
+  exited(code: unknown, signal: unknown, hostLeft?: unknown, running?: unknown): void {
+    const crashed = hostLeft === false && running === true && (code !== 0 || (signal !== null && signal !== undefined));
+    if (crashed && !this.closed) this.crashed();
+    this.end(crashed ? "crashed" : "vscode_closed");
   }
 
   // Input requests taken but not answered go back to VS Code while Claude Code still runs.
@@ -326,6 +336,9 @@ export class WrappedSession extends SessionCore {
     }
     if (r.subtype !== "can_use_tool") return;
     if (typeof r.tool_use_id === "string") this.toolUse.set(id, r.tool_use_id);
+    // A call the auto-mode classifier blocked and handed to a person may be answered here too, by allow or deny and never
+    // by a lasting rule; any other ask Claude Code wants answered in the session stays with VS Code.
+    const classifier = r.requires_user_interaction === true && r.decision_reason_type === "classifier";
     this.ask({
       requestId: id,
       toolName: String(r.tool_name ?? ""),
@@ -336,7 +349,9 @@ export class WrappedSession extends SessionCore {
       decisionReason: str(r.decision_reason),
       blockedPath: str(r.blocked_path),
       suppressAlwaysAllowRule: r.suppress_always_allow_rule === true,
-      localOnly: r.requires_user_interaction === true,
+      localOnly: r.requires_user_interaction === true && !classifier,
+      personOnly: classifier,
+      defaultToNo: r.default_to_no === true,
       agentId: r.agent_id,
     });
   }

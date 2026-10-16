@@ -8,6 +8,7 @@ import { after, test } from "node:test";
 import type { Hub } from "../src/hub.ts";
 import type { ServerMsg } from "../src/protocol.ts";
 import { Push, PushError } from "../src/push/index.ts";
+import { REUSE_MS, VapidTokens, generateVapidKeys } from "../src/push/vapid.ts";
 import type { SessionManager } from "../src/sessions/manager.ts";
 import { tempDir } from "./helpers.ts";
 import { decrypt, newBrowser, readVapid } from "./push-browser.ts";
@@ -94,8 +95,9 @@ test("a request on a session nobody watches goes out with high urgency", async (
   push.subscribe({ endpoint, keys: browser.keys }, { details: true }, { device: "phone", origin: "http://localhost:5173" });
   const manager = Object.assign(new EventEmitter(), {
     list: async () => [{ id: A, title: "Ship the release", cwd: "/home/u/app", lastModified: 0, state: "owned" }],
+    waitingSessions: () => [A],
   });
-  push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteSent: () => undefined } as unknown as Hub);
+  push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteActivity: () => undefined } as unknown as Hub);
   manager.emit("event", A, {
     t: "pending_add",
     sessionId: A,
@@ -108,7 +110,9 @@ test("a request on a session nobody watches goes out with high urgency", async (
   assert.equal(r.headers.urgency, "high");
   assert.equal("sub" in readVapid(String(r.headers.authorization)).claims, false, "an http page origin is not a contact");
   const payload = JSON.parse(decrypt(r.body, browser.privateKey, browser.auth).toString());
-  assert.deepEqual(payload, { title: "Ship the release", body: "권한 요청 · Bash", tag: `${A}:permission`, data: { url: `/#/s/${A}` } });
+  assert.deepEqual(payload, { title: "Ship the release", body: "권한 요청 · Bash", tag: `${A}:permission`, data: { url: `/#/s/${A}` }, badge: 1 });
+  assert.deepEqual(push.badge(endpoint), { subscribed: true, badge: 1, unseen: [] });
+  assert.deepEqual(push.badge(`${service.origin}/push/unknown`), { subscribed: false, badge: 0, unseen: [] });
 });
 
 test("a subscription the push service no longer knows is removed", async () => {
@@ -129,8 +133,8 @@ test("a busy push service gets one more try a little later, and only one", async
   const { push, logs } = setup(tempDir(), 120);
   const endpoint = `${service.origin}/push/busy`;
   push.subscribe({ endpoint, keys: newBrowser().keys }, undefined, { device: "phone" });
-  const manager = Object.assign(new EventEmitter(), { list: async () => [] });
-  push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteSent: () => undefined } as unknown as Hub);
+  const manager = Object.assign(new EventEmitter(), { list: async () => [], waitingSessions: () => [A] });
+  push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteActivity: () => undefined } as unknown as Hub);
   const ask = (id: string) =>
     manager.emit("event", A, { t: "pending_add", sessionId: A, request: { id, kind: "question", toolName: "AskUserQuestion", input: {}, allowAlways: false } } satisfies ServerMsg);
 
@@ -183,4 +187,56 @@ test("the key pair is made when first needed and kept with the subscriptions in 
   const saved = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.equal(saved.vapid.publicKey, first);
   assert.deepEqual(saved.subscriptions, []);
+});
+
+test("a signed token serves one push service, contact and key for six hours, then a new one is signed", () => {
+  const tokens = new VapidTokens();
+  const keys = generateVapidKeys();
+  const apple = "https://web.push.apple.com/device-1";
+  const t0 = Date.UTC(2026, 9, 16, 0, 0, 0);
+  const first = tokens.header(apple, keys, APP, t0);
+  assert.equal(first.reused, false);
+  const again = tokens.header("https://web.push.apple.com/device-2", keys, APP, t0 + REUSE_MS - 1);
+  assert.deepEqual(again, { value: first.value, reused: true }, "every subscription at the same origin shares it");
+  const claims = readVapid(again.value).claims;
+  assert.ok((claims.exp as number) * 1000 - (t0 + REUSE_MS) >= 5 * 3600_000, "a reused token still has hours left");
+  assert.ok((claims.exp as number) <= t0 / 1000 + 24 * 3600);
+  assert.equal(tokens.header(apple, keys, APP, t0 + REUSE_MS).reused, false, "six hours on");
+  const later = tokens.header(apple, keys, APP, t0 + REUSE_MS);
+  assert.equal(tokens.header(apple, keys, APP, t0 + REUSE_MS - 3600_000).reused, false, "a clock that went back");
+  assert.notEqual(tokens.header("https://fcm.googleapis.com/fcm/send/x", keys, APP, t0 + REUSE_MS).value, later.value, "another push service");
+  assert.equal(tokens.header(apple, keys, "https://other.example.ts.net", t0 + REUSE_MS).reused, false, "another contact");
+  assert.equal(tokens.header(apple, generateVapidKeys(), APP, t0 + REUSE_MS).reused, false, "another key");
+  tokens.header(apple, keys, APP, t0 + REUSE_MS);
+  tokens.forget("https://web.push.apple.com/anything");
+  assert.equal(tokens.header(apple, keys, APP, t0 + REUSE_MS + 1).reused, false, "a refused token is not used again");
+});
+
+test("notifications to one push service share the token; one refused when reused goes again at once with a new token", async () => {
+  const service = await pushService([201, 403]);
+  const { push, logs } = setup();
+  const endpoint = `${service.origin}/push/device-3`;
+  push.subscribe({ endpoint, keys: newBrowser().keys }, undefined, { device: "phone", origin: APP });
+  await push.test(endpoint);
+  await push.test(endpoint);
+  await push.test(endpoint);
+  const auth = service.received.map((r) => String(r.headers.authorization));
+  assert.equal(auth.length, 4);
+  assert.equal(auth[1], auth[0], "the second send reuses the token");
+  assert.notEqual(auth[2], auth[1], "the refused token is replaced at once");
+  assert.equal(auth[3], auth[2], "and the new one is used from then on");
+  assert.ok(auth.every((a) => readVapid(a).valid));
+  assert.equal(push.status(endpoint).lastError, undefined);
+  assert.deepEqual(logs, [`push: ${new URL(service.origin).host} answered 403 to a reused token; signing a new one`]);
+});
+
+test("a new token the push service refuses is not sent again", async () => {
+  const service = await pushService([403]);
+  const { push } = setup();
+  const endpoint = `${service.origin}/push/device-4`;
+  push.subscribe({ endpoint, keys: newBrowser().keys }, undefined, { device: "phone" });
+  await assert.rejects(push.test(endpoint), (e: unknown) => e instanceof PushError && e.status === 403);
+  assert.equal(service.received.length, 1);
+  await push.test(endpoint);
+  assert.notEqual(String(service.received[1].headers.authorization), String(service.received[0].headers.authorization), "the refused token is not kept");
 });

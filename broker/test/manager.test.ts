@@ -181,3 +181,42 @@ test("a phone message left queued when VS Code closes stays in the stopped sessi
     [["user", "hello"], ["note", "left behind"]],
   );
 });
+
+test("a VS Code session whose Claude Code crashes mid-turn ends as crashed with that turn's end, and the reason is kept a day", async (t) => {
+  const { manager, connect } = await setup();
+  const ends: [string, string, boolean][] = [];
+  manager.on("turn_end", (id: string, e: { outcome: string; attached: boolean }) => ends.push([id, e.outcome, e.attached]));
+  const reasons: (string | undefined)[] = [];
+  manager.on("event", (id: string, m: Msg) => id === X && m.t === "state" && reasons.push((m.state as Msg).closedReason as string | undefined));
+  const seen: string[] = [];
+  manager.on("seen", (id: string) => seen.push(id));
+  const w = await connect({ sessionId: X });
+  await until(() => manager.isControlled(X), "attached");
+  w.send({ m: { type: "system", subtype: "init", session_id: X }, t: "out" });
+  w.send({ m: { type: "control_request", request_id: "p1", request: { subtype: "can_use_tool", tool_name: "Write", input: {}, tool_use_id: "t1" } }, t: "out" });
+  await until(() => manager.waitingSessions().includes(X), "a request waits");
+  manager.markSeen(X);
+  assert.deepEqual(seen, [X]);
+  w.send({ t: "exit", code: null, signal: "SIGKILL", hostLeft: false, running: true });
+  await until(() => !manager.isControlled(X), "ended");
+  assert.deepEqual(ends, [[X, "crashed", true]]);
+  assert.equal(reasons.at(-1), "crashed");
+  assert.deepEqual(manager.waitingSessions(), []);
+  const ended = (manager as unknown as { ended: Map<string, unknown> }).ended;
+  const sweep = () => (manager as unknown as { sweep(): Promise<void> }).sweep();
+  const base = Date.now();
+  t.mock.timers.enable({ apis: ["Date"], now: base + 11 * 60_000 });
+  await sweep();
+  assert.ok(ended.has(X), "kept past the usual ten minutes");
+  t.mock.timers.setTime(base + 24 * 3600_000 + 60_000);
+  await sweep();
+  assert.ok(!ended.has(X), "gone after a day");
+  t.mock.timers.reset();
+
+  const old = await connect({ sessionId: Y });
+  await until(() => manager.isControlled(Y), "attached");
+  old.send({ m: { type: "system", subtype: "init", session_id: Y }, t: "out" });
+  old.send({ t: "exit", code: 1, signal: null });
+  await until(() => !manager.isControlled(Y), "ended");
+  assert.deepEqual(ends, [[X, "crashed", true]], "a wrapper that does not say how Claude Code ended reports no crash");
+});

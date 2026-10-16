@@ -3,8 +3,8 @@ import type { SessionManager } from "../sessions/manager.ts";
 import { encrypt } from "./encrypt.ts";
 import { Notifier, TIMING, type PushTiming, type Urgency } from "./rules.ts";
 import { PushError, PushStore, isPushService, parseEndpoint, parsePrefs, parseSubscription, type Subscription } from "./subscriptions.ts";
-import { DEFAULT_PREFS, type PushPayload, type PushStatus } from "./types.ts";
-import { vapidAuthorization } from "./vapid.ts";
+import { DEFAULT_PREFS, type PushBadge, type PushPayload, type PushStatus } from "./types.ts";
+import { VapidTokens } from "./vapid.ts";
 
 export { PushError, type Subscription };
 
@@ -42,6 +42,7 @@ export class Push {
   private notifier?: Notifier;
   private health = new Map<string, Health>();
   private retries = new Set<NodeJS.Timeout>();
+  private tokens = new VapidTokens();
 
   constructor(dir: string, opts: PushOptions = {}) {
     this.dir = dir;
@@ -97,6 +98,12 @@ export class Push {
     return { subscribed: true, device: sub.device, createdAt: sub.createdAt, prefs: sub.prefs, ...this.health.get(sub.endpoint) };
   }
 
+  badge(endpoint: unknown): PushBadge {
+    const sub = this.store.get(parseEndpoint(endpoint));
+    if (!sub) return { subscribed: false, badge: 0, unseen: [] };
+    return { subscribed: true, ...(this.notifier?.badgeFor(sub.endpoint) ?? { badge: 0, unseen: [] }) };
+  }
+
   async test(endpoint: unknown): Promise<void> {
     const sub = this.store.get(parseEndpoint(endpoint));
     if (!sub) throw new PushError("not_subscribed");
@@ -124,13 +131,17 @@ export class Push {
     this.deliver(sub, payload, urgency, retry).catch((e) => this.log(`push: sending failed: ${e instanceof Error ? e.message : String(e)}`));
   }
 
-  // Answers the push service's status, 0 when it could not be reached. A 404 or 410 means the
-  // subscription is gone; a 429 or 5xx is tried once more a little later. A failure is logged with the
-  // service's host and answer, never the notification.
+  // Answers the push service's status, 0 when it could not be reached. A 404 or 410 means the subscription is gone;
+  // a 429 or 5xx is tried once more a little later; a 401 or 403 to a reused token is sent again at once with a new
+  // one. A failure is logged with the service's host and answer, never the notification.
   private async deliver(sub: Subscription, payload: PushPayload, urgency: Urgency, retry: boolean): Promise<number> {
-    let answer: { status: number; reason: string; retryAfterSec?: number };
+    let answer: { status: number; reason: string; retryAfterSec?: number; reused?: boolean };
     try {
       answer = await this.post(sub, payload, urgency);
+      if (answer.reused && (answer.status === 401 || answer.status === 403)) {
+        this.log(`push: ${new URL(sub.endpoint).host} answered ${answer.status} to a reused token; signing a new one`);
+        answer = await this.post(sub, payload, urgency);
+      }
     } catch (e) {
       answer = { status: 0, reason: e instanceof Error ? e.message : String(e) };
     }
@@ -157,9 +168,10 @@ export class Push {
     return status;
   }
 
-  private async post(sub: Subscription, payload: PushPayload, urgency: Urgency): Promise<{ status: number; reason: string; retryAfterSec?: number }> {
+  private async post(sub: Subscription, payload: PushPayload, urgency: Urgency): Promise<{ status: number; reason: string; retryAfterSec?: number; reused: boolean }> {
     const url = new URL(sub.endpoint);
     if (!this.allow(url)) throw Error("not a push service");
+    const token = this.tokens.header(sub.endpoint, this.store.vapid, sub.origin);
     const res = await fetch(url, {
       method: "POST",
       headers: {
@@ -167,17 +179,19 @@ export class Push {
         Urgency: urgency,
         "Content-Type": "application/octet-stream",
         "Content-Encoding": "aes128gcm",
-        Authorization: vapidAuthorization(sub.endpoint, this.store.vapid, sub.origin),
+        Authorization: token.value,
       },
       body: encrypt(Buffer.from(JSON.stringify(payload)), sub.keys),
       redirect: "error",
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
+    if (res.status === 401 || res.status === 403) this.tokens.forget(sub.endpoint);
     const text = await res.text().catch(() => "");
     return {
       status: res.status,
       reason: res.ok ? "" : text.replace(/\s+/g, " ").trim().slice(0, 120),
       retryAfterSec: Number(res.headers.get("retry-after")) || undefined,
+      reused: token.reused,
     };
   }
 }

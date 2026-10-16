@@ -1,4 +1,4 @@
-import type { PushPrefs, PushStatus } from "../../broker/src/push/types.ts";
+import type { PushBadge, PushPrefs, PushStatus } from "../../broker/src/push/types.ts";
 import { ApiError, request } from "./api.ts";
 
 const SW = "/sw.js";
@@ -81,7 +81,25 @@ export async function turnOff(device: PushDevice): Promise<PushDevice> {
     await request("POST", "/api/push/unsubscribe", { endpoint: device.sub.endpoint });
     await device.sub.unsubscribe().catch(() => false);
   }
+  await clearBadge();
   return { ...device, sub: null, status: { subscribed: false } };
+}
+
+// The app icon shows only while notifications reach this browser; without the Badging API or the permission nothing changes.
+function badgeable(): boolean {
+  return window.isSecureContext && "setAppBadge" in navigator && "serviceWorker" in navigator && "Notification" in window && Notification.permission === "granted";
+}
+
+async function clearBadge(): Promise<void> {
+  if (badgeable()) await navigator.clearAppBadge().catch(() => {});
+}
+
+// Sets the app icon to what the broker counts for this browser's subscription, the same number its notifications carry.
+export async function syncBadge(): Promise<void> {
+  if (!badgeable()) return;
+  const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
+  const n = sub ? (await request<PushBadge>("GET", `/api/push/badge?endpoint=${encodeURIComponent(sub.endpoint)}`)).badge : 0;
+  await (n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge());
 }
 
 export async function savePrefs(device: PushDevice, prefs: Partial<PushPrefs>): Promise<PushPrefs> {

@@ -37,7 +37,7 @@ async function setup() {
 
 test("push routes need a login", async () => {
   const { app } = await setup();
-  for (const [method, url] of [["GET", "/api/push/key"], ["GET", "/api/push/status?endpoint=x"], ["POST", "/api/push/subscribe"], ["POST", "/api/push/test"]] as const) {
+  for (const [method, url] of [["GET", "/api/push/key"], ["GET", "/api/push/status?endpoint=x"], ["GET", "/api/push/badge?endpoint=x"], ["POST", "/api/push/subscribe"], ["POST", "/api/push/test"]] as const) {
     assert.equal((await app.inject({ method, url, payload: method === "POST" ? {} : undefined })).statusCode, 401, url);
   }
 });
@@ -72,7 +72,7 @@ test("a subscription is checked before it is kept", async () => {
     assert.equal(res.statusCode, 400, JSON.stringify(subscription).slice(0, 80));
     assert.equal(res.json().error, error, JSON.stringify(subscription).slice(0, 80));
   }
-  for (const prefs of [{ vscodeDelaySec: 45 }, { vscodeDelaySec: "30" }, { turnDone: "yes" }, [true]]) {
+  for (const prefs of [{ vscodeDelaySec: 45 }, { vscodeDelaySec: "30" }, { turnEnd: "sometimes" }, { turnEnd: true }, { turnDone: "yes" }, [true]]) {
     const res = await post("/api/push/subscribe", { subscription: { endpoint: APPLE, keys }, prefs });
     assert.equal(res.json().error, "invalid_prefs", JSON.stringify(prefs));
   }
@@ -105,8 +105,8 @@ test("settings, status and unsubscribing work on this device's endpoint", async 
   const { app, post, audited } = await setup();
   const endpoint = APPLE;
   await post("/api/push/subscribe", { subscription: { endpoint, keys: newBrowser().keys } });
-  const prefs = await post("/api/push/prefs", { endpoint, prefs: { vscodeDelaySec: 120, turnDone: false, extra: 1 } });
-  assert.deepEqual(prefs.json(), { prefs: { vscodeDelaySec: 120, turnDone: false, details: false } });
+  const prefs = await post("/api/push/prefs", { endpoint, prefs: { vscodeDelaySec: 120, turnEnd: "all", extra: 1 } });
+  assert.deepEqual(prefs.json(), { prefs: { vscodeDelaySec: 120, turnEnd: "all", details: false } });
   assert.equal(audited.at(-1)?.event, "push_subscribe");
   const status = await app.inject({ method: "GET", url: `/api/push/status?endpoint=${encodeURIComponent(endpoint)}`, headers: AUTHED });
   assert.deepEqual(status.json().prefs, prefs.json().prefs);
@@ -121,4 +121,47 @@ test("settings, status and unsubscribing work on this device's endpoint", async 
   assert.equal((await post("/api/push/unsubscribe", { endpoint })).statusCode, 200);
   assert.equal((await post("/api/push/unsubscribe", { endpoint: ["x"] })).json().error, "invalid_endpoint");
   assert.equal(audited.length, 3, "nothing is logged for what did not change");
+});
+
+test("a screen from before the turn-end choice still switches it with turnDone", async () => {
+  const { post } = await setup();
+  await post("/api/push/subscribe", { subscription: { endpoint: APPLE, keys: newBrowser().keys } });
+  assert.deepEqual((await post("/api/push/prefs", { endpoint: APPLE, prefs: { turnDone: false } })).json().prefs, { ...DEFAULT_PREFS, turnEnd: "off" });
+  assert.deepEqual((await post("/api/push/prefs", { endpoint: APPLE, prefs: { turnDone: true } })).json().prefs, { ...DEFAULT_PREFS, turnEnd: "remote" });
+  assert.deepEqual((await post("/api/push/prefs", { endpoint: APPLE, prefs: { turnEnd: "all", turnDone: false } })).json().prefs.turnEnd, "all", "the new field wins");
+});
+
+test("settings saved before the turn-end choice load as its values and are saved in the new shape", async () => {
+  const dir = tempDir();
+  const keys = newBrowser().keys;
+  const sub = (n: number, prefs: Record<string, unknown>) => ({ endpoint: `${APPLE}${n}`, keys, device: "phone", createdAt: n, prefs });
+  fs.writeFileSync(
+    path.join(dir, "push.json"),
+    JSON.stringify({ subscriptions: [sub(1, { vscodeDelaySec: 0, turnDone: true, details: true }), sub(2, { vscodeDelaySec: 120, turnDone: false, details: false }), sub(3, {})] }),
+  );
+  const push = new Push(dir, { log: () => {} });
+  assert.deepEqual(push.status(`${APPLE}1`).prefs, { vscodeDelaySec: 0, turnEnd: "remote", details: true });
+  assert.deepEqual(push.status(`${APPLE}2`).prefs, { vscodeDelaySec: 120, turnEnd: "off", details: false });
+  assert.deepEqual(push.status(`${APPLE}3`).prefs, DEFAULT_PREFS);
+  push.setPrefs(`${APPLE}3`, { details: true });
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, "push.json"), "utf8")).subscriptions;
+  assert.deepEqual(
+    saved.map((s: { prefs: unknown }) => s.prefs),
+    [
+      { vscodeDelaySec: 0, turnEnd: "remote", details: true },
+      { vscodeDelaySec: 120, turnEnd: "off", details: false },
+      { ...DEFAULT_PREFS, details: true },
+    ],
+  );
+});
+
+test("the badge is asked for by endpoint; an unknown one counts nothing", async () => {
+  const { app, post } = await setup();
+  const get = (endpoint: string) => app.inject({ method: "GET", url: `/api/push/badge?endpoint=${encodeURIComponent(endpoint)}`, headers: AUTHED });
+  assert.deepEqual((await get(APPLE)).json(), { subscribed: false, badge: 0, unseen: [] });
+  await post("/api/push/subscribe", { subscription: { endpoint: APPLE, keys: newBrowser().keys } });
+  assert.deepEqual((await get(APPLE)).json(), { subscribed: true, badge: 0, unseen: [] });
+  const bad = await app.inject({ method: "GET", url: "/api/push/badge", headers: AUTHED });
+  assert.equal(bad.statusCode, 400);
+  assert.equal(bad.json().error, "invalid_endpoint");
 });
