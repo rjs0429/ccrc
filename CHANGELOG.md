@@ -11,9 +11,14 @@ The first public release: an installer, updates, and the changes needed to run o
 ### Breaking
 
 - The VS Code wrapper now needs Node.js 22.18 or newer, as `ccrc` does (its built relay used to run on Node.js 20).
-  Without one it runs Claude Code directly, so VS Code keeps working but the phone cannot drive its sessions.
+  Without one it runs Claude Code directly and notes it in `wrapper.log`, so VS Code keeps working but the phone cannot
+  see or drive its sessions.
 - `bin/ccrc` and `bin/ccrc-wrapper` no longer look in `~/.local/opt/node22`. They look in `CCRC_NODE`,
-  `<dataDir>/node/bin/node`, the Node.js the install recorded, then `PATH`.
+  `<dataDir>/node/bin/node`, the Node.js the install recorded, then `PATH`. A development checkout needs one of these
+  before it is updated: see "Upgrading from 0.6".
+- `allowedDevices` matches only the first label of a machine's MagicDNS name in your tailnet, no longer the host name
+  the machine reports itself, and never machines shared in from another tailnet. An entry that named a host name
+  different from the MagicDNS name no longer lets that machine in.
 
 ### Added
 
@@ -27,16 +32,24 @@ The first public release: an installer, updates, and the changes needed to run o
   checks each part (Claude Code, Tailscale install, login and operator, MagicDNS and HTTPS, the allowed phone, the ccrc
   login, settings, the service, `tailscale serve`, the VS Code wrapper setting, the phone, the compatibility check) and
   does only what is missing; running it again finishes or repairs. It asks how broker sessions sign in, and changes
-  VS Code's `settings.json` in place, keeping comments and layout, after a backup.
+  VS Code's `settings.json` in place, keeping comments and layout, after a backup. It keeps settings already in
+  config.json (an empty `roots` list too), signs in to Tailscale with a bare `tailscale up` so the machine's other
+  Tailscale settings stay, and asks before turning on linger. With `--yes`, steps that use sudo run without asking.
 - `ccrc uninstall [--purge] [--yes] [--dry-run]`: removes VS Code's wrapper setting first, then the service,
-  `tailscale serve` and the installed versions; `--purge` also removes settings and state.
+  `tailscale serve` and the installed versions; `--purge` also removes settings and state, and keeps the copy of VS
+  Code's settings next to `settings.json`. `<dataDir>/node` stays while a development checkout the service or VS Code
+  runs still needs it.
 - `ccrc update [--check] [--to <version>] [--channel stable|rc] [--yes] [--from <repo>[@<ref>]]`: builds a release
   beside the running one, shows its changes, backs up and migrates config and state, switches the `current` link,
   restarts the service and checks `/api/ping`, going back on its own when the new version does not answer (exit code 3;
   4 when the old version cannot be confirmed either). A failed update puts config and state back exactly as they were.
   Ctrl-C is held until a switch is confirmed or undone.
 - `ccrc rollback`: returns to the version before the last update and restores the config and state files that update's
-  migration changed. Exits with code 4 when the service cannot be restarted.
+  migration reported changing (`ccrc migrate --json`). Exits with code 4 when the service cannot be restarted.
+- `ccrc update`, `ccrc rollback`, setup's service step and `ccrc uninstall` refuse to run inside `ccrc.service` (a
+  session the broker started, such as one asked from the phone), whose restart would stop them halfway.
+- Update and rollback keep their three newest backups and those of the last three history entries, and remove older
+  ones.
 - `<dataDir>/history.json`, a record of each update and rollback with its backup folder.
 - Optional tag signature checks: when an install has `.ccrc-allowed-signers`, `ccrc update` requires
   `git verify-tag` (SSH signatures) to pass.
@@ -53,6 +66,8 @@ The first public release: an installer, updates, and the changes needed to run o
   them on, and hides the start and fork actions; the status page shows the mode read-only. Storing a key while the
   broker runs tells an open phone right away.
 - `ccrc config path | get [key] | set <key> <value> | set-api-key` to read and change config.json from the terminal.
+- `ccrc update --from` records where the install looked for releases before (`updateSource` in the install info), so
+  trying local work does not move the new-release check off GitHub.
 - `ccrc version` (and `--version`): the installed version, `git describe` for a development checkout, else
   package.json's.
 - `GET /api/ping` answers `{ ok, version }` without a login, to this machine always and to allowed devices.
@@ -69,8 +84,9 @@ The first public release: an installer, updates, and the changes needed to run o
 
 - `ccrc status` also shows the version, the newest release the broker has seen, and the `brokerSessions` mode.
 - `deploy/install-service.sh` runs setup's service step: the unit runs `<dataDir>/current/bin/ccrc serve` for an
-  install, records `CCRC_NODE`, enables linger, and checks `/api/ping`; a replaced unit is copied to
-  `<stateDir>/backup/`.
+  install, records `CCRC_NODE`, and checks `/api/ping`; a replaced unit is copied to `<stateDir>/backup/`, and its
+  `Environment` lines that setup does not write are carried over. Linger is optional and left as it is with `--yes`.
+  It changes only the service, not VS Code's setting.
 - package.json carries the version.
 - New dependency: `jsonc-parser`.
 
@@ -83,7 +99,11 @@ The first public release: an installer, updates, and the changes needed to run o
 ### Security
 
 - `install.sh`, `ccrc setup` and `ccrc uninstall` refuse to run as root.
-- `ccrc uninstall` will not remove a data, config or state folder that is `/`, your home folder or a folder holding it.
+- `ccrc uninstall` never touches `/`, your home folder, `~/.config`, `~/.local`, `~/.local/share`, `~/.local/state`,
+  `~/.cache` (or the `XDG_*` folders) or a folder holding one, and removes a folder whole only when it is named `ccrc`;
+  elsewhere it removes only what ccrc makes.
+- Copies of Claude Code's settings that the phone's settings editor keeps (`settings.json.ccrc-<time>.bak`) are secret
+  files to the file viewer, attachments and `@` suggestions, as `settings.json` is.
 - `install.sh` keeps its log private (state folder 0700, `install.log` 0600) and keeps Node.js downloads from an https
   source on https.
 - The API key never reaches logs, the audit log, the screen or API answers; in `apiKey` mode an inherited
@@ -93,6 +113,22 @@ The first public release: an installer, updates, and the changes needed to run o
 
 ### Upgrading from 0.6
 
+- A development checkout must find Node.js 22.18+ **before you update it** (`git pull` or `git merge`), not only before
+  restarting the service: VS Code runs the checkout's `bin/ccrc-wrapper` directly, so from the moment the new code is
+  in place, new Claude tabs run without ccrc when it finds no Node.js, and the service fails to start at its next
+  restart. VS Code started from a desktop and the service often have no Node.js on `PATH`. Make the link first, then
+  update, then check that `ccrc` finds Node.js without `PATH`:
+
+  ```bash
+  mkdir -p ~/.local/share/ccrc && ln -s /path/to/node-v22 ~/.local/share/ccrc/node
+  ~/.local/share/ccrc/node/bin/node --version      # v22.18 or newer
+  git pull                                         # or git merge
+  env -i HOME=$HOME PATH=/usr/bin:/bin bin/ccrc version
+  ```
+
+  The link serves both `ccrc` and the wrapper. `deploy/install-service.sh` (run from a shell that finds Node.js 22.18+)
+  writes that Node into the service unit as `CCRC_NODE`, which only the service reads; without the link, the wrapper
+  needs `CCRC_NODE` in `claudeCode.environmentVariables` instead.
 - 0.6 has no `ccrc update`. Either update the checkout (`git pull`, `npm ci`, `npm run build`, then
   `systemctl --user restart ccrc.service`), or move to an install with `install.sh`, which keeps your settings, login
   and notification subscriptions and points the service and VS Code at the install.
@@ -100,10 +136,7 @@ The first public release: an installer, updates, and the changes needed to run o
   broker sessions keep working as before. The earlier file is kept in `<stateDir>/backup/migrate-0-1-<time>/`. To turn
   broker sessions off or move them to an API key: `ccrc config set brokerSessions off` (or `apiKey`, after
   `ccrc config set-api-key`).
-- A development checkout must find Node.js 22.18+ through `CCRC_NODE`, a link `<dataDir>/node` to a Node.js folder
-  (e.g. `~/.local/share/ccrc/node`), or `PATH`. Set this up before restarting the service: otherwise `ccrc` stops with
-  "needs Node.js 22.18", and VS Code's wrapper runs Claude Code without ccrc. Running `deploy/install-service.sh` from
-  a shell where Node.js 22.18+ is found writes that Node into the unit as `CCRC_NODE`.
+- Check that each name in `allowedDevices` is the first label of the device's MagicDNS name (`tailscale status`).
 - Reload VS Code windows so open tabs use the new wrapper, and fully close and reopen the phone's home screen app.
 
 ### Tested with

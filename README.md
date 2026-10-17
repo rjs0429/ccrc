@@ -61,9 +61,10 @@ advice. Change it any time with `ccrc config set brokerSessions <value>`; a runn
 - A Tailscale account. The installer sets up Tailscale on the machine; MagicDNS and HTTPS certificates must be on in
   the tailnet (setup shows where).
 - The Tailscale app on the phone, signed in to the same tailnet.
-- Node.js 22.18 or newer, git, curl, tar, xz and sha256sum. The installer offers to install the base tools and
-  downloads Node.js 22 into ccrc's own folder when none is found; nothing needs root except the base tools, Tailscale
-  and, if your system asks for it, `loginctl enable-linger`.
+- Node.js 22.18 or newer with npm, git, curl, tar, xz and sha256sum. The installer offers to install the base tools
+  and downloads Node.js 22 (npm included) into ccrc's own folder when none is found; some distributions package npm
+  apart from Node.js. Nothing needs root except the base tools, Tailscale and, if your system asks for it,
+  `loginctl enable-linger`.
 
 ## Install
 
@@ -86,8 +87,10 @@ bash install.sh --version v0.7.0
 1. Checks the platform (Linux, x86_64 or aarch64, a systemd user session) and refuses to run as root.
 2. Installs missing base tools with apt, dnf, pacman or zypper (asks first, uses sudo).
 3. Finds Node.js 22.18 or newer (`CCRC_NODE`, ccrc's own Node, the one an earlier install recorded, then `PATH`).
-   Without one it downloads the newest Node.js 22 from nodejs.org, checks it against `SHASUMS256.txt`, and unpacks it
-   into `~/.local/share/ccrc/node-v22.x.y-linux-<arch>`, linked as `~/.local/share/ccrc/node`.
+   Without one it downloads the newest Node.js 22 from nodejs.org, checks it against the `SHASUMS256.txt` there, and
+   unpacks it into `~/.local/share/ccrc/node-v22.x.y-linux-<arch>`, linked as `~/.local/share/ccrc/node`. The
+   checksum catches a damaged or cut-off download; that the file is Node.js's own rests on HTTPS to the source (the
+   signature on `SHASUMS256.txt` is not checked).
 4. Clones the release into `~/.local/share/ccrc/versions/<version>`, runs `npm ci` and `npm run build` there,
    records the install in `.ccrc-install.json`, and links `~/.local/share/ccrc/current` and `~/.local/bin/ccrc`.
 5. Runs `ccrc setup`. Under `curl | bash`, questions are read from the terminal (`/dev/tty`).
@@ -98,9 +101,9 @@ versions) and runs setup again.
 
 | `install.sh` option | Meaning |
 |---|---|
-| `--version <tag>` | Install this release instead of the newest one |
+| `--version <tag>` | Install this release instead of the newest one (`0.7.0` and `v0.7.0` both name the tag `v0.7.0`) |
 | `--channel stable\|rc` | With `rc`, release candidates count when looking for the newest release |
-| `--yes` | Take the default answer to every question (steps that need you still wait) |
+| `--yes` | Take the default answer to every question, so steps that use sudo run without asking (sudo itself may still ask for your password); steps that need you still wait |
 | `--dry-run` | Show what would be done and change nothing; with an install in place, setup shows its part too |
 | `--no-system` | Never use sudo or change the system (for testing) |
 | `--uninstall` | Run `ccrc uninstall` of the install in place |
@@ -114,19 +117,21 @@ from, for mirrors).
 ### What `ccrc setup` does
 
 Setup checks each step and does only what is missing, so running it again finishes or repairs an install. Steps
-that need you show what to do and wait until it is done. Steps that need sudo say why and ask first.
+that need you show what to do and wait until it is done. Steps that need sudo, and the change to VS Code's settings,
+say why and ask first; with `--yes` they take the default answer and run without asking (sudo may still ask for your
+password).
 
 | Step id | Checks and does |
 |---|---|
-| `claude` | The Claude Code extension or CLI is installed and signed in (`claude auth status`); otherwise shows how |
+| `claude` | The Claude Code extension or CLI is installed and signed in (`claude auth status`); otherwise offers to install the extension with `code --install-extension`, or shows how, and waits for the sign-in |
 | `tailscale-install` | Tailscale is installed and running; otherwise runs Tailscale's install script (sudo) |
-| `tailscale-login` | This machine is signed in; otherwise runs `sudo tailscale up --operator=$USER --qr` and waits |
+| `tailscale-login` | This machine is signed in; otherwise runs `sudo tailscale up` with no flags, so Tailscale settings already on the machine stay, and waits while you open the sign-in link it shows |
 | `tailscale-operator` | `tailscale serve` works without sudo; otherwise `sudo tailscale set --operator=$USER` |
 | `https` | MagicDNS and HTTPS certificates are on; otherwise shows the Tailscale admin page to turn them on and waits. The machine's name then appears in public certificate logs |
 | `devices` | Lets you pick your phone from the tailnet's devices for `allowedDevices` |
 | `account` | Sets the ccrc login ID and password (`ccrc passwd`) |
-| `config` | Asks which folders new sessions may start in (default: home), sets `claudePath`, and asks how broker sessions sign in (`off`, `apiKey` with the key typed hidden, or `subscription`) |
-| `service` | Writes `~/.config/systemd/user/ccrc.service` (runs `<dataDir>/current/bin/ccrc serve` with the Node found), enables and starts it, turns on linger so it runs while you are logged out, and checks `/api/ping`. A replaced unit is backed up first |
+| `config` | Asks which folders new sessions may start in (default: home; `none` for only folders that already have sessions), sets `claudePath`, and asks how broker sessions sign in (`off`, `apiKey` with the key typed hidden, or `subscription`). Settings already in config.json are kept, an empty `roots` list too |
+| `service` | Writes `~/.config/systemd/user/ccrc.service` (runs `<dataDir>/current/bin/ccrc serve` with the Node found), enables and starts it, and checks `/api/ping`. A replaced unit is backed up first, and its `Environment` lines that setup does not write itself (a proxy, say) are kept. Linger is optional: when it is off, setup asks whether to turn it on so the broker runs while you are logged out (`--yes` leaves it off). Refuses to run inside a broker session (see [Update and roll back](#update-and-roll-back)) |
 | `serve` | `tailscale serve --bg --https=8443 http://127.0.0.1:8737` (kept across restarts) and shows the phone's address |
 | `vscode` | Asks, backs up, then sets `claudeCode.claudeProcessWrapper` in VS Code's `settings.json`, keeping its comments and layout |
 | `phone` | Shows the address (and a terminal QR code when `qrencode` is installed) and what to do on the phone |
@@ -180,8 +185,9 @@ broker is down, and the wrapper reconnects when it comes back.
 ## Update and roll back
 
 The broker looks for new releases a minute after it starts and then daily (`git ls-remote`, no GitHub API), and shows
-a new version in the phone's settings (status page) and in `ccrc status`. When a phone has notifications on, it gets
-one notification per new release. Updates are applied on the machine:
+a new version in the phone's settings (status page) and in `ccrc status`. On an install (not a development checkout),
+a phone with notifications on gets one notification per new release. Updates are applied on the machine, in a
+terminal or VS Code's terminal:
 
 ```bash
 ccrc update --check        # only report
@@ -205,20 +211,24 @@ ccrc rollback              # back to the version before the last update
 8. Tells you what else to do: reload VS Code windows when the wrapper protocol changed, and fully close and reopen
    the phone's home screen app.
 
+`ccrc update`, `ccrc rollback`, setup's `service` step and `ccrc uninstall` refuse to run inside a broker session
+(asking Claude to run them from the phone, for example): those sessions run inside `ccrc.service`, so restarting it
+would stop the command halfway, before it could confirm the new version or go back.
+
 Exit codes: 0 done or nothing to do, 1 stopped before anything was switched, 3 the update failed and the old
 version is back, 4 the old version could not be confirmed after going back (check `systemctl --user status
 ccrc.service`). `ccrc rollback` exits with 4 when the service cannot be restarted.
 
 `ccrc rollback` returns to the version before the last update and puts back the config and state files that update's
-migration changed (the current ones are backed up first), so later password changes and notification subscriptions are
-kept. Ctrl-C is held while a switch is being confirmed, so a cut-off run can still be rolled back.
+migration reported changing (the current ones are backed up first), so later password changes and notification
+subscriptions are kept. Ctrl-C is held while a switch is being confirmed, so a cut-off run can still be rolled back.
 
 Change versions with `ccrc update`, not `install.sh --version`: `install.sh` does not record the switch in
 `history.json`, so `ccrc rollback` cannot undo it.
 
 `ccrc update --from <repository>[@<ref>]` installs a commit of a local repository as a version (named by
-`git describe`) the same way, for trying changes before a release. In a development checkout, `ccrc update` only
-explains this; `--check` works there too.
+`git describe`) the same way, for trying changes before a release. The install keeps looking for releases where it did
+before. In a development checkout, `ccrc update` only explains this; `--check` works there too.
 
 ## Uninstall
 
@@ -228,9 +238,16 @@ ccrc uninstall [--purge] [--yes] [--dry-run]
 
 In this order: removes `claudeCode.claudeProcessWrapper` from VS Code's settings (after a backup; VS Code could not
 start Claude Code if the wrapper went first), stops and removes `ccrc.service`, turns off its `tailscale serve`, and
-removes `~/.local/share/ccrc` with the installed versions and the `~/.local/bin/ccrc` link. `--purge` also removes settings (`~/.config/ccrc`) and state
-(`~/.local/state/ccrc`). Tailscale, Node.js on the system and Claude Code are left alone. It only removes a VS Code
-setting or service that points into the install, and refuses to remove `/`, your home folder or a folder holding it.
+removes `~/.local/share/ccrc` with the installed versions and the `~/.local/bin/ccrc` link. `--purge` also removes
+settings (`~/.config/ccrc`) and state (`~/.local/state/ccrc`, with the backups); the copy of VS Code's settings is then
+kept next to `settings.json` instead. Tailscale, Node.js on the system and Claude Code are left alone.
+
+- It only removes a VS Code setting or service that points into the install. When one is left because it runs a
+  development checkout, `~/.local/share/ccrc/node` stays too, as that checkout finds Node.js there.
+- It never touches `/`, your home folder, `~/.config`, `~/.local`, `~/.local/share`, `~/.local/state`, `~/.cache` (or
+  the `XDG_*` folders set instead), or a folder holding one of them.
+- A folder is removed whole only when it is named `ccrc`. In a folder of another name (`CCRC_DATA_DIR`,
+  `CCRC_CONFIG_DIR` or `CCRC_STATE_DIR` set to it), only the files and folders ccrc makes are removed.
 
 ## Commands
 
@@ -264,10 +281,10 @@ column, and unknown keys are only warned about. A running broker takes in change
 |---|---|---|
 | `schemaVersion` | `1` | Format of the file, written by ccrc. Older files are migrated after a backup to `~/.local/state/ccrc/backup/migrate-<from>-<to>-<time>/`; a file from a newer ccrc is refused with a hint to update or roll back |
 | `brokerSessions` | `"off"` | How sessions ccrc starts itself sign in: `"off"`, `"apiKey"` or `"subscription"` (see [above](#how-sessions-the-phone-starts-sign-in-brokersessions)). A config from 0.6 or earlier becomes `"subscription"` |
-| `allowedDevices` | `[]` | Tailnet machine names (the first label of the name, e.g. `"phone"`) allowed through `tailscale serve` |
+| `allowedDevices` | `[]` | Tailnet machines allowed through `tailscale serve`, by the first label of their MagicDNS name in your tailnet (`"phone"` for `phone.<tailnet>.ts.net`; not the host name a device reports) |
 | `allowLocal` | `true` | Allow requests from this machine itself |
 | `roots` | `[]` | Folders (and below) where new sessions may start, besides folders that already have sessions |
-| `claudePath` | `"vscode"` | Claude Code CLI for broker sessions: a path, or `"vscode"` for the one bundled in the newest VS Code extension, picked again at each session start; without one, `~/.local/bin/claude` |
+| `claudePath` | `"vscode"` | Claude Code CLI for broker sessions: a path, or `"vscode"` for the one bundled in the newest VS Code extension, picked again at each session start; without one, `~/.local/bin/claude`, else the CLI that comes with the Agent SDK |
 | `leaseIdleMinutes` | `720` | The remote login ends after this long without activity |
 | `sessionIdleMinutes` | `15` | Broker session processes nobody is viewing, with no work or open prompt, close after this long |
 | `host` | `"127.0.0.1"` | Address the broker listens on (keep it on loopback; the phone reaches it through `tailscale serve`) |
@@ -286,7 +303,7 @@ Other settings (notifications, Enter to send, Claude Code's own settings) are ch
 | `CCRC_CONFIG_DIR` | Config folder (default `$XDG_CONFIG_HOME/ccrc`, i.e. `~/.config/ccrc`) |
 | `CCRC_STATE_DIR` | State folder (default `$XDG_STATE_HOME/ccrc`, i.e. `~/.local/state/ccrc`) |
 | `CCRC_DATA_DIR` | Install folder (default `$XDG_DATA_HOME/ccrc`, i.e. `~/.local/share/ccrc`) |
-| `CCRC_NODE` | Node.js 22.18+ for `ccrc` and the wrapper; looked for first, before `<dataDir>/node/bin/node`, the Node the install recorded and `PATH`. Setup writes it into the service unit |
+| `CCRC_NODE` | Node.js 22.18+ for `ccrc` and the wrapper; looked for first, before `<dataDir>/node/bin/node`, the Node the install recorded and `PATH`. Setup writes it into the service unit, which only the service reads: the wrapper sees it only in VS Code's own environment (or `claudeCode.environmentVariables`) |
 | `CCRC_VSCODE_EXTENSIONS_DIR` | VS Code extensions folder (default `~/.vscode/extensions`) |
 | `CLAUDE_CONFIG_DIR` | Claude Code's folder (default `~/.claude`); ccrc follows it everywhere |
 | `CCRC_WRAPPER=off` | In `claudeCode.environmentVariables`: VS Code runs Claude Code without ccrc |
@@ -305,7 +322,7 @@ while setup runs, setup writes it into the service unit too.
 |---|---|
 | `~/.local/share/ccrc/versions/<version>/` | Installed versions (git copies with their build and `.ccrc-install.json`) |
 | `~/.local/share/ccrc/current` | Link to the running version; the service and VS Code use paths through it |
-| `~/.local/share/ccrc/node` | Node.js downloaded by `install.sh` (when it had to) |
+| `~/.local/share/ccrc/node` | Node.js downloaded by `install.sh` (when it had to); in a development checkout, a link you make to a Node.js folder so `ccrc` and the wrapper find it |
 | `~/.local/share/ccrc/history.json` | Each update and rollback, with its backup folder |
 | `~/.local/bin/ccrc` | Link to `current/bin/ccrc` |
 | `~/.config/ccrc/config.json` | Settings |
@@ -314,23 +331,29 @@ while setup runs, setup writes it into the service unit too.
 | `~/.config/ccrc/anthropic-api-key` | The API key for `brokerSessions: "apiKey"` (0600) |
 | `~/.config/systemd/user/ccrc.service` | The service |
 | `~/.local/state/ccrc/audit.jsonl` | Audit log |
-| `~/.local/state/ccrc/backup/` | Backups: config migrations, updates, rollbacks, VS Code settings, the service unit, rewritten transcripts |
+| `~/.local/state/ccrc/backup/` | Backups: config migrations, updates, rollbacks, VS Code settings, the service unit, rewritten transcripts. Update and rollback backups copy the whole config folder, with the API key, the password hash and the Web Push keys; the newest three and those of the last three updates are kept |
 | `~/.local/state/ccrc/update-check.json` | The last new-release check |
 | `~/.local/state/ccrc/install.log`, `wrapper.log` | Logs of `install.sh` and the wrapper (no conversation content) |
 | `~/.local/state/ccrc/uploads/` | Phone attachments, kept 24 hours |
 | `~/.local/state/ccrc/*.json`, `turns/`, `cli/`, `doctor/` | Working state: archived sessions, recent remote activity, start settings, model and context window lists, the last compatibility check, cut-off turns |
 | `$XDG_RUNTIME_DIR/ccrc/link.sock` | Wrapper and broker socket |
 
-Folders ccrc creates are private to you (0700) and its files 0600. Editing Claude Code's settings from the phone
-keeps the last ten versions next to the file as `settings.json.ccrc-<time>.bak`.
+The config and state folders (`~/.config/ccrc`, `~/.local/state/ccrc`) are private to you (0700) and the files in them
+0600; the install folder (`~/.local/share/ccrc`) holds code and Node.js and has the usual permissions. After changing
+or revoking the API key, also delete the update and rollback backups that still hold the old one
+(`~/.local/state/ccrc/backup/update-*`, `rollback-*`). Editing Claude Code's settings from the phone keeps the last ten
+versions next to the file as `settings.json.ccrc-<time>.bak`; ccrc's file viewer treats them as secret, as it does the
+file.
 
 ## Security model
 
 - **Tailnet only.** The broker listens on `127.0.0.1`. The phone reaches it through `tailscale serve`, which offers it
   over HTTPS inside your tailnet only (not Tailscale Funnel). Nothing is exposed to the internet.
 - **Device allowlist.** A request through `tailscale serve` is let in only when its tailnet address belongs to a
-  device named in `allowedDevices` (looked up with `tailscale status`). Requests from the machine itself need
-  `allowLocal`.
+  device of your tailnet whose MagicDNS name is in `allowedDevices` (looked up with `tailscale status`; machines shared
+  in from other tailnets never match). Requests from the machine itself need `allowLocal`. A program on the machine
+  can pass its request off as coming through `tailscale serve`, so `allowLocal: false` does not keep out other users
+  of the machine; the login does.
 - **Login.** An ID and password, stored as an Argon2id hash. After five failed logins, logins lock for 5 minutes,
   doubling up to an hour, also across restarts. The session cookie is HttpOnly, Secure and SameSite=Strict;
   POST requests and WebSockets have their Origin checked, and pages carry a Content Security Policy.
@@ -350,6 +373,18 @@ keeps the last ten versions next to the file as `settings.json.ccrc-<time>.bak`.
 - **Secrets.** The API key is passed only to broker sessions' Claude Code as `ANTHROPIC_API_KEY`, and never written to
   logs, the audit log, the screen or API answers. Notifications carry the session title and the kind of request only.
 
+### What leaves your machine
+
+- **Claude Code** talks to Anthropic's API as it always does; ccrc adds nothing to that.
+- **New-release check:** a minute after the broker starts and then daily, `git ls-remote` to the repository updates
+  come from (GitHub by default). GitHub sees the machine's address and the time; ccrc sends no version or identifier.
+  `updateCheck: false` turns it off, `updateNotify: false` only the notification.
+- **Notifications** go through the phone's push service (Apple's or Google's), encrypted end to end; they carry the
+  session title and the kind of request.
+- **Tailscale** keeps its own connection to its coordination server; the phone's traffic to the broker stays on the
+  tailnet.
+- **Installing and updating** fetch from GitHub, nodejs.org and the npm registry.
+
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Known gaps of the VS Code wrapper
@@ -367,7 +402,8 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 - The phone app is in Korean only.
 - Linux with systemd only; no macOS, WSL or VS Code Remote-SSH. VS Code's settings are looked for in `~/.config/Code`
-  (not Insiders or VSCodium).
+  and its extensions in `~/.vscode/extensions`, as Microsoft's build keeps them: not Insiders, VSCodium or Code - OSS
+  (Arch's `code` package; use `visual-studio-code-bin` there). With another build, setup skips the `vscode` step.
 - One user per machine and one remote login at a time.
 - Sessions run on the machine, so it has to be on and online. Sessions started in a terminal are view-only.
 - In `apiKey` mode, commands Claude runs in a broker session (the Bash tool, for example) inherit Claude Code's
@@ -388,12 +424,13 @@ bin/ccrc serve
 ```
 
 `bin/ccrc` and `bin/ccrc-wrapper` look for Node.js 22.18+ in `CCRC_NODE`, `<dataDir>/node/bin/node`, the install's
-recorded Node, then `PATH`; without one, `ccrc` stops with an error and the wrapper runs Claude Code directly. The
-broker runs from its TypeScript sources (Node's type stripping); the wrapper uses the built relay while it is newer
-than its sources.
+recorded Node, then `PATH`; without one, `ccrc` stops with an error and the wrapper runs Claude Code directly, noting
+it in `wrapper.log`. VS Code started from a desktop, and the service, often have no Node.js on `PATH`, so in a checkout
+link one: `mkdir -p ~/.local/share/ccrc && ln -s /path/to/node-v22 ~/.local/share/ccrc/node`. The broker runs from
+its TypeScript sources (Node's type stripping); the wrapper uses the built relay while it is newer than its sources.
 
-Running `bin/ccrc setup` (or `deploy/install-service.sh`, which runs its service step) from a checkout points the
-service and VS Code at that checkout. To try a commit on an install instead, use `ccrc update --from <repo>[@<ref>]`.
+Running `bin/ccrc setup` from a checkout points the service and VS Code at that checkout; `deploy/install-service.sh`
+runs only its service step, so it changes the service and not VS Code. To try a commit on an install instead, use `ccrc update --from <repo>[@<ref>]`.
 
 When a change adds a config key, a state file, an outside tool or a path, update `ccrc setup`, the migrations in
 `broker/src/config.ts`, this README and the CHANGELOG's Unreleased section together. Test data uses example values
