@@ -53,7 +53,9 @@ const USAGE = `usage: ccrc <command>
   migrate                     bring config.json to this version's format (serve does this too)
   update [--check] [--to <version>] [--channel stable|rc] [--yes] [--from <repository>[@<ref>]]
                               install a newer release beside this one and switch to it, or go back on failure
-  rollback [--yes]            go back to the version before the last update`;
+  rollback [--yes]            go back to the version before the last update
+  setup [options]             check each part of the setup and do what is missing (setup --help)
+  uninstall [--purge]         remove the install, VS Code's setting first (uninstall --help)`;
 
 function migrate(): void {
   const r = migrateConfigFile();
@@ -313,6 +315,8 @@ if (major < 22 || (major === 22 && minor < 18)) {
 
 const command = process.argv[2] ?? "serve";
 const commands: Record<string, () => unknown> = { serve, passwd, status, logout, version, "--version": version, config, migrate, update: updateCommand, rollback: rollbackCommand };
+commands.setup = async () => (await import("./setup/cli.ts")).setup(process.argv.slice(3));
+commands.uninstall = async () => (await import("./setup/cli.ts")).uninstall(process.argv.slice(3));
 const run = commands[command];
 if (!run) {
   console.error(USAGE);
