@@ -5,6 +5,7 @@ import { installKind, readInstallInfo, versionsDir, writeInstallInfo, type Insta
 import { paths } from "./paths.ts";
 import { changelogSections, isNewer, latestTag, listTags, quietGitEnv, releaseUrl, updateSource, type UpdateChannel } from "./releases.ts";
 import { run, type Runner } from "./run.ts";
+import { inBrokerService, inServiceRefusal } from "./service-cgroup.ts";
 import { readUpdateCheck, updateCheckFile, writeUpdateCheck } from "./update-check.ts";
 
 // `ccrc update` and `ccrc rollback` on an install: <dataDir>/versions/<version>/ folders and the <dataDir>/current link.
@@ -18,6 +19,9 @@ const SERVICE = "ccrc.service";
 const PING_WAIT_MS = 30_000;
 const PING_EVERY_MS = 1000;
 const STEP_TIMEOUT_MS = 15 * 60_000;
+// Update and rollback backups kept besides those of the last few history entries; they hold copies of the API key,
+// the password hash and the push keys, so old ones go.
+const KEEP_BACKUPS = 3;
 
 // Exit codes beyond 0 (done, or nothing to do) and 1 (stopped before anything switched).
 export const EXIT_ROLLED_BACK = 3;
@@ -51,6 +55,8 @@ export interface UpdateDeps {
   sleep: (ms: number) => Promise<void>;
   pingWaitMs: number;
   pingEveryMs: number;
+  // Whether this runs inside ccrc.service, which a restart would stop.
+  inService: () => boolean;
 }
 
 export interface UpdateOptions {
@@ -88,6 +94,7 @@ export function defaultDeps(): UpdateDeps {
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     pingWaitMs: PING_WAIT_MS,
     pingEveryMs: PING_EVERY_MS,
+    inService: () => inBrokerService(),
   };
 }
 
@@ -292,12 +299,15 @@ class Updater {
     }
   }
 
-  // Builds a fetched copy in <version>.tmp, writes its install info and moves it to versions/<version>.
-  async finish(tmp: string, version: string, source: string): Promise<string> {
+  // Builds a fetched copy in <version>.tmp, writes its install info and moves it to versions/<version>. A copy of local
+  // work (--from) keeps looking for releases where the version before it did.
+  async finish(tmp: string, version: string, source: string, local = false): Promise<string> {
     await this.build(tmp);
     const commit = await this.git(["-C", tmp, "rev-parse", "HEAD"]);
-    const node = this.current()?.info?.node ?? this.d.node;
-    writeInstallInfo(tmp, { version, commit, source, node, installedAt: this.d.now().toISOString() });
+    const before = this.current()?.info;
+    const node = before?.node ?? this.d.node;
+    const releases = local && before ? before.updateSource || before.source : undefined;
+    writeInstallInfo(tmp, { version, commit, source, ...(releases ? { updateSource: releases } : {}), node, installedAt: this.d.now().toISOString() });
     const dir = this.dirOf(version);
     fs.rmSync(dir, { recursive: true, force: true });
     fs.renameSync(tmp, dir);
@@ -323,13 +333,17 @@ class Updater {
     const release = holdSignals(this.d.log);
     try {
       try {
-        const migrate = await this.d.runner(path.join(this.dirOf(to), "bin", "ccrc"), ["migrate"], {
+        const migrate = await this.d.runner(path.join(this.dirOf(to), "bin", "ccrc"), ["migrate", "--json"], {
           env: { ...this.d.env, CCRC_NODE: this.d.node, CCRC_CONFIG_DIR: this.d.configDir, CCRC_STATE_DIR: this.d.stateDir, CCRC_DATA_DIR: this.d.dataDir },
           timeoutMs: 60_000,
         });
         if (migrate.code !== 0) throw new UpdateError(`${to} could not migrate the config: ${lastLine(migrate.stderr || migrate.stdout) || `exit code ${migrate.code}`}`);
-        if (migrate.stdout.trim()) this.d.log(`  ${migrate.stdout.trim().split("\n").join("\n  ")}`);
-        const migrated = this.changedSince(backupDir);
+        const reported = migrateReport(migrate.stdout);
+        if (reported?.message) this.d.log(`  ${reported.message}`);
+        else if (!reported && migrate.stdout.trim()) this.d.log(`  ${migrate.stdout.trim().split("\n").join("\n  ")}`);
+        // What rollback puts back. The running broker keeps writing state meanwhile, so the files the migrate step
+        // names are taken over what changed since the backup.
+        const migrated = reported?.changed ?? this.changedSince(backupDir);
         fs.writeFileSync(path.join(backupDir, "manifest.json"), JSON.stringify({ from, to, migrated }, null, 2) + "\n");
         this.link(to);
       } catch (e) {
@@ -359,6 +373,7 @@ class Updater {
       }
       try {
         this.prune([to, ...(fromName ? [fromName] : [])]);
+        this.pruneBackups();
       } catch (e) {
         this.d.log(`Could not remove old versions: ${message(e)}`);
       }
@@ -419,6 +434,23 @@ class Updater {
     }
   }
 
+  // Removes update and rollback backups but the newest few and those of the last few history entries.
+  pruneBackups(): void {
+    const dir = path.join(this.d.stateDir, "backup");
+    const keep = new Set(
+      this.history()
+        .slice(-KEEP_BACKUPS)
+        .flatMap((h) => (h.backupDir ? [path.resolve(h.backupDir)] : [])),
+    );
+    const ours = safeList(dir)
+      .filter((n) => /^(update|rollback)-.+-\d{8}T\d{6}Z$/.test(n))
+      .sort((a, b) => a.slice(-16).localeCompare(b.slice(-16)));
+    for (const name of ours.slice(0, -KEEP_BACKUPS)) {
+      const full = path.join(dir, name);
+      if (!keep.has(path.resolve(full))) fs.rmSync(full, { recursive: true, force: true });
+    }
+  }
+
   // fromName and to are folder names under versions/.
   afterwards(fromName: string | undefined, to: string): void {
     this.d.log(`ccrc is now ${readInstallInfo(this.dirOf(to))?.version ?? to}.`);
@@ -439,6 +471,17 @@ function holdSignals(log: (line: string) => void): () => void {
   return () => {
     for (const s of signals) process.off(s, hold);
   };
+}
+
+// What `ccrc migrate --json` reports: the files it changed ("config/<path>", "state/<path>") and a line to show.
+function migrateReport(stdout: string): { changed: string[]; message?: string } | undefined {
+  try {
+    const v = JSON.parse(stdout.trim().split("\n").at(-1) ?? "") as { changed?: unknown; message?: unknown };
+    if (!Array.isArray(v.changed) || !v.changed.every((f) => typeof f === "string")) return undefined;
+    return { changed: v.changed as string[], ...(typeof v.message === "string" && v.message ? { message: v.message } : {}) };
+  } catch {
+    return undefined;
+  }
 }
 
 function alive(pid: number): boolean {
@@ -569,7 +612,7 @@ async function updateFrom(u: Updater, d: UpdateDeps, o: UpdateOptions): Promise<
     try {
       await u.git(["clone", "--quiet", "--no-checkout", repo, tmp]);
       await u.git(["-C", tmp, "-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", sha]);
-      await u.finish(tmp, version, repo);
+      await u.finish(tmp, version, repo, true);
     } catch (e) {
       fs.rmSync(tmp, { recursive: true, force: true });
       throw e;
@@ -582,6 +625,7 @@ export async function update(o: UpdateOptions, deps: Partial<UpdateDeps> = {}): 
   const d = { ...defaultDeps(), ...deps };
   const u = new Updater(d);
   try {
+    if (!o.check && d.inService()) throw new UpdateError(inServiceRefusal("update"));
     const kind = installKind(d.codeRoot, d.dataDir);
     if (o.from) {
       const unlock = u.lock();
@@ -690,6 +734,7 @@ export async function rollback(o: { yes?: boolean }, deps: Partial<UpdateDeps> =
   const d = { ...defaultDeps(), ...deps };
   const u = new Updater(d);
   try {
+    if (d.inService()) throw new UpdateError(inServiceRefusal("rollback"));
     const last = u
       .history()
       .filter((h) => !h.failed)
@@ -744,6 +789,9 @@ export async function rollback(o: { yes?: boolean }, deps: Partial<UpdateDeps> =
         }
       } else if (svc.state === "other") d.log(`${SERVICE} runs ${svc.exec}, not the install, so it was not restarted.`);
       else d.log(`No ${SERVICE}: start \`${path.join(d.dataDir, "current", "bin", "ccrc")} serve\` again to run ${last.from}.`);
+      try {
+        u.pruneBackups();
+      } catch {}
       u.afterwards(u.nameOf(last.to), fromName);
       return 0;
     } finally {

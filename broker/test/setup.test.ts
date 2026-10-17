@@ -192,7 +192,7 @@ function machine(world: World, o: { extension?: boolean; vscode?: boolean } = {}
       if (line === "sh -c curl -fsSL https://tailscale.com/install.sh | sh") Object.assign(world, { tailscale: true, daemon: true, backend: "NeedsLogin" });
       else if (line === "sudo pacman -S --needed tailscale") world.tailscale = true;
       else if (line === "sudo systemctl enable --now tailscaled") Object.assign(world, { daemon: true, backend: "NeedsLogin" });
-      else if (line === "sudo tailscale up --operator=user --qr") world.backend = "Running";
+      else if (line === "sudo tailscale up") world.backend = "Running";
       else if (line === "sudo tailscale set --operator=user") world.operator = true;
       else if (/^tailscale serve --bg --https=(\d+) (\S+)$/.test(line)) {
         const [, p, target] = /^tailscale serve --bg --https=(\d+) (\S+)$/.exec(line)!;
@@ -260,6 +260,7 @@ function ctxOf(m: Machine, o: Partial<SetupOptions> = {}, answers?: Answers): Ct
     pollMs: 1,
     pingWaitMs: 3000,
     now: () => new Date("2026-10-17T00:00:00Z"),
+    inService: () => false,
     lines,
   };
 }
@@ -321,7 +322,7 @@ test("a full run on a new machine does every step, and a second run finds nothin
   const attached = m.calls.filter((c) => c.startsWith("attached "));
   assert.deepEqual(attached, [
     "attached sh -c curl -fsSL https://tailscale.com/install.sh | sh",
-    "attached sudo tailscale up --operator=user --qr",
+    "attached sudo tailscale up",
     "attached sudo tailscale set --operator=user",
     `attached ${m.at.ccrc} passwd`,
     "attached tailscale serve --bg --https=8443 http://127.0.0.1:8737",
@@ -438,7 +439,7 @@ test("the service step takes linger with sudo when loginctl refuses, and restart
   fs.writeFileSync(unitFile, unitText({ ccrc: m.at.ccrc, node: m.at.node, path: "/usr/bin", env: {} }));
   const ctx = ctxOf(m, { only: ["service"] });
   const first = await runSetup([...STEPS], ctx);
-  assert.match(ctx.lines.join("\n"), /stops at logout \(no linger\), runs v0\.6\.0/);
+  assert.match(ctx.lines.join("\n"), /\(runs v0\.6\.0\)/);
   assert.equal(first.ok, false, "a broker that keeps answering with the old version fails the step");
   assert.ok(m.calls.includes("run systemctl --user restart ccrc.service"));
   assert.ok(m.calls.includes("attached sudo loginctl enable-linger user"));
@@ -456,9 +457,10 @@ test("a refused sudo linger leaves linger for later and setup goes on", async ()
   const ctx = ctxOf(m, { only: ["service", "vscode"] });
   const r = await runSetup([...STEPS], ctx);
   assert.equal(r.ok, true, ctx.lines.join("\n"));
-  assert.deepEqual(outcomes(r), { service: "left", vscode: "done" });
+  assert.deepEqual(outcomes(r), { service: "done", vscode: "done" });
   assert.ok(m.world.active && m.world.enabled);
   assert.match(ctx.lines.join("\n"), /sudo loginctl enable-linger user failed \(exit code 1\)/);
+  assert.match(ctx.lines.join("\n"), /stops when you log out \(optional: loginctl enable-linger user\)/);
 });
 
 test("a unit that runs other code is copied aside, then written for this install", async () => {
@@ -720,6 +722,7 @@ function uninstallCtx(m: Machine, o: { purge?: boolean; dryRun?: boolean; noSyst
       ask: fakePrompt(answers),
       out: (l: string) => lines.push(l),
       now: () => new Date("2026-10-17T00:00:00Z"),
+      inService: () => false,
     },
   };
 }
@@ -795,11 +798,144 @@ test("uninstall leaves a folder it must not remove whole, such as the home folde
   const { ctx, lines } = uninstallCtx(m, { purge: true, noSystem: true });
   assert.equal(await runUninstall(ctx), true, lines.join("\n"));
   assert.ok(fs.existsSync(m.at.home) && fs.existsSync(path.join(m.at.home, ".config")));
-  assert.match(lines.join("\n"), /is left: it is not a folder ccrc removes whole/);
+  assert.match(lines.join("\n"), /is left: it is your home folder or a folder other programs share/);
   assert.ok(!fs.existsSync(m.at.dataDir) && !fs.existsSync(m.at.stateDir));
 });
 
 test("setup and uninstall refuse root", () => {
   assert.match(rootRefusal("setup", 0)!, /do not run this as root/);
   assert.equal(rootRefusal("setup", 1000), undefined);
+});
+
+test("linger is optional: --yes leaves it off and asks nothing, and a second run passes without it", async () => {
+  const m = machine(readyWorld());
+  Object.assign(m.world, { enabled: false, active: false, linger: false });
+  const ctx = ctxOf(m, { only: ["service"], yes: true });
+  const r = await runSetup([...STEPS], ctx);
+  assert.deepEqual(outcomes(r), { service: "done" }, ctx.lines.join("\n"));
+  assert.ok(!m.calls.some((c) => c.includes("enable-linger")), m.calls.join("\n"));
+  assert.match(ctx.lines.join("\n"), /Linger stays off/);
+  const again = ctxOf(m, { only: ["service"] });
+  assert.ok((await runSetup([...STEPS], again)).reports.every((x) => x.outcome === "ok"));
+  assert.equal(again.ask.asked.length, 0);
+});
+
+test("the service step keeps the Environment lines it does not write, and writes the unit whole", async () => {
+  const m = machine(readyWorld());
+  const unitFile = path.join(m.at.xdgConfigHome, "systemd", "user", "ccrc.service");
+  const old = unitText({ ccrc: "/home/user/ccrc/bin/ccrc", node: "/usr/bin/node", path: "/usr/bin", env: {} }).replace(
+    "Restart=on-failure",
+    'Environment=HTTPS_PROXY=http://proxy.example.com:3128 "NO_PROXY=localhost,127.0.0.1"\nEnvironment=ANTHROPIC_BASE_URL=https://api.example.com\nEnvironment=CCRC_NODE=/old/node PATH=/old\nEnvironmentFile=-/home/user/.config/ccrc.env\nRestart=on-failure',
+  );
+  fs.mkdirSync(path.dirname(unitFile), { recursive: true });
+  fs.writeFileSync(unitFile, old);
+  const ctx = ctxOf(m, { only: ["service"] });
+  assert.deepEqual(outcomes(await runSetup([...STEPS], ctx)), { service: "done" }, ctx.lines.join("\n"));
+  const unit = fs.readFileSync(unitFile, "utf8");
+  assert.match(unit, /^Environment=HTTPS_PROXY=http:\/\/proxy\.example\.com:3128 "NO_PROXY=localhost,127\.0\.0\.1"$/m);
+  assert.match(unit, /^Environment=ANTHROPIC_BASE_URL=https:\/\/api\.example\.com$/m);
+  assert.match(unit, /^EnvironmentFile=-\/home\/user\/\.config\/ccrc\.env$/m);
+  assert.ok(!unit.includes("/old/node"), "setup's own variables are its own");
+  assert.equal((unit.match(/^Environment=CCRC_NODE=/gm) ?? []).length, 1);
+  assert.match(ctx.lines.join("\n"), /kept from it: Environment=ANTHROPIC_BASE_URL/);
+  assert.deepEqual(fs.readdirSync(path.dirname(unitFile)), ["ccrc.service"]);
+});
+
+test("setup's service step and uninstall refuse to run inside ccrc.service", async () => {
+  const m = machine(readyWorld());
+  Object.assign(m.world, { active: false });
+  const ctx = { ...ctxOf(m, { only: ["service"] }), inService: () => true };
+  const r = await runSetup([...STEPS], ctx);
+  assert.deepEqual(outcomes(r), { service: "failed" });
+  assert.match(ctx.lines.join("\n"), /ccrc setup restarts or stops ccrc\.service, and this runs inside it/);
+  assert.ok(!m.calls.some((c) => /restart|daemon-reload/.test(c)));
+
+  installed(m);
+  const u = uninstallCtx(m);
+  u.ctx.inService = () => true;
+  assert.equal(await runUninstall(u.ctx), false);
+  assert.match(u.lines.join("\n"), /ccrc uninstall restarts or stops ccrc\.service/);
+  assert.ok(fs.existsSync(m.at.dataDir));
+});
+
+test("tailscale-login runs a bare `tailscale up`, which keeps the machine's other Tailscale settings", async () => {
+  const m = machine({ ...readyWorld(), backend: "NeedsLogin" });
+  const ctx = ctxOf(m, { only: ["tailscale-login"] });
+  assert.deepEqual(outcomes(await runSetup([...STEPS], ctx)), { "tailscale-login": "done" });
+  assert.deepEqual(
+    m.calls.filter((c) => c.startsWith("attached")),
+    ["attached sudo tailscale up"],
+  );
+});
+
+test("config keeps an empty roots list, and a 0.6 config without one; \"none\" chooses it", async () => {
+  const m = machine(readyWorld());
+  fs.mkdirSync(m.at.configDir, { recursive: true });
+  fs.writeFileSync(m.at.configFile, JSON.stringify({ schemaVersion: 1, roots: [], brokerSessions: "subscription", claudePath: "vscode" }));
+  const ctx = ctxOf(m, { only: ["config"], yes: true });
+  const r = await runSetup([...STEPS], ctx);
+  assert.deepEqual(outcomes(r), { config: "ok" }, ctx.lines.join("\n"));
+  assert.match(ctx.lines.join("\n"), /roots none/);
+  assert.deepEqual(readJson(m.at.configFile).roots, []);
+
+  fs.writeFileSync(m.at.configFile, JSON.stringify({ allowedDevices: ["phone"] }));
+  assert.deepEqual(outcomes(await runSetup([...STEPS], ctxOf(m, { only: ["config"], yes: true }))), { config: "ok" });
+
+  fs.writeFileSync(m.at.configFile, JSON.stringify({ schemaVersion: 1, allowedDevices: ["phone"] }));
+  const asked = ctxOf(m, { only: ["config"] }, { text: ["None"] });
+  assert.deepEqual(outcomes(await runSetup([...STEPS], asked)), { config: "done" });
+  assert.deepEqual(readJson(m.at.configFile).roots, []);
+});
+
+test("uninstall touches no shared folder, and outside a folder of its own removes only what ccrc made", async () => {
+  for (const d of ["/home/user/.local/share", "/home/user/.config", "/home/user/.local/state", "/home/user/.local", "/home/user/.cache"]) {
+    assert.equal(safeToRemove(d, "/home/user", ["/home/user/.config", "/home/user/.local", "/home/user/.local/share", "/home/user/.local/state", "/home/user/.cache"]), false, d);
+  }
+  const m = machine(readyWorld());
+  installed(m);
+  const share = path.join(m.at.home, ".local", "share");
+  fs.mkdirSync(path.join(share, "otherapp"), { recursive: true });
+  fs.mkdirSync(path.join(m.at.home, ".config", "otherapp"), { recursive: true });
+  fs.writeFileSync(path.join(m.at.home, ".config", "otherapp", "c"), "x");
+  m.at = { ...m.at, dataDir: share, configDir: path.join(m.at.home, ".config") };
+  const { ctx, lines } = uninstallCtx(m, { purge: true, noSystem: true });
+  assert.equal(await runUninstall(ctx), true, lines.join("\n"));
+  assert.ok(fs.existsSync(path.join(share, "otherapp")) && fs.existsSync(path.join(m.at.home, ".config", "otherapp", "c")), lines.join("\n"));
+  assert.match(lines.join("\n"), /\.local\/share is left: it is your home folder or a folder other programs share/);
+
+  // A folder of another name: only ccrc's own entries go.
+  const m2 = machine(readyWorld());
+  installed(m2);
+  const mine = path.join(m2.at.home, "apps");
+  fs.mkdirSync(path.join(mine, "versions"), { recursive: true });
+  fs.writeFileSync(path.join(mine, "history.json"), "[]");
+  fs.writeFileSync(path.join(mine, "notes.txt"), "mine");
+  m2.at = { ...m2.at, dataDir: mine };
+  const u = uninstallCtx(m2, { noSystem: true });
+  assert.equal(await runUninstall(u.ctx), true, u.lines.join("\n"));
+  assert.deepEqual(fs.readdirSync(mine), ["notes.txt"]);
+  assert.match(u.lines.join("\n"), /keeps what ccrc did not make there: notes\.txt/);
+});
+
+test("uninstall leaves <dataDir>/node while a checkout the service or VS Code runs needs it, and --purge keeps the VS Code backup", async () => {
+  const m = machine(readyWorld());
+  fs.mkdirSync(path.join(m.at.dataDir, "node-v22.20.0-linux-x64", "bin"), { recursive: true });
+  fs.symlinkSync("node-v22.20.0-linux-x64", path.join(m.at.dataDir, "node"));
+  const unitFile = path.join(m.at.xdgConfigHome, "systemd", "user", "ccrc.service");
+  fs.mkdirSync(path.dirname(unitFile), { recursive: true });
+  fs.writeFileSync(unitFile, unitText({ ccrc: "/home/user/ccrc/bin/ccrc", node: path.join(m.at.dataDir, "node", "bin", "node"), path: "/usr/bin", env: {} }));
+  const { ctx, lines } = uninstallCtx(m, { dryRun: true });
+  assert.equal(await runUninstall(ctx), true);
+  assert.match(lines.join("\n"), /node is left: the ccrc that the service or VS Code still runs finds Node\.js there/);
+  assert.ok(!lines.some((l) => l.includes(`remove ${m.at.dataDir}`)), lines.join("\n"));
+
+  const p = machine(readyWorld());
+  installed(p);
+  const purge = uninstallCtx(p, { purge: true });
+  assert.equal(await runUninstall(purge.ctx), true, purge.lines.join("\n"));
+  const userDir = path.join(p.at.vscodeUserDir, "User");
+  const copies = fs.readdirSync(userDir).filter((n) => n !== "settings.json");
+  assert.equal(copies.length, 1, "the copy of settings.json outlives the state folder");
+  assert.match(fs.readFileSync(path.join(userDir, copies[0]), "utf8"), /claudeProcessWrapper/);
+  assert.ok(!fs.existsSync(p.at.stateDir));
 });

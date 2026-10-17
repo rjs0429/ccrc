@@ -65,7 +65,10 @@ export class UpdateCheck {
   constructor(options: UpdateCheckOptions) {
     this.o = {
       kind: () => installKind(),
-      installSource: () => readInstallInfo()?.source,
+      installSource: () => {
+        const info = readInstallInfo();
+        return info?.updateSource || info?.source;
+      },
       file: updateCheckFile(),
       runner: run,
       now: () => new Date(),

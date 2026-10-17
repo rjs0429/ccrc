@@ -6,6 +6,8 @@ interface TailscaleNode {
   HostName?: string;
   DNSName?: string;
   TailscaleIPs?: string[];
+  // A machine of another tailnet that this one was shared with.
+  ShareeNode?: boolean;
 }
 
 interface TailscaleStatus {
@@ -36,8 +38,10 @@ function normalizeIp(ip: string): string {
 }
 
 // Requests through `tailscale serve` arrive from loopback with the tailnet client address as the
-// last X-Forwarded-For entry. Only allowed machines (by tailnet name) get through; a request
-// without the header comes from this machine.
+// last X-Forwarded-For entry. Only allowed machines get through, named by the first label of their
+// MagicDNS name in this tailnet: unlike the host name a machine reports itself, the tailnet keeps
+// that unique. A request without the header comes from this machine. Any local process can add
+// the header, so allowLocal does not keep out other users of this machine.
 export class DeviceGate {
   private names: Set<string>;
   private allowLocal: boolean;
@@ -67,11 +71,14 @@ export class DeviceGate {
   async refresh(): Promise<void> {
     const st = await this.status();
     const map = new Map<string, string>();
+    const suffix = (n: TailscaleNode) => (n.DNSName ?? "").toLowerCase().replace(/\.$/, "").split(".").slice(1).join(".");
+    const tailnet = st.Self ? suffix(st.Self) : "";
     for (const node of [st.Self, ...Object.values(st.Peer ?? {})]) {
-      if (!node) continue;
+      if (!node || node.ShareeNode) continue;
+      // Machines shared in from another tailnet carry that tailnet's name.
+      if (tailnet && suffix(node) !== tailnet) continue;
       const label = (node.DNSName ?? "").split(".")[0].toLowerCase();
-      const host = (node.HostName ?? "").toLowerCase();
-      const name = this.names.has(label) ? label : this.names.has(host) ? host : undefined;
+      const name = this.names.has(label) ? label : undefined;
       if (!name) continue;
       for (const ip of node.TailscaleIPs ?? []) map.set(normalizeIp(ip), name);
     }

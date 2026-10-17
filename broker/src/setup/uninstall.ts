@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { inServiceRefusal } from "../service-cgroup.ts";
 import type { Ctx } from "./engine.ts";
 import { SERVICE, unitFile, unitProgram } from "./service.ts";
 import { brokerPort } from "./steps.ts";
@@ -13,7 +14,7 @@ export interface UninstallOptions {
   noSystem: boolean;
 }
 
-export type UninstallCtx = Pick<Ctx, "at" | "run" | "ask" | "out" | "now"> & { o: UninstallOptions };
+export type UninstallCtx = Pick<Ctx, "at" | "run" | "ask" | "out" | "now" | "inService"> & { o: UninstallOptions };
 
 interface Action {
   title: string;
@@ -27,12 +28,71 @@ function inside(dir: string, p: string): boolean {
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
-// A folder ccrc may remove whole: not /, the home folder or a folder holding it, which CCRC_DATA_DIR,
-// CCRC_CONFIG_DIR or CCRC_STATE_DIR set by mistake could name.
-export function safeToRemove(dir: string, home: string): boolean {
+// Folders other programs keep their files in, as CCRC_DATA_DIR, CCRC_CONFIG_DIR or CCRC_STATE_DIR set to a parent of
+// ccrc's own folder would name them.
+export function sharedFolders(home: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const bases = [".config", ".local", ".local/share", ".local/state", ".cache"].map((d) => path.join(home, d));
+  for (const k of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) if (env[k] && path.isAbsolute(env[k])) bases.push(env[k]);
+  return bases.map((d) => path.resolve(d));
+}
+
+// A folder ccrc may touch at all: not /, the home folder, a shared folder such as ~/.config, or a folder holding one.
+export function safeToRemove(dir: string, home: string, shared = sharedFolders(home)): boolean {
   const d = path.resolve(dir);
-  const h = path.resolve(home);
-  return path.isAbsolute(dir) && d !== path.parse(d).root && d !== h && !inside(d, h);
+  return path.isAbsolute(dir) && d !== path.parse(d).root && ![path.resolve(home), ...shared].some((p) => p === d || inside(d, p));
+}
+
+type Kind = "data" | "config" | "state";
+
+// What ccrc keeps in each of its folders. A folder named "ccrc" that is empty or holds one of these goes whole;
+// elsewhere only these entries go, and anything else in the folder stays.
+const OWN: Record<Kind, { names: string[]; patterns: RegExp[] }> = {
+  data: {
+    names: ["versions", "current", "node", "history.json", "update.lock", "current.tmp", "node.tmp"],
+    patterns: [/^node-v\d+\.\d+\.\d+-linux-[a-z0-9_]+$/, /^(current|history\.json)\.\d+\.tmp$/],
+  },
+  config: {
+    names: ["config.json", "state.json", "push.json", "anthropic-api-key"],
+    patterns: [/^(config\.json|state\.json|push\.json|anthropic-api-key)\.\d+\.tmp$/],
+  },
+  state: {
+    names: [
+      "audit.jsonl",
+      "backup",
+      "uploads",
+      "turns",
+      "cli",
+      "doctor",
+      "doctor.json",
+      "commands.json",
+      "remote-activity.json",
+      "start-settings.json",
+      "context-windows.json",
+      "ultracode-models.json",
+      "archived.json",
+      "models.json",
+      "update-check.json",
+      "install.log",
+      "wrapper.log",
+      "wrapper.log.1",
+      "link.sock",
+    ],
+    patterns: [/^[a-z-]+\.json\.\d+\.tmp$/],
+  },
+};
+
+const NODE_ENTRY = (name: string) => name === "node" || name === "node.tmp" || /^node-v/.test(name);
+
+function own(kind: Kind, name: string): boolean {
+  return OWN[kind].names.includes(name) || OWN[kind].patterns.some((r) => r.test(name));
+}
+
+function entries(dir: string): string[] {
+  try {
+    return fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
 }
 
 function linkTarget(p: string): string | undefined {
@@ -47,6 +107,10 @@ function linkTarget(p: string): string | undefined {
 // set to its wrapper cannot start Claude Code. Settings and state stay unless purge; Tailscale, Node and Claude Code stay.
 export async function runUninstall(ctx: UninstallCtx): Promise<boolean> {
   const { at, o } = ctx;
+  if (!o.dryRun && ctx.inService()) {
+    ctx.out(inServiceRefusal("uninstall"));
+    return false;
+  }
   const actions: Action[] = [];
   const notes: string[] = [];
   const port = (() => {
@@ -66,16 +130,23 @@ export async function runUninstall(ctx: UninstallCtx): Promise<boolean> {
     ctx.out(`Remove "${WRAPPER_SETTING}" from it by hand first, then run this again.`);
     return false;
   }
+  // --purge removes the state folder, so the copy of VS Code's settings then stays next to them.
+  const settingsBackup = o.purge ? path.dirname(settings) : path.join(at.stateDir, "backup");
+  // A checkout of ccrc the service or VS Code still runs finds its Node through <dataDir>/node.
+  let checkoutStays = false;
   if (typeof wrapper === "string" && inside(at.dataDir, wrapper)) {
     actions.push({
-      title: `remove "${WRAPPER_SETTING}" from ${settings} (copied to ${path.join(at.stateDir, "backup")} first)`,
+      title: `remove "${WRAPPER_SETTING}" from ${settings} (copied to ${settingsBackup} first)`,
       vital: true,
       act: async () => {
-        const r = changeSetting(settings, WRAPPER_SETTING, undefined, path.join(at.stateDir, "backup"), ctx.now());
+        const r = changeSetting(settings, WRAPPER_SETTING, undefined, settingsBackup, ctx.now());
         if (r.backup) ctx.out(`  the file as it was: ${r.backup}`);
       },
     });
-  } else if (typeof wrapper === "string" && wrapper) notes.push(`VS Code's "${WRAPPER_SETTING}" is left: it points at ${wrapper}, not this install.`);
+  } else if (typeof wrapper === "string" && wrapper) {
+    notes.push(`VS Code's "${WRAPPER_SETTING}" is left: it points at ${wrapper}, not this install.`);
+    checkoutStays = true;
+  }
 
   const unit = unitFile(at.xdgConfigHome);
   const unitText = fs.existsSync(unit) ? fs.readFileSync(unit, "utf8") : undefined;
@@ -91,7 +162,10 @@ export async function runUninstall(ctx: UninstallCtx): Promise<boolean> {
         await ctx.run.run("systemctl", ["--user", "daemon-reload"]);
       },
     });
-  } else if (unitText !== undefined) notes.push(`${SERVICE} is left: it runs ${program ?? "something else"}, not this install.`);
+  } else if (unitText !== undefined) {
+    notes.push(`${SERVICE} is left: it runs ${program ?? "something else"}, not this install.`);
+    checkoutStays = true;
+  }
 
   if ((ours || unitText === undefined) && !o.noSystem && ctx.run.which("tailscale")) {
     for (const s of (await servedPorts(ctx.run)) ?? []) {
@@ -109,14 +183,29 @@ export async function runUninstall(ctx: UninstallCtx): Promise<boolean> {
   const bin = path.join(at.home, ".local", "bin", "ccrc");
   const target = linkTarget(bin);
   if (target && inside(at.dataDir, target)) actions.push({ title: `remove the link ${bin}`, act: async () => fs.rmSync(bin, { force: true }) });
-  const removeDir = (dir: string, title: string) => {
+  const removeDir = (dir: string, kind: Kind, what: string, keep: (name: string) => boolean = () => false) => {
     if (!fs.existsSync(dir)) return;
-    if (safeToRemove(dir, at.home)) actions.push({ title, act: async () => fs.rmSync(dir, { recursive: true, force: true }) });
-    else notes.push(`${dir} is left: it is not a folder ccrc removes whole (check CCRC_DATA_DIR, CCRC_CONFIG_DIR and CCRC_STATE_DIR).`);
+    if (!safeToRemove(dir, at.home)) {
+      notes.push(`${dir} is left: it is your home folder or a folder other programs share (check CCRC_DATA_DIR, CCRC_CONFIG_DIR and CCRC_STATE_DIR).`);
+      return;
+    }
+    const names = entries(dir);
+    const kept = names.filter(keep);
+    const ours = names.filter((n) => own(kind, n) && !keep(n));
+    if (!kept.length && path.basename(dir) === "ccrc" && (ours.length || !names.length)) {
+      actions.push({ title: `remove ${dir} (${what})`, act: async () => fs.rmSync(dir, { recursive: true, force: true }) });
+      return;
+    }
+    for (const n of ours) actions.push({ title: `remove ${path.join(dir, n)}`, act: async () => fs.rmSync(path.join(dir, n), { recursive: true, force: true }) });
+    const others = names.filter((n) => !own(kind, n));
+    if (others.length) notes.push(`${dir} keeps what ccrc did not make there: ${others.slice(0, 5).join(", ")}${others.length > 5 ? ", ..." : ""}.`);
   };
-  removeDir(at.dataDir, `remove ${at.dataDir} (installed versions and Node)`);
+  const nodeKept = checkoutStays && entries(at.dataDir).some(NODE_ENTRY);
+  if (nodeKept) notes.push(`${path.join(at.dataDir, "node")} is left: the ccrc that the service or VS Code still runs finds Node.js there.`);
+  removeDir(at.dataDir, "data", "installed versions and Node", nodeKept ? NODE_ENTRY : undefined);
   if (o.purge) {
-    for (const dir of [at.configDir, at.stateDir]) removeDir(dir, `remove ${dir}`);
+    removeDir(at.configDir, "config", "settings");
+    removeDir(at.stateDir, "state", "state and logs");
   } else notes.push(`Settings and state stay in ${at.configDir} and ${at.stateDir} (--purge removes them).`);
 
   for (const n of notes) ctx.out(n);

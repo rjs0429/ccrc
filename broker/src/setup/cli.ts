@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { Doctor } from "../doctor.ts";
 import { brokerVersion, isInstalled, readInstallInfo } from "../install.ts";
 import { paths } from "../paths.ts";
+import { inBrokerService } from "../service-cgroup.ts";
 import { SetupUsageError, runSetup, type Ctx, type SetupOptions, type Where } from "./engine.ts";
 import { TerminalPrompt, realRunner, withDefaults } from "./io.ts";
 import { STEPS, STEP_IDS } from "./steps.ts";
@@ -105,6 +106,7 @@ function realCtx(o: SetupOptions): Ctx {
     pollMs: 5000,
     pingWaitMs: 20_000,
     now: () => new Date(),
+    inService: () => inBrokerService(),
   };
 }
 
@@ -193,6 +195,7 @@ export async function uninstall(args: string[]): Promise<void> {
     ask: prompt,
     out: (line) => console.log(line),
     now: () => new Date(),
+    inService: () => inBrokerService(),
   });
   if (!ok) process.exitCode = 1;
 }

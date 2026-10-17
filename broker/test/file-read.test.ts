@@ -118,6 +118,7 @@ test("secret files are refused even inside the working directory", async () => {
     `${home}/.claude.json`,
     `${home}/.claude/settings.json`,
     `${home}/.claude/settings.local.json`,
+    `${home}/.claude/settings.json.ccrc-20261017T120000000Z.bak`,
     "/proc/self/environ",
     `${home}/.codex/auth.json`,
     "/p/.envrc",

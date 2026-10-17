@@ -251,6 +251,7 @@ find_node() {
   local c
   if [ -n "${CCRC_NODE:-}" ]; then
     node_ok "$CCRC_NODE" || die "CCRC_NODE=$CCRC_NODE is not Node.js 22.18 or newer"
+    has_npm "$CCRC_NODE" || die "CCRC_NODE=$CCRC_NODE has no npm next to it or on PATH"
     NODE=$CCRC_NODE
   else
     for c in "$DATA_DIR/node/bin/node" "$(installed_node)" "$(command -v node 2>/dev/null || true)"; do
@@ -293,7 +294,8 @@ fetch_code() {
     say "keeping ccrc $NAME; to change versions, use ccrc update"
   else
     if [ -n "$VERSION" ]; then
-      tag=$VERSION
+      # As ccrc update --to takes it: 0.7.0 is the tag v0.7.0.
+      case $VERSION in [0-9]*) tag=v$VERSION ;; *) tag=$VERSION ;; esac
     elif [ -z "$REF$FROM" ]; then
       tag=$(latest_tag "$source")
       [ -n "$tag" ] || die "no release tags at $source; pass --ref <branch> to install a branch"

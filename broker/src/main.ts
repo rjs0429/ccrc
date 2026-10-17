@@ -50,18 +50,25 @@ const USAGE = `usage: ccrc <command>
   config get [key]            show the config, or one key of it
   config set <key> <value>    change a key; a value that is not JSON is taken as a string
   config set-api-key          store the Anthropic API key for brokerSessions "apiKey" (typed hidden, or from stdin)
-  migrate                     bring config.json to this version's format (serve does this too)
+  migrate [--json]            bring config.json to this version's format (serve does this too)
   update [--check] [--to <version>] [--channel stable|rc] [--yes] [--from <repository>[@<ref>]]
                               install a newer release beside this one and switch to it, or go back on failure
   rollback [--yes]            go back to the version before the last update
   setup [options]             check each part of the setup and do what is missing (setup --help)
   uninstall [--purge]         remove the install, VS Code's setting first (uninstall --help)`;
 
+// With --json, one line for `ccrc update`: the files changed, as "config/<path>", and the message.
 function migrate(): void {
+  const json = process.argv.slice(3).includes("--json");
   const r = migrateConfigFile();
-  if (!r) return console.log(`No config yet at ${paths.configFile}; the broker makes one when it starts.`);
-  if (!r.backupDir) return console.log(`Config is already of format ${r.to}.`);
-  console.log(`Config moved from format ${r.from} to ${r.to}; the earlier file is in ${r.backupDir}`);
+  const message = !r
+    ? `No config yet at ${paths.configFile}; the broker makes one when it starts.`
+    : !r.backupDir
+      ? `Config is already of format ${r.to}.`
+      : `Config moved from format ${r.from} to ${r.to}; the earlier file is in ${r.backupDir}`;
+  if (!json) return console.log(message);
+  const changed = r?.backupDir ? [`config/${path.relative(paths.configDir, paths.configFile)}`] : [];
+  console.log(JSON.stringify({ changed, message }));
 }
 
 async function serve(): Promise<void> {

@@ -67,9 +67,10 @@ export function isNewer(tag: string, current: string | undefined): boolean {
   return Boolean(t && c) && compareVersions(t!, c!) > 0;
 }
 
-// Where updates come from: the repository the install was fetched from, else updateRepo, else the project's own.
-export function updateSource(info: Pick<InstallInfo, "source"> | undefined, updateRepo: string | undefined): string {
-  return info?.source || updateRepo || DEFAULT_REPO;
+// Where updates come from: the repository the install looks for releases in (where it was fetched from, unless it
+// names another), else updateRepo, else the project's own.
+export function updateSource(info: Pick<InstallInfo, "source" | "updateSource"> | undefined, updateRepo: string | undefined): string {
+  return info?.updateSource || info?.source || updateRepo || DEFAULT_REPO;
 }
 
 // The release page of a tag on GitHub, for a source that lives there.
@@ -127,15 +128,27 @@ export function changelogSections(changelog: string, to: string, from?: string):
   return sections;
 }
 
+// An item wrapped onto indented lines is one line here.
 function breakingLines(lines: string[]): string[] {
   const out: string[] = [];
   let under = false;
+  let item = false;
   for (const line of lines) {
     if (/^###\s/.test(line)) {
       under = /breaking/i.test(line);
+      item = false;
       continue;
     }
-    if ((under || /\bBREAKING\b/.test(line)) && line.trim()) out.push(line.trim());
+    if (!line.trim()) {
+      item = false;
+      continue;
+    }
+    if (item && /^\s+\S/.test(line) && !/^\s*[-*]\s/.test(line)) {
+      out[out.length - 1] += ` ${line.trim()}`;
+      continue;
+    }
+    item = (under || /\bBREAKING\b/.test(line)) && /^\s*[-*]\s/.test(line);
+    if (under || /\bBREAKING\b/.test(line)) out.push(line.trim());
   }
   return out;
 }

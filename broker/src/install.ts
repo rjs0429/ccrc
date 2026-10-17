@@ -12,6 +12,9 @@ export interface InstallInfo {
   commit: string;
   // Where it was fetched from: a repository URL or a local path.
   source: string;
+  // Where to look for releases when that is not `source`: a copy of local work (`ccrc update --from`) keeps the
+  // repository the install looked in before.
+  updateSource?: string;
   // The Node the installer found or fetched, which bin/ccrc and bin/ccrc-wrapper fall back on.
   node?: string;
   installedAt: string;
@@ -46,7 +49,15 @@ export function readInstallInfo(root = paths.codeRoot): InstallInfo | undefined 
   const version = str("version");
   if (!version) return undefined;
   const node = str("node");
-  return { version, commit: str("commit") ?? "", source: str("source") ?? "", ...(node ? { node } : {}), installedAt: str("installedAt") ?? "" };
+  const updateSource = str("updateSource");
+  return {
+    version,
+    commit: str("commit") ?? "",
+    source: str("source") ?? "",
+    ...(updateSource ? { updateSource } : {}),
+    ...(node ? { node } : {}),
+    installedAt: str("installedAt") ?? "",
+  };
 }
 
 export function writeInstallInfo(root: string, info: InstallInfo): void {

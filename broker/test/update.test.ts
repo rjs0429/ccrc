@@ -157,6 +157,7 @@ function installed(repo: Repo, version = "v0.7.0"): World {
     log: (line) => w.lines.push(line),
     pingWaitMs: 100,
     pingEveryMs: 10,
+    inService: () => false,
   };
   return w;
 }
@@ -390,7 +391,11 @@ test("a development checkout is told how to update; --from installs a commit of 
   assert.equal(await update({ yes: true, from: repo.work }, { ...w.deps, codeRoot: checkout }), 0, output(w));
   assert.equal(current(w), path.join("versions", described));
   assert.equal(readInstallInfo(path.join(w.dataDir, "versions", described))!.source, repo.work);
+  assert.equal(readInstallInfo(path.join(w.dataDir, "versions", described))!.updateSource, repo.bare, "releases are still looked for where they were");
   assert.equal(w.running, described);
+  w.lines.length = 0;
+  assert.equal(await update({ check: true }, w.deps), 0);
+  assert.match(output(w), new RegExp(`from ${repo.bare.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
 
   w.lines.length = 0;
   assert.equal(await update({ yes: true, from: `${repo.work}@v0.7.1` }, w.deps), 0, output(w));
@@ -560,4 +565,79 @@ test("a copy made with --from is not taken for the release of the same name", as
   assert.equal(await update({ yes: true }, w.deps), 0, output(w));
   assert.ok(w.calls.some((c) => c.startsWith("git -c advice.detachedHead=false clone")), "fetched again from the install's source");
   assert.equal(readInstallInfo(path.join(w.dataDir, "versions", "v0.7.1"))!.source, repo.bare);
+});
+
+test("a wrapped breaking item is one line", () => {
+  const text = `## [0.9.0] - 2026-11-01
+
+### Breaking
+
+- The wrapper now needs Node.js 22.18.
+  Without one it runs Claude Code directly.
+- Another change.
+
+### Added
+
+- Not breaking.
+  Still not.
+`;
+  assert.deepEqual(changelogSections(text, "v0.9.0", "v0.8.0")[0].breaking, ["- The wrapper now needs Node.js 22.18. Without one it runs Claude Code directly.", "- Another change."]);
+});
+
+test("update, rollback and update --from refuse to run inside ccrc.service, which their restart would stop", async () => {
+  const repo = makeRepo();
+  const w = installed(repo);
+  const deps = { ...w.deps, inService: () => true };
+  assert.equal(await update({ yes: true }, deps), 1);
+  assert.equal(await update({ yes: true, from: repo.work }, deps), 1);
+  assert.equal(await rollback({ yes: true }, deps), 1);
+  assert.match(output(w), /ccrc update restarts or stops ccrc\.service, and this runs inside it/);
+  assert.match(output(w), /ccrc rollback restarts or stops ccrc\.service/);
+  assert.equal(w.restarts, 0);
+  assert.equal(current(w), path.join("versions", "v0.7.0"));
+  w.lines.length = 0;
+  assert.equal(await update({ check: true }, deps), 0, "--check only looks");
+});
+
+test("rollback restores only what the migrate step reports, not state the running broker wrote meanwhile", async () => {
+  const repo = makeRepo();
+  const w = installed(repo);
+  fs.writeFileSync(path.join(w.configDir, "state.json"), '{"lease":"old"}\n');
+  const runner = w.deps.runner!;
+  w.deps.runner = async (cmd, args, o) => {
+    if (args[0] === "migrate") {
+      assert.deepEqual(args, ["migrate", "--json"]);
+      // The broker renews its login lease while the new version migrates.
+      fs.writeFileSync(path.join(w.configDir, "state.json"), '{"lease":"renewed"}\n');
+      const r = await runner(cmd, ["migrate"], o);
+      return { ...r, stdout: JSON.stringify({ changed: ["config/config.json"], message: "Config moved from format 1 to 1" }) + "\n" };
+    }
+    return runner(cmd, args, o);
+  };
+  assert.equal(await update({ yes: true }, w.deps), 0, output(w));
+  assert.match(output(w), /Config moved from format 1 to 1/);
+  const manifest = JSON.parse(fs.readFileSync(path.join(history(w).at(-1)!.backupDir!, "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.migrated, ["config/config.json"]);
+  fs.writeFileSync(path.join(w.configDir, "state.json"), '{"lease":"later"}\n');
+  assert.equal(await rollback({ yes: true }, w.deps), 0, output(w));
+  assert.equal(fs.readFileSync(path.join(w.configDir, "state.json"), "utf8"), '{"lease":"later"}\n', "the password and login state stay as they are now");
+  assert.equal(config(w).migratedTo, undefined);
+});
+
+test("old update and rollback backups go, those the last history entries name stay", async () => {
+  const repo = makeRepo();
+  const w = installed(repo);
+  const backups = path.join(w.stateDir, "backup");
+  fs.mkdirSync(backups, { recursive: true });
+  for (const name of ["update-v0.5.0-v0.6.0-20260101T000000Z", "rollback-v0.6.0-v0.5.0-20260102T000000Z", "update-v0.5.0-v0.6.0-20260103T000000Z", "migrate-0-1-20260101T000000Z"]) {
+    fs.mkdirSync(path.join(backups, name));
+  }
+  assert.equal(await update({ yes: true, to: "v0.7.1" }, w.deps), 0, output(w));
+  assert.equal(await rollback({ yes: true }, w.deps), 0, output(w));
+  assert.equal(await update({ yes: true, to: "v0.7.1" }, w.deps), 0, output(w));
+  const left = fs.readdirSync(backups).sort();
+  assert.ok(left.includes("migrate-0-1-20260101T000000Z"), "other backups are left");
+  assert.ok(!left.includes("update-v0.5.0-v0.6.0-20260101T000000Z"));
+  assert.ok(!left.includes("rollback-v0.6.0-v0.5.0-20260102T000000Z"));
+  for (const h of history(w)) assert.ok(fs.existsSync(h.backupDir!), h.backupDir);
 });

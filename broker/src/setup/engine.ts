@@ -66,6 +66,8 @@ export interface Ctx {
   pollMs: number;
   pingWaitMs: number;
   now: () => Date;
+  // Whether this runs inside ccrc.service, which restarting or stopping the service would stop.
+  inService: () => boolean;
 }
 
 export interface Check {

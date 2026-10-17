@@ -41,3 +41,21 @@ test("a changed device list and allowLocal hold from the next request", async ()
   gate.update([], true);
   assert.equal((await gate.check("127.0.0.1", "100.64.0.2")).ok, false);
 });
+
+test("only the MagicDNS name of a machine of this tailnet counts, not the host name it reports itself", async () => {
+  const st = async () => ({
+    Self: { HostName: "laptop", DNSName: "laptop.example.ts.net.", TailscaleIPs: ["100.64.0.1"] },
+    Peer: {
+      a: { HostName: "phone", DNSName: "phone-1.example.ts.net.", TailscaleIPs: ["100.64.0.2"] },
+      b: { HostName: "phone", DNSName: "other-host.other.ts.net.", TailscaleIPs: ["100.64.0.3"] },
+      c: { HostName: "x", DNSName: "phone.other.ts.net.", TailscaleIPs: ["100.64.0.4"] },
+      d: { HostName: "y", DNSName: "tablet.example.ts.net.", TailscaleIPs: ["100.64.0.5"], ShareeNode: true },
+    },
+  });
+  const gate = new DeviceGate(["phone", "tablet"], false, st);
+  assert.deepEqual(await gate.check("127.0.0.1", "100.64.0.2"), { ok: false, ip: "100.64.0.2" }, "a host name of its own choosing");
+  assert.deepEqual(await gate.check("127.0.0.1", "100.64.0.3"), { ok: false, ip: "100.64.0.3" }, "shared in from another tailnet");
+  assert.deepEqual(await gate.check("127.0.0.1", "100.64.0.4"), { ok: false, ip: "100.64.0.4" }, "the same label in another tailnet");
+  assert.deepEqual(await gate.check("127.0.0.1", "100.64.0.5"), { ok: false, ip: "100.64.0.5" }, "a sharee machine");
+  assert.equal((await gate.check("127.0.0.1", undefined)).ok, false);
+});

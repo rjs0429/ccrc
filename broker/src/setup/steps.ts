@@ -18,7 +18,8 @@ import { migrateConfigFile } from "../migrate.ts";
 import { PushStore } from "../push/subscriptions.ts";
 import type { Ctx, Step } from "./engine.ts";
 import type { Choice } from "./io.ts";
-import { SERVICE, unitFile, unitMatches, unitText } from "./service.ts";
+import { inServiceRefusal } from "../service-cgroup.ts";
+import { SERVICE, keptLines, unitFile, unitMatches, unitText, writeUnit } from "./service.ts";
 import { dnsName, httpsReady, phones, reachesBroker, servedPorts, tailscaleStatus } from "./tailscale.ts";
 import { WRAPPER_SETTING, changeSetting, readSettingsFile, settingsFile } from "./vscode-settings.ts";
 
@@ -45,6 +46,16 @@ function configRaw(ctx: Ctx): Obj | undefined {
   if (!fs.existsSync(file)) return undefined;
   return applyMigrations(parseConfigText(fs.readFileSync(file, "utf8"), file), file).config;
 }
+
+// Whether setup still has to ask for roots. An empty list is a choice (new sessions only in folders that already have
+// sessions), and so is a missing key in a config from ccrc 0.6 or earlier, where it meant the same.
+function rootsUnset(ctx: Ctx, raw: Obj): boolean {
+  if (Array.isArray(raw.roots)) return false;
+  const file = ctx.at.configFile;
+  return !fs.existsSync(file) || parseConfigText(fs.readFileSync(file, "utf8"), file).schemaVersion !== undefined;
+}
+
+const NO_ROOTS = "none";
 
 // Changes config.json, migrating it first (with its backup) and checking the result as the broker will read it.
 function changeConfig(ctx: Ctx, change: (raw: Obj) => void): void {
@@ -144,11 +155,13 @@ const tailscaleLogin: Step = {
     if (st?.BackendState === "Running") return { ok: true, detail: dnsName(st.Self) };
     return { ok: false, detail: st ? `state ${st.BackendState ?? "unknown"}` : "Tailscale does not answer" };
   },
-  plan: (ctx) => [
-    `sudo tailscale up --operator=${ctx.at.user} --qr: it shows a sign-in link and QR code`,
+  plan: () => [
+    "sudo tailscale up, with no flags so settings from an earlier Tailscale setup stay: it shows a sign-in link",
     "you sign in there; without a Tailscale account, that page makes one (Google, Microsoft, GitHub or Apple)",
   ],
-  apply: (ctx) => must(ctx, "sudo", ["tailscale", "up", `--operator=${ctx.at.user}`, "--qr"], true),
+  // With any flag, `tailscale up` fails unless it is given every setting the machine already has. The operator is
+  // set by the next step.
+  apply: (ctx) => must(ctx, "sudo", ["tailscale", "up"], true),
 };
 
 const tailscaleOperator: Step = {
@@ -270,18 +283,18 @@ const config: Step = {
     if (!raw) return { ok: false, detail: "no config.json yet" };
     const roots = Array.isArray(raw.roots) ? (raw.roots as string[]) : [];
     const missing = [
-      !roots.length && "roots",
+      rootsUnset(ctx, raw) && "roots",
       raw.claudePath === undefined && claudePathFor(ctx) !== FOLLOW_VSCODE && "claudePath",
       raw.brokerSessions === undefined && "brokerSessions",
       raw.brokerSessions === "apiKey" && !readApiKey(ctx.at.apiKeyFile) && "the API key",
     ].filter(Boolean);
     if (missing.length) return { ok: false, detail: `to set: ${missing.join(", ")}` };
-    return { ok: true, detail: `brokerSessions ${String(raw.brokerSessions)}, roots ${roots.join(", ")}` };
+    return { ok: true, detail: `brokerSessions ${String(raw.brokerSessions)}, roots ${roots.join(", ") || "none (folders with sessions only)"}` };
   },
   plan(ctx) {
     const raw = configRaw(ctx) ?? {};
     const out: string[] = [];
-    if (!Array.isArray(raw.roots) || !raw.roots.length) out.push(`ask which folders new sessions may start in (default ${ctx.at.home})`);
+    if (rootsUnset(ctx, raw)) out.push(`ask which folders new sessions may start in (default ${ctx.at.home}; "${NO_ROOTS}" for only folders that already have sessions)`);
     if (raw.claudePath === undefined) out.push(`set claudePath to ${claudePathFor(ctx)}`);
     if (raw.brokerSessions === undefined) out.push(`ask how sessions the phone starts sign in: ${BROKER_SESSIONS.join(", ")} (default off)`);
     if (raw.brokerSessions === "apiKey" || raw.brokerSessions === undefined) out.push("for apiKey, ask for the key (typed hidden)");
@@ -291,13 +304,16 @@ const config: Step = {
   async apply(ctx) {
     const raw = configRaw(ctx) ?? {};
     const answers: Obj = {};
-    if (!Array.isArray(raw.roots) || !raw.roots.length) {
-      const text = await ctx.ask.text("Folders new sessions may start in, separated by commas", ctx.at.home);
-      answers.roots = text
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map((s) => path.resolve(ctx.at.home, s.replace(/^~(?=$|\/)/, ctx.at.home)));
+    if (rootsUnset(ctx, raw)) {
+      const text = await ctx.ask.text(`Folders new sessions may start in, separated by commas ("${NO_ROOTS}": only folders that already have sessions)`, ctx.at.home);
+      answers.roots =
+        text.trim().toLowerCase() === NO_ROOTS
+          ? []
+          : text
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+              .map((s) => path.resolve(ctx.at.home, s.replace(/^~(?=$|\/)/, ctx.at.home)));
     }
     if (raw.claudePath === undefined) answers.claudePath = claudePathFor(ctx);
     let mode = raw.brokerSessions as BrokerSessions | undefined;
@@ -357,42 +373,50 @@ const service: Step = {
       !s.unitOk && (s.text === undefined ? "no unit" : "unit runs other code"),
       !s.enabled && "not enabled",
       !s.active && "not running",
-      !s.linger && "stops at logout (no linger)",
       s.active && s.version === undefined && "does not answer",
       runsOther(s, ctx) && `runs ${s.version}`,
     ].filter(Boolean);
-    return problems.length ? { ok: false, detail: problems.join(", ") } : { ok: true, detail: `${s.version ?? "running"}` };
+    if (problems.length) return { ok: false, detail: problems.join(", ") };
+    // Linger is optional: without it the broker runs while you are logged in.
+    return { ok: true, detail: `${s.version ?? "running"}${s.linger ? "" : `; stops when you log out (optional: loginctl enable-linger ${ctx.at.user})`}` };
   },
   plan: (ctx) => [
-    `write ${unitFile(ctx.at.xdgConfigHome)}: ExecStart=${ctx.at.ccrc} serve, CCRC_NODE=${ctx.at.node}, Restart=on-failure`,
+    `write ${unitFile(ctx.at.xdgConfigHome)}: ExecStart=${ctx.at.ccrc} serve, CCRC_NODE=${ctx.at.node}, Restart=on-failure; Environment lines of a unit already there that setup does not set are kept`,
     `systemctl --user daemon-reload, enable ${SERVICE}, and (re)start it`,
-    `loginctl enable-linger ${ctx.at.user} so it runs while you are logged out (with sudo if that is refused)`,
+    `when linger is off, ask whether to turn it on (loginctl enable-linger ${ctx.at.user}) so the broker runs while you are logged out; --yes leaves it off`,
     `check http://127.0.0.1:${brokerPort(ctx)}/api/ping`,
     `on its first start the broker changes the entrypoint field of transcripts in ${ctx.at.claudeProjectsDir} that earlier broker sessions wrote, so VS Code lists them; each file is backed up first`,
   ],
   async apply(ctx) {
+    if (ctx.inService()) throw Error(inServiceRefusal("setup"));
     const s = await serviceState(ctx);
     const spec = { ccrc: ctx.at.ccrc, node: ctx.at.node, path: ctx.at.path, env: ctx.at.keepEnv };
     if (!s.unitOk) {
       const file = unitFile(ctx.at.xdgConfigHome);
+      let kept: string[] = [];
       if (s.text !== undefined) {
         const backup = path.join(ctx.at.stateDir, "backup", `${SERVICE}-${ctx.now().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`);
         fs.mkdirSync(path.dirname(backup), { recursive: true, mode: 0o700 });
         fs.writeFileSync(backup, s.text);
         ctx.out(`The unit as it was: ${backup}`);
+        kept = keptLines(s.text, spec);
+        for (const l of kept) ctx.out(`  kept from it: ${l}`);
       }
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, unitText(spec));
+      writeUnit(file, unitText({ ...spec, kept }));
       await must(ctx, "systemctl", ["--user", "daemon-reload"]);
     }
     if (!s.enabled) await must(ctx, "systemctl", ["--user", "enable", SERVICE]);
     if (!s.unitOk || !s.active || s.version === undefined || runsOther(s, ctx)) await must(ctx, "systemctl", ["--user", "restart", SERVICE]);
-    if (!s.linger && (await ctx.run.run("loginctl", ["enable-linger", ctx.at.user])).code !== 0) {
-      ctx.out(`loginctl enable-linger was refused; with sudo it keeps the broker running while you are logged out.`);
-      // The broker runs either way while you are logged in, so a refusal here is left for a later run, not a failure.
-      if (await ctx.ask.confirm(`Run sudo loginctl enable-linger ${ctx.at.user}?`, true)) {
-        const code = await ctx.run.attached("sudo", ["loginctl", "enable-linger", ctx.at.user]);
-        if (code !== 0) ctx.out(`sudo loginctl enable-linger ${ctx.at.user} failed (exit code ${code}); the broker stops when you log out until it is run.`);
+    // Linger changes whether the broker outlives your login, so it is asked, and --yes leaves it as it is.
+    if (!s.linger) {
+      if (ctx.o.yes || !(await ctx.ask.confirm(`Keep the broker running while you are logged out (loginctl enable-linger ${ctx.at.user})?`, true))) {
+        ctx.out(`Linger stays off: the broker stops when you log out. To change that: loginctl enable-linger ${ctx.at.user}`);
+      } else if ((await ctx.run.run("loginctl", ["enable-linger", ctx.at.user])).code !== 0) {
+        ctx.out("loginctl enable-linger was refused; with sudo it keeps the broker running while you are logged out.");
+        if (await ctx.ask.confirm(`Run sudo loginctl enable-linger ${ctx.at.user}?`, true)) {
+          const code = await ctx.run.attached("sudo", ["loginctl", "enable-linger", ctx.at.user]);
+          if (code !== 0) ctx.out(`sudo loginctl enable-linger ${ctx.at.user} failed (exit code ${code}); the broker stops when you log out until it is run.`);
+        }
       }
     }
     const port = brokerPort(ctx);

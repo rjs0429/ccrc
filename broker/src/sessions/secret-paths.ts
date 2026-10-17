@@ -53,8 +53,8 @@ export function isSecretPath(p: string): boolean {
   if (SECRET_NAMES.has(name) || SECRET_PATTERNS.some((r) => r.test(name))) return true;
   if (SECRET_SUBPATHS.some((s) => `${lower}/`.includes(s))) return true;
   if (segs[0] === "proc") return true;
-  // The user's Claude Code settings hold env values the settings screen hides.
+  // The user's Claude Code settings hold env values the settings screen hides, and so do the copies ccrc keeps of them.
   const claudeDirs = [path.join(paths.home, ".claude"), paths.claudeConfigDir].map((d) => d.toLowerCase());
-  if (/^settings(\.local)?\.json$/.test(name) && claudeDirs.includes(path.dirname(lower))) return true;
+  if (/^settings(\.local)?\.json/.test(name) && claudeDirs.includes(path.dirname(lower))) return true;
   return [paths.configDir, paths.stateDir].some((d) => inside(path.resolve(p), d));
 }
