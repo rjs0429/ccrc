@@ -105,7 +105,7 @@ versions) and runs setup again.
 | `--version <tag>` | Install this release instead of the newest one (`0.7.0` and `v0.7.0` both name the tag `v0.7.0`) |
 | `--channel stable\|rc` | With `rc`, release candidates count when looking for the newest release |
 | `--yes` | Take the default answer to every question except whether to use sudo; steps that need you still wait |
-| `--allow-sudo` | Without a terminal, let the steps that need sudo run (sudo itself may still need your password). With a terminal each one is still asked. Passed on to `ccrc setup` |
+| `--allow-sudo` | Without a terminal, let the steps that need sudo run; sudo then has to work without asking for a password. With a terminal each one is still asked. Passed on to `ccrc setup` |
 | `--dry-run` | Show what would be done and change nothing; with an install in place, setup shows its part too |
 | `--no-system` | Never use sudo or change the system (for testing) |
 | `--uninstall` | Run `ccrc uninstall` of the install in place |
@@ -158,9 +158,14 @@ fresh install there is nothing to rewrite.
 taken from `--yes`:
 
 - With a terminal, each use says what it runs and why, and asks, `--allow-sudo` or not.
-- Without a terminal (from a script, say), it runs only with `--allow-sudo`. Otherwise `install.sh` stops before
-  installing base tools, and setup leaves the step as "sudo consent needed", goes on with the steps that do not
-  depend on it, and says how to finish: run `ccrc setup` in a terminal, or again with `--allow-sudo`.
+- Without a terminal (from a script, say), it runs only with `--allow-sudo`, and sudo then has to work without asking
+  for a password (a `NOPASSWD` rule, for example); otherwise that sudo fails and so does the step. Without
+  `--allow-sudo`, `install.sh` stops before installing base tools, and setup leaves the step as "sudo consent needed",
+  goes on with the steps that do not depend on it, and says how to finish: run `ccrc setup` in a terminal, or again
+  with `--allow-sudo`.
+- Before 0.7.1, setup took `--yes` as consent to sudo and had no `--allow-sudo`. When `install.sh` installs such a
+  version (`--version v0.7.0`) with `--yes` and without `--allow-sudo`, it runs that setup without `--yes`, so each
+  question is asked, or, without a terminal, stops once the code is installed.
 - `--no-system` leaves out those steps altogether. `deploy/install-service.sh` (`ccrc setup --only service --yes`)
   never uses sudo: under `--yes` linger is left as it is.
 

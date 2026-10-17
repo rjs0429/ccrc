@@ -13,7 +13,9 @@ your version and the new one, and the lines under "Breaking" separately.
   needs it) says what it runs and why and asks at the terminal, `--yes` or not. Without a terminal it runs only with
   the new `--allow-sudo` option, which `install.sh` also passes on to setup; otherwise `install.sh` stops before
   installing base tools, and setup leaves the step as "sudo consent needed", goes on with the steps that do not need
-  it, and says how to finish. `deploy/install-service.sh` still uses no sudo.
+  it, and says how to finish. `deploy/install-service.sh` still uses no sudo. When `install.sh` installs an earlier
+  version, whose setup takes `--yes` as consent to sudo, it runs that setup without `--yes` (or, without a terminal,
+  stops before it) unless `--allow-sudo` is given.
 
 ### Fixed
 

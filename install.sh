@@ -13,7 +13,8 @@
 #   --channel stable|rc  with rc, release candidates count when looking for the newest release
 #   --yes                take the default answer to every question, except whether to use sudo
 #   --allow-sudo         without a terminal, let the steps that need sudo run (with one, each is asked, --yes or
-#                        not); passed on to setup. Without a terminal and without it, those steps stop or are left
+#                        not); passed on to setup (0.7.1 and later). Without a terminal and without it, those
+#                        steps stop or are left
 #   --dry-run            show what would be done and change nothing; with an install in place, setup shows its part
 #   --no-system          never use sudo or change the system (for testing)
 #   --uninstall          run `ccrc uninstall` of the install in place
@@ -394,13 +395,28 @@ link_code() {
 }
 
 run_ccrc() {
-  local args=("$@")
-  [ "$YES" = 0 ] || args+=(--yes)
+  local args=("$@") yes=$YES allow=$ALLOW_SUDO help
+  if [ -n "$NODE" ]; then export CCRC_NODE=$NODE; fi
+  if [ "$1" = setup ]; then
+    help=$("$DATA_DIR/current/bin/ccrc" setup --help 2>/dev/null || true)
+    case "$help" in
+      *--allow-sudo*) ;;
+      *)
+        # A setup before 0.7.1 (--version v0.7.0, say) knows no --allow-sudo and takes --yes as consent to sudo.
+        allow=0
+        if [ "$YES" = 1 ] && [ "$ALLOW_SUDO" = 0 ] && [ "$NO_SYSTEM" = 0 ] && [ "$DRY_RUN" = 0 ]; then
+          [ -n "$TTY" ] || die "ccrc is installed, but the setup of this version takes --yes as consent to sudo: run \`ccrc setup\` in a terminal, or install.sh again with --allow-sudo"
+          say "The setup of this version takes --yes as consent to sudo, so it runs without --yes and asks each question."
+          yes=0
+        fi
+        ;;
+    esac
+  fi
+  [ "$yes" = 0 ] || args+=(--yes)
   [ "$NO_SYSTEM" = 0 ] || args+=(--no-system)
   [ "$DRY_RUN" = 0 ] || args+=(--dry-run)
-  if [ "$1" = setup ] && [ "$ALLOW_SUDO" = 1 ]; then args+=(--allow-sudo); fi
+  [ "$allow" = 0 ] || [ "$1" != setup ] || args+=(--allow-sudo)
   args+=("${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"}")
-  if [ -n "$NODE" ]; then export CCRC_NODE=$NODE; fi
   say ""
   say "== ccrc ${args[*]}"
   if [ ! -t 0 ] && [ -n "$TTY" ]; then exec "$DATA_DIR/current/bin/ccrc" "${args[@]}" <"$TTY"; fi
