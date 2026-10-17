@@ -13,7 +13,7 @@ const PROBE = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "fixture
 // What the phone holds after the broker took in a recorded run up to message `upTo`.
 function replay(k: string, upTo = PROBE[k].length) {
   const book = new TaskBook(() => {});
-  const builder = new ItemBuilder("/tmp/f9-probe");
+  const builder = new ItemBuilder("/tmp/probe");
   const pending: PendingRequest[] = [];
   for (const m of PROBE[k].slice(0, upTo)) {
     if (m.type === "control_request") {
@@ -30,12 +30,12 @@ function replay(k: string, upTo = PROBE[k].length) {
 const at = (k: string, pred: (m: Msg) => boolean) => PROBE[k].findIndex(pred) + 1;
 
 test("a nested subagent shows under the subagent that started it, merged with its Agent call", () => {
-  const { tasks, items, pending } = replay("a", at("a", (m) => m.subtype === "task_progress" && m.task_id === "a8d26e194948c7c82"));
+  const { tasks, items, pending } = replay("a", at("a", (m) => m.subtype === "task_progress" && m.task_id === "a1000000000000002"));
   const map = agentMap({ tasks, items, pending, busy: true });
   assert.equal(map.tree.length, 1);
   const outer = map.tree[0];
   assert.equal(outer.title, "Run nested subagent echo check");
-  assert.equal(outer.itemId, "toolu_01MFKW2sCk2TMPNgjN4kaCk3");
+  assert.equal(outer.itemId, "toolu_a_outer");
   assert.equal(outer.prompt?.startsWith("Use the Agent tool yourself"), true);
   assert.deepEqual(
     outer.children.map((c) => [c.title, c.status, c.background]),
@@ -65,7 +65,7 @@ test("a workflow shows its phases and agents and counts its running agents on th
   const wf = map.tree[0];
   assert.equal(wf.workflow, true);
   assert.equal(wf.name, "alpha-beta-join");
-  assert.equal(wf.itemId, "toolu_011UT1xC9Fx3hWf24zG3PGpH");
+  assert.equal(wf.itemId, "toolu_b_workflow");
   assert.deepEqual(wf.progress?.phases, ["gather", "join"]);
   assert.deepEqual([wf.progress?.phase, wf.progress?.running, wf.progress?.done], [1, 1, 2]);
   assert.deepEqual(map.chip, { running: 1, dot: "running", total: 1 });
@@ -164,7 +164,7 @@ test("a running node's time counts on from the broker's measure", () => {
 
 test("a subagent's result is its report without Claude Code's hand-back notice, indent, id and usage", () => {
   const { tasks, items, pending } = replay("a");
-  const outer = agentMap({ tasks, items, pending, busy: false }).nodes.find((n) => n.task?.id === "a095e9cb1491eec1a")!;
+  const outer = agentMap({ tasks, items, pending, busy: false }).nodes.find((n) => n.task?.id === "a1000000000000001")!;
   assert.equal(outer.result?.startsWith("The nested subagent is launched but has not finished"), true, outer.result);
   assert.equal(outer.result?.endsWith("too large to read directly."), true, outer.result);
 });

@@ -5,8 +5,8 @@ import { mock, test } from "node:test";
 import { TaskBook, workflowProgress } from "../src/sessions/tasks.ts";
 
 type Msg = Record<string, unknown>;
-// Messages a real Claude Code (haiku) sent through the SDK: a: a subagent that starts a nested subagent,
-// b: a workflow of three agents in two phases, c: a background subagent asking for permission.
+// Messages as Claude Code sends them through the SDK, cut to the fields the broker reads: a: a subagent that starts a
+// nested subagent, b: a workflow of three agents in two phases, c: a background subagent asking for permission.
 const PROBE = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "fixtures", "agent-probe.json"), "utf8")) as Record<string, Msg[]>;
 const taskMessages = (k: string) => PROBE[k].filter((m) => m.type === "system" && TaskBook.handles(m.subtype));
 
@@ -21,18 +21,18 @@ test("a nested subagent hangs under the subagent that started it, with its depth
   const msgs = taskMessages("a");
   const upTo = (n: number) => msgs.slice(0, n).forEach((m) => b.on(m));
   upTo(msgs.findIndex((m) => m.subtype === "task_started" && m.parent_task_id));
-  const outer = b.get("a095e9cb1491eec1a")!;
+  const outer = b.get("a1000000000000001")!;
   assert.equal(outer.description, "Run nested subagent echo check");
   assert.equal(outer.activity, "Run nested echo check", "the progress names what it does now");
   assert.deepEqual([outer.kind, outer.agentType, outer.depth, outer.background, outer.status], ["local_agent", "general-purpose", 1, false, "running"]);
-  const listedFirst = b.get("a8d26e194948c7c82")!;
-  assert.equal(listedFirst.parentId, "a095e9cb1491eec1a", "the list of background tasks names its parent before it starts");
+  const listedFirst = b.get("a1000000000000002")!;
+  assert.equal(listedFirst.parentId, "a1000000000000001", "the list of background tasks names its parent before it starts");
   msgs.slice(msgs.findIndex((m) => m.subtype === "task_started" && m.parent_task_id)).forEach((m) => b.on(m));
-  const inner = b.get("a8d26e194948c7c82")!;
-  assert.deepEqual([inner.parentId, inner.depth, inner.background, inner.status, inner.toolUseId], ["a095e9cb1491eec1a", 2, true, "completed", "toolu_01YF8X1LLAWMPL2457UJCQDo"]);
+  const inner = b.get("a1000000000000002")!;
+  assert.deepEqual([inner.parentId, inner.depth, inner.background, inner.status, inner.toolUseId], ["a1000000000000001", 2, true, "completed", "toolu_a_inner"]);
   assert.equal(inner.summary, "The command `echo nested-ok` printed exactly: `nested-ok`");
   assert.deepEqual([inner.tokens, inner.tools, inner.ms], [12153, 1, 3208]);
-  assert.equal(b.get("a095e9cb1491eec1a")?.status, "completed");
+  assert.equal(b.get("a1000000000000001")?.status, "completed");
   assert.equal(b.running(), false);
   b.clear();
 });
@@ -42,7 +42,7 @@ test("a workflow's progress gives its phases and agents", () => {
   const msgs = taskMessages("b");
   const progress = msgs.filter((m) => m.subtype === "task_progress");
   for (const m of msgs.slice(0, msgs.indexOf(progress[0]) + 1)) b.on(m);
-  let wf = b.get("ws4ojltl1")!;
+  let wf = b.get("w10000001")!;
   assert.equal(wf.kind, "local_workflow");
   assert.equal(wf.workflow?.name, "alpha-beta-join");
   assert.deepEqual(wf.workflow?.phases, ["gather", "join"]);
@@ -55,7 +55,7 @@ test("a workflow's progress gives its phases and agents", () => {
   );
   assert.equal(wf.summary, undefined, "a summary that repeats the name is left out");
   for (const m of msgs.slice(msgs.indexOf(progress[0]) + 1, msgs.indexOf(progress.at(-1)!) + 1)) b.on(m);
-  wf = b.get("ws4ojltl1")!;
+  wf = b.get("w10000001")!;
   assert.deepEqual(wf.workflow && { ...wf.workflow, agents: wf.workflow.agents.map((a) => [a.label, a.phase, a.state, a.tokens, a.ms]) }, {
     name: "alpha-beta-join",
     phases: ["gather", "join"],
@@ -70,9 +70,9 @@ test("a workflow's progress gives its phases and agents", () => {
     done: 3,
     failed: 0,
   });
-  assert.equal(wf.workflow?.agents[2].id, "adc5e4cf751d4364d");
+  assert.equal(wf.workflow?.agents[2].id, "a2000000000000003");
   for (const m of msgs.slice(msgs.indexOf(progress.at(-1)!) + 1)) b.on(m);
-  assert.deepEqual([b.get("ws4ojltl1")?.status, b.get("ws4ojltl1")?.ms, b.get("ws4ojltl1")?.tokens], ["completed", 4654, 30574]);
+  assert.deepEqual([b.get("w10000001")?.status, b.get("w10000001")?.ms, b.get("w10000001")?.tokens], ["completed", 4654, 30574]);
   b.clear();
 });
 
@@ -200,7 +200,7 @@ test("the list of background tasks adds what was missed and drops what has gone,
 test("a task first seen in a list keeps its parent once the parent has ended and the list no longer names it", () => {
   const { b } = book();
   for (const m of taskMessages("a")) b.on(m);
-  assert.equal(b.get("a8d26e194948c7c82")?.parentId, "a095e9cb1491eec1a");
+  assert.equal(b.get("a1000000000000002")?.parentId, "a1000000000000001");
   b.clear();
 });
 
