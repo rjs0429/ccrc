@@ -27,7 +27,7 @@ DATA_DIR=${CCRC_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ccrc}
 STATE_DIR=${CCRC_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ccrc}
 BIN_DIR=$HOME/.local/bin
 NODE_DIST=${CCRC_NODE_DIST:-https://nodejs.org/dist/latest-v22.x}
-TOOLS=(git curl tar xz sha256sum)
+TOOLS=(git curl tar xz sha256sum ssh-keygen)
 export npm_config_update_notifier=false npm_config_fund=false npm_config_audit=false
 
 VERSION=
@@ -206,6 +206,13 @@ install_tools() {
     case "$t" in
       xz) if [ "$pm" = apt-get ]; then pkgs+=(xz-utils); else pkgs+=(xz); fi ;;
       sha256sum) pkgs+=(coreutils) ;;
+      ssh-keygen)
+        case "$pm" in
+          apt-get) pkgs+=(openssh-client) ;;
+          pacman) pkgs+=(openssh) ;;
+          *) pkgs+=(openssh-clients) ;;
+        esac
+        ;;
       *) pkgs+=("$t") ;;
     esac
   done
@@ -224,7 +231,7 @@ install_tools() {
   [ "$NO_SYSTEM" = 0 ] || die "missing ${missing[*]}; --no-system does not install them: $cmd"
   say "missing ${missing[*]}; to install them: $cmd"
   local consent=0
-  sudo_ok "install ${missing[*]} with the system's package manager; ccrc needs them to fetch and build" || consent=$?
+  sudo_ok "install ${missing[*]} with the system's package manager; ccrc needs them to fetch, build and check its updates" || consent=$?
   case "$consent" in
     0) ;;
     2) die "sudo consent needed to install ${missing[*]}: run install.sh in a terminal to be asked, or again with --allow-sudo; or install them yourself ($cmd) and run this again" ;;

@@ -6,6 +6,8 @@ import { paths } from "./paths.ts";
 import { changelogSections, isNewer, latestTag, listTags, quietGitEnv, releaseUrl, updateSource, type UpdateChannel } from "./releases.ts";
 import { run, type Runner } from "./run.ts";
 import { inBrokerService, inServiceRefusal } from "./service-cgroup.ts";
+import { whichOn } from "./setup/io.ts";
+import { sshKeygenInstall } from "./ssh-keygen.ts";
 import { readUpdateCheck, updateCheckFile, writeUpdateCheck } from "./update-check.ts";
 
 // `ccrc update` and `ccrc rollback` on an install: <dataDir>/versions/<version>/ folders and the <dataDir>/current link.
@@ -106,7 +108,7 @@ function stamp(d: Date): string {
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const lastLine = (text: string) => text.trim().split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 500);
+const lastLine = (text: string) => [...new Set(text.trim().split("\n").filter(Boolean))].slice(-3).join(" / ").slice(0, 500);
 
 class Updater {
   private d: UpdateDeps;
@@ -322,7 +324,14 @@ class Updater {
       env: quietGitEnv(this.d.env),
       timeoutMs: 60_000,
     });
-    if (r.code !== 0) throw new UpdateError(`the signature of ${tag} does not check out against ${signers}: ${lastLine(r.stderr) || `exit code ${r.code}`}`);
+    if (r.code === 0) return;
+    const why = lastLine(r.stderr) || `exit code ${r.code}`;
+    const dirs = this.d.env.PATH ?? "";
+    if (/cannot run ssh-keygen/.test(r.stderr) || !whichOn("ssh-keygen", dirs)) {
+      const install = sshKeygenInstall((cmd) => whichOn(cmd, dirs));
+      throw new UpdateError(`could not check the signature of ${tag}: git checks it with ssh-keygen, which is not on PATH (${why}). Run ccrc update again once it is installed; ${install}`);
+    }
+    throw new UpdateError(`the signature of ${tag} does not check out against ${signers}: ${why}`);
   }
 
   // Backs up, migrates with the new version's code, moves the link and restarts. Returns the exit code.

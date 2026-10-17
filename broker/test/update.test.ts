@@ -440,6 +440,24 @@ test("with allowed signers in the install, a tag must carry a signature from one
   assert.deepEqual(versions(unsigned), ["v0.7.0"]);
 });
 
+test("with allowed signers but no ssh-keygen, the update stops and says what to install", async (t) => {
+  if (spawnSync("ssh-keygen", ["-?"]).error) return t.skip("no ssh-keygen");
+  const keys = tempDir();
+  const key = path.join(keys, "id");
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "test@example.com", "-f", key]);
+  const w = installed(makeRepo({ key }));
+  fs.writeFileSync(path.join(w.root, ".ccrc-allowed-signers"), `test@example.com namespaces="git" ${fs.readFileSync(`${key}.pub`, "utf8").trim()}\n`);
+  // PATH with git and a package manager, without ssh-keygen.
+  const bin = tempDir();
+  for (const cmd of ["git", "apt-get"]) fs.symlinkSync(execFileSync("sh", ["-c", `command -v ${cmd} || echo /bin/true`], { encoding: "utf8" }).trim(), path.join(bin, cmd));
+  w.deps = { ...w.deps, env: { ...GIT_ENV, PATH: bin } };
+  assert.equal(await update({ yes: true }, w.deps), 1, output(w));
+  assert.match(output(w), /could not check the signature of v0\.7\.1: git checks it with ssh-keygen, which is not on PATH \(error: cannot run ssh-keygen/);
+  assert.match(output(w), /Run ccrc update again once it is installed; install it with: sudo apt-get install openssh-client$/m);
+  assert.equal(current(w), path.join("versions", "v0.7.0"));
+  assert.deepEqual(versions(w), ["v0.7.0"]);
+});
+
 test("with allowed signers in the install, an OpenPGP signature does not pass even from a key GnuPG trusts", async (t) => {
   if (spawnSync("ssh-keygen", ["-?"]).error || spawnSync("gpg", ["--version"]).error) return t.skip("no ssh-keygen or gpg");
   const gnupgHome = tempDir();

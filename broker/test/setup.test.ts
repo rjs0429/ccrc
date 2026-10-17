@@ -8,6 +8,7 @@ import { withDefaults, type Choice, type Prompt, type RunResult, type Runner } f
 import { parseSetupArgs, rootRefusal } from "../src/setup/cli.ts";
 import { unitMatches, unitProgram, unitText } from "../src/setup/service.ts";
 import { STEPS } from "../src/setup/steps.ts";
+import { sshKeygenInstall } from "../src/ssh-keygen.ts";
 import { phones, reachesBroker } from "../src/setup/tailscale.ts";
 import { runUninstall, safeToRemove } from "../src/setup/uninstall.ts";
 import { WRAPPER_SETTING, changeSetting, editSettingsText, parseSettingsText } from "../src/setup/vscode-settings.ts";
@@ -35,6 +36,7 @@ interface World {
   loggedIn: boolean;
   code: boolean;
   qrencode: boolean;
+  sshKeygen: boolean;
   doctor?: DoctorResult;
 }
 
@@ -56,6 +58,7 @@ function freshWorld(): World {
     loggedIn: false,
     code: true,
     qrencode: true,
+    sshKeygen: true,
   };
 }
 
@@ -147,6 +150,8 @@ function machine(world: World, o: { extension?: boolean; vscode?: boolean } = {}
       if (cmd === "tailscale") return world.tailscale ? "/usr/bin/tailscale" : undefined;
       if (cmd === "code") return world.code ? "/usr/bin/code" : undefined;
       if (cmd === "qrencode") return world.qrencode ? "/usr/bin/qrencode" : undefined;
+      if (cmd === "ssh-keygen") return world.sshKeygen ? "/usr/bin/ssh-keygen" : undefined;
+      if (cmd === "apt-get") return "/usr/bin/apt-get";
       return undefined;
     },
     async run(cmd, args) {
@@ -306,6 +311,7 @@ test("a full run on a new machine does every step, and a second run finds nothin
   const r = await runSetup([...STEPS], ctx);
   assert.equal(r.ok, true, ctx.lines.join("\n"));
   assert.deepEqual(outcomes(r), {
+    "ssh-keygen": "ok",
     claude: "done",
     "tailscale-install": "done",
     "tailscale-login": "done",
@@ -584,6 +590,38 @@ test("claude: with VS Code's code command the extension is installed, then setup
   const r2 = await runSetup([...STEPS], ctx2);
   assert.deepEqual(outcomes(r2), { claude: "left" });
   assert.match(ctx2.lines.join("\n"), /curl -fsSL https:\/\/claude\.ai\/install\.sh \| bash/);
+});
+
+test("ssh-keygen: a missing one is shown with why and how to install it, without sudo; a checkout skips it", async () => {
+  const m = machine({ ...readyWorld(), sshKeygen: false });
+  const dry = ctxOf(m, { only: ["ssh-keygen"], dryRun: true });
+  await runSetup([...STEPS], dry);
+  assert.match(dry.lines.join("\n"), /\[todo\] ssh-keygen .*\(not on PATH\)/);
+  assert.match(dry.lines.join("\n"), /you install it with: sudo apt-get install openssh-client/);
+
+  const ctx = ctxOf(m, { only: ["ssh-keygen"], yes: true });
+  const r = await runSetup([...STEPS], ctx);
+  assert.deepEqual(outcomes(r), { "ssh-keygen": "left" });
+  const text = ctx.lines.join("\n");
+  assert.match(text, /ccrc update checks that a release tag is signed .* needs ssh-keygen/);
+  assert.match(text, /^Install it with: sudo apt-get install openssh-client$/m);
+  assert.match(text, /Still to do: ssh-keygen \(left\)/);
+  assert.deepEqual(m.calls, []);
+
+  m.world.sshKeygen = true;
+  assert.deepEqual(outcomes(await runSetup([...STEPS], ctxOf(m, { only: ["ssh-keygen"] }))), { "ssh-keygen": "ok" });
+  const checkout = machine({ ...readyWorld(), sshKeygen: false });
+  checkout.at.installed = false;
+  assert.deepEqual(outcomes(await runSetup([...STEPS], ctxOf(checkout, { only: ["ssh-keygen"] }))), { "ssh-keygen": "skipped" });
+});
+
+test("the ssh-keygen package is named for the package manager found", () => {
+  const on = (...found: string[]) => (cmd: string) => (found.includes(cmd) ? `/usr/bin/${cmd}` : undefined);
+  assert.equal(sshKeygenInstall(on("apt-get")), "install it with: sudo apt-get install openssh-client");
+  assert.equal(sshKeygenInstall(on("dnf")), "install it with: sudo dnf install openssh-clients");
+  assert.equal(sshKeygenInstall(on("pacman")), "install it with: sudo pacman -S --needed openssh");
+  assert.equal(sshKeygenInstall(on("zypper")), "install it with: sudo zypper install openssh-clients");
+  assert.match(sshKeygenInstall(on()), /openssh-client on Debian and Ubuntu, openssh-clients on Fedora, RHEL and openSUSE, openssh on Arch/);
 });
 
 test("vscode: asks, keeps the file's comments, and copies it first; --no-vscode and no VS Code skip it", async () => {

@@ -6,6 +6,14 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Fixed
+
+- A machine without OpenSSH's `ssh-keygen` installed ccrc but stopped at its first `ccrc update`, which checks release
+  signatures with it. `install.sh` now counts `ssh-keygen` among the base tools and installs it with them
+  (`openssh-client`, `openssh-clients` or `openssh`, asking for sudo as before); `ccrc setup` has an `ssh-keygen` step
+  that says why it is needed and how to install it; and `ccrc update` says what to install instead of reporting a
+  signature that does not check out.
+
 ## [0.7.2] - 2026-10-18
 
 ### Added

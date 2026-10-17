@@ -19,6 +19,7 @@ import { PushStore } from "../push/subscriptions.ts";
 import { SUDO_CONSENT_HINT, askSudo, type Ctx, type Step } from "./engine.ts";
 import type { Choice } from "./io.ts";
 import { inServiceRefusal } from "../service-cgroup.ts";
+import { sshKeygenInstall } from "../ssh-keygen.ts";
 import { SERVICE, keptLines, unitFile, unitMatches, unitText, writeUnit } from "./service.ts";
 import { dnsName, httpsReady, phones, reachesBroker, servedPorts, tailscaleStatus } from "./tailscale.ts";
 import { WRAPPER_SETTING, changeSetting, readSettingsFile, settingsFile } from "./vscode-settings.ts";
@@ -78,6 +79,24 @@ function findClaude(ctx: Ctx): { bin: string; label: string; vscode: boolean } |
   const cli = ctx.run.which("claude") ?? (fs.existsSync(local) ? local : undefined);
   return cli ? { bin: cli, label: `CLI ${cli}`, vscode: false } : undefined;
 }
+
+// Only says how to install it: setup uses sudo for Tailscale and linger alone.
+const sshKeygen: Step = {
+  id: "ssh-keygen",
+  title: "ssh-keygen, which ccrc update checks release signatures with",
+  human: true,
+  skip: (ctx) => (ctx.at.installed ? undefined : "ccrc update is for installs"),
+  async check(ctx) {
+    const found = ctx.run.which("ssh-keygen");
+    return found ? { ok: true, detail: found } : { ok: false, detail: "not on PATH" };
+  },
+  plan: (ctx) => [`you ${sshKeygenInstall((cmd) => ctx.run.which(cmd))}`],
+  async apply(ctx) {
+    const install = sshKeygenInstall((cmd) => ctx.run.which(cmd));
+    ctx.out("ccrc update checks that a release tag is signed by a key in .ccrc-allowed-signers (git verify-tag), which needs ssh-keygen; without it, updates stop.");
+    ctx.out(`${install[0].toUpperCase()}${install.slice(1)}`);
+  },
+};
 
 const claude: Step = {
   id: "claude",
@@ -531,6 +550,6 @@ const doctor: Step = {
   },
 };
 
-export const STEPS: readonly Step[] = [claude, tailscaleInstall, tailscaleLogin, tailscaleOperator, https, devices, account, config, service, serve, vscode, phone, doctor];
+export const STEPS: readonly Step[] = [sshKeygen, claude, tailscaleInstall, tailscaleLogin, tailscaleOperator, https, devices, account, config, service, serve, vscode, phone, doctor];
 export const STEP_IDS = STEPS.map((s) => s.id);
 export { phoneUrl, brokerPort };

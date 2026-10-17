@@ -61,12 +61,12 @@ advice. Change it any time with `ccrc config set brokerSessions <value>`; a runn
 - A Tailscale account. The installer sets up Tailscale on the machine; MagicDNS and HTTPS certificates must be on in
   the tailnet (setup shows where).
 - The Tailscale app on the phone, signed in to the same tailnet.
-- Node.js 22.18 or newer with npm, git, curl, tar, xz and sha256sum. The installer offers to install the base tools
-  and downloads Node.js 22 (npm included) into ccrc's own folder when none is found; some distributions package npm
-  apart from Node.js. Nothing needs root except the base tools, Tailscale and, if your system asks for it,
+- Node.js 22.18 or newer with npm, git, curl, tar, xz, sha256sum and OpenSSH's `ssh-keygen` (it comes with the SSH
+  client: `openssh-client` on Debian and Ubuntu, `openssh-clients` on Fedora, RHEL and openSUSE, `openssh` on Arch),
+  which `ccrc update` uses from 0.7.2 to check the signatures of release tags. The installer offers to install the
+  base tools and downloads Node.js 22 (npm included) into ccrc's own folder when none is found; some distributions
+  package npm apart from Node.js. Nothing needs root except the base tools, Tailscale and, if your system asks for it,
   `loginctl enable-linger`.
-- OpenSSH's `ssh-keygen` (it comes with the SSH client), which `ccrc update` uses from 0.7.2 to check the signatures
-  of release tags.
 
 ## Install
 
@@ -87,8 +87,8 @@ bash install.sh --version v0.7.0
 `install.sh` only prepares, then hands over to `ccrc setup`:
 
 1. Checks the platform (Linux, x86_64 or aarch64, a systemd user session) and refuses to run as root.
-2. Installs missing base tools with apt, dnf, pacman or zypper. This uses sudo, so it says why and asks first, even
-   with `--yes` (see [sudo](#sudo)).
+2. Installs missing base tools (git, curl, tar, xz, sha256sum, ssh-keygen) with apt, dnf, pacman or zypper. This
+   uses sudo, so it says why and asks first, even with `--yes` (see [sudo](#sudo)).
 3. Finds Node.js 22.18 or newer (`CCRC_NODE`, ccrc's own Node, the one an earlier install recorded, then `PATH`).
    Without one it downloads the newest Node.js 22 from nodejs.org, checks it against the `SHASUMS256.txt` there, and
    unpacks it into `~/.local/share/ccrc/node-v22.x.y-linux-<arch>`, linked as `~/.local/share/ccrc/node`. The
@@ -127,6 +127,7 @@ takes the default answer to it and to the other questions. Steps that need sudo 
 
 | Step id | Checks and does |
 |---|---|
+| `ssh-keygen` | OpenSSH's `ssh-keygen` is on `PATH`, which `ccrc update` checks release signatures with; otherwise says why and shows the command that installs it for the package manager found. Setup does not run it (no sudo); skipped when ccrc runs from a checkout |
 | `claude` | The Claude Code extension or CLI is installed and signed in (`claude auth status`); otherwise offers to install the extension with `code --install-extension`, or shows how, and waits for the sign-in |
 | `tailscale-install` | Tailscale is installed and running; otherwise runs Tailscale's install script (sudo) |
 | `tailscale-login` | This machine is signed in; otherwise runs `sudo tailscale up` with no flags, so Tailscale settings already on the machine stay, and waits while you open the sign-in link it shows |
@@ -506,7 +507,8 @@ also marks the tag Verified.
 `ccrc update` checks the signature of the tag it fetched against the install's own copy of the file before building
 it, and stops when the signature does not check out. An update from 0.7.1 or older to 0.7.2 is not checked, as those
 versions have no such file; check `v0.7.2` by hand as above if you want to. Without `ssh-keygen`, `ccrc update` on
-0.7.2 or newer cannot check and stops.
+0.7.2 or newer cannot check and stops, with the command that installs it; `install.sh` installs it with the other base
+tools, and `ccrc setup` shows it missing.
 
 ## License and Anthropic's terms
 
