@@ -6,6 +6,8 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-18
+
 The first public release: an installer, updates, and the changes needed to run on machines other than the author's.
 
 ### Breaking
@@ -265,7 +267,8 @@ The first public release: an installer, updates, and the changes needed to run o
 - Idle broker session processes close after 15 minutes; an audit log without message contents; light and dark themes.
 - `ccrc serve | passwd | status | logout` and `deploy/install-service.sh`.
 
-[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/rjs0429/ccrc/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/rjs0429/ccrc/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/rjs0429/ccrc/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/rjs0429/ccrc/compare/v0.3.0...v0.4.0
