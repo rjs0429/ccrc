@@ -277,7 +277,8 @@ test("a search past its time budget answers on titles and reads the rest afterwa
 
 test("warming reads transcripts newest first ahead of any search and stops at the kept total", async () => {
   const ids = [sid(), sid(), sid()];
-  const files = ids.map((id, i) => write(id, [row(id, "user", `mike warm ${i} ${"x".repeat(300)}`)]));
+  // Text much longer than the rest of a row, so the room below fits two files whatever the length of the temp path.
+  const files = ids.map((id, i) => write(id, [row(id, "user", `mike warm ${i} ${"x".repeat(3000)}`)]));
   const list = ids.map((id, i) => summary(id, "other", i + 1));
   const s = new SessionSearch({ budgetMs: -1, warmGapMs: 5 });
   await s.prewarm(list);
