@@ -90,9 +90,28 @@ export function hideUserInfo(text: string): string {
   return text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1***@");
 }
 
+// What git's stderr says went wrong, most telling first. git often ends with advice ("Please make sure you have the
+// correct access rights / and the repository exists."), so its last line is seldom the reason.
+const GIT_REASONS = [
+  /timed out/i,
+  /not found|does not exist|does not appear to be a git repository|no such file or directory/i,
+  /could not resolve|unable to access|connection (refused|reset)|network is unreachable|failed to connect|certificate|ssl/i,
+  /could not read username|authentication failed|permission denied|terminal prompts disabled|host key verification failed/i,
+];
+
+// The one line of a failed git command's stderr worth showing.
+export function gitReason(stderr: string): string | undefined {
+  const lines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+  for (const re of GIT_REASONS) {
+    const hit = lines.find((l) => re.test(l));
+    if (hit) return hit;
+  }
+  return lines.find((l) => /^(fatal|error):/i.test(l)) ?? lines.at(-1);
+}
+
 export async function listTags(runner: Runner, source: string, env: NodeJS.ProcessEnv = process.env, timeoutMs = LS_REMOTE_TIMEOUT_MS): Promise<string[]> {
   const r = await runner("git", ["-c", "credential.helper=", "ls-remote", "--tags", "--refs", source], { env: quietGitEnv(env), timeoutMs });
-  if (r.code !== 0) throw Error(hideUserInfo(`git ls-remote ${source} failed: ${(r.stderr.trim().split("\n").pop() || `exit code ${r.code}`).slice(0, 300)}`));
+  if (r.code !== 0) throw Error(hideUserInfo(`git ls-remote ${source} failed: ${(gitReason(r.stderr) || `exit code ${r.code}`).slice(0, 300)}`));
   return parseLsRemote(r.stdout);
 }
 

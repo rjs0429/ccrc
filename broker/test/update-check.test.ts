@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { applyConfig, LIVE_KEYS } from "../src/config-watch.ts";
 import { ConfigError, checkConfig, newConfig, readConfig, type Config } from "../src/config.ts";
 import type { Runner } from "../src/run.ts";
+import { gitReason, listTags } from "../src/releases.ts";
 import { UpdateCheck, readUpdateCheck } from "../src/update-check.ts";
 import { updateStatus } from "../src/update.ts";
 import { tempDir } from "./helpers.ts";
@@ -166,4 +167,34 @@ test("a token in the repository URL stays out of the recorded error", async () =
   const error = s.check.info().error ?? "";
   assert.match(error, /https:\/\/\*\*\*@example\.com\/ccrc\.git/);
   assert.doesNotMatch(error + s.lines.join("\n"), /secret-token/);
+});
+
+test("a failed git ls-remote names the line that says why, not git's closing advice", async () => {
+  const ssh = "ERROR: Repository not found.\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.\n";
+  assert.equal(gitReason(ssh), "ERROR: Repository not found.");
+  assert.equal(gitReason("remote: Repository not found.\nfatal: repository 'https://github.com/a/b.git/' not found\n"), "remote: Repository not found.");
+  assert.equal(gitReason("fatal: unable to access 'https://github.com/a/b.git/': Could not resolve host: github.com\n"), "fatal: unable to access 'https://github.com/a/b.git/': Could not resolve host: github.com");
+  assert.equal(gitReason("fatal: could not read Username for 'https://github.com': terminal prompts disabled\n"), "fatal: could not read Username for 'https://github.com': terminal prompts disabled");
+  // How run() reports a command past its time limit.
+  assert.equal(gitReason("remote: Enumerating objects\ntimed out after 30000 ms"), "timed out after 30000 ms");
+  assert.equal(gitReason("warning: something\nfatal: odd failure\nhint: try again\n"), "fatal: odd failure");
+  assert.equal(gitReason("just this\n"), "just this");
+  assert.equal(gitReason(""), undefined);
+
+  const failing = (stderr: string, code = 128): Runner => async () => ({ code, stdout: "", stderr });
+  await assert.rejects(listTags(failing(ssh), "git@github.com:a/b.git"), { message: "git ls-remote git@github.com:a/b.git failed: ERROR: Repository not found." });
+  await assert.rejects(listTags(failing(""), "https://example.com/r.git"), { message: "git ls-remote https://example.com/r.git failed: exit code 128" });
+  // A token in the URL stays out of the message, in the reason too.
+  await assert.rejects(
+    listTags(failing("fatal: unable to access 'https://user:secret@example.com/r.git/': Could not resolve host: example.com\nPlease make sure\n"), "https://user:secret@example.com/r.git"),
+    { message: "git ls-remote https://***@example.com/r.git failed: fatal: unable to access 'https://***@example.com/r.git/': Could not resolve host: example.com" },
+  );
+});
+
+test("the update check keeps the useful line of a failed look", async () => {
+  const s = setup({ source: "https://github.com/a/b.git" });
+  await s.check.check();
+  s.setFail("repository 'https://github.com/a/b.git/' not found\n\nPlease make sure you have the correct access rights\nand the repository exists.");
+  await s.check.check();
+  assert.equal(s.check.info().error, "git ls-remote https://github.com/a/b.git failed: fatal: repository 'https://github.com/a/b.git/' not found");
 });

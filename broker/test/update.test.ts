@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { readInstallInfo, writeInstallInfo } from "../src/install.ts";
+import { brokerVersion, readInstallInfo, writeInstallInfo } from "../src/install.ts";
 import { changelogSections, compareVersions, isNewer, latestTag, parseLsRemote, parseVersion, releaseUrl, updateSource } from "../src/releases.ts";
 import { run, type Runner } from "../src/run.ts";
 import { readUpdateCheck } from "../src/update-check.ts";
@@ -466,7 +466,10 @@ test("bin/ccrc update and rollback: options, a development checkout, and the sta
   const check = ccrc("update", "--check");
   assert.equal(check.status, 0, check.stdout + check.stderr);
   assert.match(check.stdout, /latest: v0\.7\.1 on stable/);
-  assert.match(ccrc("status").stdout, /^update: {6}none \(latest v0\.7\.1, seen /m, "a checkout past no tag is not behind");
+  // This checkout's own version (git describe) decides whether v0.7.1 is news to it.
+  const mine = brokerVersion({ root: path.join(import.meta.dirname, "..", "..") });
+  if (isNewer("v0.7.1", mine)) assert.match(ccrc("status").stdout, /^update: {6}v0\.7\.1 available \(seen .*\); run: ccrc update$/m, `${mine} is behind v0.7.1`);
+  else assert.match(ccrc("status").stdout, /^update: {6}none \(latest v0\.7\.1, seen /m, `${mine} is not behind v0.7.1`);
   fs.writeFileSync(path.join(env.CCRC_CONFIG_DIR, "config.json"), JSON.stringify({ schemaVersion: 1, brokerSessions: "off", updateCheck: false }));
   assert.match(ccrc("status").stdout, /^update: {6}not looked for \(updateCheck is false\)$/m);
 });
