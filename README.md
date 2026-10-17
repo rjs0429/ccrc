@@ -65,6 +65,8 @@ advice. Change it any time with `ccrc config set brokerSessions <value>`; a runn
   and downloads Node.js 22 (npm included) into ccrc's own folder when none is found; some distributions package npm
   apart from Node.js. Nothing needs root except the base tools, Tailscale and, if your system asks for it,
   `loginctl enable-linger`.
+- OpenSSH's `ssh-keygen` (it comes with the SSH client), which `ccrc update` uses from 0.7.2 to check the signatures
+  of release tags.
 
 ## Install
 
@@ -221,7 +223,8 @@ ccrc rollback              # back to the version before the last update
 
 1. Finds the newest release tag (release candidates only with `--channel rc` or `updateChannel: "rc"`).
 2. Fetches it into `versions/<version>`, shows its CHANGELOG section (breaking changes separately), and asks.
-   When the install holds a `.ccrc-allowed-signers` file, the tag's SSH signature must check out (`git verify-tag`).
+   From 0.7.2 an install holds `.ccrc-allowed-signers`, and the tag's SSH signature must check out against it
+   (`git verify-tag`); see [Verifying a release](#verifying-a-release).
 3. Builds it beside the running version (`npm ci`, `npm run build`); the service keeps running meanwhile.
 4. Backs up config and state to `~/.local/state/ccrc/backup/update-<old>-<new>-<time>/` and migrates them with the
    new version's code.
@@ -466,6 +469,39 @@ raises MINOR and fixes raise PATCH. Releases are annotated tags on `main`, and t
 promise covers the commands, the port, the minimum Node.js, the one VS Code setting line, the wrapper protocol
 (`LINK_VERSION`) and the config and state formats; breaking it is listed under "Breaking" in
 [CHANGELOG.md](CHANGELOG.md), with what to do, and `ccrc update` shows those lines before it asks.
+
+## Releases
+
+Each release tag has a GitHub Release on the [Releases page](https://github.com/rjs0429/ccrc/releases) with its
+CHANGELOG section, the commands to install or update to it, and a link to the changes since the release before it.
+They are made automatically: pushing a tag runs `.github/workflows/release.yml`, which runs
+`scripts/sync-releases.sh` (notes from `scripts/release-notes.sh`). Tags with a `-` (`v0.8.0-rc.1`) become
+pre-releases, and the highest other tag is marked latest. Pushes to `main` and a manual run of the workflow make any
+release a failed run left out; releases that exist are left alone. A release has no files of its own beyond GitHub's
+source archives: `install.sh` and `ccrc update` build ccrc on your machine from the tag.
+
+From 0.7.2, release tags are signed with an SSH key listed in `.ccrc-allowed-signers` at the repository root, and the
+workflow makes a release only when the tag's signature checks out against that file.
+
+### Verifying a release
+
+In a clone, with OpenSSH's `ssh-keygen` installed:
+
+```bash
+git fetch --tags
+git -c gpg.ssh.allowedSignersFile=.ccrc-allowed-signers verify-tag v0.7.2
+```
+
+It prints `Good "git" signature for 79899760+rjs0429@users.noreply.github.com with ED25519 key
+SHA256:7tvRIQuI7tARS7iihd3ezgTJycbqrIN8E9TPofkuAAw` and exits with 0; a tag without a signature, or signed by a key
+not in the file, fails. The file comes with the clone, so compare its key with the signing key on the author's GitHub
+account (<https://api.github.com/users/rjs0429/ssh_signing_keys>); GitHub also marks the tag Verified.
+
+`ccrc update` does this by itself from 0.7.2: an install of 0.7.2 or newer holds `.ccrc-allowed-signers`, and
+`ccrc update` checks the signature of the tag it fetched against the install's own copy of the file before building
+it, and stops when the signature does not check out. An update from 0.7.1 or older to 0.7.2 is not checked, as those
+versions have no such file; check `v0.7.2` by hand as above if you want to. Without `ssh-keygen`, `ccrc update` on
+0.7.2 or newer cannot check and stops.
 
 ## License and Anthropic's terms
 

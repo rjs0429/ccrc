@@ -6,6 +6,21 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Added
+
+- GitHub Releases: `.github/workflows/release.yml` runs `scripts/sync-releases.sh` when a tag is pushed, which makes a
+  Release for each tag from v0.7.0 that has none, with its CHANGELOG section, install and update commands and a
+  compare link (`scripts/release-notes.sh`). Tags with a `-` become pre-releases; pushes to `main` and a manual run
+  fill in releases a failed run left out.
+
+### Security
+
+- Release tags are signed with SSH from 0.7.2, with the keys in `.ccrc-allowed-signers` at the repository root. An
+  install of 0.7.2 or newer holds that file, so `ccrc update` checks each tag it updates to with `git verify-tag` and
+  stops when the signature does not check out; this needs OpenSSH's `ssh-keygen`. The release workflow makes no
+  Release for such a tag either. The update from 0.7.1 or older to 0.7.2 is not checked; the README's "Verifying a
+  release" shows how to check a tag by hand.
+
 ## [0.7.1] - 2026-10-18
 
 ### Changed
