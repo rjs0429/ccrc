@@ -111,7 +111,8 @@ export function gitReason(stderr: string): string | undefined {
 
 export async function listTags(runner: Runner, source: string, env: NodeJS.ProcessEnv = process.env, timeoutMs = LS_REMOTE_TIMEOUT_MS): Promise<string[]> {
   const r = await runner("git", ["-c", "credential.helper=", "ls-remote", "--tags", "--refs", source], { env: quietGitEnv(env), timeoutMs });
-  if (r.code !== 0) throw Error(hideUserInfo(`git ls-remote ${source} failed: ${(gitReason(r.stderr) || `exit code ${r.code}`).slice(0, 300)}`));
+  // Hidden before it is cut short, so a cut cannot leave half of a user name or token where the pattern misses it.
+  if (r.code !== 0) throw Error(hideUserInfo(`git ls-remote ${source} failed: ${hideUserInfo(gitReason(r.stderr) || `exit code ${r.code}`).slice(0, 300)}`));
   return parseLsRemote(r.stdout);
 }
 

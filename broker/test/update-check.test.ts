@@ -189,6 +189,9 @@ test("a failed git ls-remote names the line that says why, not git's closing adv
     listTags(failing("fatal: unable to access 'https://user:secret@example.com/r.git/': Could not resolve host: example.com\nPlease make sure\n"), "https://user:secret@example.com/r.git"),
     { message: "git ls-remote https://***@example.com/r.git failed: fatal: unable to access 'https://***@example.com/r.git/': Could not resolve host: example.com" },
   );
+  // Even where the line is cut short in the middle of the token.
+  const long = `fatal: unable to access '${"x".repeat(259)}https://user:secret-token@example.com/r.git/': Could not resolve host`;
+  await assert.rejects(listTags(failing(long), "https://example.com/r.git"), (e: Error) => !/secret|user:/.test(e.message) && /https:\/\/\*\*\*@/.test(e.message));
 });
 
 test("the update check keeps the useful line of a failed look", async () => {
