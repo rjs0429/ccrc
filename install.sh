@@ -72,10 +72,13 @@ step() {
 
 # Runs a command with its output in the log; on failure the end of the log is shown.
 logged() {
-  local code=0
+  local code=0 out
+  out=$(mktemp)
   printf '%s $ %s\n' "$(date '+%F %T')" "$*" >>"$LOG"
-  "$@" >>"$LOG" 2>&1 || code=$?
-  if [ "$code" -ne 0 ]; then tail -n 20 "$LOG" >&2; fi
+  "$@" >"$out" 2>&1 || code=$?
+  cat "$out" >>"$LOG"
+  if [ "$code" -ne 0 ]; then tail -n 20 "$out" >&2; fi
+  rm -f "$out"
   return "$code"
 }
 
@@ -287,11 +290,10 @@ fetch_code() {
       else
         logged git clone --quiet "$source" "$tmp"
         if [ -n "$REF" ]; then
-          if git -C "$tmp" rev-parse -q --verify "origin/$REF^{commit}" >/dev/null; then
-            logged git -C "$tmp" checkout --quiet --detach "origin/$REF"
-          else
-            logged git -C "$tmp" checkout --quiet --detach "$REF"
-          fi
+          local commit
+          commit=$(git -C "$tmp" rev-parse -q --verify "origin/$REF^{commit}" || git -C "$tmp" rev-parse -q --verify "$REF^{commit}") ||
+            die "no branch, tag or commit \"$REF\" in $source"
+          logged git -C "$tmp" checkout --quiet --detach "$commit"
         fi
         NAME=$(git -C "$tmp" describe --tags --always --match 'v[0-9]*')
       fi
