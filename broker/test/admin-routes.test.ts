@@ -13,6 +13,7 @@ import { Leases } from "../src/lease.ts";
 import { Push } from "../src/push/index.ts";
 import { buildServer } from "../src/server.ts";
 import type { SessionManager } from "../src/sessions/manager.ts";
+import { UpdateCheck } from "../src/update-check.ts";
 import { Uploads } from "../src/uploads.ts";
 import { tempDir, tempStore } from "./helpers.ts";
 
@@ -39,6 +40,7 @@ async function setup() {
     uploads: new Uploads(tempDir()),
     push: new Push(tempDir()),
     doctor: new Doctor({ stateDir: tempDir(), extensionsDir, vscodeDir: tempDir(), platform: "linux-x64", stepTimeoutMs: 10_000 }),
+    updates: new UpdateCheck({ config: { updateCheck: true, updateChannel: "stable" }, version: () => "v0.7.0", kind: () => "installed", file: path.join(dir, "update-check.json") }),
     claudeSettings: new ClaudeSettings(settingsFile),
     webDir: tempDir(),
     logLevel: "silent",
@@ -118,6 +120,7 @@ test("health: reports versions and runs a check on request, recorded in the audi
   assert.deepEqual([before.extensionVersion, before.cliVersion, before.last, before.running], ["2.1.296", "2.1.296", undefined, false]);
   assert.deepEqual(before.wrapper, { on: false, thisBroker: false });
   assert.deepEqual(before.brokerSessions, { mode: "apiKey", ready: false }, "the setting, and only whether a key is there");
+  assert.deepEqual(before.update, { version: "v0.7.0", kind: "installed", enabled: true, channel: "stable", available: false });
   const res = await app.inject({ method: "POST", url: "/api/health/check", headers, payload: {} });
   assert.equal(res.statusCode, 200);
   const after = res.json() as HealthInfo;
