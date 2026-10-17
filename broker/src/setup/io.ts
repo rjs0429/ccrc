@@ -77,7 +77,7 @@ export interface Prompt {
 
 export class NoTerminalError extends Error {
   constructor() {
-    super("setup has a question but no terminal to ask it on: run it in a terminal, or pass --yes to take the defaults");
+    super("setup has a question but no terminal to ask it on: run it in a terminal, or pass --yes to take the defaults (and --allow-sudo for the steps that need sudo)");
   }
 }
 

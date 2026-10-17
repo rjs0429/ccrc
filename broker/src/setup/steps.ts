@@ -16,7 +16,7 @@ import {
 } from "../config.ts";
 import { migrateConfigFile } from "../migrate.ts";
 import { PushStore } from "../push/subscriptions.ts";
-import type { Ctx, Step } from "./engine.ts";
+import { SUDO_CONSENT_HINT, askSudo, type Ctx, type Step } from "./engine.ts";
 import type { Choice } from "./io.ts";
 import { inServiceRefusal } from "../service-cgroup.ts";
 import { SERVICE, keptLines, unitFile, unitMatches, unitText, writeUnit } from "./service.ts";
@@ -121,7 +121,7 @@ const claude: Step = {
 const tailscaleInstall: Step = {
   id: "tailscale-install",
   title: "Tailscale installed and running",
-  sudo: true,
+  sudo: "install Tailscale's system package and start its daemon, tailscaled, which ccrc reaches the phone through",
   system: true,
   async check(ctx) {
     if (!ctx.run.which("tailscale")) return { ok: false, detail: "not installed" };
@@ -145,7 +145,7 @@ const tailscaleInstall: Step = {
 const tailscaleLogin: Step = {
   id: "tailscale-login",
   title: "This machine signed in to Tailscale",
-  sudo: true,
+  sudo: "sign this machine in to your tailnet, which only root may change",
   system: true,
   human: true,
   waits: true,
@@ -167,7 +167,7 @@ const tailscaleLogin: Step = {
 const tailscaleOperator: Step = {
   id: "tailscale-operator",
   title: "Tailscale serve usable without sudo",
-  sudo: true,
+  sudo: "let your user run `tailscale serve`, so ccrc can make the broker reachable from the phone without root",
   system: true,
   needs: ["tailscale-login"],
   async check(ctx) {
@@ -412,10 +412,13 @@ const service: Step = {
       if (ctx.o.yes || !(await ctx.ask.confirm(`Keep the broker running while you are logged out (loginctl enable-linger ${ctx.at.user})?`, true))) {
         ctx.out(`Linger stays off: the broker stops when you log out. To change that: loginctl enable-linger ${ctx.at.user}`);
       } else if ((await ctx.run.run("loginctl", ["enable-linger", ctx.at.user])).code !== 0) {
-        ctx.out("loginctl enable-linger was refused; with sudo it keeps the broker running while you are logged out.");
-        if (await ctx.ask.confirm(`Run sudo loginctl enable-linger ${ctx.at.user}?`, true)) {
+        ctx.out("loginctl enable-linger was refused.");
+        const consent = await askSudo(ctx, `turn on linger for ${ctx.at.user} (sudo loginctl enable-linger ${ctx.at.user}), so the broker keeps running while you are logged out`, `Run sudo loginctl enable-linger ${ctx.at.user}?`);
+        if (consent === "yes") {
           const code = await ctx.run.attached("sudo", ["loginctl", "enable-linger", ctx.at.user]);
           if (code !== 0) ctx.out(`sudo loginctl enable-linger ${ctx.at.user} failed (exit code ${code}); the broker stops when you log out until it is run.`);
+        } else if (consent === "needs-consent") {
+          ctx.out(`Linger stays off (sudo consent needed): ${SUDO_CONSENT_HINT}, or run sudo loginctl enable-linger ${ctx.at.user} yourself.`);
         }
       }
     }

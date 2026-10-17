@@ -7,6 +7,8 @@ import { NoTerminalError, type Prompt, type Runner } from "./io.ts";
 
 export interface SetupOptions {
   yes: boolean;
+  // Without a terminal, lets steps that need sudo run; --yes never does (with a terminal each is asked).
+  allowSudo: boolean;
   dryRun: boolean;
   noSystem: boolean;
   noVscode: boolean;
@@ -56,7 +58,10 @@ export interface Ctx {
   o: SetupOptions;
   at: Where;
   run: Runner;
+  // Questions, answered with their defaults under --yes.
   ask: Prompt;
+  // The person at the terminal, asked about sudo whether or not --yes is given.
+  sudoAsk: Prompt;
   out: (line: string) => void;
   sleep: (ms: number) => Promise<void>;
   // The version the broker on this port reports (null when it reports none), or undefined when nothing answers.
@@ -78,8 +83,8 @@ export interface Check {
 export interface Step {
   id: string;
   title: string;
-  // apply runs sudo: it is shown and asked before.
-  sudo?: boolean;
+  // apply runs sudo, for this reason: it is shown and asked before, --yes or not (see askSudo).
+  sudo?: string;
   // It changes the system outside ccrc's own files; --no-system skips it, check and all.
   system?: boolean;
   // A person has a part in it; with waits, apply is followed by checking again until it passes.
@@ -99,7 +104,8 @@ export interface Step {
   apply(ctx: Ctx): Promise<void>;
 }
 
-export type Outcome = "ok" | "done" | "shown" | "skipped" | "todo" | "left" | "declined" | "blocked" | "failed";
+// needs-sudo: the step needs sudo, and there was no terminal to ask on and no --allow-sudo.
+export type Outcome = "ok" | "done" | "shown" | "skipped" | "todo" | "left" | "declined" | "needs-sudo" | "blocked" | "failed";
 
 export interface StepReport {
   id: string;
@@ -116,6 +122,20 @@ export interface SetupResult {
 const GOOD: Outcome[] = ["ok", "done", "shown", "skipped"];
 
 export class SetupUsageError extends Error {}
+
+export const SUDO_CONSENT_HINT = "run `ccrc setup` in a terminal to be asked, or again with --allow-sudo";
+
+// Consent to run sudo is never taken from --yes. With a terminal the person is told why and asked; without one only
+// --allow-sudo lets it go ahead, and otherwise the step is left as needing consent.
+export async function askSudo(ctx: Ctx, why: string, question = "Run this with sudo?"): Promise<"yes" | "no" | "needs-consent"> {
+  ctx.out(`This uses sudo: ${why}.`);
+  if (ctx.sudoAsk.interactive) return (await ctx.sudoAsk.confirm(question, true)) ? "yes" : "no";
+  if (!ctx.o.allowSudo) return "needs-consent";
+  ctx.out("No terminal to ask on; --allow-sudo lets it run.");
+  return "yes";
+}
+
+const shown = (o: Outcome) => (o === "needs-sudo" ? "sudo consent needed" : o);
 
 function ids(list: string[] | undefined, steps: Step[], flag: string): Set<string> {
   const known = new Set(steps.map((s) => s.id));
@@ -188,6 +208,7 @@ export async function runSetup(steps: Step[], ctx: Ctx): Promise<SetupResult> {
     for (const step of todo) {
       ctx.out(`${step.id}: ${step.title}${step.sudo ? " (sudo)" : ""}${step.human ? " (needs you)" : ""}`);
       for (const p of await step.plan(ctx)) ctx.out(`  - ${p}`);
+      if (step.sudo) ctx.out(`  - sudo, to ${step.sudo}: asked first, --yes or not; without a terminal only with --allow-sudo`);
     }
     return result(true);
   }
@@ -203,7 +224,7 @@ export async function runSetup(steps: Step[], ctx: Ctx): Promise<SetupResult> {
       ctx.out("");
       ctx.out(`== ${step.title} (${step.id})`);
       if (blocker) {
-        ctx.out(`Left for later: it needs ${blocker.id}, which is ${blocker.outcome}.`);
+        ctx.out(`Left for later: it needs ${blocker.id}, which is ${shown(blocker.outcome)}.`);
         report(step, "blocked", `needs ${blocker.id}`);
         continue;
       }
@@ -214,7 +235,18 @@ export async function runSetup(steps: Step[], ctx: Ctx): Promise<SetupResult> {
         continue;
       }
       for (const p of await step.plan(ctx)) ctx.out(`  - ${p}`);
-      if ((step.sudo || step.confirm) && !(await ctx.ask.confirm(step.sudo ? "Run this with sudo?" : "Do this?", true))) {
+      if (step.sudo) {
+        const consent = await askSudo(ctx, step.sudo);
+        if (consent === "needs-consent") {
+          ctx.out(`Left for later: sudo consent needed; ${SUDO_CONSENT_HINT}.`);
+          report(step, "needs-sudo", "sudo consent needed");
+          continue;
+        }
+        if (consent === "no") {
+          report(step, "declined");
+          continue;
+        }
+      } else if (step.confirm && !(await ctx.ask.confirm("Do this?", true))) {
         report(step, "declined");
         continue;
       }
@@ -244,6 +276,7 @@ export async function runSetup(steps: Step[], ctx: Ctx): Promise<SetupResult> {
   const r = result(true);
   const open = r.reports.filter((x) => !GOOD.includes(x.outcome));
   ctx.out("");
-  ctx.out(open.length ? `Still to do: ${open.map((x) => `${x.id} (${x.outcome})`).join(", ")}. Run \`ccrc setup\` again to finish.` : "Setup is complete.");
+  ctx.out(open.length ? `Still to do: ${open.map((x) => `${x.id} (${shown(x.outcome)})`).join(", ")}. Run \`ccrc setup\` again to finish.` : "Setup is complete.");
+  if (open.some((x) => x.outcome === "needs-sudo")) ctx.out(`For the steps that need sudo, ${SUDO_CONSENT_HINT}.`);
   return r;
 }

@@ -4,7 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { DoctorResult } from "../src/admin-protocol.ts";
 import { SetupUsageError, runSetup, type Ctx, type SetupOptions, type Where } from "../src/setup/engine.ts";
-import type { Choice, Prompt, RunResult, Runner } from "../src/setup/io.ts";
+import { withDefaults, type Choice, type Prompt, type RunResult, type Runner } from "../src/setup/io.ts";
 import { parseSetupArgs, rootRefusal } from "../src/setup/cli.ts";
 import { unitMatches, unitProgram, unitText } from "../src/setup/service.ts";
 import { STEPS } from "../src/setup/steps.ts";
@@ -239,7 +239,7 @@ function fakePrompt(a: Answers = {}): Prompt & { asked: string[] } {
   };
 }
 
-const OPTIONS: SetupOptions = { yes: false, dryRun: false, noSystem: false, noVscode: false, noServe: false, httpsPort: 8443, skip: [] };
+const OPTIONS: SetupOptions = { yes: false, allowSudo: false, dryRun: false, noSystem: false, noVscode: false, noServe: false, httpsPort: 8443, skip: [] };
 
 function ctxOf(m: Machine, o: Partial<SetupOptions> = {}, answers?: Answers): Ctx & { lines: string[]; ask: ReturnType<typeof fakePrompt> } {
   const lines: string[] = [];
@@ -249,6 +249,7 @@ function ctxOf(m: Machine, o: Partial<SetupOptions> = {}, answers?: Answers): Ct
     at: m.at,
     run: m.runner,
     ask,
+    sudoAsk: ask,
     out: (l) => lines.push(l),
     sleep: async () => {},
     ping: async () => (m.world.active ? m.world.runs : undefined),
@@ -684,6 +685,7 @@ test("tailnet phones and serve targets", () => {
 test("setup flags", () => {
   assert.deepEqual(parseSetupArgs(["--yes", "--only", "service, serve", "--https-port", "10443", "--no-vscode"]), {
     yes: true,
+    allowSudo: false,
     dryRun: false,
     noSystem: false,
     noVscode: true,
@@ -692,6 +694,7 @@ test("setup flags", () => {
     only: ["service", "serve"],
     skip: [],
   });
+  assert.equal(parseSetupArgs(["--allow-sudo"]).allowSudo, true);
   assert.throws(() => parseSetupArgs(["--https-port", "x"]), /port number/);
   assert.throws(() => parseSetupArgs(["--bogus"]), /Unknown option/);
 });
@@ -938,4 +941,87 @@ test("uninstall leaves <dataDir>/node while a checkout the service or VS Code ru
   assert.equal(copies.length, 1, "the copy of settings.json outlives the state folder");
   assert.match(fs.readFileSync(path.join(userDir, copies[0]), "utf8"), /claudeProcessWrapper/);
   assert.ok(!fs.existsSync(p.at.stateDir));
+});
+
+// As cli.ts builds it: --yes answers questions with their defaults, while sudo is asked of the terminal, if there is one.
+function yesCtx(m: Machine, o: Partial<SetupOptions>, terminal: boolean, sudoAnswers: boolean[] = []) {
+  const base = ctxOf(m, { yes: true, ...o }, { interactive: terminal, confirm: sudoAnswers });
+  const term = base.ask;
+  const ctx: Ctx = { ...base, ask: withDefaults(term), sudoAsk: term };
+  return { ctx, term, lines: base.lines };
+}
+
+const SUDO_STEPS = ["tailscale-install", "tailscale-login", "tailscale-operator"];
+
+test("--yes without a terminal runs no sudo: those steps are left as needing consent, with how to give it", async () => {
+  const m = machine({ ...freshWorld(), loggedIn: true });
+  const { ctx, lines } = yesCtx(m, { only: [...SUDO_STEPS, "https"] }, false);
+  const r = await runSetup([...STEPS], ctx);
+  assert.equal(r.ok, true);
+  assert.deepEqual(outcomes(r), { "tailscale-install": "needs-sudo", "tailscale-login": "blocked", "tailscale-operator": "blocked", https: "blocked" });
+  assert.ok(!m.calls.some((c) => c.startsWith("attached")), m.calls.join("\n"));
+  const text = lines.join("\n");
+  assert.match(text, /This uses sudo: install Tailscale's system package/);
+  assert.match(text, /Left for later: sudo consent needed; run `ccrc setup` in a terminal to be asked, or again with --allow-sudo\./);
+  assert.match(text, /it needs tailscale-install, which is sudo consent needed/);
+  assert.match(text, /Still to do: tailscale-install \(sudo consent needed\), tailscale-login \(blocked\)/);
+  assert.match(text, /For the steps that need sudo, run `ccrc setup` in a terminal to be asked, or again with --allow-sudo\./);
+});
+
+test("--allow-sudo without a terminal lets the sudo steps run", async () => {
+  const m = machine({ ...freshWorld(), loggedIn: true });
+  const { ctx, lines } = yesCtx(m, { only: SUDO_STEPS, allowSudo: true }, false);
+  const r = await runSetup([...STEPS], ctx);
+  assert.deepEqual(outcomes(r), { "tailscale-install": "done", "tailscale-login": "done", "tailscale-operator": "done" });
+  assert.deepEqual(
+    m.calls.filter((c) => c.startsWith("attached")),
+    ["attached sh -c curl -fsSL https://tailscale.com/install.sh | sh", "attached sudo tailscale up", "attached sudo tailscale set --operator=user"],
+  );
+  assert.equal(lines.filter((l) => l === "No terminal to ask on; --allow-sudo lets it run.").length, 3);
+});
+
+test("with a terminal, sudo is asked even with --yes (and with --allow-sudo), and a no is kept", async () => {
+  const m = machine({ ...readyWorld(), backend: "NeedsLogin", operator: false });
+  for (const allowSudo of [false, true]) {
+    m.calls.length = 0;
+    const { ctx, term, lines } = yesCtx(m, { only: ["tailscale-login", "tailscale-operator"], allowSudo }, true, [false]);
+    const r = await runSetup([...STEPS], ctx);
+    assert.deepEqual(outcomes(r), { "tailscale-login": "declined", "tailscale-operator": "blocked" });
+    assert.deepEqual(term.asked, ["Run this with sudo?"], "only the sudo question reaches the person");
+    assert.ok(!m.calls.some((c) => c.startsWith("attached")));
+    assert.match(lines.join("\n"), /This uses sudo: sign this machine in to your tailnet/);
+  }
+  const { ctx, term } = yesCtx(m, { only: ["tailscale-login", "tailscale-operator"] }, true, [true, true]);
+  assert.deepEqual(outcomes(await runSetup([...STEPS], ctx)), { "tailscale-login": "done", "tailscale-operator": "done" });
+  assert.equal(term.asked.length, 2);
+});
+
+test("--dry-run says which steps use sudo and why", async () => {
+  const m = machine(freshWorld());
+  const ctx = ctxOf(m, { dryRun: true, only: ["tailscale-operator"] });
+  await runSetup([...STEPS], ctx);
+  assert.match(ctx.lines.join("\n"), /sudo, to let your user run `tailscale serve`.*asked first, --yes or not; without a terminal only with --allow-sudo/);
+});
+
+test("the sudo fallback for linger needs consent like any sudo", async () => {
+  const m = machine(readyWorld());
+  Object.assign(m.world, { linger: false, lingerNeedsSudo: true });
+  const unitFile = path.join(m.at.xdgConfigHome, "systemd", "user", "ccrc.service");
+  fs.mkdirSync(path.dirname(unitFile), { recursive: true });
+  fs.writeFileSync(unitFile, unitText({ ccrc: m.at.ccrc, node: m.at.node, path: "/usr/bin", env: {} }));
+  Object.assign(m.world, { active: false });
+  const ctx = ctxOf(m, { only: ["service"] });
+  ctx.sudoAsk = fakePrompt({ interactive: false });
+  const r = await runSetup([...STEPS], ctx);
+  assert.deepEqual(outcomes(r), { service: "done" });
+  assert.ok(!m.calls.includes("attached sudo loginctl enable-linger user"));
+  assert.match(ctx.lines.join("\n"), /Linger stays off \(sudo consent needed\): run `ccrc setup` in a terminal to be asked, or again with --allow-sudo, or run sudo loginctl enable-linger user yourself\./);
+
+  // Stopped again, so the step has something to do and comes to linger.
+  m.world.active = false;
+  const allowed = ctxOf(m, { only: ["service"], allowSudo: true });
+  allowed.sudoAsk = fakePrompt({ interactive: false });
+  await runSetup([...STEPS], allowed);
+  assert.ok(m.calls.includes("attached sudo loginctl enable-linger user"));
+  assert.equal(m.world.linger, true);
 });

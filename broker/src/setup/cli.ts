@@ -11,9 +11,11 @@ import { TerminalPrompt, realRunner, withDefaults } from "./io.ts";
 import { STEPS, STEP_IDS } from "./steps.ts";
 import { runUninstall } from "./uninstall.ts";
 
-export const SETUP_USAGE = `usage: ccrc setup [--yes] [--dry-run] [--only ids] [--skip ids] [--no-system] [--no-vscode] [--no-serve] [--https-port N]
+export const SETUP_USAGE = `usage: ccrc setup [--yes] [--allow-sudo] [--dry-run] [--only ids] [--skip ids] [--no-system] [--no-vscode] [--no-serve] [--https-port N]
   Checks each step and does the ones not yet in place; run it again to finish or repair.
-  --yes         take the default answer to every question (steps that need you still wait)
+  --yes         take the default answer to every question but sudo (steps that need you still wait)
+  --allow-sudo  without a terminal, let the steps that need sudo run; with one, each is still asked.
+                Without either, those steps are left as needing sudo consent
   --dry-run     show what is in place and what setup would do, changing nothing
   --only, --skip  comma-separated step ids: ${STEP_IDS.join(", ")}
   --no-system   leave out steps that use sudo or change the system (Tailscale, the service)
@@ -99,6 +101,7 @@ function realCtx(o: SetupOptions): Ctx {
     at: where(),
     run: realRunner,
     ask: o.yes ? withDefaults(prompt) : prompt,
+    sudoAsk: prompt,
     out: (line) => console.log(line),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     ping,
@@ -118,6 +121,7 @@ export function parseSetupArgs(args: string[]): SetupOptions {
     strict: true,
     options: {
       yes: { type: "boolean", short: "y" },
+      "allow-sudo": { type: "boolean" },
       "dry-run": { type: "boolean" },
       only: { type: "string" },
       skip: { type: "string" },
@@ -131,6 +135,7 @@ export function parseSetupArgs(args: string[]): SetupOptions {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new SetupUsageError(`--https-port takes a port number, not ${v["https-port"]}`);
   return {
     yes: Boolean(v.yes),
+    allowSudo: Boolean(v["allow-sudo"]),
     dryRun: Boolean(v["dry-run"]),
     noSystem: Boolean(v["no-system"]),
     noVscode: Boolean(v["no-vscode"]),

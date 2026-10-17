@@ -11,7 +11,9 @@
 #   --ref <git ref>      install a branch or commit (for testing)
 #   --from <path>        install from a local repository: its HEAD, or --ref
 #   --channel stable|rc  with rc, release candidates count when looking for the newest release
-#   --yes                take the default answer to every question
+#   --yes                take the default answer to every question, except whether to use sudo
+#   --allow-sudo         without a terminal, let the steps that need sudo run (with one, each is asked, --yes or
+#                        not); passed on to setup. Without a terminal and without it, those steps stop or are left
 #   --dry-run            show what would be done and change nothing; with an install in place, setup shows its part
 #   --no-system          never use sudo or change the system (for testing)
 #   --uninstall          run `ccrc uninstall` of the install in place
@@ -32,6 +34,7 @@ REF=
 FROM=
 CHANNEL=stable
 YES=0
+ALLOW_SUDO=0
 DRY_RUN=0
 NO_SYSTEM=0
 UNINSTALL=0
@@ -96,6 +99,19 @@ confirm() {
   case "$answer" in "" | [yY] | [yY][eE][sS]) return 0 ;; *) return 1 ;; esac
 }
 
+# Consent to sudo is never taken from --yes: with a terminal the person is told why and asked each time; without one
+# only --allow-sudo lets it go ahead. Returns 1 for a no, 2 when there was no one to ask and no --allow-sudo.
+sudo_ok() {
+  local answer
+  say "This uses sudo: $1."
+  if [ -n "$TTY" ]; then
+    read -r -p "Run that with sudo? [Y/n] " answer <"$TTY" || return 1
+    case "$answer" in "" | [yY] | [yY][eE][sS]) return 0 ;; *) return 1 ;; esac
+  fi
+  [ "$ALLOW_SUDO" = 1 ] || return 2
+  say "No terminal to ask on; --allow-sudo lets it run."
+}
+
 need_value() {
   [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"
 }
@@ -112,6 +128,7 @@ parse_args() {
         shift 2
         ;;
       --yes | -y) YES=1; shift ;;
+      --allow-sudo) ALLOW_SUDO=1; shift ;;
       --dry-run) DRY_RUN=1; shift ;;
       --no-system) NO_SYSTEM=1; shift ;;
       --uninstall) UNINSTALL=1; shift ;;
@@ -200,12 +217,18 @@ install_tools() {
     *) die "missing ${missing[*]}, and no apt-get, dnf, pacman or zypper to install them with: install them and run this again" ;;
   esac
   if [ "$DRY_RUN" = 1 ]; then
-    say "missing ${missing[*]}; would run: $cmd"
+    say "missing ${missing[*]}; would run, after asking for sudo (--yes does not cover it): $cmd"
     return
   fi
   [ "$NO_SYSTEM" = 0 ] || die "missing ${missing[*]}; --no-system does not install them: $cmd"
   say "missing ${missing[*]}; to install them: $cmd"
-  confirm "Run that with sudo?" || die "install ${missing[*]} and run this again"
+  local consent=0
+  sudo_ok "install ${missing[*]} with the system's package manager; ccrc needs them to fetch and build" || consent=$?
+  case "$consent" in
+    0) ;;
+    2) die "sudo consent needed to install ${missing[*]}: run install.sh in a terminal to be asked, or again with --allow-sudo; or install them yourself ($cmd) and run this again" ;;
+    *) die "install ${missing[*]} and run this again" ;;
+  esac
   if [ -n "$TTY" ]; then sh -c "$cmd" <"$TTY"; else sh -c "$cmd"; fi
 }
 
@@ -375,6 +398,7 @@ run_ccrc() {
   [ "$YES" = 0 ] || args+=(--yes)
   [ "$NO_SYSTEM" = 0 ] || args+=(--no-system)
   [ "$DRY_RUN" = 0 ] || args+=(--dry-run)
+  if [ "$1" = setup ] && [ "$ALLOW_SUDO" = 1 ]; then args+=(--allow-sudo); fi
   args+=("${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"}")
   if [ -n "$NODE" ]; then export CCRC_NODE=$NODE; fi
   say ""
