@@ -458,6 +458,9 @@ its TypeScript sources (Node's type stripping); the wrapper uses the built relay
 Running `bin/ccrc setup` from a checkout points the service and VS Code at that checkout; `deploy/install-service.sh`
 runs only its service step, so it changes the service and not VS Code. To try a commit on an install instead, use `ccrc update --from <repo>[@<ref>]`.
 
+GitHub Actions runs the same `npm ci`, typecheck, tests and build on Node.js 22 for pushes to `main` and `dev` and
+for pull requests (`.github/workflows/ci.yml`).
+
 When a change adds a config key, a state file, an outside tool or a path, update `ccrc setup`, the migrations in
 `broker/src/config.ts`, this README and the CHANGELOG's Unreleased section together. Test data uses example values
 only (`100.64.0.x`, `*.example.ts.net`, `/home/user`).

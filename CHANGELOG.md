@@ -12,6 +12,8 @@ your version and the new one, and the lines under "Breaking" separately.
   Release for each tag from v0.7.0 that has none, with its CHANGELOG section, install and update commands and a
   compare link (`scripts/release-notes.sh`). Tags with a `-` become pre-releases; pushes to `main` and a manual run
   fill in releases a failed run left out.
+- CI: `.github/workflows/ci.yml` runs `npm ci`, `npm run typecheck`, `npm test` and `npm run build` on Node.js 22 for
+  pushes to `main` and `dev` and for pull requests.
 
 ### Security
 
