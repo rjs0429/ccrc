@@ -26,7 +26,18 @@ for c in "${CCRC_NODE:-}" "$DATA/node/bin/node" "$INSTALLED" "$(command -v node 
     break
   fi
 done
-[ -n "$NODE" ] || exec "$@"
+if [ -z "$NODE" ]; then
+  # Say why in the wrapper log, since VS Code shows nothing: the tab works, but the phone cannot see or drive it.
+  STATE=${CCRC_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ccrc}
+  LOG=${CCRC_WRAPPER_LOG:-$STATE/wrapper.log}
+  (
+    umask 077
+    mkdir -p "$(dirname "$LOG")" &&
+      printf '%s [%s] running claude directly: no Node.js 22.18 or newer (CCRC_NODE, %s, the install'"'"'s Node, PATH)\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$$" "$DATA/node/bin/node" >>"$LOG"
+  ) 2>/dev/null || true
+  exec "$@"
+fi
 
 # The relay built by `npm run build` is used while it is newer than its sources; otherwise the sources run directly.
 SRC=$ROOT/broker/src

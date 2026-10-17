@@ -20,7 +20,7 @@ for c in "${CCRC_NODE:-}" "$DATA/node/bin/node" "$(installed_node)" "$(command -
   fi
 done
 if [ -z "$NODE" ]; then
-  echo "ccrc needs Node.js 22.18 or newer: set CCRC_NODE, or put one on PATH" >&2
+  echo "ccrc needs Node.js 22.18 or newer: set CCRC_NODE, link a Node.js folder as $DATA/node, or put one on PATH" >&2
   exit 1
 fi
 exec "$NODE" "$ROOT/broker/src/main.ts" "$@"
