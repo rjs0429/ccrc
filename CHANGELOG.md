@@ -6,6 +6,21 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Changed
+
+- Consent to sudo is no longer taken from `--yes`. In `install.sh` and `ccrc setup`, every use of sudo (base tools,
+  Tailscale's installer, `tailscale up`, `tailscale set --operator`, and `sudo loginctl enable-linger` when linger
+  needs it) says what it runs and why and asks at the terminal, `--yes` or not. Without a terminal it runs only with
+  the new `--allow-sudo` option, which `install.sh` also passes on to setup; otherwise `install.sh` stops before
+  installing base tools, and setup leaves the step as "sudo consent needed", goes on with the steps that do not need
+  it, and says how to finish. `deploy/install-service.sh` still uses no sudo.
+
+### Fixed
+
+- When looking for a new version fails (the update check, and `ccrc update`), the message now names the line of
+  git's output that says why ("Repository not found.", "Could not resolve host", a timeout) instead of git's closing
+  advice ("and the repository exists."). A user name or token in the repository URL is still left out.
+
 ## [0.7.0] - 2026-10-18
 
 The first public release: an installer, updates, and the changes needed to run on machines other than the author's.

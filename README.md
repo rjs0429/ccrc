@@ -85,7 +85,8 @@ bash install.sh --version v0.7.0
 `install.sh` only prepares, then hands over to `ccrc setup`:
 
 1. Checks the platform (Linux, x86_64 or aarch64, a systemd user session) and refuses to run as root.
-2. Installs missing base tools with apt, dnf, pacman or zypper (asks first, uses sudo).
+2. Installs missing base tools with apt, dnf, pacman or zypper. This uses sudo, so it says why and asks first, even
+   with `--yes` (see [sudo](#sudo)).
 3. Finds Node.js 22.18 or newer (`CCRC_NODE`, ccrc's own Node, the one an earlier install recorded, then `PATH`).
    Without one it downloads the newest Node.js 22 from nodejs.org, checks it against the `SHASUMS256.txt` there, and
    unpacks it into `~/.local/share/ccrc/node-v22.x.y-linux-<arch>`, linked as `~/.local/share/ccrc/node`. The
@@ -103,7 +104,8 @@ versions) and runs setup again.
 |---|---|
 | `--version <tag>` | Install this release instead of the newest one (`0.7.0` and `v0.7.0` both name the tag `v0.7.0`) |
 | `--channel stable\|rc` | With `rc`, release candidates count when looking for the newest release |
-| `--yes` | Take the default answer to every question, so steps that use sudo run without asking (sudo itself may still ask for your password); steps that need you still wait |
+| `--yes` | Take the default answer to every question except whether to use sudo; steps that need you still wait |
+| `--allow-sudo` | Without a terminal, let the steps that need sudo run (sudo itself may still need your password). With a terminal each one is still asked. Passed on to `ccrc setup` |
 | `--dry-run` | Show what would be done and change nothing; with an install in place, setup shows its part too |
 | `--no-system` | Never use sudo or change the system (for testing) |
 | `--uninstall` | Run `ccrc uninstall` of the install in place |
@@ -117,9 +119,9 @@ from, for mirrors).
 ### What `ccrc setup` does
 
 Setup checks each step and does only what is missing, so running it again finishes or repairs an install. Steps
-that need you show what to do and wait until it is done. Steps that need sudo, and the change to VS Code's settings,
-say why and ask first; with `--yes` they take the default answer and run without asking (sudo may still ask for your
-password).
+that need you show what to do and wait until it is done. The change to VS Code's settings is asked first; `--yes`
+takes the default answer to it and to the other questions. Steps that need sudo are asked separately (see
+[sudo](#sudo)).
 
 | Step id | Checks and does |
 |---|---|
@@ -138,15 +140,29 @@ password).
 | `doctor` | Runs the compatibility check with VS Code's Claude Code without a model call |
 
 ```
-ccrc setup [--yes] [--dry-run] [--only ids] [--skip ids] [--no-system] [--no-vscode] [--no-serve] [--https-port N]
+ccrc setup [--yes] [--allow-sudo] [--dry-run] [--only ids] [--skip ids] [--no-system] [--no-vscode] [--no-serve] [--https-port N]
 ```
 
 `--only` and `--skip` take comma-separated step ids. `--no-system` leaves out steps that use sudo or change the
-system (Tailscale, the service and `tailscale serve`); `--https-port` sets the tailnet HTTPS port (default 8443).
+system (Tailscale, the service and `tailscale serve`); `--allow-sudo` lets the steps that need sudo run without a
+terminal (see [sudo](#sudo)); `--https-port` sets the tailnet HTTPS port (default 8443).
 
 When the broker first starts, it rewrites the `entrypoint` field in transcripts that earlier broker sessions wrote
 under `~/.claude/projects`, so VS Code lists them; each file is copied to `~/.local/state/ccrc/backup/` first. On a
 fresh install there is nothing to rewrite.
+
+#### sudo
+
+`install.sh` and `ccrc setup` use sudo only for the base tools, Tailscale (`tailscale-install`, `tailscale-login`,
+`tailscale-operator`), and `loginctl enable-linger` when your system refuses it without sudo. Consent to sudo is never
+taken from `--yes`:
+
+- With a terminal, each use says what it runs and why, and asks, `--allow-sudo` or not.
+- Without a terminal (from a script, say), it runs only with `--allow-sudo`. Otherwise `install.sh` stops before
+  installing base tools, and setup leaves the step as "sudo consent needed", goes on with the steps that do not
+  depend on it, and says how to finish: run `ccrc setup` in a terminal, or again with `--allow-sudo`.
+- `--no-system` leaves out those steps altogether. `deploy/install-service.sh` (`ccrc setup --only service --yes`)
+  never uses sudo: under `--yes` linger is left as it is.
 
 ### On the phone
 
@@ -408,8 +424,10 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 - Sessions run on the machine, so it has to be on and online. Sessions started in a terminal are view-only.
 - In `apiKey` mode, commands Claude runs in a broker session (the Bash tool, for example) inherit Claude Code's
   environment and so can read the key.
-- The installer is new. ccrc has run daily on Ubuntu 24.04, but installs on other distributions (Debian, Fedora,
-  Arch, openSUSE) have not been tried yet.
+- The installer is new. ccrc has run daily on Ubuntu 24.04. On 2026-10-18 `install.sh` from GitHub installed v0.7.0
+  over an existing 0.6 setup on Ubuntu 24.04: setup kept the settings, the phone's notifications and `tailscale serve`
+  as they were, and moved only the service and the VS Code wrapper to the install. Installs on other distributions
+  (Debian, Fedora, Arch, openSUSE) and on a fresh machine have not been tried yet.
 
 ## Development
 
