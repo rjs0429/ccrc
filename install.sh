@@ -56,7 +56,13 @@ die() {
 }
 
 on_error() {
-  printf 'install.sh: the step "%s" failed (exit code %s). The log is %s.\n' "$STEP" "$1" "$LOG" >&2
+  # set -E hands this trap to subshells too: report once, from the script itself.
+  [ "$BASHPID" = "$$" ] || return 0
+  if [ "$LOG" = /dev/null ]; then
+    printf 'install.sh: the step "%s" failed (exit code %s).\n' "$STEP" "$1" >&2
+  else
+    printf 'install.sh: the step "%s" failed (exit code %s). The log is %s.\n' "$STEP" "$1" "$LOG" >&2
+  fi
   printf 'Fix what it says and run install.sh again; what is already done is kept.\n' >&2
 }
 
@@ -124,13 +130,21 @@ node_ok() {
   [ -n "$1" ] && [ -x "$1" ] && "$1" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=18)?0:1)' 2>/dev/null
 }
 
+# npm next to that Node, or on PATH: the build needs it, and some distributions package it apart from Node.
+has_npm() {
+  [ -x "$(dirname "$1")/npm" ] || command -v npm >/dev/null 2>&1
+}
+
 complete() {
   [ -f "$1/.ccrc-install.json" ] && [ -x "$1/bin/ccrc" ] && [ -f "$1/web/dist/index.html" ]
 }
 
+not_root() {
+  [ "$(id -u)" -ne 0 ] || die "do not run this as root: ccrc is installed for your own user, and uses sudo only where it has to"
+}
+
 prepare() {
   step "prepare"
-  [ "$(id -u)" -ne 0 ] || die "do not run this as root: ccrc is installed for your own user, and uses sudo only where it has to"
   case "$(uname -s)" in
     Linux) ;;
     Darwin) die "macOS is not supported yet: ccrc runs as a systemd user service on Linux" ;;
@@ -192,20 +206,22 @@ install_tools() {
   [ "$NO_SYSTEM" = 0 ] || die "missing ${missing[*]}; --no-system does not install them: $cmd"
   say "missing ${missing[*]}; to install them: $cmd"
   confirm "Run that with sudo?" || die "install ${missing[*]} and run this again"
-  sh -c "$cmd"
+  if [ -n "$TTY" ]; then sh -c "$cmd" <"$TTY"; else sh -c "$cmd"; fi
 }
 
 fetch_node() {
-  local line sum file name dir
+  local line sum file name dir get=(curl -fsSL)
+  # From an https source, redirects may not leave https.
+  case "$NODE_DIST" in https://*) get+=(--proto-redir =https) ;; esac
   WORK=$(mktemp -d)
-  logged curl -fsSL "$NODE_DIST/SHASUMS256.txt" -o "$WORK/SHASUMS256.txt"
+  logged "${get[@]}" "$NODE_DIST/SHASUMS256.txt" -o "$WORK/SHASUMS256.txt"
   line=$(grep -m 1 -E "^[0-9a-f]{64}  node-v22\.[0-9]+\.[0-9]+-linux-$ARCH\.tar\.xz$" "$WORK/SHASUMS256.txt") ||
     die "no Node.js 22 for linux-$ARCH in $NODE_DIST/SHASUMS256.txt"
   sum=${line%% *}
   file=${line##* }
   name=${file%.tar.xz}
   say "downloading $file"
-  logged curl -fsSL "$NODE_DIST/$file" -o "$WORK/$file"
+  logged "${get[@]}" "$NODE_DIST/$file" -o "$WORK/$file"
   printf '%s  %s\n' "$sum" "$WORK/$file" | sha256sum -c --status - || die "$file does not match its checksum in SHASUMS256.txt"
   dir=$DATA_DIR/$name
   mkdir -p "$DATA_DIR"
@@ -231,7 +247,8 @@ find_node() {
     NODE=$CCRC_NODE
   else
     for c in "$DATA_DIR/node/bin/node" "$(command -v node 2>/dev/null || true)"; do
-      if node_ok "$c"; then NODE=$c; break; fi
+      if node_ok "$c" && has_npm "$c"; then NODE=$c; break; fi
+      if node_ok "$c"; then say "skipping Node.js at $c: no npm next to it or on PATH"; fi
     done
   fi
   if [ -n "$NODE" ]; then
@@ -358,13 +375,16 @@ run_ccrc() {
 
 main() {
   parse_args "$@"
+  not_root
   if [ -t 0 ]; then
     TTY=/dev/stdin
   elif (: </dev/tty) 2>/dev/null; then
     TTY=/dev/tty
   fi
   if [ "$DRY_RUN" = 0 ]; then
-    mkdir -p "$STATE_DIR"
+    # The broker keeps its state private (0700); the log is made the same way.
+    mkdir -p "$(dirname "$STATE_DIR")"
+    (umask 077 && mkdir -p "$STATE_DIR" && touch "$STATE_DIR/install.log")
     LOG=$STATE_DIR/install.log
     printf '\n%s install.sh %s\n' "$(date '+%F %T')" "$*" >>"$LOG"
   fi
