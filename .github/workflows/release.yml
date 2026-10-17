@@ -1,0 +1,33 @@
+# Makes the GitHub Release of each release tag; the work is in scripts/sync-releases.sh. Pushes to main and manual
+# runs make any release a failed or missed run left out.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  releases:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      # A run started by a tag push has that tag as a plain ref to its commit; verify-tag needs the tag objects.
+      - name: Fetch tag objects
+        run: git fetch --force --tags origin
+      - name: Make missing releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: scripts/sync-releases.sh
