@@ -87,6 +87,8 @@ async function serve(): Promise<void> {
     },
     log: (line) => console.log(line),
   });
+  // `ccrc config set-api-key` while the broker runs: an open phone learns that broker sessions can start now.
+  fs.watchFile(paths.apiKeyFile, { interval: 2000 }, () => manager.emit("options_changed"));
 
   // `ccrc passwd` and `ccrc logout` edit the credentials file while the broker runs.
   fs.watchFile(paths.credentialsFile, { interval: 2000 }, () => {

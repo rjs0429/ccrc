@@ -65,8 +65,8 @@ after(async () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-async function setup() {
-  const manager = new SessionManager(config, undefined, { handoffTurnMs: 200, handoffOtherMs: 400 });
+async function setup(cfg: typeof config & { brokerSessions?: "off" | "apiKey" | "subscription" } = config) {
+  const manager = new SessionManager(cfg, undefined, { handoffTurnMs: 200, handoffOtherMs: 400 });
   const server = new LinkServer(path.join(tempDir("ccrc-link-"), "link.sock"));
   servers.push(server);
   server.on("link", (link) => manager.attachLink(link));
@@ -136,6 +136,17 @@ test("a newer wrapper for the same session replaces the older one quietly", asyn
   assert.equal(manager.isControlled(X), true);
   second.sock.destroy();
   await until(() => events.some(([e, id]) => e === "detached" && id === X), "closing the current one detaches it");
+});
+
+test('a VS Code session is still driven from the phone while brokerSessions is "off"', async () => {
+  const { manager, connect, events } = await setup({ ...config, brokerSessions: "off" });
+  const w = await connect({ sessionId: X });
+  await until(() => events.some(([e, id]) => e === "attached" && id === X), "attached");
+  assert.equal(await manager.activate(X).then((s) => s.id), X);
+  await manager.send(X, "from the phone");
+  await w.wait((f) => f.t === "to_cli" && JSON.stringify(f.m).includes("from the phone"), "the message reaches Claude Code through the wrapper");
+  w.sock.destroy();
+  await until(() => events.some(([e, id]) => e === "detached" && id === X), "detached");
 });
 
 test("what a wrapper reports before naming its session is replayed in order", async () => {
