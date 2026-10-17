@@ -1,0 +1,241 @@
+# Changelog
+
+All notable changes to ccrc are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and ccrc uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `ccrc update` shows the sections between
+your version and the new one, and the lines under "Breaking" separately.
+
+## [Unreleased]
+
+The first public release: an installer, updates, and the changes needed to run on machines other than the author's.
+
+### Breaking
+
+- The VS Code wrapper now needs Node.js 22.18 or newer, as `ccrc` does (its built relay used to run on Node.js 20).
+  Without one it runs Claude Code directly, so VS Code keeps working but the phone cannot drive its sessions.
+- `bin/ccrc` and `bin/ccrc-wrapper` no longer look in `~/.local/opt/node22`. They look in `CCRC_NODE`,
+  `<dataDir>/node/bin/node`, the Node.js the install recorded, then `PATH`.
+
+### Added
+
+- `install.sh`: checks the platform, installs missing base tools (asks first, uses sudo), downloads Node.js 22 checked
+  against `SHASUMS256.txt` when no Node.js 22.18+ is found, builds ccrc into `~/.local/share/ccrc/versions/<version>`,
+  links `current` and `~/.local/bin/ccrc`, then runs `ccrc setup`. Options `--version`, `--ref`, `--from`,
+  `--channel stable|rc`, `--yes`, `--dry-run`, `--no-system` and `--uninstall`; other options, and everything after
+  `--`, go to `ccrc setup`. Environment `CCRC_REPO_URL`, `CCRC_DATA_DIR`, `CCRC_STATE_DIR`, `CCRC_NODE` and
+  `CCRC_NODE_DIST`. It reuses the Node.js an existing install recorded, and logs to `<stateDir>/install.log`.
+- `ccrc setup [--yes] [--dry-run] [--only ids] [--skip ids] [--no-system] [--no-vscode] [--no-serve] [--https-port N]`:
+  checks each part (Claude Code, Tailscale install, login and operator, MagicDNS and HTTPS, the allowed phone, the ccrc
+  login, settings, the service, `tailscale serve`, the VS Code wrapper setting, the phone, the compatibility check) and
+  does only what is missing; running it again finishes or repairs. It asks how broker sessions sign in, and changes
+  VS Code's `settings.json` in place, keeping comments and layout, after a backup.
+- `ccrc uninstall [--purge] [--yes] [--dry-run]`: removes VS Code's wrapper setting first, then the service,
+  `tailscale serve` and the installed versions; `--purge` also removes settings and state.
+- `ccrc update [--check] [--to <version>] [--channel stable|rc] [--yes] [--from <repo>[@<ref>]]`: builds a release
+  beside the running one, shows its changes, backs up and migrates config and state, switches the `current` link,
+  restarts the service and checks `/api/ping`, going back on its own when the new version does not answer (exit code 3;
+  4 when the old version cannot be confirmed either). A failed update puts config and state back exactly as they were.
+  Ctrl-C is held until a switch is confirmed or undone.
+- `ccrc rollback`: returns to the version before the last update and restores the config and state files that update's
+  migration changed. Exits with code 4 when the service cannot be restarted.
+- `<dataDir>/history.json`, a record of each update and rollback with its backup folder.
+- Optional tag signature checks: when an install has `.ccrc-allowed-signers`, `ccrc update` requires
+  `git verify-tag` (SSH signatures) to pass.
+- A new-release check in the broker, a minute after start and then daily (`git ls-remote` with a time limit), stored in
+  `<stateDir>/update-check.json`, with the config keys `updateCheck`, `updateChannel`, `updateRepo` and `updateNotify`.
+  An install sends one push notification per new release to subscribed phones.
+- The settings status page and `/api/health` show the ccrc version, whether it is an install or a development checkout,
+  the newest release with a link to its changes, and when it was last checked.
+- `brokerSessions` setting (`off`, `apiKey`, `subscription`) decides whether and how sessions ccrc starts itself through
+  the Agent SDK sign in. New installs default to `off`.
+- With `apiKey`, broker sessions get the key stored by `ccrc config set-api-key` (`<configDir>/anthropic-api-key`,
+  0600), and nothing else sees it.
+- When broker sessions are off or have no key, the phone greys the new-session button, shows the reason and how to turn
+  them on, and hides the start and fork actions; the status page shows the mode read-only. Storing a key while the
+  broker runs tells an open phone right away.
+- `ccrc config path | get [key] | set <key> <value> | set-api-key` to read and change config.json from the terminal.
+- `ccrc version` (and `--version`): the installed version, `git describe` for a development checkout, else
+  package.json's.
+- `GET /api/ping` answers `{ ok, version }` without a login, to this machine always and to allowed devices.
+- config.json is checked on load: a key of the wrong type stops the broker with the key and what it takes, unknown keys
+  are warned about, and broken JSON is reported with its line and column.
+- A running broker takes in changes to `allowedDevices`, `allowLocal`, `roots`, `brokerSessions`, `leaseIdleMinutes`,
+  `sessionIdleMinutes` and the update keys without a restart, and logs that `host`, `port` and `claudePath` need one.
+- config.json has a `schemaVersion`. `ccrc serve` and `ccrc migrate` bring older files up to date after copying them to
+  `<stateDir>/backup/`; a file from a newer ccrc is refused with a hint to update or roll back.
+- `CCRC_VSCODE_EXTENSIONS_DIR` sets the VS Code extensions folder.
+- README for public use, this changelog, a license (MIT) and a security policy.
+
+### Changed
+
+- `ccrc status` also shows the version, the newest release the broker has seen, and the `brokerSessions` mode.
+- `deploy/install-service.sh` runs setup's service step: the unit runs `<dataDir>/current/bin/ccrc serve` for an
+  install, records `CCRC_NODE`, enables linger, and checks `/api/ping`; a replaced unit is copied to
+  `<stateDir>/backup/`.
+- package.json carries the version.
+- New dependency: `jsonc-parser`.
+
+### Fixed
+
+- Claude Code's folder follows `CLAUDE_CONFIG_DIR` everywhere, not only for its settings file.
+- The VS Code wrapper finds an installed Node.js when VS Code was started from a desktop whose `PATH` has none, instead
+  of quietly running Claude Code without ccrc.
+
+### Security
+
+- `install.sh`, `ccrc setup` and `ccrc uninstall` refuse to run as root.
+- `ccrc uninstall` will not remove a data, config or state folder that is `/`, your home folder or a folder holding it.
+- `install.sh` keeps its log private (state folder 0700, `install.log` 0600) and keeps Node.js downloads from an https
+  source on https.
+- The API key never reaches logs, the audit log, the screen or API answers; in `apiKey` mode an inherited
+  `CLAUDE_CODE_OAUTH_TOKEN` is removed from broker sessions' environment.
+- The new-release check runs git without password prompts or credential helpers, and masks a user name or token in a
+  repository URL in errors shown on the status page.
+
+### Upgrading from 0.6
+
+- 0.6 has no `ccrc update`. Either update the checkout (`git pull`, `npm ci`, `npm run build`, then
+  `systemctl --user restart ccrc.service`), or move to an install with `install.sh`, which keeps your settings, login
+  and notification subscriptions and points the service and VS Code at the install.
+- On its first start, 0.7 moves `config.json` to `schemaVersion: 1` and adds `"brokerSessions": "subscription"`, so
+  broker sessions keep working as before. The earlier file is kept in `<stateDir>/backup/migrate-0-1-<time>/`. To turn
+  broker sessions off or move them to an API key: `ccrc config set brokerSessions off` (or `apiKey`, after
+  `ccrc config set-api-key`).
+- A development checkout must find Node.js 22.18+ through `CCRC_NODE`, a link `<dataDir>/node` to a Node.js folder
+  (e.g. `~/.local/share/ccrc/node`), or `PATH`. Set this up before restarting the service: otherwise `ccrc` stops with
+  "needs Node.js 22.18", and VS Code's wrapper runs Claude Code without ccrc. Running `deploy/install-service.sh` from
+  a shell where Node.js 22.18+ is found writes that Node into the unit as `CCRC_NODE`.
+- Reload VS Code windows so open tabs use the new wrapper, and fully close and reopen the phone's home screen app.
+
+### Tested with
+
+- Claude Code VS Code extension and CLI 2.1.301, Claude Agent SDK 0.3.296
+- Node.js 22.18 or newer; Ubuntu 24.04 with systemd 255; Tailscale 1.104.1
+- iOS 16.4 or later (home screen app, for notifications)
+
+## [0.6.0] - 2026-10-16
+
+### Added
+
+- Rename sessions (also seen by VS Code and `claude --resume`) and archive them within ccrc.
+- Fork a session from the menu or from any message into a new broker session that can run in the background;
+  `/fork` and `/branch` open the fork sheet.
+- Rewind the conversation as Claude Code does: conversation and code, conversation only, or code only. Broker sessions
+  rewind in place; VS Code sessions continue in a fork from that point.
+- Start a new session in a new git worktree, and clean worktrees up from the session menu or when archiving.
+- Fast mode and Thinking switches for the current session, with markers on the composer.
+- Claude can send files to the phone (`SendUserFile`, Claude Code 2.1.300 or later), opened by reference, with secret
+  files blocked and a 50 MB limit. `CCRC_SEND_FILES=0` turns it off.
+- Agent map: read a subagent's transcript, and the output of shell and monitor tasks.
+- Turn-done notifications in three choices (sessions driven from the phone, all sessions, off), an app icon badge, and
+  separate wording and urgency for errors, usage limits and Claude Code exiting unexpectedly. Turn-done notifications
+  also survive a broker restart.
+- Prompts that only VS Code can answer are marked as such in notifications.
+
+### Changed
+
+- `claudePath` defaults to `"vscode"`: broker sessions use the CLI bundled in the newest VS Code extension.
+- Composer chips fit on one line when they can, two otherwise; the session menu puts the four frequent actions first.
+- Web Push reuses its VAPID signature for six hours and retries once with a new one on 401 or 403.
+
+## [0.5.0] - 2026-10-15
+
+### Added
+
+- Session search by title and message text, jumping to the message found.
+- Output style per session, from the session menu.
+- MCP input requests (elicitation) answered on the phone, for broker sessions and for VS Code sessions while the
+  phone is reachable.
+- Model, effort, ultracode and permission mode can be chosen for an inactive session, and applied when ccrc starts it;
+  a "start now" button starts it without a message.
+- A context ring next to the model chip, opening Context, plan usage and Compact.
+- Dedicated views for AskUserQuestion, plan approval and 19 other tools; a raw view for the rest.
+- Queued messages show at the bottom until Claude Code takes them, can be taken back, and stay in step with VS Code.
+- Photo thumbnails with a full-screen viewer, a jump-to-bottom button, and timestamps under Claude's replies with date
+  separators.
+- A new-session screen with the full composer (`@`, `/`, attachments, chips).
+- Agent map: subagents, workflows and background tasks of a session.
+- Agent reports and messages from other sessions as collapsed cards; `!` commands as shell cards.
+- Landscape layout, with notch and home indicator areas kept clear.
+
+### Changed
+
+- Commands that open a window in Claude Code (`/context`, `/usage`, `/mcp`, `/model`, `/config` and others) open a
+  sheet on the phone and are not sent into the conversation.
+- The attachment button opens the iOS picker in one tap.
+- Send and stop are one button; the effort chip shows the value only.
+- Broker sessions name their own entrypoint, so VS Code lists them; transcripts written by earlier versions are
+  rewritten after a backup.
+- Secret file names are left out of `@` suggestions.
+
+## [0.4.0] - 2026-10-14
+
+### Added
+
+- Model, effort and ultracode follow what Claude Code reports, also when changed in VS Code; an ultracode switch in
+  the effort sheet.
+- Cards for command results: `/usage` with a bar per limit, `/context` with its breakdown, others as Markdown; the
+  `/` palette opens sheets for `/context`, `/usage`, `/cost`, `/stats`, `/mcp` and `/model`.
+- File link viewer: links in replies open files within the session's folders, with line anchors, rendered Markdown,
+  highlighted code, images, PDFs, JSON and CSV tables. Secret files are blocked, and each read is in the audit log.
+
+### Changed
+
+- Settings are grouped into pages; chip and menu names follow VS Code's.
+- The wrapper accepts only `effortLevel` and `ultracode` in remote flag settings.
+
+## [0.3.0] - 2026-10-14
+
+### Added
+
+- Attachments (photos resized for upload, PDFs, text files), `@` file mentions and `/` commands in the composer.
+- Edit and Write diffs, subagent activity and a to-do bar in the conversation.
+- Session menu: changes with line comments, running tasks with stop, context breakdown, MCP servers (status, on and
+  off, reconnect), and rewinding files to a message.
+- Web Push notifications for prompts waiting for an answer and for turns sent from the phone that finished.
+- Settings: edit Claude Code's settings (allowed keys only, with backups), a compatibility check whenever the VS Code
+  extension changes, the audit log, and Enter to send.
+- The wrapper resumes a turn cut off by a VS Code window reload, and starts new tabs in the permission mode VS Code
+  remembered.
+
+### Security
+
+- Plan approval accepts only its four decisions, and the wrapper refuses any remote answer that would switch to
+  `bypassPermissions`.
+- `@` suggestions use git's file list only when the git worktree holds the session folder.
+
+## [0.2.0] - 2026-10-14
+
+### Added
+
+- VS Code wrapper (`bin/ccrc-wrapper`, for `claudeCode.claudeProcessWrapper`): sessions open in VS Code can be driven
+  from the phone (live view, messages, stop, model, mode, effort, context usage).
+- Permission prompts show in VS Code and on the phone; the first answer counts.
+- A session the broker runs is handed over when VS Code opens it; a session another process holds opens as a fork.
+- VS Code keeps working while the broker is down, and the wrapper reconnects when it returns.
+- The wrapper and the broker meet on a private socket in `$XDG_RUNTIME_DIR/ccrc/`, never in `/tmp`.
+
+## [0.1.0] - 2026-10-13
+
+### Added
+
+- Broker on `127.0.0.1:8737`, run as a systemd user service, and a phone web app served through `tailscale serve`.
+- Every Claude Code session on the machine, by folder, with its state (running in ccrc, open in VS Code or a terminal,
+  inactive).
+- Inactive sessions resume when you send a message; new sessions start in folders that have sessions or in `roots`.
+- Conversation view with live streaming, tool cards and thinking; cards for permission prompts, questions and plan
+  approval; model, permission mode and effort; stop; input queued while Claude works.
+- Sessions open in VS Code are shown live, read-only.
+- Login with an ID and an Argon2id-hashed password, lockout after repeated failures, one remote login at a time,
+  logout after 12 hours idle.
+- Only allowed tailnet devices get in; Origin checks, strict cookies and a Content Security Policy;
+  `bypassPermissions` cannot be chosen remotely.
+- Idle broker session processes close after 15 minutes; an audit log without message contents; light and dark themes.
+- `ccrc serve | passwd | status | logout` and `deploy/install-service.sh`.
+
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/rjs0429/ccrc/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/rjs0429/ccrc/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/rjs0429/ccrc/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/rjs0429/ccrc/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/rjs0429/ccrc/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/rjs0429/ccrc/releases/tag/v0.1.0
