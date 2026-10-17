@@ -405,13 +405,15 @@ class Updater {
     return EXIT_ROLLED_BACK;
   }
 
-  // Keeps the versions named and the one current points at; removes other versions and left-over downloads.
+  // Keeps the versions named and the one current points at; removes other versions and left-over downloads, but not
+  // one install.sh is still building (versions/.tmp-<its pid>).
   prune(keep: string[]): void {
     const dir = versionsDir(this.d.dataDir);
     const cur = this.current()?.dir;
     for (const name of safeList(dir)) {
       const full = path.join(dir, name);
-      if (keep.includes(name) || full === cur) continue;
+      const installing = /^\.tmp-(\d+)$/.exec(name);
+      if (keep.includes(name) || full === cur || (installing && alive(Number(installing[1])))) continue;
       fs.rmSync(full, { recursive: true, force: true });
       this.d.log(`Removed ${name.endsWith(".tmp") ? "the unfinished download" : "old version"} ${name}`);
     }

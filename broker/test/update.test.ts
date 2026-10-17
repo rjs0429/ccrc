@@ -240,6 +240,10 @@ test("an update builds beside the running version, migrates, switches, restarts 
   const w = installed(repo);
   fs.mkdirSync(path.join(w.dataDir, "versions", "v0.6.0"));
   fs.mkdirSync(path.join(w.dataDir, "versions", "v0.9.9.tmp"));
+  // install.sh's download: kept while that process runs, removed once it is gone.
+  fs.mkdirSync(path.join(w.dataDir, "versions", `.tmp-${process.pid}`));
+  const gone = spawnSync(process.execPath, ["-e", ""]).pid!;
+  fs.mkdirSync(path.join(w.dataDir, "versions", `.tmp-${gone}`));
   const before = fs.readFileSync(path.join(w.configDir, "config.json"), "utf8");
 
   assert.equal(await update({ yes: true }, w.deps), 0, output(w));
@@ -262,7 +266,7 @@ test("an update builds beside the running version, migrates, switches, restarts 
   assert.equal(fs.readFileSync(path.join(entry.backupDir!, "config", "config.json"), "utf8"), before, "the config as it was");
   assert.ok(fs.existsSync(path.join(entry.backupDir!, "state", "archived.json")));
   assert.ok(entry.backupDir!.startsWith(path.join(w.stateDir, "backup", "update-v0.7.0-v0.7.1-")));
-  assert.deepEqual(versions(w), ["v0.7.0", "v0.7.1"], "the version before stays; older ones and left-over downloads go");
+  assert.deepEqual(versions(w), [`.tmp-${process.pid}`, "v0.7.0", "v0.7.1"], "the version before stays; older ones and left-over downloads go");
 
   assert.match(output(w), /## 0\.7\.1/);
   assert.match(output(w), /Breaking changes:\n {2}0\.7\.1: - The wrapper link changed/);

@@ -239,6 +239,13 @@ fetch_node() {
   say "Node.js $("$NODE" --version) is in $DATA_DIR/$name"
 }
 
+# The Node the install in place recorded, as bin/ccrc finds it.
+installed_node() {
+  if [ -f "$DATA_DIR/current/.ccrc-install.json" ]; then
+    sed -n 's/.*"node"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$DATA_DIR/current/.ccrc-install.json" | head -n 1
+  fi
+}
+
 find_node() {
   step "Node.js"
   local c
@@ -246,7 +253,7 @@ find_node() {
     node_ok "$CCRC_NODE" || die "CCRC_NODE=$CCRC_NODE is not Node.js 22.18 or newer"
     NODE=$CCRC_NODE
   else
-    for c in "$DATA_DIR/node/bin/node" "$(command -v node 2>/dev/null || true)"; do
+    for c in "$DATA_DIR/node/bin/node" "$(installed_node)" "$(command -v node 2>/dev/null || true)"; do
       if node_ok "$c" && has_npm "$c"; then NODE=$c; break; fi
       if node_ok "$c"; then say "skipping Node.js at $c: no npm next to it or on PATH"; fi
     done
@@ -312,7 +319,8 @@ fetch_code() {
             die "no branch, tag or commit \"$REF\" in $source"
           logged git -C "$tmp" checkout --quiet --detach "$commit"
         fi
-        NAME=$(git -C "$tmp" describe --tags --always --match 'v[0-9]*')
+        # Named as `ccrc update --from` and the broker's version name the commit.
+        NAME=$(git -C "$tmp" describe --always --match 'v[0-9]*')
       fi
       dest=$DATA_DIR/versions/$NAME
       if complete "$dest"; then
