@@ -326,10 +326,15 @@ class Updater {
     });
     if (r.code === 0) return;
     const why = lastLine(r.stderr) || `exit code ${r.code}`;
-    const dirs = this.d.env.PATH ?? "";
-    if (/cannot run ssh-keygen/.test(r.stderr) || !whichOn("ssh-keygen", dirs)) {
+    // git runs ssh-keygen only for an SSH signature: a tag with none, or not a tag, fails the same without it.
+    if (/cannot run ssh-keygen\b/.test(r.stderr)) {
+      const dirs = this.d.env.PATH ?? "";
       const install = sshKeygenInstall((cmd) => whichOn(cmd, dirs));
-      throw new UpdateError(`could not check the signature of ${tag}: git checks it with ssh-keygen, which is not on PATH (${why}). Run ccrc update again once it is installed; ${install}`);
+      throw new UpdateError(`could not check the signature of ${tag}: git checks it with ssh-keygen, which it could not run (${why}). Run ccrc update again once it is installed; ${install}`);
+    }
+    // OpenSSH before 8.2 has no ssh-keygen -Y find-principals, which git needs (RHEL 8 ships 8.0).
+    if (/find-principals\/verify is needed/.test(r.stderr)) {
+      throw new UpdateError(`could not check the signature of ${tag}: git needs ssh-keygen from OpenSSH 8.2 or newer to check it (${why}). Run ccrc update again on a newer OpenSSH`);
     }
     throw new UpdateError(`the signature of ${tag} does not check out against ${signers}: ${why}`);
   }

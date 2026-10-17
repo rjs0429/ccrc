@@ -63,10 +63,10 @@ advice. Change it any time with `ccrc config set brokerSessions <value>`; a runn
 - The Tailscale app on the phone, signed in to the same tailnet.
 - Node.js 22.18 or newer with npm, git, curl, tar, xz, sha256sum and OpenSSH's `ssh-keygen` (it comes with the SSH
   client: `openssh-client` on Debian and Ubuntu, `openssh-clients` on Fedora, RHEL and openSUSE, `openssh` on Arch),
-  which `ccrc update` uses from 0.7.2 to check the signatures of release tags. The installer offers to install the
-  base tools and downloads Node.js 22 (npm included) into ccrc's own folder when none is found; some distributions
-  package npm apart from Node.js. Nothing needs root except the base tools, Tailscale and, if your system asks for it,
-  `loginctl enable-linger`.
+  which `ccrc update` uses from 0.7.2 to check the signatures of release tags and which must be from OpenSSH 8.2 or
+  newer (RHEL 8 has 8.0). The installer offers to install the base tools and downloads Node.js 22 (npm included) into
+  ccrc's own folder when none is found; some distributions package npm apart from Node.js. Nothing needs root except
+  the base tools, Tailscale and, if your system asks for it, `loginctl enable-linger`.
 
 ## Install
 
@@ -508,7 +508,8 @@ also marks the tag Verified.
 it, and stops when the signature does not check out. An update from 0.7.1 or older to 0.7.2 is not checked, as those
 versions have no such file; check `v0.7.2` by hand as above if you want to. Without `ssh-keygen`, `ccrc update` on
 0.7.2 or newer cannot check and stops, with the command that installs it; `install.sh` installs it with the other base
-tools, and `ccrc setup` shows it missing.
+tools, and `ccrc setup` shows it missing. An `ssh-keygen` older than OpenSSH 8.2 cannot check SSH signatures either,
+and `ccrc update` stops saying so.
 
 ## License and Anthropic's terms
 

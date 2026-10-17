@@ -440,7 +440,7 @@ test("with allowed signers in the install, a tag must carry a signature from one
   assert.deepEqual(versions(unsigned), ["v0.7.0"]);
 });
 
-test("with allowed signers but no ssh-keygen, the update stops and says what to install", async (t) => {
+test("with allowed signers but no ssh-keygen, or one too old, the update stops and says what to install", async (t) => {
   if (spawnSync("ssh-keygen", ["-?"]).error) return t.skip("no ssh-keygen");
   const keys = tempDir();
   const key = path.join(keys, "id");
@@ -452,10 +452,29 @@ test("with allowed signers but no ssh-keygen, the update stops and says what to 
   for (const cmd of ["git", "apt-get"]) fs.symlinkSync(execFileSync("sh", ["-c", `command -v ${cmd} || echo /bin/true`], { encoding: "utf8" }).trim(), path.join(bin, cmd));
   w.deps = { ...w.deps, env: { ...GIT_ENV, PATH: bin } };
   assert.equal(await update({ yes: true }, w.deps), 1, output(w));
-  assert.match(output(w), /could not check the signature of v0\.7\.1: git checks it with ssh-keygen, which is not on PATH \(error: cannot run ssh-keygen/);
+  assert.match(output(w), /could not check the signature of v0\.7\.1: git checks it with ssh-keygen, which it could not run \(error: cannot run ssh-keygen/);
   assert.match(output(w), /Run ccrc update again once it is installed; install it with: sudo apt-get install openssh-client$/m);
   assert.equal(current(w), path.join("versions", "v0.7.0"));
   assert.deepEqual(versions(w), ["v0.7.0"]);
+
+  // An unsigned tag is reported as such, ssh-keygen or not: git does not get as far as running it.
+  const unsigned = installed(makeRepo());
+  fs.writeFileSync(path.join(unsigned.root, ".ccrc-allowed-signers"), fs.readFileSync(path.join(w.root, ".ccrc-allowed-signers")));
+  unsigned.deps = { ...unsigned.deps, env: { ...GIT_ENV, PATH: bin } };
+  assert.equal(await update({ yes: true }, unsigned.deps), 1);
+  assert.match(output(unsigned), /the signature of v0\.7\.1 does not check out .*no signature found/);
+  assert.doesNotMatch(output(unsigned), /install it with/);
+
+  // OpenSSH before 8.2 (RHEL 8) has an ssh-keygen without -Y find-principals.
+  const old = installed(makeRepo({ key }));
+  fs.writeFileSync(path.join(old.root, ".ccrc-allowed-signers"), fs.readFileSync(path.join(w.root, ".ccrc-allowed-signers")));
+  const oldBin = tempDir();
+  fs.symlinkSync(path.join(bin, "git"), path.join(oldBin, "git"));
+  fs.writeFileSync(path.join(oldBin, "ssh-keygen"), "#!/bin/sh\necho 'usage: ssh-keygen [-q] [-a rounds]' >&2\nexit 1\n", { mode: 0o755 });
+  old.deps = { ...old.deps, env: { ...GIT_ENV, PATH: oldBin } };
+  assert.equal(await update({ yes: true }, old.deps), 1);
+  assert.match(output(old), /could not check the signature of v0\.7\.1: git needs ssh-keygen from OpenSSH 8\.2 or newer/);
+  assert.equal(current(old), path.join("versions", "v0.7.0"));
 });
 
 test("with allowed signers in the install, an OpenPGP signature does not pass even from a key GnuPG trusts", async (t) => {
