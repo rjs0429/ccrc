@@ -111,6 +111,13 @@ export class Push {
     if (status < 200 || status > 299) throw new PushError("push_failed", status);
   }
 
+  // A notification for every subscribed device; false when there is none.
+  announce(payload: PushPayload): boolean {
+    const subs = this.store.list();
+    for (const sub of subs) this.send(sub, payload, "normal", true);
+    return subs.length > 0;
+  }
+
   watch(manager: SessionManager, hub: Hub): void {
     this.notifier?.close();
     this.notifier = new Notifier(manager, hub, {

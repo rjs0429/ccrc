@@ -4,7 +4,7 @@ import { ConfigError, RESTART_KEYS, readConfig, type Config } from "./config.ts"
 const WATCH_INTERVAL_MS = 2000;
 
 // Keys a running broker takes in as soon as config.json changes.
-export const LIVE_KEYS = ["allowedDevices", "allowLocal", "roots", "brokerSessions", "leaseIdleMinutes", "sessionIdleMinutes"] as const;
+export const LIVE_KEYS = ["allowedDevices", "allowLocal", "roots", "brokerSessions", "leaseIdleMinutes", "sessionIdleMinutes", "updateCheck", "updateChannel", "updateRepo", "updateNotify"] as const;
 
 export interface ConfigSinks {
   // Called with the config once its live keys hold the new values.

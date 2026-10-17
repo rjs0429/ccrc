@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { paths } from "./paths.ts";
+import { UPDATE_CHANNELS, type UpdateChannel } from "./releases.ts";
 
 export { paths };
 
@@ -27,6 +28,13 @@ export interface Config {
   sessionIdleMinutes: number;
   // Unset only where a config is made in code; a config file always has it once migrated.
   brokerSessions?: BrokerSessions;
+  // Look for new ccrc releases with git ls-remote a minute after start and daily, on the stable or rc channel, in
+  // updateRepo when the install does not name its source; updateNotify pushes one notification per new version.
+  // Unset only where a config is made in code, which means true, "stable" and true.
+  updateCheck?: boolean;
+  updateChannel?: UpdateChannel;
+  updateRepo?: string;
+  updateNotify?: boolean;
 }
 
 export const FOLLOW_VSCODE = "vscode";
@@ -44,6 +52,9 @@ function defaults(): Config {
     roots: [],
     leaseIdleMinutes: 720,
     sessionIdleMinutes: 15,
+    updateCheck: true,
+    updateChannel: "stable",
+    updateNotify: true,
   };
 }
 
@@ -96,6 +107,10 @@ const KEYS: Record<string, { ok: (v: unknown) => boolean; expected: string; rest
   leaseIdleMinutes: { ok: isPositive, expected: "a number above 0" },
   sessionIdleMinutes: { ok: isPositive, expected: "a number above 0" },
   brokerSessions: { ok: (v) => BROKER_SESSIONS.includes(v as BrokerSessions), expected: BROKER_SESSIONS.map((m) => `"${m}"`).join(", ") },
+  updateCheck: { ok: (v) => typeof v === "boolean", expected: "true or false" },
+  updateChannel: { ok: (v) => UPDATE_CHANNELS.includes(v as UpdateChannel), expected: UPDATE_CHANNELS.map((m) => `"${m}"`).join(", ") },
+  updateRepo: { ok: (v) => isText(v) && v !== "", expected: "a git URL or path" },
+  updateNotify: { ok: (v) => typeof v === "boolean", expected: "true or false" },
 };
 
 export const CONFIG_KEYS = Object.keys(KEYS);

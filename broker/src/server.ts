@@ -9,6 +9,7 @@ import { checkCredentials, setCredentials } from "./auth.ts";
 import type { ClaudeSettings } from "./claude-settings.ts";
 import { DeviceGate } from "./devices.ts";
 import type { Doctor } from "./doctor.ts";
+import type { UpdateCheck } from "./update-check.ts";
 import type { Hub } from "./hub.ts";
 import type { Leases } from "./lease.ts";
 import { PERMISSION_MODES } from "./protocol.ts";
@@ -55,6 +56,7 @@ export interface ServerDeps {
   uploads: Uploads;
   push: Push;
   doctor: Doctor;
+  updates?: UpdateCheck;
   // Claude Code's settings file; ~/.claude/settings.json unless given.
   claudeSettings?: ClaudeSettings;
   webDir: string;

@@ -34,6 +34,9 @@ import { SessionManager } from "./sessions/manager.ts";
 import { SessionSearch } from "./sessions/search.ts";
 import { Store } from "./store.ts";
 import { Uploads } from "./uploads.ts";
+import { UPDATE_CHANNELS, type UpdateChannel } from "./releases.ts";
+import { UpdateCheck } from "./update-check.ts";
+import { rollback, update, updateStatus, type UpdateOptions } from "./update.ts";
 
 const WARM_DELAY_MS = 5000;
 
@@ -47,7 +50,10 @@ const USAGE = `usage: ccrc <command>
   config get [key]            show the config, or one key of it
   config set <key> <value>    change a key; a value that is not JSON is taken as a string
   config set-api-key          store the Anthropic API key for brokerSessions "apiKey" (typed hidden, or from stdin)
-  migrate                     bring config.json to this version's format (serve does this too)`;
+  migrate                     bring config.json to this version's format (serve does this too)
+  update [--check] [--to <version>] [--channel stable|rc] [--yes] [--from <repository>[@<ref>]]
+                              install a newer release beside this one and switch to it, or go back on failure
+  rollback [--yes]            go back to the version before the last update`;
 
 function migrate(): void {
   const r = migrateConfigFile();
@@ -74,6 +80,12 @@ async function serve(): Promise<void> {
   manager.remoteWatching = () => hub.connected;
   const doctor = new Doctor({ brokerCli: () => manager.cli.peek() });
   doctor.start();
+  const updates = new UpdateCheck({
+    config,
+    version: () => doctor.brokerVersion(),
+    notify: (tag) => push.announce({ title: "ccrc", body: `새 버전 ${tag}: 노트북에서 ccrc update 로 적용합니다`, tag: "ccrc-update", data: { url: "/#/settings/status" } }),
+  });
+  updates.start();
   const links = new LinkServer(linkSocketPath());
   links.on("link", (link) => manager.attachLink(link));
   await links.listen();
@@ -84,6 +96,7 @@ async function serve(): Promise<void> {
       gate.update(c.allowedDevices, c.allowLocal);
       leases.setIdleMinutes(c.leaseIdleMinutes);
       if (changed.includes("brokerSessions") || changed.includes("roots")) manager.emit("options_changed");
+      updates.configChanged(changed);
     },
     log: (line) => console.log(line),
   });
@@ -98,7 +111,7 @@ async function serve(): Promise<void> {
   });
 
   const search = new SessionSearch();
-  const app = await buildServer({ store, leases, gate, audit, manager, hub, uploads, push, doctor, search, webDir: paths.webDir, logLevel: process.env.CCRC_LOG_LEVEL });
+  const app = await buildServer({ store, leases, gate, audit, manager, hub, uploads, push, doctor, updates, search, webDir: paths.webDir, logLevel: process.env.CCRC_LOG_LEVEL });
   await app.listen({ host: config.host, port: config.port });
   // The first search after a start finds the transcripts already read.
   const warm = async () => search.prewarm(await manager.list());
@@ -111,6 +124,7 @@ async function serve(): Promise<void> {
     hub.close();
     push.close();
     doctor.close();
+    updates.close();
     await links.close();
     await manager.closeAll();
     await app.close();
@@ -178,6 +192,7 @@ function status(): void {
   console.log(`listen:      http://${config.host}:${config.port}`);
   console.log(`wrappers:    ${linkSocketPath()}${fs.existsSync(linkSocketPath()) ? "" : " (not listening)"}`);
   console.log(`devices:     ${config.allowedDevices.join(", ") || "(none; local access only)"}`);
+  console.log(`update:      ${config.updateCheck !== false ? updateStatus(brokerVersion()) : "not looked for (updateCheck is false)"}`);
   console.log(`broker sessions: ${brokerSessionsText(brokerSessionsOf(config))}`);
   console.log(`login:       ${user ? `${user.id} (set ${user.changedAt})` : "not set; run: ccrc passwd"}`);
   console.log(`remote use:  ${lease ? `${lease.device}, last active ${new Date(lease.lastSeen).toLocaleString()}` : "none"}`);
@@ -223,8 +238,8 @@ async function config(): Promise<void> {
     case "get": {
       const c = fs.existsSync(file) ? readConfig(file).config : newConfig();
       if (key === undefined) return console.log(JSON.stringify(c, null, 2));
-      if (!(key in c)) throw new ConfigError(`unknown key "${key}"`);
-      return console.log(JSON.stringify(c[key as keyof typeof c]));
+      if (!CONFIG_KEYS.includes(key)) throw new ConfigError(`unknown key "${key}"`);
+      return console.log(JSON.stringify(c[key as keyof typeof c] ?? null));
     }
     case "set": {
       if (!key || rest.length !== 1) throw Error("usage: ccrc config set <key> <value>");
@@ -251,6 +266,45 @@ async function config(): Promise<void> {
   }
 }
 
+async function ask(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) throw Error("no terminal to ask in: pass --yes");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
+  rl.close();
+  return answer === "y" || answer === "yes";
+}
+
+function updateArgs(args: string[]): UpdateOptions {
+  const o: UpdateOptions = {};
+  const value = (flag: string, i: number) => {
+    if (args[i + 1] === undefined) throw Error(`${flag} needs a value`);
+    return args[i + 1];
+  };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--check") o.check = true;
+    else if (a === "--yes" || a === "-y") o.yes = true;
+    else if (a === "--to") o.to = value(a, i++);
+    else if (a === "--from") o.from = value(a, i++);
+    else if (a === "--channel") {
+      const c = value(a, i++);
+      if (!UPDATE_CHANNELS.includes(c as UpdateChannel)) throw Error(`--channel takes ${UPDATE_CHANNELS.join(" or ")}`);
+      o.channel = c as UpdateChannel;
+    } else throw Error(`unknown option ${a}\n${USAGE}`);
+  }
+  return o;
+}
+
+async function updateCommand(): Promise<void> {
+  process.exitCode = await update(updateArgs(process.argv.slice(3)), { ask });
+}
+
+async function rollbackCommand(): Promise<void> {
+  const args = process.argv.slice(3);
+  if (args.some((a) => a !== "--yes" && a !== "-y")) throw Error("usage: ccrc rollback [--yes]");
+  process.exitCode = await rollback({ yes: args.length > 0 }, { ask });
+}
+
 const [major, minor] = process.versions.node.split(".").map(Number);
 if (major < 22 || (major === 22 && minor < 18)) {
   console.error(`ccrc needs Node.js 22.18 or newer (found ${process.versions.node})`);
@@ -258,7 +312,7 @@ if (major < 22 || (major === 22 && minor < 18)) {
 }
 
 const command = process.argv[2] ?? "serve";
-const commands: Record<string, () => unknown> = { serve, passwd, status, logout, version, "--version": version, config, migrate };
+const commands: Record<string, () => unknown> = { serve, passwd, status, logout, version, "--version": version, config, migrate, update: updateCommand, rollback: rollbackCommand };
 const run = commands[command];
 if (!run) {
   console.error(USAGE);

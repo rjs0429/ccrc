@@ -113,6 +113,25 @@ export interface HealthInfo {
   last?: DoctorResult;
   running: boolean;
   brokerSessions?: BrokerSessionsInfo;
+  update?: UpdateInfo;
+}
+
+// ccrc's own version and the newest release the broker found. kind: an install made by install.sh or `ccrc update`,
+// a git checkout, or a copy that is neither.
+export interface UpdateInfo {
+  version?: string;
+  kind: "installed" | "git" | "plain";
+  // Whether the broker looks for new versions (updateCheck).
+  enabled: boolean;
+  channel: "stable" | "rc";
+  latest?: string;
+  // latest is a later version than this one.
+  available: boolean;
+  // The release page of latest, when the source is on GitHub.
+  url?: string;
+  checkedAt?: string;
+  // Why the last look failed.
+  error?: string;
 }
 
 // Claude sends files to the phone from broker sessions only with this Claude Code or newer.
