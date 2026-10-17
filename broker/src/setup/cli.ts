@@ -139,6 +139,18 @@ export function parseSetupArgs(args: string[]): SetupOptions {
   };
 }
 
+// ccrc is set up for the user who runs it; as root it would write root's settings and a service for root.
+export function rootRefusal(command: string, uid = process.getuid?.()): string | undefined {
+  return uid === 0 ? `ccrc ${command}: do not run this as root (or with sudo): run it as the user ccrc is for; it asks before each step that needs sudo` : undefined;
+}
+
+function refuseRoot(command: string): void {
+  const why = rootRefusal(command);
+  if (!why) return;
+  console.error(why);
+  process.exit(1);
+}
+
 function usage(e: unknown, text: string): never {
   console.error(`${(e as Error).message}\n${text}`);
   process.exit(2);
@@ -152,6 +164,7 @@ export async function setup(args: string[]): Promise<void> {
   } catch (e) {
     usage(e, SETUP_USAGE);
   }
+  refuseRoot("setup");
   const ctx = realCtx(o);
   console.log(`ccrc setup: ${ctx.at.version ?? "unknown version"}, ${ctx.at.installed ? "installed" : "from"} ${ctx.at.codeRoot}`);
   try {
@@ -171,6 +184,7 @@ export async function uninstall(args: string[]): Promise<void> {
   } catch (e) {
     usage(e, UNINSTALL_USAGE);
   }
+  refuseRoot("uninstall");
   const prompt = new TerminalPrompt();
   const ok = await runUninstall({
     o: { purge: Boolean(v.purge), yes: Boolean(v.yes), dryRun: Boolean(v["dry-run"]), noSystem: Boolean(v["no-system"]) },

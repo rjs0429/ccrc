@@ -5,11 +5,11 @@ import { test } from "node:test";
 import type { DoctorResult } from "../src/admin-protocol.ts";
 import { SetupUsageError, runSetup, type Ctx, type SetupOptions, type Where } from "../src/setup/engine.ts";
 import type { Choice, Prompt, RunResult, Runner } from "../src/setup/io.ts";
-import { parseSetupArgs } from "../src/setup/cli.ts";
+import { parseSetupArgs, rootRefusal } from "../src/setup/cli.ts";
 import { unitMatches, unitProgram, unitText } from "../src/setup/service.ts";
 import { STEPS } from "../src/setup/steps.ts";
 import { phones, reachesBroker } from "../src/setup/tailscale.ts";
-import { runUninstall } from "../src/setup/uninstall.ts";
+import { runUninstall, safeToRemove } from "../src/setup/uninstall.ts";
 import { WRAPPER_SETTING, changeSetting, editSettingsText, parseSettingsText } from "../src/setup/vscode-settings.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -445,6 +445,22 @@ test("the service step takes linger with sudo when loginctl refuses, and restart
   assert.ok(!m.calls.includes("run systemctl --user daemon-reload"), "the unit already matched");
 });
 
+test("a refused sudo linger leaves linger for later and setup goes on", async () => {
+  const m = machine(readyWorld());
+  Object.assign(m.world, { enabled: false, active: false, linger: false, lingerNeedsSudo: true });
+  fs.mkdirSync(m.at.configDir, { recursive: true });
+  fs.writeFileSync(m.at.configFile, JSON.stringify({ schemaVersion: 1, allowedDevices: ["phone"], roots: ["/home/user"], brokerSessions: "off", claudePath: "vscode" }));
+  const runner = m.runner;
+  const attached = runner.attached.bind(runner);
+  runner.attached = async (cmd, args) => (cmd === "sudo" && args[0] === "loginctl" ? (m.calls.push(`attached ${cmd} ${args.join(" ")}`), 1) : attached(cmd, args));
+  const ctx = ctxOf(m, { only: ["service", "vscode"] });
+  const r = await runSetup([...STEPS], ctx);
+  assert.equal(r.ok, true, ctx.lines.join("\n"));
+  assert.deepEqual(outcomes(r), { service: "left", vscode: "done" });
+  assert.ok(m.world.active && m.world.enabled);
+  assert.match(ctx.lines.join("\n"), /sudo loginctl enable-linger user failed \(exit code 1\)/);
+});
+
 test("a unit that runs other code is copied aside, then written for this install", async () => {
   const m = machine(readyWorld());
   const unitFile = path.join(m.at.xdgConfigHome, "systemd", "user", "ccrc.service");
@@ -610,6 +626,24 @@ test("settings.json edits change only the member and the comma next to it", () =
   assert.equal(editSettingsText(text, "missing", undefined), text);
   assert.throws(() => editSettingsText('{"a": }', "b", "c"), /line 1, column 7/);
   assert.throws(() => parseSettingsText("[1]"), /JSON object/);
+  // A block comment that runs on past the last member's line is not where the new member goes.
+  const multi = editSettingsText('{\n  "a": 1 /* one\n  two */\n}\n', "k", "v");
+  assert.deepEqual(parseSettingsText(multi), { a: 1, k: "v" });
+  assert.match(multi, /one\n  two \*\//);
+});
+
+test("an unchanged settings.json is neither copied nor written", () => {
+  const dir = tempDir();
+  const file = path.join(dir, "settings.json");
+  fs.writeFileSync(file, '{ "a": 1 }\n');
+  fs.chmodSync(file, 0o600);
+  const before = fs.statSync(file).mtimeMs;
+  const r = changeSetting(file, "missing", undefined, path.join(dir, "backup"));
+  assert.equal(r.backup, undefined);
+  assert.ok(!fs.existsSync(path.join(dir, "backup")));
+  assert.equal(fs.statSync(file).mtimeMs, before);
+  changeSetting(file, "b", "x", path.join(dir, "backup"));
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });
 
 test("a settings.json that is a link is changed where it points", () => {
@@ -750,4 +784,22 @@ test("uninstall asks first, and --no-system leaves the service and serve", async
   assert.match(lines.join("\n"), /ccrc\.service is left \(--no-system\)/);
   assert.ok(!m.calls.some((c) => /systemctl|tailscale/.test(c)));
   assert.ok(!fs.existsSync(m.at.dataDir));
+});
+
+test("uninstall leaves a folder it must not remove whole, such as the home folder", async () => {
+  assert.equal(safeToRemove("/home/user/.local/share/ccrc", "/home/user"), true);
+  for (const d of ["/", "/home", "/home/user", "/home/user/", "relative/ccrc"]) assert.equal(safeToRemove(d, "/home/user"), false, d);
+  const m = machine(readyWorld());
+  installed(m);
+  m.at = { ...m.at, configDir: m.at.home };
+  const { ctx, lines } = uninstallCtx(m, { purge: true, noSystem: true });
+  assert.equal(await runUninstall(ctx), true, lines.join("\n"));
+  assert.ok(fs.existsSync(m.at.home) && fs.existsSync(path.join(m.at.home, ".config")));
+  assert.match(lines.join("\n"), /is left: it is not a folder ccrc removes whole/);
+  assert.ok(!fs.existsSync(m.at.dataDir) && !fs.existsSync(m.at.stateDir));
+});
+
+test("setup and uninstall refuse root", () => {
+  assert.match(rootRefusal("setup", 0)!, /do not run this as root/);
+  assert.equal(rootRefusal("setup", 1000), undefined);
 });

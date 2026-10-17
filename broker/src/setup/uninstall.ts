@@ -27,6 +27,14 @@ function inside(dir: string, p: string): boolean {
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
+// A folder ccrc may remove whole: not /, the home folder or a folder holding it, which CCRC_DATA_DIR,
+// CCRC_CONFIG_DIR or CCRC_STATE_DIR set by mistake could name.
+export function safeToRemove(dir: string, home: string): boolean {
+  const d = path.resolve(dir);
+  const h = path.resolve(home);
+  return path.isAbsolute(dir) && d !== path.parse(d).root && d !== h && !inside(d, h);
+}
+
 function linkTarget(p: string): string | undefined {
   try {
     return path.resolve(path.dirname(p), fs.readlinkSync(p));
@@ -101,11 +109,14 @@ export async function runUninstall(ctx: UninstallCtx): Promise<boolean> {
   const bin = path.join(at.home, ".local", "bin", "ccrc");
   const target = linkTarget(bin);
   if (target && inside(at.dataDir, target)) actions.push({ title: `remove the link ${bin}`, act: async () => fs.rmSync(bin, { force: true }) });
-  if (fs.existsSync(at.dataDir)) actions.push({ title: `remove ${at.dataDir} (installed versions and Node)`, act: async () => fs.rmSync(at.dataDir, { recursive: true, force: true }) });
+  const removeDir = (dir: string, title: string) => {
+    if (!fs.existsSync(dir)) return;
+    if (safeToRemove(dir, at.home)) actions.push({ title, act: async () => fs.rmSync(dir, { recursive: true, force: true }) });
+    else notes.push(`${dir} is left: it is not a folder ccrc removes whole (check CCRC_DATA_DIR, CCRC_CONFIG_DIR and CCRC_STATE_DIR).`);
+  };
+  removeDir(at.dataDir, `remove ${at.dataDir} (installed versions and Node)`);
   if (o.purge) {
-    for (const dir of [at.configDir, at.stateDir]) {
-      if (fs.existsSync(dir)) actions.push({ title: `remove ${dir}`, act: async () => fs.rmSync(dir, { recursive: true, force: true }) });
-    }
+    for (const dir of [at.configDir, at.stateDir]) removeDir(dir, `remove ${dir}`);
   } else notes.push(`Settings and state stay in ${at.configDir} and ${at.stateDir} (--purge removes them).`);
 
   for (const n of notes) ctx.out(n);

@@ -389,7 +389,11 @@ const service: Step = {
     if (!s.unitOk || !s.active || s.version === undefined || runsOther(s, ctx)) await must(ctx, "systemctl", ["--user", "restart", SERVICE]);
     if (!s.linger && (await ctx.run.run("loginctl", ["enable-linger", ctx.at.user])).code !== 0) {
       ctx.out(`loginctl enable-linger was refused; with sudo it keeps the broker running while you are logged out.`);
-      if (await ctx.ask.confirm(`Run sudo loginctl enable-linger ${ctx.at.user}?`, true)) await must(ctx, "sudo", ["loginctl", "enable-linger", ctx.at.user], true);
+      // The broker runs either way while you are logged in, so a refusal here is left for a later run, not a failure.
+      if (await ctx.ask.confirm(`Run sudo loginctl enable-linger ${ctx.at.user}?`, true)) {
+        const code = await ctx.run.attached("sudo", ["loginctl", "enable-linger", ctx.at.user]);
+        if (code !== 0) ctx.out(`sudo loginctl enable-linger ${ctx.at.user} failed (exit code ${code}); the broker stops when you log out until it is run.`);
+      }
     }
     const port = brokerPort(ctx);
     for (let waited = 0; ; waited += 1000) {

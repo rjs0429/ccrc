@@ -46,11 +46,12 @@ function commaIn(text: string, from: number, to: number): number {
   return -1;
 }
 
-// Whether text holds only spaces and comments.
+// Whether text holds only spaces and whole comments (a block comment cut off at its end does not count).
 function trivia(text: string): boolean {
   const scan = jsonc.createScanner(text, false);
   for (let t = scan.scan(); t !== jsonc.SyntaxKind.EOF; t = scan.scan()) {
     if (t !== jsonc.SyntaxKind.Trivia && t !== jsonc.SyntaxKind.LineCommentTrivia && t !== jsonc.SyntaxKind.BlockCommentTrivia && t !== jsonc.SyntaxKind.LineBreakTrivia) return false;
+    if (scan.getTokenError() !== jsonc.ScanError.None) return false;
   }
   return true;
 }
@@ -162,6 +163,7 @@ function stamp(d: Date): string {
 export function changeSetting(file: string, key: string, value: string | undefined, backupDir: string, now = new Date()): SettingsChange {
   const current = readSettingsFile(file);
   const next = editSettingsText(current?.text ?? "", key, value);
+  if (current && next === current.text) return { file };
   let target = file;
   let mode = 0o644;
   let backup: string | undefined;
