@@ -110,6 +110,7 @@ function machine(world: World, o: { extension?: boolean; vscode?: boolean } = {}
     stateDir: path.join(home, ".local", "state", "ccrc"),
     dataDir,
     xdgConfigHome: path.join(home, ".config"),
+    claudeProjectsDir: path.join(home, ".claude", "projects"),
     codeRoot: path.join(dataDir, "versions", VERSION),
     installed: true,
     ccrc: path.join(dataDir, "current", "bin", "ccrc"),
@@ -283,7 +284,7 @@ test("dry-run on a new machine runs only reading commands and writes nothing", a
   assert.match(text, /\[todo\] tailscale-install/);
   assert.match(text, /curl -fsSL https:\/\/tailscale\.com\/install\.sh \| sh/);
   assert.match(text, /ExecStart=.*current\/bin\/ccrc serve/);
-  assert.match(text, /~\/\.claude\/projects/);
+  assert.ok(text.includes(path.join(m.at.home, ".claude", "projects")));
 });
 
 test("a full run on a new machine does every step, and a second run finds nothing to do", async () => {
@@ -420,6 +421,8 @@ test("a failing step stops setup with its name and a way on; the next run picks 
   assert.match(text, /journalctl --user -u ccrc\.service/);
   assert.match(text, /run `ccrc setup` again/);
 
+  assert.ok(!fs.existsSync(path.join(m.at.stateDir, "backup")), "no unit to keep a copy of");
+
   m.world.runs = VERSION;
   const again = ctxOf(m, { only: ["service", "serve", "vscode"] });
   const r2 = await runSetup([...STEPS], again);
@@ -440,6 +443,20 @@ test("the service step takes linger with sudo when loginctl refuses, and restart
   assert.ok(m.calls.includes("run systemctl --user restart ccrc.service"));
   assert.ok(m.calls.includes("attached sudo loginctl enable-linger user"));
   assert.ok(!m.calls.includes("run systemctl --user daemon-reload"), "the unit already matched");
+});
+
+test("a unit that runs other code is copied aside, then written for this install", async () => {
+  const m = machine(readyWorld());
+  const unitFile = path.join(m.at.xdgConfigHome, "systemd", "user", "ccrc.service");
+  const old = unitText({ ccrc: "/home/user/ccrc/bin/ccrc", node: "/usr/bin/node", path: "/usr/bin", env: {} });
+  fs.mkdirSync(path.dirname(unitFile), { recursive: true });
+  fs.writeFileSync(unitFile, old);
+  const ctx = ctxOf(m, { only: ["service"] });
+  const r = await runSetup([...STEPS], ctx);
+  assert.deepEqual(outcomes(r), { service: "done" });
+  assert.match(fs.readFileSync(unitFile, "utf8"), new RegExp(`^ExecStart=${m.at.ccrc} serve$`, "m"));
+  assert.equal(fs.readFileSync(path.join(m.at.stateDir, "backup", "ccrc.service-20261017T000000Z"), "utf8"), old);
+  assert.ok(m.calls.includes("run systemctl --user restart ccrc.service"));
 });
 
 test("the unit file quotes what systemd would split, and a change of PATH alone is no change", () => {
@@ -479,6 +496,16 @@ test("config without a terminal takes the defaults it can and leaves the API key
   assert.match(ctx.lines.join("\n"), /ccrc config set-api-key/);
   assert.match(ctx.lines.join("\n"), /run `ccrc passwd`/);
   assert.ok(!m.calls.some((c) => c.includes("passwd")));
+});
+
+test("a login that ccrc passwd does not save is left for later, and setup goes on", async () => {
+  const m = machine(readyWorld());
+  const attached = m.runner.attached.bind(m.runner);
+  m.runner.attached = async (cmd, args) => (args[0] === "passwd" ? (m.calls.push(`attached ${cmd} passwd`), 1) : attached(cmd, args));
+  const ctx = ctxOf(m, { only: ["account", "config"] });
+  const r = await runSetup([...STEPS], ctx);
+  assert.deepEqual(outcomes(r), { account: "left", config: "done" });
+  assert.match(ctx.lines.join("\n"), /The login was not saved/);
 });
 
 test("devices waits for a phone to join the tailnet, or is left when the person skips", async () => {

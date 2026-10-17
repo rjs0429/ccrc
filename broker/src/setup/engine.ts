@@ -27,6 +27,7 @@ export interface Where {
   stateDir: string;
   dataDir: string;
   xdgConfigHome: string;
+  claudeProjectsDir: string;
   codeRoot: string;
   installed: boolean;
   // bin/ccrc and bin/ccrc-wrapper as the service and VS Code run them: through <dataDir>/current for an install.

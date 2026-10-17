@@ -237,7 +237,7 @@ const account: Step = {
       return;
     }
     ctx.out("Choose the ID and password the phone signs in with.");
-    await must(ctx, ctx.at.ccrc, ["passwd"], true);
+    if ((await ctx.run.attached(ctx.at.ccrc, ["passwd"])) !== 0) ctx.out("The login was not saved; run `ccrc passwd`, or setup again.");
   },
 };
 
@@ -368,13 +368,19 @@ const service: Step = {
     `systemctl --user daemon-reload, enable ${SERVICE}, and (re)start it`,
     `loginctl enable-linger ${ctx.at.user} so it runs while you are logged out (with sudo if that is refused)`,
     `check http://127.0.0.1:${brokerPort(ctx)}/api/ping`,
-    "on its first start the broker changes the entrypoint field of transcripts in ~/.claude/projects that earlier broker sessions wrote, so VS Code lists them; each file is backed up first",
+    `on its first start the broker changes the entrypoint field of transcripts in ${ctx.at.claudeProjectsDir} that earlier broker sessions wrote, so VS Code lists them; each file is backed up first`,
   ],
   async apply(ctx) {
     const s = await serviceState(ctx);
     const spec = { ccrc: ctx.at.ccrc, node: ctx.at.node, path: ctx.at.path, env: ctx.at.keepEnv };
     if (!s.unitOk) {
       const file = unitFile(ctx.at.xdgConfigHome);
+      if (s.text !== undefined) {
+        const backup = path.join(ctx.at.stateDir, "backup", `${SERVICE}-${ctx.now().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`);
+        fs.mkdirSync(path.dirname(backup), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(backup, s.text);
+        ctx.out(`The unit as it was: ${backup}`);
+      }
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, unitText(spec));
       await must(ctx, "systemctl", ["--user", "daemon-reload"]);

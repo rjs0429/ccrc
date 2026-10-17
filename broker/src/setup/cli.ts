@@ -63,6 +63,7 @@ export function where(): Where {
     stateDir: paths.stateDir,
     dataDir: paths.dataDir,
     xdgConfigHome: paths.xdgConfigHome,
+    claudeProjectsDir: paths.claudeProjectsDir,
     codeRoot: paths.codeRoot,
     installed,
     ccrc: path.join(bin, "ccrc"),
