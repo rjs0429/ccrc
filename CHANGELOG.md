@@ -19,9 +19,9 @@ your version and the new one, and the lines under "Breaking" separately.
 
 - Release tags are signed with SSH from 0.7.2, with the keys in `.ccrc-allowed-signers` at the repository root. An
   install of 0.7.2 or newer holds that file, so `ccrc update` checks each tag it updates to with `git verify-tag` and
-  stops when the signature does not check out; this needs OpenSSH's `ssh-keygen`. The release workflow makes no
-  Release for such a tag either. The update from 0.7.1 or older to 0.7.2 is not checked; the README's "Verifying a
-  release" shows how to check a tag by hand.
+  stops unless it carries an SSH signature from a key in that file; this needs OpenSSH's `ssh-keygen`. The release
+  workflow makes no Release for such a tag either. The update from 0.7.1 or older to 0.7.2 is not checked; the README's
+  "Verifying a release" shows how to check a tag by hand.
 
 ## [0.7.1] - 2026-10-18
 

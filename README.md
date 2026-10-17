@@ -496,9 +496,11 @@ git -c gpg.ssh.allowedSignersFile=.ccrc-allowed-signers verify-tag v0.7.2
 ```
 
 It prints `Good "git" signature for 79899760+rjs0429@users.noreply.github.com with ED25519 key
-SHA256:7tvRIQuI7tARS7iihd3ezgTJycbqrIN8E9TPofkuAAw` and exits with 0; a tag without a signature, or signed by a key
-not in the file, fails. The file comes with the clone, so compare its key with the signing key on the author's GitHub
-account (<https://api.github.com/users/rjs0429/ssh_signing_keys>); GitHub also marks the tag Verified.
+SHA256:7tvRIQuI7tARS7iihd3ezgTJycbqrIN8E9TPofkuAAw` and exits with 0; a tag without a signature, or signed by a key not
+in the file, fails. Look for that line: git checks an OpenPGP signature against your GnuPG keyring, not the file
+(`ccrc update` and the release workflow accept SSH signatures only). The file comes with the clone, so compare its key
+with the signing key on the author's GitHub account (<https://api.github.com/users/rjs0429/ssh_signing_keys>); GitHub
+also marks the tag Verified.
 
 `ccrc update` does this by itself from 0.7.2: an install of 0.7.2 or newer holds `.ccrc-allowed-signers`, and
 `ccrc update` checks the signature of the tag it fetched against the install's own copy of the file before building

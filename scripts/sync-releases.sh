@@ -4,8 +4,8 @@
 # latest. Existing releases are left alone, so running it again changes nothing.
 #
 # A tag whose commit holds .ccrc-allowed-signers must carry a signature from a key in that file (git verify-tag);
-# otherwise its release is not made and the script exits with 1 after the other tags. Older tags have no such file and
-# are not checked.
+# otherwise its release is not made and the script exits with 1 after the other tags. Only an SSH signature counts: git
+# would check an OpenPGP or X.509 one with GnuPG instead of the file. Older tags have no such file and are not checked.
 #
 # Run inside a clone with all tags as annotated tag objects (git fetch --force --tags). Uses gh, which needs GH_TOKEN,
 # and GH_REPO (owner/name) outside a clone of the GitHub repository.
@@ -64,8 +64,8 @@ done
 failed=()
 made=0
 for tag in "${tags[@]}"; do
-  if [ "$(git cat-file -t "refs/tags/$tag")" != tag ]; then
-    say "$tag: not an annotated tag object here (fetch with: git fetch --force --tags)"
+  if [ "$(git cat-file -t "refs/tags/$tag")" != tag ] || ! git rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null; then
+    say "$tag: not an annotated tag of a commit here (fetch with: git fetch --force --tags)"
     failed+=("$tag")
     continue
   fi
@@ -82,7 +82,8 @@ for tag in "${tags[@]}"; do
 
   if git cat-file -e "$tag^{commit}:$SIGNERS" 2>/dev/null; then
     git show "$tag^{commit}:$SIGNERS" >"$work/allowed-signers"
-    if ! out=$(git -c gpg.format=ssh -c "gpg.ssh.allowedSignersFile=$work/allowed-signers" verify-tag "$tag" 2>&1); then
+    if ! out=$(git -c gpg.format=ssh -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
+      -c "gpg.ssh.allowedSignersFile=$work/allowed-signers" verify-tag "$tag" 2>&1); then
       say "$tag: the signature does not check out against $SIGNERS at $tag; no release made"
       printf '%s\n' "$out" | sed 's/^/  /' >&2
       failed+=("$tag")

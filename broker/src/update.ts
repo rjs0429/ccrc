@@ -14,6 +14,7 @@ import { readUpdateCheck, updateCheckFile, writeUpdateCheck } from "./update-che
 // version within PING_WAIT_MS, the link and the backup go back.
 
 export const SIGNERS_FILE = ".ccrc-allowed-signers";
+const SSH_ONLY_VERIFY = ["-c", "gpg.format=ssh", "-c", "gpg.program=false", "-c", "gpg.openpgp.program=false", "-c", "gpg.x509.program=false"];
 export const HISTORY_FILE = "history.json";
 const SERVICE = "ccrc.service";
 const PING_WAIT_MS = 30_000;
@@ -314,8 +315,10 @@ class Updater {
     return dir;
   }
 
+  // git picks the verifier from the kind of signature, not from gpg.format; with the OpenPGP and X.509 programs set to
+  // `false`, only an SSH signature from a key in the signers file passes.
   async verifyTag(dir: string, tag: string, signers: string): Promise<void> {
-    const r = await this.d.runner("git", ["-C", dir, "-c", "gpg.format=ssh", "-c", `gpg.ssh.allowedSignersFile=${signers}`, "verify-tag", tag], {
+    const r = await this.d.runner("git", ["-C", dir, ...SSH_ONLY_VERIFY, "-c", `gpg.ssh.allowedSignersFile=${signers}`, "verify-tag", tag], {
       env: quietGitEnv(this.d.env),
       timeoutMs: 60_000,
     });

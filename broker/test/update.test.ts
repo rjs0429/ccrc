@@ -63,7 +63,8 @@ interface Repo {
 }
 
 // A repository with the tags v0.7.0, v0.7.1 (a new LINK_VERSION and migrate step) and v0.8.0-rc.1, and a bare copy.
-function makeRepo(sign?: { key: string }): Repo {
+// sign: SSH-signs the tags with a key file, or OpenPGP-signs them with GnuPG in gnupgHome.
+function makeRepo(sign?: { key: string } | { gnupgHome: string }): Repo {
   const work = tempDir("ccrc-update-work-");
   git(work, "init", "-q", "-b", "main");
   const put = (rel: string, text: string, mode = 0o644) => {
@@ -71,7 +72,8 @@ function makeRepo(sign?: { key: string }): Repo {
     fs.writeFileSync(path.join(work, rel), text, { mode });
   };
   const tag = (name: string) => {
-    if (sign) git(work, "-c", "gpg.format=ssh", "-c", `user.signingkey=${sign.key}`, "tag", "-s", "-m", name, name);
+    if (sign && "key" in sign) git(work, "-c", "gpg.format=ssh", "-c", `user.signingkey=${sign.key}`, "tag", "-s", "-m", name, name);
+    else if (sign) execFileSync("git", ["tag", "-s", "-u", "test@example.com", "-m", name, name], { cwd: work, env: { ...GIT_ENV, GNUPGHOME: sign.gnupgHome }, stdio: "ignore" });
     else git(work, "tag", "-a", "-m", name, name);
   };
   const release = (version: string, link: number) => {
@@ -436,6 +438,29 @@ test("with allowed signers in the install, a tag must carry a signature from one
   assert.match(output(unsigned), /the signature of v0\.7\.1 does not check out/);
   assert.equal(current(unsigned), path.join("versions", "v0.7.0"));
   assert.deepEqual(versions(unsigned), ["v0.7.0"]);
+});
+
+test("with allowed signers in the install, an OpenPGP signature does not pass even from a key GnuPG trusts", async (t) => {
+  if (spawnSync("ssh-keygen", ["-?"]).error || spawnSync("gpg", ["--version"]).error) return t.skip("no ssh-keygen or gpg");
+  const gnupgHome = tempDir();
+  fs.chmodSync(gnupgHome, 0o700);
+  const gpgEnv = { ...process.env, GNUPGHOME: gnupgHome };
+  t.after(() => spawnSync("gpgconf", ["--kill", "gpg-agent"], { env: gpgEnv }));
+  const made = spawnSync("gpg", ["--batch", "--passphrase", "", "--quick-gen-key", "Test <test@example.com>", "ed25519", "sign", "never"], { env: gpgEnv, encoding: "utf8" });
+  if (made.status !== 0) return t.skip(`gpg could not make a key: ${made.stderr.trim().split("\n").at(-1)}`);
+  const keys = tempDir();
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "test@example.com", "-f", path.join(keys, "id")]);
+  const signers = `test@example.com namespaces="git" ${fs.readFileSync(path.join(keys, "id.pub"), "utf8").trim()}\n`;
+
+  const repo = makeRepo({ gnupgHome });
+  const env = { ...GIT_ENV, GNUPGHOME: gnupgHome };
+  execFileSync("git", ["-C", repo.work, "verify-tag", "v0.7.1"], { env, stdio: "ignore" });
+  const w = installed(repo);
+  w.deps = { ...w.deps, env };
+  fs.writeFileSync(path.join(w.root, ".ccrc-allowed-signers"), signers);
+  assert.equal(await update({ yes: true }, w.deps), 1, output(w));
+  assert.match(output(w), /the signature of v0\.7\.1 does not check out/);
+  assert.equal(current(w), path.join("versions", "v0.7.0"));
 });
 
 test("the repository's .ccrc-allowed-signers lists SSH keys for git signatures", (t) => {
