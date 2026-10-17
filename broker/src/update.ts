@@ -115,8 +115,8 @@ class Updater {
     return path.join(versionsDir(this.d.dataDir), version);
   }
 
-  // The version `current` points at, with its install info.
-  current(): { version: string; dir: string; info?: InstallInfo } | undefined {
+  // The version `current` points at, with its folder name and install info.
+  current(): { version: string; name: string; dir: string; info?: InstallInfo } | undefined {
     let target: string;
     try {
       target = fs.readlinkSync(this.currentLink);
@@ -125,7 +125,14 @@ class Updater {
     }
     const dir = path.resolve(this.d.dataDir, target);
     const info = readInstallInfo(dir);
-    return { version: info?.version ?? path.basename(dir), dir, ...(info ? { info } : {}) };
+    return { version: info?.version ?? path.basename(dir), name: path.basename(dir), dir, ...(info ? { info } : {}) };
+  }
+
+  // The folder under versions/ that holds `version`: versions/<version>, else one whose install info names it (an
+  // install made by another tool may name its folder otherwise).
+  nameOf(version: string): string {
+    if (readInstallInfo(this.dirOf(version))) return version;
+    return safeList(versionsDir(this.d.dataDir)).find((n) => !n.endsWith(".tmp") && readInstallInfo(this.dirOf(n))?.version === version) ?? version;
   }
 
   config(): Config {
@@ -157,7 +164,20 @@ class Updater {
   }
 
   record(entry: HistoryEntry): void {
-    writeFileAtomic(this.historyFile(), JSON.stringify([...this.history(), entry].slice(-50), null, 2) + "\n");
+    this.writeHistory([...this.history(), entry]);
+  }
+
+  writeHistory(entries: HistoryEntry[]): void {
+    writeFileAtomic(this.historyFile(), JSON.stringify(entries.slice(-50), null, 2) + "\n");
+  }
+
+  // History is what `ccrc rollback` goes by; failing to write it does not undo a switch already made.
+  tryRecord(write: () => void): void {
+    try {
+      write();
+    } catch (e) {
+      this.d.log(`Could not write ${this.historyFile()}: ${message(e)}`);
+    }
   }
 
   lock(): () => void {
@@ -203,6 +223,12 @@ class Updater {
       ["config", this.d.configDir, () => true],
       ["state", this.d.stateDir, (rel, isDir) => !isDir && !rel.includes("/") && rel.endsWith(".json")],
     ];
+  }
+
+  // Puts the backup back as it was: its files, and files made since then removed.
+  restoreAll(backupDir: string): string[] {
+    const saved = this.parts().flatMap(([part]) => listFiles(path.join(backupDir, part), () => true).map((rel) => `${part}/${rel}`));
+    return this.restore(backupDir, [...new Set([...saved, ...this.changedSince(backupDir)])]);
   }
 
   // Puts the backed-up files back. `only` limits it to those files, and removes the ones of them the backup lacks.
@@ -290,52 +316,78 @@ class Updater {
   async switchTo(from: string | undefined, to: string): Promise<number> {
     const c = this.config();
     const svc = await this.service();
+    const fromName = from ? this.nameOf(from) : undefined;
     const fromAnswered = svc.state === "current" && from ? (await this.d.ping(this.pingHost(c), c.port)) === from : false;
     const backupDir = this.backup(`update-${from ?? "none"}-${to}`);
     this.d.log(`Config and state backed up to ${backupDir}`);
-    const migrate = await this.d.runner(path.join(this.dirOf(to), "bin", "ccrc"), ["migrate"], {
-      env: { ...this.d.env, CCRC_NODE: this.d.node, CCRC_CONFIG_DIR: this.d.configDir, CCRC_STATE_DIR: this.d.stateDir, CCRC_DATA_DIR: this.d.dataDir },
-      timeoutMs: 60_000,
-    });
-    if (migrate.code !== 0) {
-      this.restore(backupDir);
-      throw new UpdateError(`${to} could not migrate the config: ${lastLine(migrate.stderr || migrate.stdout) || `exit code ${migrate.code}`}. Nothing was switched.`);
-    }
-    if (migrate.stdout.trim()) this.d.log(`  ${migrate.stdout.trim().split("\n").join("\n  ")}`);
-    const migrated = this.changedSince(backupDir);
-    fs.writeFileSync(path.join(backupDir, "manifest.json"), JSON.stringify({ from, to, migrated }, null, 2) + "\n");
-
-    this.link(to);
-    this.d.log(`current -> versions/${to}`);
-    if (svc.state === "current") {
-      this.d.log(`Restarting ${SERVICE}...`);
-      let failed: string | undefined;
+    const release = holdSignals(this.d.log);
+    try {
       try {
-        await this.restart();
-        const r = await this.waitFor(to, c);
-        if (!r.ok) failed = r.seen ? `the broker still answers as ${r.seen}` : `the broker did not answer on port ${c.port} within ${Math.round(this.d.pingWaitMs / 1000)} s`;
+        const migrate = await this.d.runner(path.join(this.dirOf(to), "bin", "ccrc"), ["migrate"], {
+          env: { ...this.d.env, CCRC_NODE: this.d.node, CCRC_CONFIG_DIR: this.d.configDir, CCRC_STATE_DIR: this.d.stateDir, CCRC_DATA_DIR: this.d.dataDir },
+          timeoutMs: 60_000,
+        });
+        if (migrate.code !== 0) throw new UpdateError(`${to} could not migrate the config: ${lastLine(migrate.stderr || migrate.stdout) || `exit code ${migrate.code}`}`);
+        if (migrate.stdout.trim()) this.d.log(`  ${migrate.stdout.trim().split("\n").join("\n  ")}`);
+        const migrated = this.changedSince(backupDir);
+        fs.writeFileSync(path.join(backupDir, "manifest.json"), JSON.stringify({ from, to, migrated }, null, 2) + "\n");
+        this.link(to);
       } catch (e) {
-        failed = message(e);
+        this.restoreAll(backupDir);
+        throw new UpdateError(`${message(e)}. Nothing was switched; config and state are as they were.`);
       }
-      if (failed) return this.undo(from, to, backupDir, failed, fromAnswered, c);
-    } else if (svc.state === "other") {
-      this.d.log(`${SERVICE} runs ${svc.exec}, not ${path.join(this.d.dataDir, "current", "bin", "ccrc")}, so it was not restarted.`);
-      this.d.log(`Point the service at the install to run ${to}: ccrc setup --only service`);
-    } else {
-      this.d.log(`No ${SERVICE}: start \`${path.join(this.d.dataDir, "current", "bin", "ccrc")} serve\` again to run ${to}.`);
+      this.d.log(`current -> versions/${to}`);
+      // Recorded before the restart, so `ccrc rollback` still knows the way back if this run dies from here on.
+      const entry: HistoryEntry = { ...(from ? { from } : {}), to, backupDir, at: this.d.now().toISOString() };
+      this.tryRecord(() => this.record(entry));
+      if (svc.state === "current") {
+        this.d.log(`Restarting ${SERVICE}...`);
+        let failed: string | undefined;
+        try {
+          await this.restart();
+          const r = await this.waitFor(to, c);
+          if (!r.ok) failed = r.seen ? `the broker still answers as ${r.seen}` : `the broker did not answer on port ${c.port} within ${Math.round(this.d.pingWaitMs / 1000)} s`;
+        } catch (e) {
+          failed = message(e);
+        }
+        if (failed) return await this.undo(from, fromName, to, backupDir, failed, fromAnswered, c);
+      } else if (svc.state === "other") {
+        this.d.log(`${SERVICE} runs ${svc.exec}, not ${path.join(this.d.dataDir, "current", "bin", "ccrc")}, so it was not restarted.`);
+        this.d.log(`Point the service at the install to run ${to}: ccrc setup --only service`);
+      } else {
+        this.d.log(`No ${SERVICE}: start \`${path.join(this.d.dataDir, "current", "bin", "ccrc")} serve\` again to run ${to}.`);
+      }
+      try {
+        this.prune([to, ...(fromName ? [fromName] : [])]);
+      } catch (e) {
+        this.d.log(`Could not remove old versions: ${message(e)}`);
+      }
+      this.afterwards(fromName, to);
+      return 0;
+    } finally {
+      release();
     }
-    this.record({ ...(from ? { from } : {}), to, backupDir, at: this.d.now().toISOString() });
-    this.prune([to, ...(from ? [from] : [])]);
-    this.afterwards(from, to);
-    return 0;
   }
 
-  async undo(from: string | undefined, to: string, backupDir: string, failed: string, fromAnswered: boolean, c: Config): Promise<number> {
+  async undo(from: string | undefined, fromName: string | undefined, to: string, backupDir: string, failed: string, fromAnswered: boolean, c: Config): Promise<number> {
     this.d.log(`Update to ${to} failed: ${failed}`);
     this.d.log(`Going back to ${from ?? "no install"}...`);
-    this.link(from);
-    this.restore(backupDir);
-    this.record({ ...(from ? { from } : {}), to, backupDir, at: this.d.now().toISOString(), failed });
+    let putBack = true;
+    try {
+      this.link(fromName);
+      this.restoreAll(backupDir);
+    } catch (e) {
+      this.d.log(`Could not put ${from ?? "the previous setup"} back: ${message(e)}`);
+      putBack = false;
+    }
+    this.tryRecord(() => {
+      const h = this.history();
+      const i = h.findLastIndex((e) => e.backupDir === backupDir && e.to === to);
+      if (i >= 0) h[i] = { ...h[i], failed };
+      else h.push({ ...(from ? { from } : {}), to, backupDir, at: this.d.now().toISOString(), failed });
+      this.writeHistory(h);
+    });
+    // Whether the old version answers again; when it did not answer before the update either, nothing says it should.
     let back = !fromAnswered;
     try {
       await this.restart();
@@ -344,7 +396,7 @@ class Updater {
       this.d.log(message(e));
       back = false;
     }
-    if (!back) {
+    if (!putBack || !back) {
       this.d.log(`The broker does not answer as ${from} either. Check: systemctl --user status ${SERVICE}; journalctl --user -u ${SERVICE}`);
       this.d.log(`Config and state as they were before the update are in ${backupDir}`);
       return EXIT_BROKEN;
@@ -365,11 +417,26 @@ class Updater {
     }
   }
 
-  afterwards(from: string | undefined, to: string): void {
-    this.d.log(`ccrc is now ${to}.`);
-    if (from && linkVersion(this.dirOf(from)) !== linkVersion(this.dirOf(to))) this.d.log("- The wrapper protocol changed: reload VS Code windows (Developer: Reload Window) so Claude tabs use the new wrapper.");
+  // fromName and to are folder names under versions/.
+  afterwards(fromName: string | undefined, to: string): void {
+    this.d.log(`ccrc is now ${readInstallInfo(this.dirOf(to))?.version ?? to}.`);
+    if (fromName && linkVersion(this.dirOf(fromName)) !== linkVersion(this.dirOf(to))) this.d.log("- The wrapper protocol changed: reload VS Code windows (Developer: Reload Window) so Claude tabs use the new wrapper.");
     this.d.log("- On the phone, close the home screen app fully and open it again.");
   }
+}
+
+// Keeps Ctrl-C and a terminal closing from stopping ccrc between moving the link and confirming or undoing it.
+function holdSignals(log: (line: string) => void): () => void {
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+  let told = false;
+  const hold = (signal: string) => {
+    if (!told) log(`(${signal}: finishing the switch first, or undoing it; this takes up to a minute)`);
+    told = true;
+  };
+  for (const s of signals) process.on(s, hold);
+  return () => {
+    for (const s of signals) process.off(s, hold);
+  };
 }
 
 function alive(pid: number): boolean {
@@ -491,7 +558,7 @@ async function updateFrom(u: Updater, d: UpdateDeps, o: UpdateOptions): Promise<
     return 0;
   }
   if (!(await confirm(d, o.yes, `Switch ccrc from ${current?.version ?? "no install"} to ${version} (${repo} ${ref})?`))) return 0;
-  if (readInstallInfo(u.dirOf(version))) d.log(`Using the copy already in versions/${version}.`);
+  if (readInstallInfo(u.dirOf(version))?.commit === sha) d.log(`Using the copy already in versions/${version}.`);
   else {
     const tmp = `${u.dirOf(version)}.tmp`;
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -575,7 +642,8 @@ export async function update(o: UpdateOptions, deps: Partial<UpdateDeps> = {}): 
     const unlock = u.lock();
     try {
       const dir = u.dirOf(target);
-      const reuse = Boolean(readInstallInfo(dir));
+      // A copy of that tag left by an earlier update; one made with --from is local work and is fetched over.
+      const reuse = readInstallInfo(dir)?.source === source;
       const tmp = `${dir}.tmp`;
       const fetched = reuse ? dir : tmp;
       if (reuse) d.log(`Using the copy already in versions/${target}.`);
@@ -586,8 +654,8 @@ export async function update(o: UpdateOptions, deps: Partial<UpdateDeps> = {}): 
         await u.git(["-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1", "--branch", target, source, tmp]);
       }
       try {
-        const signers = current ? path.join(current.dir, SIGNERS_FILE) : undefined;
-        if (signers && fs.existsSync(signers) && !reuse) {
+        const signers = path.join(current?.dir ?? d.codeRoot, SIGNERS_FILE);
+        if (fs.existsSync(signers) && !reuse) {
           await u.verifyTag(tmp, target, signers);
           d.log(`The tag ${target} is signed by a key in ${SIGNERS_FILE}.`);
         }
@@ -629,9 +697,12 @@ export async function rollback(o: { yes?: boolean }, deps: Partial<UpdateDeps> =
     if (!last.from) throw new UpdateError(`${last.to} was the first version installed; there is nothing before it`);
     const current = u.current();
     if (current?.version !== last.to) throw new UpdateError(`current is ${current?.version ?? "not set"}, not ${last.to} from the last update`);
-    if (!readInstallInfo(u.dirOf(last.from))) throw new UpdateError(`versions/${last.from} is gone; install it with: ccrc update --to ${last.from}`);
+    const from = last.from;
+    const fromName = u.nameOf(from);
+    if (!readInstallInfo(u.dirOf(fromName))) throw new UpdateError(`versions/${last.from} is gone; install it with: ccrc update --to ${last.from}`);
     if (!(await confirm(d, o.yes, `Go back from ${last.to} to ${last.from}?`))) return 0;
     const unlock = u.lock();
+    const release = holdSignals(d.log);
     try {
       const c = u.config();
       const svc = await u.service();
@@ -642,17 +713,28 @@ export async function rollback(o: { yes?: boolean }, deps: Partial<UpdateDeps> =
         const m = JSON.parse(fs.readFileSync(path.join(last.backupDir ?? "", "manifest.json"), "utf8")) as { migrated?: unknown };
         if (Array.isArray(m.migrated)) migrated = m.migrated.filter((f): f is string => typeof f === "string");
       } catch {}
-      if (last.backupDir && fs.existsSync(last.backupDir)) {
-        const restored = u.restore(last.backupDir, migrated);
-        d.log(restored.length ? `Restored from ${last.backupDir}: ${restored.join(", ")}` : "The update changed no config or state file; nothing to restore.");
-      } else d.log(`The backup of that update (${last.backupDir ?? "none"}) is gone; config and state stay as they are.`);
-      u.link(last.from);
-      d.log(`current -> versions/${last.from}`);
-      u.record({ from: last.to, to: last.from, backupDir: ownBackup, at: d.now().toISOString(), rollback: true });
+      try {
+        if (last.backupDir && fs.existsSync(last.backupDir)) {
+          const restored = u.restore(last.backupDir, migrated);
+          d.log(restored.length ? `Restored from ${last.backupDir}: ${restored.join(", ")}` : "The update changed no config or state file; nothing to restore.");
+        } else d.log(`The backup of that update (${last.backupDir ?? "none"}) is gone; config and state stay as they are.`);
+        u.link(fromName);
+      } catch (e) {
+        u.restoreAll(ownBackup);
+        throw new UpdateError(`${message(e)}. Nothing was switched; config and state are as they were.`);
+      }
+      d.log(`current -> versions/${fromName}`);
+      u.tryRecord(() => u.record({ from: last.to, to: from, backupDir: ownBackup, at: d.now().toISOString(), rollback: true }));
       if (svc.state === "current") {
         d.log(`Restarting ${SERVICE}...`);
-        await u.restart();
-        const r = await u.waitFor(last.from, c);
+        let r: { ok: boolean; seen?: string };
+        try {
+          await u.restart();
+          r = await u.waitFor(last.from, c);
+        } catch (e) {
+          d.log(message(e));
+          r = { ok: false };
+        }
         if (!r.ok) {
           d.log(`The broker does not answer as ${last.from}${r.seen ? ` (it answers as ${r.seen})` : ""}. Check: systemctl --user status ${SERVICE}`);
           d.log(`Config and state from before the rollback are in ${ownBackup}`);
@@ -660,9 +742,10 @@ export async function rollback(o: { yes?: boolean }, deps: Partial<UpdateDeps> =
         }
       } else if (svc.state === "other") d.log(`${SERVICE} runs ${svc.exec}, not the install, so it was not restarted.`);
       else d.log(`No ${SERVICE}: start \`${path.join(d.dataDir, "current", "bin", "ccrc")} serve\` again to run ${last.from}.`);
-      u.afterwards(last.to, last.from);
+      u.afterwards(u.nameOf(last.to), fromName);
       return 0;
     } finally {
+      release();
       unlock();
     }
   } catch (e) {

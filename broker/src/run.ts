@@ -14,6 +14,11 @@ export interface RunResult {
   stderr: string;
 }
 
+// After a timeout: how long SIGTERM gets before SIGKILL, and how long the output pipes get to close once the command
+// is gone (a helper it started, such as git-remote-https, can hold them open long after).
+const KILL_AFTER_MS = 5000;
+const DRAIN_MS = 1000;
+
 // Runs a command without a shell. A command that cannot start answers code 127 with the reason in stderr, and one
 // past its time limit is killed and answers 124, so callers only read the code.
 export type Runner = (cmd: string, args: string[], o?: RunOptions) => Promise<RunResult>;
@@ -24,20 +29,33 @@ export const run: Runner = (cmd, args, o = {}) =>
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let done = false;
+    const timers: NodeJS.Timeout[] = [];
     child.stdout?.on("data", (c: Buffer) => (stdout += c.toString("utf8")));
     child.stderr?.on("data", (c: Buffer) => (stderr += c.toString("utf8")));
-    const timer = o.timeoutMs
-      ? setTimeout(() => {
+    const finish = (r: RunResult) => {
+      if (done) return;
+      done = true;
+      for (const t of timers) clearTimeout(t);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      resolve(r);
+    };
+    const result = (code: number | null): RunResult => ({
+      code: timedOut ? 124 : (code ?? 1),
+      stdout,
+      stderr: timedOut ? `${stderr}timed out after ${o.timeoutMs} ms` : stderr,
+    });
+    if (o.timeoutMs) {
+      timers.push(
+        setTimeout(() => {
           timedOut = true;
           child.kill("SIGTERM");
-        }, o.timeoutMs)
-      : undefined;
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      resolve({ code: 127, stdout, stderr: stderr + e.message });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code: timedOut ? 124 : (code ?? 1), stdout, stderr: timedOut ? `${stderr}timed out after ${o.timeoutMs} ms` : stderr });
-    });
+          timers.push(setTimeout(() => child.kill("SIGKILL"), KILL_AFTER_MS));
+        }, o.timeoutMs),
+      );
+    }
+    child.on("error", (e) => finish({ code: 127, stdout, stderr: stderr + e.message }));
+    child.on("exit", (code) => timers.push(setTimeout(() => finish(result(code)), DRAIN_MS)));
+    child.on("close", (code) => finish(result(code)));
   });

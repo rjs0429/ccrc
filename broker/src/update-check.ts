@@ -148,7 +148,8 @@ export class UpdateCheck {
       if (before.source === source && before.channel === channel && before.latest) state.latest = before.latest;
       this.o.log(`ccrc: looking for a new version failed: ${state.error}`);
     }
-    if (state.latest && !state.error && isNewer(state.latest, this.o.version()) && !state.notified?.includes(state.latest)) {
+    // Only an install is told: a development checkout is updated with git, not ccrc update.
+    if (state.latest && !state.error && this.o.kind() === "installed" && isNewer(state.latest, this.o.version()) && !state.notified?.includes(state.latest)) {
       this.o.log(`ccrc: ${state.latest} is out (this is ${this.o.version()}); run ccrc update`);
       if (this.o.config.updateNotify !== false && this.o.notify?.(state.latest, releaseUrl(source, state.latest))) {
         state.notified = [...(state.notified ?? []), state.latest].slice(-20);

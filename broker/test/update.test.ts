@@ -461,3 +461,99 @@ test("bin/ccrc update and rollback: options, a development checkout, and the sta
   fs.writeFileSync(path.join(env.CCRC_CONFIG_DIR, "config.json"), JSON.stringify({ schemaVersion: 1, brokerSessions: "off", updateCheck: false }));
   assert.match(ccrc("status").stdout, /^update: {6}not looked for \(updateCheck is false\)$/m);
 });
+
+test("a command past its time limit is given up on even when a helper it started holds its output open", async () => {
+  const started = Date.now();
+  const r = await run("bash", ["-c", "sleep 5 & exec sleep 5"], { timeoutMs: 200 });
+  assert.equal(r.code, 124);
+  assert.match(r.stderr, /timed out after 200 ms/);
+  assert.ok(Date.now() - started < 4000, `took ${Date.now() - started} ms`);
+});
+
+test("history is written before the restart, and a failed switch also removes files the migrate step made", async () => {
+  const repo = makeRepo();
+  const w = installed(repo);
+  w.broken = "v0.7.1";
+  const runner = w.deps.runner!;
+  let seenAtRestart: HistoryEntry[] | undefined;
+  w.deps.runner = async (cmd, args, o) => {
+    if (cmd === "systemctl" && args.includes("restart") && !seenAtRestart) seenAtRestart = history(w);
+    const r = await runner(cmd, args, o);
+    if (args[0] === "migrate") fs.writeFileSync(path.join(w.configDir, "made-by-migrate.json"), "{}\n");
+    return r;
+  };
+  assert.equal(await update({ yes: true }, w.deps), EXIT_ROLLED_BACK, output(w));
+  assert.deepEqual(
+    seenAtRestart?.map((h) => [h.from, h.to, h.failed]),
+    [["v0.7.0", "v0.7.1", undefined]],
+    "a run that dies during the restart still leaves the way back",
+  );
+  assert.equal(history(w).length, 1, "the same entry is marked failed");
+  assert.match(history(w)[0].failed!, /did not answer/);
+  assert.equal(fs.existsSync(path.join(w.configDir, "made-by-migrate.json")), false);
+  assert.equal(current(w), path.join("versions", "v0.7.0"));
+});
+
+test("a migrate step that fails after making files leaves none of them", async () => {
+  const repo = makeRepo();
+  const w = installed(repo);
+  const before = fs.readFileSync(path.join(w.configDir, "config.json"), "utf8");
+  const runner = w.deps.runner!;
+  w.deps.runner = async (cmd, args, o) => {
+    if (args[0] === "migrate") {
+      fs.writeFileSync(path.join(w.configDir, "config.json"), "{}\n");
+      fs.writeFileSync(path.join(w.stateDir, "half.json"), "{}\n");
+      return { code: 1, stdout: "", stderr: "disk full" };
+    }
+    return runner(cmd, args, o);
+  };
+  assert.equal(await update({ yes: true }, w.deps), 1);
+  assert.match(output(w), /could not migrate the config: disk full\. Nothing was switched/);
+  assert.equal(fs.readFileSync(path.join(w.configDir, "config.json"), "utf8"), before);
+  assert.equal(fs.existsSync(path.join(w.stateDir, "half.json")), false);
+  assert.equal(current(w), path.join("versions", "v0.7.0"));
+});
+
+test("a rollback whose restart fails says the service is broken, not that nothing switched", async () => {
+  const repo = makeRepo();
+  const w = installed(repo);
+  assert.equal(await update({ yes: true }, w.deps), 0);
+  const runner = w.deps.runner!;
+  w.deps.runner = async (cmd, args, o) =>
+    cmd === "systemctl" && args.includes("restart") ? { code: 1, stdout: "", stderr: "Failed to restart ccrc.service" } : runner(cmd, args, o);
+  w.lines.length = 0;
+  assert.equal(await rollback({ yes: true }, w.deps), EXIT_BROKEN, output(w));
+  assert.equal(current(w), path.join("versions", "v0.7.0"));
+  assert.match(output(w), /Failed to restart ccrc\.service/);
+});
+
+test("an install whose folder is not named as its version is linked back to and kept", async () => {
+  const repo = makeRepo();
+  const w = installed(repo);
+  fs.renameSync(w.root, path.join(w.dataDir, "versions", "first"));
+  fs.rmSync(path.join(w.dataDir, "current"));
+  fs.symlinkSync(path.join("versions", "first"), path.join(w.dataDir, "current"));
+  w.deps.codeRoot = path.join(w.dataDir, "versions", "first");
+  w.broken = "v0.7.1";
+  assert.equal(await update({ yes: true }, w.deps), EXIT_ROLLED_BACK, output(w));
+  assert.equal(current(w), path.join("versions", "first"));
+  assert.equal(w.running, "v0.7.0");
+
+  w.broken = undefined;
+  assert.equal(await update({ yes: true }, w.deps), 0, output(w));
+  assert.deepEqual(versions(w), ["first", "v0.7.1"], "the version before stays under its own name");
+  assert.equal(await rollback({ yes: true }, w.deps), 0, output(w));
+  assert.equal(current(w), path.join("versions", "first"));
+});
+
+test("a copy made with --from is not taken for the release of the same name", async () => {
+  const repo = makeRepo();
+  const w = installed(repo);
+  assert.equal(await update({ yes: true, from: `${repo.work}@v0.7.1` }, w.deps), 0, output(w));
+  assert.equal(readInstallInfo(path.join(w.dataDir, "versions", "v0.7.1"))!.source, repo.work);
+  assert.equal(await rollback({ yes: true }, w.deps), 0, output(w));
+  w.calls.length = 0;
+  assert.equal(await update({ yes: true }, w.deps), 0, output(w));
+  assert.ok(w.calls.some((c) => c.startsWith("git -c advice.detachedHead=false clone")), "fetched again from the install's source");
+  assert.equal(readInstallInfo(path.join(w.dataDir, "versions", "v0.7.1"))!.source, repo.bare);
+});

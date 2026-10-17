@@ -12,7 +12,7 @@ import { tempDir } from "./helpers.ts";
 const SHA = "0".repeat(40);
 const lsRemote = (...tags: string[]) => tags.map((t) => `${SHA}\trefs/tags/${t}`).join("\n") + "\n";
 
-function setup(o: { tags?: string[]; version?: string; source?: string } = {}) {
+function setup(o: { tags?: string[]; version?: string; source?: string; kind?: "installed" | "git" } = {}) {
   const stateDir = tempDir();
   const file = path.join(stateDir, "update-check.json");
   const config: Pick<Config, "updateCheck" | "updateChannel" | "updateRepo" | "updateNotify"> = { updateCheck: true, updateChannel: "stable", updateNotify: true };
@@ -29,7 +29,7 @@ function setup(o: { tags?: string[]; version?: string; source?: string } = {}) {
   const check = new UpdateCheck({
     config,
     version: () => o.version ?? "v0.7.0",
-    kind: () => "installed",
+    kind: () => o.kind ?? "installed",
     installSource: () => o.source,
     file,
     runner,
@@ -108,6 +108,11 @@ test("a new version is announced once, and only when updateNotify is on and a de
   const current = setup({ version: "v0.7.1" });
   await current.check.check();
   assert.deepEqual(current.notified, [], "up to date");
+
+  const checkout = setup({ version: "v0.6.0-12-gabc1234", kind: "git" });
+  await checkout.check.check();
+  assert.deepEqual(checkout.notified, [], "a development checkout is updated with git, not told to run ccrc update");
+  assert.equal(checkout.check.info().available, true, "the settings screen still names the release");
 });
 
 test("a failed look is recorded, keeps the release seen before, and updateCheck off skips looking", async () => {
@@ -152,4 +157,13 @@ test("the update keys are checked, reloaded live, and default for a new config",
   const live = { ...c };
   const { applied, restart } = applyConfig(live, { ...c, updateChannel: "rc", updateRepo: "https://example.com/fork.git" });
   assert.deepEqual([applied, restart, live.updateChannel], [["updateChannel", "updateRepo"], [], "rc"]);
+});
+
+test("a token in the repository URL stays out of the recorded error", async () => {
+  const s = setup({ source: "https://user:secret-token@example.com/ccrc.git" });
+  s.setFail("unable to access 'https://user:secret-token@example.com/ccrc.git/': Could not resolve host");
+  await s.check.check();
+  const error = s.check.info().error ?? "";
+  assert.match(error, /https:\/\/\*\*\*@example\.com\/ccrc\.git/);
+  assert.doesNotMatch(error + s.lines.join("\n"), /secret-token/);
 });

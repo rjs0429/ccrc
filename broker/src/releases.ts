@@ -83,9 +83,15 @@ export function quietGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proces
   return { ...env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never", GIT_ASKPASS: "", SSH_ASKPASS: "", GIT_SSH_COMMAND: env.GIT_SSH_COMMAND || "ssh -o BatchMode=yes" };
 }
 
+// A user name or token written into a repository URL (https://user:token@host/...) is left out of messages, which
+// reach the log and the phone's status page.
+export function hideUserInfo(text: string): string {
+  return text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1***@");
+}
+
 export async function listTags(runner: Runner, source: string, env: NodeJS.ProcessEnv = process.env, timeoutMs = LS_REMOTE_TIMEOUT_MS): Promise<string[]> {
   const r = await runner("git", ["-c", "credential.helper=", "ls-remote", "--tags", "--refs", source], { env: quietGitEnv(env), timeoutMs });
-  if (r.code !== 0) throw Error(`git ls-remote ${source} failed: ${(r.stderr.trim().split("\n").pop() || `exit code ${r.code}`).slice(0, 300)}`);
+  if (r.code !== 0) throw Error(hideUserInfo(`git ls-remote ${source} failed: ${(r.stderr.trim().split("\n").pop() || `exit code ${r.code}`).slice(0, 300)}`));
   return parseLsRemote(r.stdout);
 }
 
