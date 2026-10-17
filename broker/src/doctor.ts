@@ -1,11 +1,10 @@
-import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { SEND_FILES_CLI, type DoctorCheck, type DoctorResult, type HealthInfo } from "./admin-protocol.ts";
 import { bundledClaude, extensionFolders, versionBelow, type CliChoice } from "./claude-cli.ts";
 import { ensureDir, paths, writeFileAtomic } from "./config.ts";
+import { brokerVersion } from "./install.ts";
 import { LineSplitter, parseLine } from "./link/lines.ts";
 import { readSettings } from "./wrapper/vscode.ts";
 
@@ -45,12 +44,11 @@ export interface DoctorOptions {
 }
 
 function defaults(): DoctorOptions {
-  const home = os.homedir();
-  const repo = fileURLToPath(new URL("../../", import.meta.url));
+  const repo = paths.codeRoot;
   return {
     stateDir: paths.stateDir,
-    extensionsDir: path.join(home, ".vscode", "extensions"),
-    vscodeDir: path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), "Code"),
+    extensionsDir: paths.vscodeExtensionsDir,
+    vscodeDir: paths.vscodeUserDir,
     platform: `${process.platform}-${process.arch}`,
     repoDir: repo,
     wrapper: path.join(repo, "bin", "ccrc-wrapper"),
@@ -174,16 +172,9 @@ export class Doctor {
     return { source: c.source, ...(version ? { version } : {}), ...(c.path ? { path: c.path } : {}) };
   }
 
-  // The git commit the broker started from, read once.
+  // The version the broker started as (see install.ts), read once.
   brokerVersion(): string | undefined {
-    if (this.broker === undefined) {
-      try {
-        const out = execFileSync("git", ["-C", this.o.repoDir, "rev-parse", "--short", "HEAD"], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] });
-        this.broker = out.trim() || null;
-      } catch {
-        this.broker = null;
-      }
-    }
+    if (this.broker === undefined) this.broker = brokerVersion({ root: this.o.repoDir }) ?? null;
     return this.broker ?? undefined;
   }
 

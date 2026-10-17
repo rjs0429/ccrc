@@ -7,7 +7,7 @@ import fastifyStatic from "@fastify/static";
 import type { Audit } from "./audit.ts";
 import { checkCredentials, setCredentials } from "./auth.ts";
 import type { ClaudeSettings } from "./claude-settings.ts";
-import type { DeviceGate } from "./devices.ts";
+import { DeviceGate } from "./devices.ts";
 import type { Doctor } from "./doctor.ts";
 import type { Hub } from "./hub.ts";
 import type { Leases } from "./lease.ts";
@@ -61,6 +61,8 @@ export interface ServerDeps {
   logLevel?: string;
   logStream?: NodeJS.WritableStream;
   search?: SessionSearch;
+  // The version /api/ping reports; the doctor's unless given.
+  version?: () => string | undefined;
 }
 
 // A file ticket in a URL opens the file without the login cookie until it expires, so request logs hide it.
@@ -103,6 +105,11 @@ export async function buildServer(d: ServerDeps) {
   app.decorateRequest("device", "");
 
   app.addHook("onRequest", async (req, reply) => {
+    // The installer and `ccrc update` ask for the version on this machine whether or not allowLocal lets it in.
+    if (req.method === "GET" && req.url.split("?")[0] === "/api/ping" && DeviceGate.direct(req.socket.remoteAddress, req.headers["x-forwarded-for"])) {
+      req.device = "local";
+      return;
+    }
     const check = await d.gate.check(req.socket.remoteAddress, req.headers["x-forwarded-for"]);
     if (!check.ok) {
       d.audit.log("device_denied", { ip: check.ip });
@@ -124,6 +131,9 @@ export async function buildServer(d: ServerDeps) {
   const requireAuth = async (req: FastifyRequest, reply: FastifyReply) => {
     if (!authed(req)) return reply.code(401).send({ error: "unauthorized" });
   };
+
+  const version = d.version ?? (() => d.doctor.brokerVersion());
+  app.get("/api/ping", async () => ({ ok: true, version: version() ?? null }));
 
   app.get("/api/me", async (req) => {
     d.store.reload();
@@ -180,6 +190,7 @@ export async function buildServer(d: ServerDeps) {
     models: await d.manager.modelList(),
     modes: PERMISSION_MODES,
     folders: await d.manager.folders(),
+    brokerSessions: d.manager.brokerSessions(),
   }));
 
   const routes = { ...d, requireAuth };

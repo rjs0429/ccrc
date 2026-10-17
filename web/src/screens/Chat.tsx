@@ -29,7 +29,7 @@ import { Choice, Icon, Sheet, Spinner, Tile, Tiles } from "../components/ui.tsx"
 import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import { dayLines, streamLine } from "../components/stamps.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
-import { closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
+import { brokerSessionsBlocked, closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
 import { call, composerInsert, focusDone, navigate, openAt, openSettingsFrom, send, toast, useApp } from "../state.ts";
 import { takeSent } from "../sentPreviews.ts";
@@ -78,6 +78,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const chat = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat : undefined));
   const summary = useApp((s) => s.sessions?.find((x) => x.id === sessionId));
   const models = useApp((s) => s.options?.models ?? NO_MODELS);
+  const brokerOff = brokerSessionsBlocked(useApp((s) => s.options?.brokerSessions));
   const othersWaiting = useApp((s) => (s.sessions ?? []).some((x) => x.id !== sessionId && x.pendingCount));
   // The ⋯ menu decides as it opens whether it offers 이번 턴 중지 and keeps that row while open, enabled while a turn
   // runs, so a turn starting or ending moves none of its rows.
@@ -140,7 +141,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const host = hostLabel(st?.host ?? summary?.host);
   const busy = Boolean(st?.busy);
   const cwd = st?.cwd ?? summary?.cwd ?? "";
-  const cannotStart = folderMissing ? `작업 폴더가 없어 이 세션을 시작할 수 없습니다: ${shortPath(cwd)}` : undefined;
+  const cannotStart = folderMissing ? `작업 폴더가 없어 이 세션을 시작할 수 없습니다: ${shortPath(cwd)}` : deferred ? brokerOff : undefined;
   // The list knows first of a name given anywhere: it reads the transcript.
   const named = summary?.title || st?.title || "";
   const title = sessionTitle({ title: named });
@@ -149,7 +150,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const worktree = worktreeOf(cwd);
   const renameRefused = renameBlocked(renameTarget);
   // Why the menu's greyed actions cannot be used; they point to this line.
-  const unable = renameRefused ? `${host}에서 열려 있어 여기서는 이름을 바꿀 수 없습니다` : folderMissing ? "작업 폴더가 없어 갈래를 만들거나 되돌릴 수 없습니다" : undefined;
+  const unable = renameRefused
+    ? `${host}에서 열려 있어 여기서는 이름을 바꿀 수 없습니다`
+    : folderMissing
+      ? "작업 폴더가 없어 갈래를 만들거나 되돌릴 수 없습니다"
+      : brokerOff
+        ? "원격 세션이 꺼져 있어 갈래를 만들 수 없습니다"
+        : undefined;
   const unableId = useId();
   // The header's title and the line under it are one button to rename, its padding reaching over the header's height
   // as the back button's does. The sheet opens within the tap, so its field can take the keyboard on iOS.
@@ -363,7 +370,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
             ? "폴더 없음"
             : "꺼져 있음";
   const disabledReason =
-    kind === "live" ? `${host}에서 열려 있어 지금은 보기만 할 수 있습니다.` : folderMissing ? "작업 폴더가 없어 보기만 할 수 있습니다." : undefined;
+    kind === "live" ? `${host}에서 열려 있어 지금은 보기만 할 수 있습니다.` : folderMissing ? "작업 폴더가 없어 보기만 할 수 있습니다." : deferred ? brokerOff : undefined;
 
   return (
     <div className="flex h-dvh flex-col">
@@ -495,14 +502,16 @@ export function Chat({ sessionId }: { sessionId: string }) {
                           <span className="mt-0.5 block text-xs break-all">{shortPath(st.resumeIn)}</span>
                         </p>
                       ) : (
-                        <p className="min-w-0 flex-1 break-keep text-balance">
+                        <p className="min-w-0 flex-1 break-keep text-balance" data-broker-off={brokerOff ? "" : undefined}>
                           <span className="block">{closedText(st?.closedReason) || "꺼져 있는 세션입니다."}</span>
-                          <span className="block">메시지를 보내면 이어서 실행합니다.</span>
+                          <span className="block">{brokerOff ? "원격 세션이 꺼져 있어 기록만 볼 수 있습니다." : "메시지를 보내면 이어서 실행합니다."}</span>
                         </p>
                       )}
-                      <button onClick={startNow} disabled={starting} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent disabled:opacity-50">
-                        {starting ? "시작하는 중…" : "지금 시작"}
-                      </button>
+                      {!brokerOff && (
+                        <button onClick={startNow} disabled={starting} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent disabled:opacity-50">
+                          {starting ? "시작하는 중…" : "지금 시작"}
+                        </button>
+                      )}
                     </>
                   )}
                 </div>
@@ -565,7 +574,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
                 label={archived ? "보관 해제" : "보관하기"}
                 onClick={() => (!archived && worktree ? setArchiving(true) : setArchived(sessionId, !archived), setMenu(false))}
               />
-              <Tile icon={<Icon.branch />} label="갈래로 떼기" disabled={folderMissing} describedBy={folderMissing ? unableId : undefined} onClick={() => (setFork({}), setMenu(false))} />
+              <Tile
+                icon={<Icon.branch />}
+                label="갈래로 떼기"
+                disabled={folderMissing || Boolean(brokerOff)}
+                describedBy={folderMissing || brokerOff ? unableId : undefined}
+                onClick={() => (setFork({}), setMenu(false))}
+              />
             </Tiles>
             {unable && (
               <p id={unableId} className="mt-2 px-3 text-xs text-muted" data-menu-unable>

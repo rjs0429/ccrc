@@ -1,5 +1,5 @@
 import type { SearchResponse, Thread } from "../../broker/src/search-protocol.ts";
-import type { ModelOption, PermissionModeName, SessionSummary, UploadInfo } from "../../broker/src/protocol.ts";
+import type { BrokerSessionsInfo, ModelOption, PermissionModeName, SessionSummary, UploadInfo } from "../../broker/src/protocol.ts";
 
 export interface Me {
   configured: boolean;
@@ -11,6 +11,8 @@ export interface Options {
   models: ModelOption[];
   modes: PermissionModeName[];
   folders: string[];
+  // Missing from a broker older than the setting, which always started them.
+  brokerSessions?: BrokerSessionsInfo;
 }
 
 export class ApiError extends Error {

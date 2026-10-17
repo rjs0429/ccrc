@@ -7,7 +7,7 @@ import { Icon, Spinner } from "../components/ui.tsx";
 import { UpdateBanner } from "../components/UpdateBanner.tsx";
 import { TitleText } from "../components/TitleText.tsx";
 import { useLongPress } from "../components/useLongPress.ts";
-import { baseName, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
+import { baseName, brokerSessionsBlocked, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
 import { loggedOut, navigate, openAt, refreshSessions, useApp } from "../state.ts";
 import { groupFolder, placeLabel, shownBranch } from "../worktree.ts";
 
@@ -184,6 +184,7 @@ function inView(s: SessionSummary, filter: Filter): boolean {
 export function Home() {
   const sessions = useApp((s) => s.sessions);
   const conn = useApp((s) => s.conn);
+  const brokerOff = brokerSessionsBlocked(useApp((s) => s.options?.brokerSessions));
   const [tab, setTab] = useState<"sessions" | "folders">("sessions");
   const [filter, setFilter] = useState<Filter>("all");
   const [folder, setFolder] = useState<string | null>(null);
@@ -234,7 +235,12 @@ export function Home() {
             ccrc
             <span className={`ml-2 inline-block size-2 rounded-full align-middle ${conn === "ready" ? "bg-ok" : "bg-warn"}`} title={conn} />
           </h1>
-          <button onClick={() => navigate({ name: "new" })} className="order-2 flex shrink-0 items-center gap-1 rounded-xl bg-accent px-3 py-2 text-sm font-medium text-white short:order-5 short:ml-auto">
+          <button
+            onClick={() => navigate({ name: "new" })}
+            title={brokerOff}
+            data-broker-off={brokerOff ? "" : undefined}
+            className={`order-2 flex shrink-0 items-center gap-1 rounded-xl px-3 py-2 text-sm font-medium short:order-5 short:ml-auto ${brokerOff ? "bg-surface-2 text-muted" : "bg-accent text-white"}`}
+          >
             <Icon.plus className="size-4" />새 세션
           </button>
           <button onClick={() => navigate({ name: "settings" })} aria-label="설정" className="order-3 mr-1 shrink-0 rounded-lg p-2 text-muted short:order-6">

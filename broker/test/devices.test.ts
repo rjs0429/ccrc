@@ -31,3 +31,13 @@ test("other machines are refused, judged by the last forwarded address", async (
   assert.equal((await gate.check("127.0.0.1", "100.64.0.2, 100.64.0.3")).ok, false);
   assert.equal((await gate.check("127.0.0.1", "100.64.0.3, 100.64.0.2")).ok, true);
 });
+
+test("a changed device list and allowLocal hold from the next request", async () => {
+  const gate = new DeviceGate(["phone"], true, status);
+  assert.equal((await gate.check("127.0.0.1", "100.64.0.3")).ok, false);
+  gate.update(["phone", "other-host"], false);
+  assert.deepEqual(await gate.check("127.0.0.1", "100.64.0.3"), { ok: true, device: "other-host" });
+  assert.equal((await gate.check("127.0.0.1", undefined)).ok, false);
+  gate.update([], true);
+  assert.equal((await gate.check("127.0.0.1", "100.64.0.2")).ok, false);
+});

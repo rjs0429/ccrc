@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { FOLLOW_VSCODE, paths } from "./config.ts";
+import { FOLLOW_VSCODE } from "./config.ts";
+import { paths } from "./paths.ts";
 
 const EXTENSION = /^anthropic\.claude-code-(\d+)\.(\d+)\.(\d+)-(.+)$/;
 const VERSION = /^\d+\.\d+\.\d+$/;
@@ -35,11 +35,10 @@ export interface CliOptions {
 }
 
 function defaults(): CliOptions {
-  const home = os.homedir();
   return {
-    extensionsDir: path.join(home, ".vscode", "extensions"),
+    extensionsDir: paths.vscodeExtensionsDir,
     platform: `${process.platform}-${process.arch}`,
-    global: path.join(home, ".local", "bin", "claude"),
+    global: path.join(paths.home, ".local", "bin", "claude"),
     linkDir: path.join(paths.stateDir, "cli"),
   };
 }

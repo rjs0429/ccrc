@@ -1,4 +1,19 @@
-import type { EffortName, ModelOption, NoteCode, SessionSummary } from "../../broker/src/protocol.ts";
+import type { BrokerSessionsInfo, EffortName, ModelOption, NoteCode, SessionSummary } from "../../broker/src/protocol.ts";
+
+// Why sessions cannot start from the phone, and how to turn them on at the laptop.
+const BROKER_OFF = "원격 세션이 꺼져 있어 여기서 Claude Code를 시작할 수 없습니다. 노트북에서 ccrc config set brokerSessions apiKey (또는 subscription) 로 켭니다.";
+const BROKER_NO_KEY = "원격 세션에 쓸 API 키가 없어 여기서 Claude Code를 시작할 수 없습니다. 노트북에서 ccrc config set-api-key 로 키를 넣습니다.";
+
+export function brokerSessionsBlocked(b: BrokerSessionsInfo | undefined): string | undefined {
+  if (!b || b.ready) return undefined;
+  return b.mode === "apiKey" ? BROKER_NO_KEY : BROKER_OFF;
+}
+
+export const BROKER_SESSIONS_LABEL: Record<BrokerSessionsInfo["mode"], string> = {
+  off: "꺼짐",
+  apiKey: "API 키",
+  subscription: "구독 로그인",
+};
 
 export const MODE_LABEL: Record<string, string> = {
   default: "Manual",
@@ -142,6 +157,8 @@ const REWIND_REFUSED: Record<string, string> = {
 };
 
 const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
+  [/^broker_sessions_off$/, BROKER_OFF],
+  [/^broker_sessions_off: no API key$/, BROKER_NO_KEY],
   [/^session is starting$/, "세션을 시작하는 중입니다. 시작된 뒤 다시 고르세요"],
   [/^session started meanwhile$/, "그 사이 세션이 시작되었습니다. 다시 고르세요"],
   [/^unknown model$/, "목록에 없는 모델입니다"],

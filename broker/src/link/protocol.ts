@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { paths } from "../paths.ts";
 
 // Frames on the socket between a wrapper (one VS Code conversation process) and the broker,
 // one JSON object per line. Lines copied from either side of the conversation travel unparsed
@@ -54,13 +54,13 @@ export type BrokerFrame =
   | { t: "pass"; id: string };
 
 // The user's runtime folder when there is one, else the ccrc state folder; never a shared folder such as /tmp.
-export function linkSocketPath(env: NodeJS.ProcessEnv = process.env): string {
+export function linkSocketPath(): string {
+  const env = process.env;
   if (env.CCRC_LINK_SOCKET) return env.CCRC_LINK_SOCKET;
   const userRun = `/run/user/${process.getuid?.() ?? 0}`;
-  const runtime = env.XDG_RUNTIME_DIR || (fs.existsSync(userRun) ? userRun : undefined);
+  const runtime = paths.runtimeDir || (fs.existsSync(userRun) ? userRun : undefined);
   if (runtime) return path.join(runtime, "ccrc", "link.sock");
-  const state = env.CCRC_STATE_DIR || path.join(env.XDG_STATE_HOME || path.join(env.HOME || os.homedir(), ".local", "state"), "ccrc");
-  return path.join(state, "link.sock");
+  return path.join(paths.stateDir, "link.sock");
 }
 
 // Wrappers and the broker only use a socket whose folder belongs to this user and is closed to everyone else.

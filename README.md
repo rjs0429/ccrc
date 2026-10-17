@@ -43,8 +43,15 @@ Run `npm run build` after updating; until then the wrapper runs from its TypeScr
 
 ## Configuration (`~/.config/ccrc/config.json`)
 
+Change keys with `ccrc config set <key> <value>` (or edit the file); a running broker picks up `allowedDevices`,
+`allowLocal`, `roots`, `brokerSessions`, `leaseIdleMinutes` and `sessionIdleMinutes` without a restart, and logs that
+`host`, `port` and `claudePath` need one. A key of the wrong type stops the broker with the key and what it takes;
+unknown keys are only warned about.
+
 | Key | Meaning |
 |---|---|
+| `schemaVersion` | Format of the file, written by ccrc. `ccrc serve` and `ccrc migrate` bring an older file up to date, keeping a copy in `~/.local/state/ccrc/backup/`; a file from a newer ccrc is refused |
+| `brokerSessions` | How sessions started from the phone (through the Agent SDK) sign in: `"off"` (none start; VS Code sessions are still driven), `"apiKey"` (the key stored with `ccrc config set-api-key` in `~/.config/ccrc/anthropic-api-key`), or `"subscription"` (Claude Code's own login). New installs start with `"off"`; a config from 0.6 or earlier becomes `"subscription"`, as it ran then |
 | `allowedDevices` | Tailnet machine names allowed through `tailscale serve` |
 | `allowLocal` | Allow requests from this machine itself |
 | `roots` | Extra folders where new sessions may start (folders with sessions are always allowed) |
@@ -54,8 +61,16 @@ Run `npm run build` after updating; until then the wrapper runs from its TypeScr
 
 ## Commands
 
-`bin/ccrc serve | passwd | status | logout`, and `bin/ccrc-wrapper` for VS Code (see above).
+`bin/ccrc serve | passwd | status | logout | version | migrate`, `bin/ccrc config path | get [key] | set <key> <value> | set-api-key`,
+and `bin/ccrc-wrapper` for VS Code (see above).
 The wrapper and the broker meet on `$XDG_RUNTIME_DIR/ccrc/link.sock`; the wrapper logs to `~/.local/state/ccrc/wrapper.log`.
+`GET /api/ping` answers `{ "ok": true, "version": ... }` without a login, to this machine and to allowed devices.
+
+Both scripts run on the first Node 22.18 or newer of `$CCRC_NODE`, `~/.local/share/ccrc/node/bin/node`, the Node an
+install recorded, and the one on `PATH`. Without one, `ccrc` stops with an error and the wrapper runs Claude Code directly.
+
+Folders follow the environment: `CCRC_CONFIG_DIR`, `CCRC_STATE_DIR`, `CCRC_DATA_DIR` (else the XDG folders),
+`CLAUDE_CONFIG_DIR` (else `~/.claude`) and `CCRC_VSCODE_EXTENSIONS_DIR` (else `~/.vscode/extensions`).
 
 ## Development
 

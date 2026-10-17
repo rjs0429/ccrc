@@ -564,6 +564,13 @@ export interface ModelOption {
   thinkingOff?: boolean;
 }
 
+// How the Claude Code processes the broker starts sign in (the brokerSessions setting), and whether one may start now:
+// not when it is "off", nor "apiKey" without a key.
+export interface BrokerSessionsInfo {
+  mode: "off" | "apiKey" | "subscription";
+  ready: boolean;
+}
+
 export interface LiveState {
   sessionId: string;
   cwd: string;
@@ -656,6 +663,8 @@ export type ServerMsg =
   | { t: "state"; sessionId: string; state: LiveState }
   | { t: "session_started"; sessionId: string; draftId?: string }
   | { t: "sessions_changed" }
+  // What /api/options gives changed: the folders new sessions may start in, or how broker sessions sign in.
+  | { t: "options_changed" }
   | { t: "error"; message: string; sessionId?: string; draftId?: string }
   | { t: "call_result"; id: number; ok: boolean; data?: unknown; error?: string }
   | { t: "pong" };

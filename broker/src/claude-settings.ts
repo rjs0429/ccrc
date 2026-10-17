@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   CLAUDE_SETTING_FIELDS,
@@ -12,6 +11,7 @@ import {
   type SettingField,
   type SettingNoteReason,
 } from "./admin-protocol.ts";
+import { paths } from "./paths.ts";
 
 const KEEP_BACKUPS = 10;
 const HIDDEN = "••••";
@@ -74,8 +74,8 @@ interface Loaded {
   problem?: "not_json" | "not_object";
 }
 
-export function claudeSettingsFile(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "settings.json");
+export function claudeSettingsFile(): string {
+  return path.join(paths.claudeConfigDir, "settings.json");
 }
 
 function getKey(data: Obj, key: string): unknown {

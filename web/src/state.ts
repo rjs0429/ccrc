@@ -426,7 +426,12 @@ function onServer(msg: ServerMsg): void {
       void refreshSessions();
       badgeSoon();
       return;
+    case "options_changed":
+      void refreshOptions();
+      return;
     case "error": {
+      // A start refused by the brokerSessions setting means the options this window holds are out of date.
+      if (msg.message.startsWith("broker_sessions_off")) void refreshOptions();
       const failed = msg.draftId ? [startingSent, unanswered].find((d) => d?.id === msg.draftId) : undefined;
       if (msg.draftId && msg.draftId === startingSent?.id) startDone();
       if (msg.draftId && msg.draftId === unanswered?.id) unanswered = undefined;

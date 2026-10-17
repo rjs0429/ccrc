@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { paths } from "../paths.ts";
 
 export interface LiveProcess {
   pid: number;
@@ -10,7 +10,6 @@ export interface LiveProcess {
   status?: string;
 }
 
-const SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
 const CACHE_MS = 2000;
 
 const HOSTS: Record<string, string> = {
@@ -36,7 +35,7 @@ export function startTime(pid: number): string | undefined {
 // A file whose pid is gone or now belongs to another process is ignored.
 export function liveProcesses(opts: { dir?: string; fresh?: boolean } = {}): LiveProcess[] {
   if (!opts.fresh && !opts.dir && cache && Date.now() - cache.at < CACHE_MS) return cache.list;
-  const dir = opts.dir ?? SESSIONS_DIR;
+  const dir = opts.dir ?? paths.claudeSessionsDir;
   const list: LiveProcess[] = [];
   let names: string[] = [];
   try {

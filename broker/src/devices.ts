@@ -51,6 +51,19 @@ export class DeviceGate {
     this.status = status;
   }
 
+  // Takes a changed config: the next request maps addresses to names again.
+  update(names: string[], allowLocal: boolean): void {
+    this.names = new Set(names.map((n) => n.toLowerCase()));
+    this.allowLocal = allowLocal;
+    this.ipToName = new Map();
+    this.refreshedAt = 0;
+  }
+
+  // A request this machine made itself, not one `tailscale serve` passed on.
+  static direct(remoteAddress: string | undefined, forwardedFor: string | string[] | undefined): boolean {
+    return Boolean(remoteAddress && LOOPBACK.has(remoteAddress)) && !(Array.isArray(forwardedFor) ? forwardedFor.join("") : forwardedFor);
+  }
+
   async refresh(): Promise<void> {
     const st = await this.status();
     const map = new Map<string, string>();

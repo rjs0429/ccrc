@@ -1,15 +1,31 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
+import { readApiKey, writeApiKey } from "./api-key.ts";
 import { Audit } from "./audit.ts";
 import { setCredentials } from "./auth.ts";
-import { loadConfig, paths } from "./config.ts";
+import { watchConfig } from "./config-watch.ts";
+import {
+  BROKER_SESSIONS,
+  CONFIG_KEYS,
+  ConfigError,
+  applyMigrations,
+  brokerSessionsOf,
+  checkConfig,
+  loadConfig,
+  newConfig,
+  paths,
+  readConfig,
+  writeConfig,
+} from "./config.ts";
 import { DeviceGate } from "./devices.ts";
 import { Doctor } from "./doctor.ts";
 import { Hub } from "./hub.ts";
+import { brokerVersion, installKind } from "./install.ts";
 import { Leases } from "./lease.ts";
 import { linkSocketPath } from "./link/protocol.ts";
 import { LinkServer } from "./link/server.ts";
+import { migrateConfigFile } from "./migrate.ts";
 import { Push } from "./push/index.ts";
 import { RemoteActivity } from "./remote-activity.ts";
 import { buildServer } from "./server.ts";
@@ -22,12 +38,27 @@ import { Uploads } from "./uploads.ts";
 const WARM_DELAY_MS = 5000;
 
 const USAGE = `usage: ccrc <command>
-  serve    run the broker
-  passwd   set the login ID and password
-  status   show configuration and login state
-  logout   end the current remote login`;
+  serve                       run the broker
+  passwd                      set the login ID and password
+  status                      show configuration and login state
+  logout                      end the current remote login
+  version                     show the version (also --version)
+  config path                 show where config.json is
+  config get [key]            show the config, or one key of it
+  config set <key> <value>    change a key; a value that is not JSON is taken as a string
+  config set-api-key          store the Anthropic API key for brokerSessions "apiKey" (typed hidden, or from stdin)
+  migrate                     bring config.json to this version's format (serve does this too)`;
+
+function migrate(): void {
+  const r = migrateConfigFile();
+  if (!r) return console.log(`No config yet at ${paths.configFile}; the broker makes one when it starts.`);
+  if (!r.backupDir) return console.log(`Config is already of format ${r.to}.`);
+  console.log(`Config moved from format ${r.from} to ${r.to}; the earlier file is in ${r.backupDir}`);
+}
 
 async function serve(): Promise<void> {
+  const migrated = migrateConfigFile();
+  if (migrated?.backupDir) console.log(`ccrc: config moved from format ${migrated.from} to ${migrated.to} (earlier file in ${migrated.backupDir})`);
   const config = loadConfig();
   const store = new Store();
   const leases = new Leases(store, config.leaseIdleMinutes);
@@ -48,6 +79,14 @@ async function serve(): Promise<void> {
   await links.listen();
   const gate = new DeviceGate(config.allowedDevices, config.allowLocal);
   leases.on("revoked", (reason: string) => audit.log("lease_revoked", { reason }));
+  watchConfig(paths.configFile, config, {
+    apply: (c, changed) => {
+      gate.update(c.allowedDevices, c.allowLocal);
+      leases.setIdleMinutes(c.leaseIdleMinutes);
+      if (changed.includes("brokerSessions") || changed.includes("roots")) manager.emit("options_changed");
+    },
+    log: (line) => console.log(line),
+  });
 
   // `ccrc passwd` and `ccrc logout` edit the credentials file while the broker runs.
   fs.watchFile(paths.credentialsFile, { interval: 2000 }, () => {
@@ -124,13 +163,20 @@ async function passwd(): Promise<void> {
   console.log(`Saved login for ${id}.`);
 }
 
+function brokerSessionsText(mode: string): string {
+  if (mode !== "apiKey") return mode;
+  return readApiKey() ? "apiKey (key set)" : `apiKey (no key; run: ccrc config set-api-key)`;
+}
+
 function status(): void {
   const config = loadConfig();
   const { user, lease, lockout } = new Store().state;
+  console.log(`version:     ${brokerVersion() ?? "unknown"} (${KIND_TEXT[installKind()]})`);
   console.log(`config:      ${paths.configFile}`);
   console.log(`listen:      http://${config.host}:${config.port}`);
   console.log(`wrappers:    ${linkSocketPath()}${fs.existsSync(linkSocketPath()) ? "" : " (not listening)"}`);
   console.log(`devices:     ${config.allowedDevices.join(", ") || "(none; local access only)"}`);
+  console.log(`broker sessions: ${brokerSessionsText(brokerSessionsOf(config))}`);
   console.log(`login:       ${user ? `${user.id} (set ${user.changedAt})` : "not set; run: ccrc passwd"}`);
   console.log(`remote use:  ${lease ? `${lease.device}, last active ${new Date(lease.lastSeen).toLocaleString()}` : "none"}`);
   if (lockout.lockedUntil > Date.now()) console.log(`locked until ${new Date(lockout.lockedUntil).toLocaleString()}`);
@@ -144,6 +190,65 @@ function logout(): void {
   console.log("Remote login ended.");
 }
 
+const KIND_TEXT = { installed: "installed", git: "development checkout", plain: "unpacked copy" } as const;
+
+function version(): void {
+  console.log(`ccrc ${brokerVersion() ?? "unknown"} (${KIND_TEXT[installKind()]})`);
+}
+
+// A value as JSON when it reads as JSON, else the text itself.
+function configValue(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+async function readSecret(prompt: string): Promise<string> {
+  if (process.stdin.isTTY) return askHidden(prompt);
+  let text = "";
+  for await (const chunk of process.stdin) text += String(chunk);
+  return text;
+}
+
+async function config(): Promise<void> {
+  const [sub, key, ...rest] = process.argv.slice(3);
+  const file = paths.configFile;
+  switch (sub) {
+    case "path":
+      return console.log(file);
+    case "get": {
+      const c = fs.existsSync(file) ? readConfig(file).config : newConfig();
+      if (key === undefined) return console.log(JSON.stringify(c, null, 2));
+      if (!(key in c)) throw new ConfigError(`unknown key "${key}"`);
+      return console.log(JSON.stringify(c[key as keyof typeof c]));
+    }
+    case "set": {
+      if (!key || rest.length !== 1) throw Error("usage: ccrc config set <key> <value>");
+      if (!CONFIG_KEYS.includes(key) || key === "schemaVersion") throw new ConfigError(`unknown key "${key}"; keys: ${CONFIG_KEYS.filter((k) => k !== "schemaVersion").join(", ")}`);
+      migrateConfigFile();
+      const raw = fs.existsSync(file) ? readConfig(file).raw : (newConfig() as unknown as Record<string, unknown>);
+      const next = { ...raw, [key]: configValue(rest[0]) };
+      // Checked as the broker will read it, so a value of the wrong type is never written.
+      checkConfig(applyMigrations(next, file).config, file);
+      writeConfig(next, file);
+      console.log(`${key} = ${JSON.stringify(next[key])}`);
+      if (key === "brokerSessions" && next[key] === "apiKey" && !readApiKey()) console.log("No API key is stored yet: run ccrc config set-api-key");
+      return;
+    }
+    case "set-api-key": {
+      writeApiKey(await readSecret("Anthropic API key: "));
+      console.log(`Saved the API key to ${paths.apiKeyFile}.`);
+      const c = fs.existsSync(file) ? readConfig(file).config : undefined;
+      if (c && brokerSessionsOf(c) !== "apiKey") console.log("Broker sessions use it once brokerSessions is apiKey: ccrc config set brokerSessions apiKey");
+      return;
+    }
+    default:
+      throw Error(`usage: ccrc config path | get [key] | set <key> <value> | set-api-key\n  brokerSessions takes ${BROKER_SESSIONS.join(", ")}`);
+  }
+}
+
 const [major, minor] = process.versions.node.split(".").map(Number);
 if (major < 22 || (major === 22 && minor < 18)) {
   console.error(`ccrc needs Node.js 22.18 or newer (found ${process.versions.node})`);
@@ -151,7 +256,7 @@ if (major < 22 || (major === 22 && minor < 18)) {
 }
 
 const command = process.argv[2] ?? "serve";
-const commands: Record<string, () => unknown> = { serve, passwd, status, logout };
+const commands: Record<string, () => unknown> = { serve, passwd, status, logout, version, "--version": version, config, migrate };
 const run = commands[command];
 if (!run) {
   console.error(USAGE);

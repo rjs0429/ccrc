@@ -1,11 +1,10 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { getSessionMessages } from "@anthropic-ai/claude-agent-sdk";
+import { paths } from "../paths.ts";
 import type { DisplayItem } from "../protocol.ts";
 import { ItemBuilder, type RawMessage } from "./items.ts";
 
-export const PROJECTS = path.join(os.homedir(), ".claude", "projects");
 const TRAILING_COMMANDS = 50;
 
 export function projectDirName(cwd: string): string {
@@ -14,13 +13,14 @@ export function projectDirName(cwd: string): string {
 
 export function transcriptPath(sessionId: string, cwd?: string): string | undefined {
   const name = `${sessionId}.jsonl`;
+  const projects = paths.claudeProjectsDir;
   if (cwd) {
-    const guess = path.join(PROJECTS, projectDirName(cwd), name);
+    const guess = path.join(projects, projectDirName(cwd), name);
     if (fs.existsSync(guess)) return guess;
   }
   try {
-    for (const dir of fs.readdirSync(PROJECTS)) {
-      const p = path.join(PROJECTS, dir, name);
+    for (const dir of fs.readdirSync(projects)) {
+      const p = path.join(projects, dir, name);
       if (fs.existsSync(p)) return p;
     }
   } catch {}

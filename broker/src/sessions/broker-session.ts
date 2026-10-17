@@ -46,6 +46,9 @@ const PROBE_MS = 45_000;
 const STDERR_LINES = 20;
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
+const setOnly = (env: Record<string, string | undefined>): Record<string, string> =>
+  Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined));
+
 const inside = (dir: string, top: string) => dir === top || dir.startsWith(`${top}/`);
 
 type Requester = { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
@@ -76,6 +79,8 @@ export interface StartOptions {
   worktree?: WorktreeChoice;
   // Starts as a copy of session `from`, up to and with row `at`; Claude Code writes the copy once its first input comes.
   fork?: { from: string; at?: string };
+  // Laid over the session's environment, for its sign-in; an undefined value leaves the variable out.
+  env?: Record<string, string | undefined>;
 }
 
 class InputQueue {
@@ -189,7 +194,7 @@ export class BrokerSession extends SessionCore {
         allowDangerouslySkipPermissions: false,
         enableFileCheckpointing: true,
         extraArgs: { "replay-user-messages": null, ...(opts.worktree ? { worktree: opts.worktree.name } : {}) },
-        env: sessionEnv(),
+        env: setOnly({ ...sessionEnv(), ...opts.env }),
         canUseTool: this.canUseTool,
         onElicitation: this.onElicitation,
         stderr: (data) => this.noteStderr(data),
@@ -630,7 +635,7 @@ export function probeSettings(file = claudeSettingsFile()): { env: Record<string
 
 // Asks a Claude Code process started for this question alone: it loads no settings files or MCP servers, writes no
 // transcript and never starts a turn.
-async function probe<T>(cwd: string, claudePath: string | undefined, model: string | undefined, ask: (q: Query) => Promise<T>): Promise<T> {
+async function probe<T>(cwd: string, claudePath: string | undefined, model: string | undefined, env: Record<string, string | undefined>, ask: (q: Query) => Promise<T>): Promise<T> {
   let release = () => {};
   const held = new Promise<void>((r) => (release = r));
   async function* nothing(): AsyncGenerator<SDKUserMessage> {
@@ -646,7 +651,7 @@ async function probe<T>(cwd: string, claudePath: string | undefined, model: stri
       persistSession: false,
       settingSources: [],
       strictMcpConfig: true,
-      env: { ...process.env, ...user.env },
+      env: setOnly({ ...process.env, ...user.env, ...env }),
       ...(Object.keys(user.settings).length ? { settings: user.settings } : {}),
       stderr: () => {},
     },
@@ -665,18 +670,18 @@ async function probe<T>(cwd: string, claudePath: string | undefined, model: stri
 }
 
 // The account's plan limits.
-export async function probeUsage(cwd: string, claudePath?: string): Promise<UsageInfo> {
-  const r = await probe(cwd, claudePath, undefined, (q) => (q as unknown as Requester).request({ subtype: "get_usage", skip_behaviors: true }));
+export async function probeUsage(cwd: string, claudePath?: string, env: Record<string, string | undefined> = {}): Promise<UsageInfo> {
+  const r = await probe(cwd, claudePath, undefined, env, (q) => (q as unknown as Requester).request({ subtype: "get_usage", skip_behaviors: true }));
   return { limits: usageAnswer(r.response).limits };
 }
 
 // The context window of a model and where auto-compact starts, from the default settings.
-export async function probeWindow(cwd: string, model: string, claudePath?: string): Promise<ContextWindow | undefined> {
-  const d = contextDetail(await probe(cwd, claudePath, model, (q) => q.getContextUsage({ detail: "summary" })));
+export async function probeWindow(cwd: string, model: string, claudePath?: string, env: Record<string, string | undefined> = {}): Promise<ContextWindow | undefined> {
+  const d = contextDetail(await probe(cwd, claudePath, model, env, (q) => q.getContextUsage({ detail: "summary" })));
   return d.maxTokens > 0 ? { max: d.maxTokens, ...(d.autoCompactAt ? { autoCompactAt: d.autoCompactAt } : {}) } : undefined;
 }
 
 // The models Claude Code offers.
-export function probeModels(cwd: string, claudePath?: string): Promise<ModelInfo[]> {
-  return probe(cwd, claudePath, undefined, (q) => q.supportedModels());
+export function probeModels(cwd: string, claudePath?: string, env: Record<string, string | undefined> = {}): Promise<ModelInfo[]> {
+  return probe(cwd, claudePath, undefined, env, (q) => q.supportedModels());
 }

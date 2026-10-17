@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { paths } from "../paths.ts";
 import type { FileKind } from "../protocol.ts";
 import { indexedFiles } from "./files.ts";
 import { inside, isSecretPath } from "./secret-paths.ts";
@@ -96,7 +96,7 @@ export function parseLink(href: string): LinkTarget | undefined {
     out.path = m[1];
     setLines(m[2], m[3]);
   }
-  if (out.path === "~" || out.path.startsWith("~/")) out.path = path.join(os.homedir(), out.path.slice(1));
+  if (out.path === "~" || out.path.startsWith("~/")) out.path = path.join(paths.home, out.path.slice(1));
   return out.path && !out.path.includes("\0") ? out : undefined;
 }
 
@@ -265,7 +265,7 @@ function dirsFrom(file: string, base: string): string[] {
     if (!Array.isArray(dirs)) return [];
     return dirs
       .filter((d): d is string => typeof d === "string" && d.length > 0)
-      .map((d) => (d === "~" || d.startsWith("~/") ? path.join(os.homedir(), d.slice(1)) : path.resolve(base, d)));
+      .map((d) => (d === "~" || d.startsWith("~/") ? path.join(paths.home, d.slice(1)) : path.resolve(base, d)));
   } catch {
     return [];
   }

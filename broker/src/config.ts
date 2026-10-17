@@ -1,8 +1,17 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { paths } from "./paths.ts";
+
+export { paths };
+
+// How broker sessions (the ones ccrc starts itself through the Agent SDK) sign in. off: none start, VS Code sessions are
+// still driven; apiKey: with the key in <configDir>/anthropic-api-key; subscription: with Claude Code's own login.
+export type BrokerSessions = "off" | "apiKey" | "subscription";
+export const BROKER_SESSIONS: readonly BrokerSessions[] = ["off", "apiKey", "subscription"];
 
 export interface Config {
+  // The config format; see MIGRATIONS.
+  schemaVersion?: number;
   host: string;
   port: number;
   // Tailnet machine names (first DNS label, e.g. "phone") allowed through `tailscale serve`.
@@ -16,25 +25,14 @@ export interface Config {
   roots: string[];
   leaseIdleMinutes: number;
   sessionIdleMinutes: number;
+  // Unset only where a config is made in code; a config file always has it once migrated.
+  brokerSessions?: BrokerSessions;
 }
 
-const home = os.homedir();
 export const FOLLOW_VSCODE = "vscode";
 
-export const paths = {
-  configDir: process.env.CCRC_CONFIG_DIR || path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), "ccrc"),
-  stateDir: process.env.CCRC_STATE_DIR || path.join(process.env.XDG_STATE_HOME || path.join(home, ".local", "state"), "ccrc"),
-  get configFile() {
-    return path.join(this.configDir, "config.json");
-  },
-  get credentialsFile() {
-    return path.join(this.configDir, "state.json");
-  },
-  get auditFile() {
-    return path.join(this.stateDir, "audit.jsonl");
-  },
-  webDir: new URL("../../web/dist/", import.meta.url).pathname,
-};
+type Obj = Record<string, unknown>;
+const isObject = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v);
 
 function defaults(): Config {
   return {
@@ -49,6 +47,201 @@ function defaults(): Config {
   };
 }
 
+// What a config file starts as when there is none.
+export function newConfig(): Config {
+  return { schemaVersion: SCHEMA_VERSION, ...defaults(), brokerSessions: "off" };
+}
+
+export function brokerSessionsOf(c: Pick<Config, "brokerSessions">): BrokerSessions {
+  return c.brokerSessions ?? "subscription";
+}
+
+// A config.json that cannot be used; the message names the file, and the key and what it takes.
+export class ConfigError extends Error {}
+
+// A config.json written by a newer ccrc.
+export class ConfigTooNewError extends ConfigError {}
+
+// Each step brings a config of the version before it to `to`, in place. A file without schemaVersion is version 0.
+interface Migration {
+  to: number;
+  run: (c: Obj) => void;
+}
+
+export const MIGRATIONS: readonly Migration[] = [
+  // Files from before brokerSessions existed keep broker sessions on Claude Code's own login, as they ran then.
+  {
+    to: 1,
+    run: (c) => {
+      if (c.brokerSessions === undefined) c.brokerSessions = "subscription";
+    },
+  },
+];
+
+export const SCHEMA_VERSION = MIGRATIONS.at(-1)!.to;
+
+const isText = (v: unknown) => typeof v === "string";
+const isTexts = (v: unknown) => Array.isArray(v) && v.every(isText);
+const isPositive = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v > 0;
+
+// The keys a config file may hold: their check and what the error says they take.
+const KEYS: Record<string, { ok: (v: unknown) => boolean; expected: string; restart?: boolean }> = {
+  schemaVersion: { ok: (v) => Number.isInteger(v) && (v as number) >= 0, expected: "a whole number" },
+  host: { ok: (v) => isText(v) && v !== "", expected: "a non-empty string", restart: true },
+  port: { ok: (v) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 65535, expected: "a whole number from 0 (any free port) to 65535", restart: true },
+  allowedDevices: { ok: isTexts, expected: "a list of strings" },
+  allowLocal: { ok: (v) => typeof v === "boolean", expected: "true or false" },
+  claudePath: { ok: isText, expected: `a string: a path, or "${FOLLOW_VSCODE}"`, restart: true },
+  roots: { ok: isTexts, expected: "a list of strings" },
+  leaseIdleMinutes: { ok: isPositive, expected: "a number above 0" },
+  sessionIdleMinutes: { ok: isPositive, expected: "a number above 0" },
+  brokerSessions: { ok: (v) => BROKER_SESSIONS.includes(v as BrokerSessions), expected: BROKER_SESSIONS.map((m) => `"${m}"`).join(", ") },
+};
+
+export const CONFIG_KEYS = Object.keys(KEYS);
+
+// Keys a running broker only takes in when it starts again.
+export const RESTART_KEYS = Object.keys(KEYS).filter((k) => KEYS[k].restart);
+
+function shown(v: unknown): string {
+  const s = JSON.stringify(v);
+  return s === undefined ? String(v) : s.length > 60 ? `${s.slice(0, 57)}...` : s;
+}
+
+// Where in the text JSON.parse gave up, found by walking the text the way JSON reads.
+export function jsonErrorAt(text: string): number {
+  let i = 0;
+  const ws = () => {
+    while (i < text.length && " \t\n\r".includes(text[i])) i++;
+  };
+  const fail = (): never => {
+    throw i;
+  };
+  const literal = (word: string) => {
+    if (text.startsWith(word, i)) i += word.length;
+    else fail();
+  };
+  const str = () => {
+    i++;
+    while (i < text.length && text[i] !== '"') {
+      if (text.charCodeAt(i) < 0x20) fail();
+      if (text[i] === "\\") {
+        i++;
+        if (text[i] === "u") {
+          if (!/^[0-9a-fA-F]{4}$/.test(text.slice(i + 1, i + 5))) fail();
+          i += 4;
+        } else if (!'"\\/bfnrt'.includes(text[i] ?? "x")) fail();
+      }
+      i++;
+    }
+    if (i >= text.length) fail();
+    i++;
+  };
+  const value = (): void => {
+    ws();
+    const c = text[i];
+    if (c === "{" || c === "[") {
+      const close = c === "{" ? "}" : "]";
+      i++;
+      ws();
+      if (text[i] === close) return void i++;
+      for (;;) {
+        if (c === "{") {
+          ws();
+          if (text[i] !== '"') fail();
+          str();
+          ws();
+          if (text[i] !== ":") fail();
+          i++;
+        }
+        value();
+        ws();
+        if (text[i] === ",") i++;
+        else if (text[i] === close) return void i++;
+        else fail();
+      }
+    }
+    if (c === '"') return str();
+    if (c === "t") return literal("true");
+    if (c === "f") return literal("false");
+    if (c === "n") return literal("null");
+    const m = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(i));
+    if (!m) fail();
+    i += m![0].length;
+  };
+  try {
+    value();
+    ws();
+    if (i < text.length) fail();
+  } catch (at) {
+    if (typeof at === "number") return Math.min(at, text.length);
+    throw at;
+  }
+  return text.length;
+}
+
+function lineColumn(text: string, at: number): { line: number; column: number } {
+  const before = text.slice(0, at).split("\n");
+  return { line: before.length, column: before.at(-1)!.length + 1 };
+}
+
+export function parseConfigText(text: string, file = paths.configFile): Obj {
+  let v: unknown;
+  try {
+    v = JSON.parse(text);
+  } catch {
+    const { line, column } = lineColumn(text, jsonErrorAt(text));
+    throw new ConfigError(`${file}: not valid JSON at line ${line}, column ${column}`);
+  }
+  if (!isObject(v)) throw new ConfigError(`${file}: must hold a JSON object`);
+  return v;
+}
+
+// The config brought to SCHEMA_VERSION in memory, with the version it had.
+export function applyMigrations(raw: Obj, file = paths.configFile): { config: Obj; from: number } {
+  const from = raw.schemaVersion === undefined ? 0 : raw.schemaVersion;
+  if (!KEYS.schemaVersion.ok(from)) throw new ConfigError(`${file}: "schemaVersion" must be ${KEYS.schemaVersion.expected}, not ${shown(from)}`);
+  const v = from as number;
+  if (v > SCHEMA_VERSION) {
+    throw new ConfigTooNewError(
+      `${file} is of format ${v}, newer than this ccrc knows (${SCHEMA_VERSION}). A newer ccrc wrote it: run \`ccrc update\` to that version, or \`ccrc rollback\`.`,
+    );
+  }
+  const config = structuredClone(raw);
+  for (const m of MIGRATIONS) if (m.to > v) m.run(config);
+  config.schemaVersion = SCHEMA_VERSION;
+  return { config, from: v };
+}
+
+// Checks every known key's type and returns warnings for the keys ccrc does not know.
+export function checkConfig(raw: Obj, file = paths.configFile): string[] {
+  const warnings: string[] = [];
+  for (const [key, value] of Object.entries(raw)) {
+    const k = KEYS[key];
+    if (!k) warnings.push(`${file}: unknown key "${key}" is ignored`);
+    else if (!k.ok(value)) throw new ConfigError(`${file}: "${key}" must be ${k.expected}, not ${shown(value)}`);
+  }
+  return warnings;
+}
+
+export interface ReadConfig {
+  config: Config;
+  // As the file holds it.
+  raw: Obj;
+  // The format the file is of, before any migration.
+  from: number;
+  warnings: string[];
+}
+
+// The config a file holds, migrated in memory and checked, over the defaults. Throws ConfigError.
+export function readConfig(file = paths.configFile): ReadConfig {
+  const raw = parseConfigText(fs.readFileSync(file, "utf8"), file);
+  const { config, from } = applyMigrations(raw, file);
+  const warnings = checkConfig(config, file);
+  const known = Object.fromEntries(Object.entries(config).filter(([k]) => k in KEYS));
+  return { config: { ...defaults(), brokerSessions: "off", ...known } as Config, raw, from, warnings };
+}
+
 export function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
@@ -61,12 +254,18 @@ export function writeFileAtomic(file: string, data: string): void {
   fs.renameSync(tmp, file);
 }
 
-export function loadConfig(): Config {
-  const base = defaults();
-  if (!fs.existsSync(paths.configFile)) {
-    writeFileAtomic(paths.configFile, JSON.stringify(base, null, 2) + "\n");
-    return base;
+export function writeConfig(raw: Obj, file = paths.configFile): void {
+  writeFileAtomic(file, JSON.stringify(raw, null, 2) + "\n");
+}
+
+// The config, made with the defaults of a new install when there is no file. Warnings go to stderr.
+export function loadConfig(file = paths.configFile): Config {
+  if (!fs.existsSync(file)) {
+    const fresh = newConfig();
+    writeConfig(fresh as unknown as Obj, file);
+    return fresh;
   }
-  const raw = JSON.parse(fs.readFileSync(paths.configFile, "utf8")) as Partial<Config>;
-  return { ...base, ...raw };
+  const r = readConfig(file);
+  for (const w of r.warnings) console.warn(`ccrc: ${w}`);
+  return r.config;
 }

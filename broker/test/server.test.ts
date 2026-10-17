@@ -17,15 +17,20 @@ import { tempDir, tempStore } from "./helpers.ts";
 const ORIGIN = { origin: "http://localhost:80" };
 const status = async () => ({ Peer: { a: { DNSName: "phone.example.ts.net.", TailscaleIPs: ["100.64.0.2"] } } });
 
-async function setup(log?: { stream: NodeJS.WritableStream }) {
+async function setup(log?: { stream: NodeJS.WritableStream }, o: { allowLocal?: boolean } = {}) {
   const store = tempStore();
   const leases = new Leases(store, 60);
-  const manager = { list: async () => [], folders: async () => [], models: [] } as unknown as SessionManager;
+  const manager = {
+    list: async () => [],
+    folders: async () => [],
+    modelList: async () => [],
+    brokerSessions: () => ({ mode: "off", ready: false }),
+  } as unknown as SessionManager;
   const hub = { attach() {} } as unknown as Hub;
   const app = await buildServer({
     store,
     leases,
-    gate: new DeviceGate(["phone"], true, status),
+    gate: new DeviceGate(["phone"], o.allowLocal ?? true, status),
     audit: new Audit(path.join(tempDir(), "audit.jsonl")),
     manager,
     hub,
@@ -35,6 +40,7 @@ async function setup(log?: { stream: NodeJS.WritableStream }) {
     webDir: tempDir(),
     logLevel: log ? "info" : "silent",
     logStream: log?.stream,
+    version: () => "v0.7.0-2-gabcdef1",
   });
   return { app, store, leases };
 }
@@ -85,6 +91,26 @@ test("unknown tailnet machines are refused before anything else", async () => {
   const { app } = await setup();
   const res = await app.inject({ method: "GET", url: "/api/me", headers: { "x-forwarded-for": "100.64.0.3" } });
   assert.equal(res.statusCode, 403);
+});
+
+test("ping answers the version without a login, to this machine even when allowLocal is off", async () => {
+  const { app } = await setup(undefined, { allowLocal: false });
+  const local = await app.inject({ method: "GET", url: "/api/ping" });
+  assert.equal(local.statusCode, 200);
+  assert.deepEqual(local.json(), { ok: true, version: "v0.7.0-2-gabcdef1" });
+  assert.equal((await app.inject({ method: "GET", url: "/api/ping?x=1" })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/api/me" })).statusCode, 403, "nothing else is let in");
+  assert.equal((await app.inject({ method: "GET", url: "/api/ping", headers: { "x-forwarded-for": "100.64.0.2" } })).statusCode, 200, "an allowed device");
+  assert.equal((await app.inject({ method: "GET", url: "/api/ping", headers: { "x-forwarded-for": "100.64.0.3" } })).statusCode, 403, "another machine");
+  assert.equal((await app.inject({ method: "GET", url: "/api/ping", remoteAddress: "100.64.0.3" })).statusCode, 403, "not through tailscale serve");
+});
+
+test("options say how broker sessions sign in", async () => {
+  const { app, store } = await setup();
+  await setCredentials(store, "owner", "correct horse battery");
+  const login = await app.inject({ method: "POST", url: "/api/login", headers: ORIGIN, payload: { id: "owner", password: "correct horse battery" } });
+  const res = await app.inject({ method: "GET", url: "/api/options", headers: { cookie: cookieOf(login) } });
+  assert.deepEqual(res.json().brokerSessions, { mode: "off", ready: false });
 });
 
 test("session data needs a login", async () => {

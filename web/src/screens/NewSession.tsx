@@ -7,7 +7,7 @@ import { NEW_SESSION_SCOPE, takeAttachments } from "../components/composer/attac
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { WorktreeOption, worktreeBlocked, worktreeChoice, type FolderGit, type WorktreeDraft } from "../components/WorktreeOption.tsx";
-import { errorText, shortPath } from "../labels.ts";
+import { brokerSessionsBlocked, errorText, shortPath } from "../labels.ts";
 import { rememberSent } from "../sentPreviews.ts";
 import { offeredFolder, placeLabel } from "../worktree.ts";
 import { callFolder, navigate, onDraftFailed, onDraftStarted, openSettingsFrom, startNewSession, toast, useApp } from "../state.ts";
@@ -74,6 +74,7 @@ export function NewSession() {
   const sessions = useApp((s) => s.sessions);
   const starting = useApp((s) => Boolean(s.starting));
   const models = options?.models ?? NO_MODELS;
+  const brokerOff = brokerSessionsBlocked(options?.brokerSessions);
   const [chosen, setChosen] = useState<string | null>(kept.cwd);
   const [query, setQuery] = useState("");
   const [start, setStart] = useState<StartSettings>(kept.start);
@@ -288,7 +289,7 @@ export function NewSession() {
         models={models}
         controllable={false}
         starting={starting}
-        disabledReason={cwd ? undefined : "폴더를 고르세요"}
+        disabledReason={brokerOff ?? (cwd ? undefined : "폴더를 고르세요")}
         placeholder="무엇을 할까요?"
         onSend={sendOrHold}
         onStop={() => {}}

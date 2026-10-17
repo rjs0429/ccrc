@@ -13,7 +13,8 @@ process.env.CLAUDE_CONFIG_DIR = path.join(home, ".claude");
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 
 const { SessionSearch } = await import("../src/sessions/search.ts");
-const { loadHistory, projectDirName, PROJECTS } = await import("../src/sessions/history.ts");
+const { loadHistory, projectDirName } = await import("../src/sessions/history.ts");
+const PROJECTS = path.join(home, ".claude", "projects");
 const { registerSearch } = await import("../src/routes/search.ts");
 type Summary = import("../src/protocol.ts").SessionSummary;
 

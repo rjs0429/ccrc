@@ -87,6 +87,9 @@ export class Hub {
       if (this.active && sessionId === this.viewing) send(this.active, msg);
     });
     manager.on("changed", () => this.changed());
+    manager.on("options_changed", () => {
+      if (this.active) send(this.active, { t: "options_changed" });
+    });
     for (const ev of ["attached", "detached"]) {
       manager.on(ev, (sessionId: string) => {
         if (this.active && sessionId === this.viewing) void this.setView(sessionId).catch(() => {});

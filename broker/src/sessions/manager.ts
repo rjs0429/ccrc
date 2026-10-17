@@ -1,13 +1,13 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { listSessions, type ModelInfo, type SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
+import { readApiKey } from "../api-key.ts";
 import type { Audit } from "../audit.ts";
 import { ClaudeCli, type CliChoice } from "../claude-cli.ts";
 import { claudeSettingsFile } from "../claude-settings.ts";
-import { paths, writeFileAtomic, type Config } from "../config.ts";
+import { brokerSessionsOf, paths, writeFileAtomic, type Config } from "../config.ts";
 import type { Hello } from "../link/protocol.ts";
 import type { Link } from "../link/server.ts";
 import {
@@ -17,6 +17,7 @@ import {
   type ContextGauge,
   type DisplayItem,
   type EffortName,
+  type BrokerSessionsInfo,
   type ForkResult,
   type LiveState,
   type ModelOption,
@@ -42,7 +43,7 @@ import { ContextWindows, exactModel, gauge, lastModelId, lastUsage, widened, typ
 import type { ContentBlock, SessionCore } from "./core.ts";
 import { writeTitle } from "./custom-title.ts";
 import { searchFiles } from "./files.ts";
-import { PROJECTS, forkPoint, lastCwd, loadHistory, projectDirName, transcriptPath, turnPoint } from "./history.ts";
+import { forkPoint, lastCwd, loadHistory, projectDirName, transcriptPath, turnPoint } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
@@ -54,6 +55,10 @@ import { gitFolderInfo, removeWorktree, worktreeState, worktreeStatus, worktreeT
 import { WrappedSession } from "./wrapped.ts";
 
 const CATALOG_MS = 3000;
+// The error a start the brokerSessions setting refuses fails with, alone when the setting is "off".
+export const BROKER_SESSIONS_OFF = "broker_sessions_off";
+
+type LaunchEnv = Record<string, string | undefined>;
 const EXACT_KEEP = 500;
 const SNAPSHOT_ITEMS = 400;
 const FOCUS_BEFORE = 20;
@@ -175,7 +180,7 @@ async function worktreeOrigin(sessionId: string, cwd: string): Promise<string | 
 }
 
 // A probe loads no project settings, so any folder serves when the session's is gone.
-const probeDir = (cwd: string): string => (isFolder(cwd) ? cwd : os.homedir());
+const probeDir = (cwd: string): string => (isFolder(cwd) ? cwd : paths.home);
 
 // Owns the broker's Claude Code processes, tracks the VS Code ones reached through wrappers, and
 // answers questions about every session on the machine.
@@ -209,16 +214,18 @@ export class SessionManager extends EventEmitter {
   private exact = new Map<string, { size: number; model: string }>();
   private sent = new SentIndex();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
-  usageProbe: (cwd: string, claudePath?: string) => Promise<UsageInfo> = probeUsage;
+  usageProbe: (cwd: string, claudePath?: string, env?: LaunchEnv) => Promise<UsageInfo> = probeUsage;
   // Whether a phone can be reached now (connected, or the signed-in device gets notifications), so a VS Code
   // session's MCP input request is better answered there than declined by VS Code.
   remoteReachable: () => boolean = () => false;
   // Whether the app is open on a phone now; otherwise a taken input request waits only a short while.
   remoteWatching: () => boolean = () => false;
-  // Where the model list comes from before any session reported one: (cwd, Claude Code path).
-  modelProbe: (cwd: string, claudePath?: string) => Promise<ModelInfo[]> = probeModels;
-  // Where a model's context window comes from when no session reported it: (cwd, model, Claude Code path).
-  windowProbe: (cwd: string, model: string, claudePath?: string) => Promise<ContextWindow | undefined> = probeWindow;
+  // Where the model list comes from before any session reported one: (cwd, Claude Code path, sign-in environment).
+  modelProbe: (cwd: string, claudePath?: string, env?: LaunchEnv) => Promise<ModelInfo[]> = probeModels;
+  // Where a model's context window comes from when no session reported it: (cwd, model, Claude Code path, sign-in environment).
+  windowProbe: (cwd: string, model: string, claudePath?: string, env?: LaunchEnv) => Promise<ContextWindow | undefined> = probeWindow;
+  // The API key of brokerSessions "apiKey", read at each start.
+  apiKey: () => string | undefined = () => readApiKey();
   // The Claude Code each session and probe starts with, picked again for each, and where the pick is told.
   readonly cli: ClaudeCli;
   cliLog: (line: string) => void = (line) => console.log(line);
@@ -346,9 +353,10 @@ export class SessionManager extends EventEmitter {
 
   // The models Claude Code last offered; before any session reported them, asked once of a short-lived process.
   async modelList(): Promise<ModelOption[]> {
-    if (!this.models.length) {
+    const env = this.models.length ? undefined : this.probeEnv();
+    if (env) {
       this.modelsAsked ??= this.folders()
-        .then(async (dirs) => this.modelProbe(probeDir(dirs[0] ?? os.homedir()), (await this.claude()).path))
+        .then(async (dirs) => this.modelProbe(probeDir(dirs[0] ?? paths.home), (await this.claude()).path, env))
         .then(
           (list) => {
             if (!this.models.length) this.setModels(list);
@@ -472,12 +480,14 @@ export class SessionManager extends EventEmitter {
     if (!model) return undefined;
     let asked = this.probing.get(model);
     if (!asked) {
+      const env = this.probeEnv();
+      if (!env) return undefined;
       const forget = () => {
         setTimeout(() => this.probing.get(model) === asked && this.probing.delete(model), this.timing.probeRetryMs).unref();
         return undefined;
       };
       asked = this.claude()
-        .then((c) => this.windowProbe(probeDir(cwd), model, c.path))
+        .then((c) => this.windowProbe(probeDir(cwd), model, c.path, env))
         .then((w) => {
           if (!w) return forget();
           this.windows.learn(model, w);
@@ -523,6 +533,7 @@ export class SessionManager extends EventEmitter {
     const pending = this.starting.get(sessionId);
     if (pending) return pending;
     const p = (async (): Promise<SessionCore> => {
+      const env = this.launchEnv();
       const info = await this.info(sessionId);
       if (!info?.cwd) throw Error("unknown session");
       const folder = await this.resumeFolder(sessionId, info.cwd);
@@ -538,7 +549,7 @@ export class SessionManager extends EventEmitter {
       const start = this.starts.get(sessionId);
       const s = new BrokerSession(sessionId, cwd, history, titleOf(info));
       this.adopt(s);
-      s.start({ resume: true, claudePath: cli.path, ...startOptions(start) });
+      s.start({ resume: true, claudePath: cli.path, env, ...startOptions(start) });
       this.logCli(s.id, cli);
       this.starts.delete(sessionId);
       if (start) this.audit?.log("start_settings", { sessionId, ...start });
@@ -562,12 +573,13 @@ export class SessionManager extends EventEmitter {
     cwd: string,
     opts: { model?: string; mode?: PermissionModeName; effort?: EffortName; ultracode?: boolean; fast?: boolean; thinking?: boolean; worktree?: WorktreeChoice },
   ): Promise<BrokerSession> {
+    const env = this.launchEnv();
     const dir = await this.resolveFolder(cwd);
     const made = opts.worktree ? await this.worktreeFor(dir, opts.worktree) : undefined;
     const cli = await this.claude();
     const s = new BrokerSession(randomUUID(), dir);
     this.adopt(s);
-    s.start({ ...opts, claudePath: cli.path });
+    s.start({ ...opts, claudePath: cli.path, env });
     this.logCli(s.id, cli);
     if (opts.worktree) await this.inWorktree(s, made);
     return s;
@@ -592,7 +604,7 @@ export class SessionManager extends EventEmitter {
       await s.started(this.timing.worktreeStartMs);
     } catch (e) {
       await s.close("failed");
-      for (const d of ["file-history", "session-env"]) fs.rmSync(path.join(path.dirname(claudeSettingsFile()), d, s.id), { recursive: true, force: true });
+      for (const d of ["file-history", "session-env"]) fs.rmSync(path.join(paths.claudeConfigDir, d, s.id), { recursive: true, force: true });
       throw e;
     }
     if (place && isFolder(place)) s.moveTo(place);
@@ -636,6 +648,7 @@ export class SessionManager extends EventEmitter {
     if (taken) return { sessionId: taken.id, cwd: taken.cwd, title: taken.title ?? "" };
     const kept = transcriptPath(req.id) ? await this.info(req.id) : undefined;
     if (kept?.cwd) return { sessionId: req.id, cwd: kept.cwd, title: titleOf(kept) };
+    const env = this.launchEnv();
     const source = this.controlled(sourceId);
     const info = await this.info(sourceId);
     if (!source && !info?.cwd) throw Error("unknown session");
@@ -649,14 +662,14 @@ export class SessionManager extends EventEmitter {
     const cli = await this.claude();
     const s = new BrokerSession(req.id, cwd, [], title);
     this.adopt(s);
-    s.start({ fork: { from: sourceId, ...(point?.at ? { at: point.at } : {}) }, claudePath: cli.path, ...this.forkSettings(sourceId, source) });
+    s.start({ fork: { from: sourceId, ...(point?.at ? { at: point.at } : {}) }, claudePath: cli.path, env, ...this.forkSettings(sourceId, source) });
     this.logCli(s.id, cli);
     try {
       await s.started(FORK_START_MS);
       await s.command(`/rename ${title}`, FORK_NAME_MS);
     } catch (e) {
       await s.close("fork_failed");
-      if (!transcriptPath(req.id, cwd)) fs.rmSync(path.join(os.homedir(), ".claude", "file-history", req.id), { recursive: true, force: true });
+      if (!transcriptPath(req.id, cwd)) fs.rmSync(path.join(paths.claudeConfigDir, "file-history", req.id), { recursive: true, force: true });
       throw Error(`fork failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     s.builder.seed(await this.written(s));
@@ -727,6 +740,32 @@ export class SessionManager extends EventEmitter {
     const restored = files && s && !s.closed ? await s.rewind(messageId, false).catch(failed) : undefined;
     const done = { prefill: message.text, ...(restored ? { files: restored } : {}) };
     return "draft" in r ? { mode: "draft", cwd: r.draft.cwd, ...done } : { mode: "forked", sessionId: r.sessionId, ...done };
+  }
+
+  // How the Claude Code processes this broker starts sign in, and whether one may start now.
+  brokerSessions(): BrokerSessionsInfo {
+    const mode = brokerSessionsOf(this.cfg);
+    return { mode, ready: mode === "subscription" || (mode === "apiKey" && Boolean(this.apiKey())) };
+  }
+
+  // What a Claude Code process this broker starts adds to its environment to sign in. Fails with BROKER_SESSIONS_OFF
+  // when brokerSessions is "off", or "apiKey" without a key. The key reaches the process and nothing else.
+  private launchEnv(): LaunchEnv {
+    const mode = brokerSessionsOf(this.cfg);
+    if (mode === "subscription") return {};
+    if (mode === "off") throw Error(BROKER_SESSIONS_OFF);
+    const key = this.apiKey();
+    if (!key) throw Error(`${BROKER_SESSIONS_OFF}: no API key`);
+    return { ANTHROPIC_API_KEY: key, CLAUDE_CODE_OAUTH_TOKEN: undefined };
+  }
+
+  // The same for a probe, which is left out when no process may start.
+  private probeEnv(): LaunchEnv | undefined {
+    try {
+      return this.launchEnv();
+    } catch {
+      return undefined;
+    }
   }
 
   // The Claude Code to start now; the ones running sessions use stay.
@@ -804,7 +843,7 @@ export class SessionManager extends EventEmitter {
 
   // Sessions whose transcript is gone, as Claude Code removes old ones, leave the archive.
   pruneArchived(): void {
-    const ids = transcriptIds(PROJECTS);
+    const ids = transcriptIds(paths.claudeProjectsDir);
     if (ids) this.archive.prune((id) => ids.has(id));
   }
 
@@ -953,7 +992,9 @@ export class SessionManager extends EventEmitter {
         return { limits: (await s.usage()).limits };
       } catch {}
     }
-    return this.usageProbe(probeDir(cwd), (await this.claude()).path);
+    const env = this.probeEnv();
+    if (!env) return { limits: [] };
+    return this.usageProbe(probeDir(cwd), (await this.claude()).path, env);
   }
 
   // What reading a linked file needs: the folder the session started in, the one it last worked in,

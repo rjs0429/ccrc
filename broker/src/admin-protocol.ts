@@ -1,5 +1,7 @@
 // Shapes of the Claude Code settings, audit log and health endpoints, shared by the broker and the web client.
 
+import type { BrokerSessionsInfo } from "./protocol.ts";
+
 export type SettingField =
   | { key: string; kind: "choice"; values: string[] }
   | { key: string; kind: "text"; pattern: RegExp }
@@ -110,6 +112,7 @@ export interface HealthInfo {
   brokerCli?: { source: "config" | "vscode" | "global" | "sdk"; version?: string; path?: string };
   last?: DoctorResult;
   running: boolean;
+  brokerSessions?: BrokerSessionsInfo;
 }
 
 // Claude sends files to the phone from broker sessions only with this Claude Code or newer.

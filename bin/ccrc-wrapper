@@ -14,22 +14,26 @@ if [ -z "$stream" ] || [ "${CLAUDE_CODE_CONFIG_PROBE:-}" = 1 ] || [ "${CCRC_WRAP
   exec "$@"
 fi
 
-DEFAULT_NODE=$HOME/.local/opt/node22/bin/node
-NODE=${CCRC_NODE:-$DEFAULT_NODE}
-[ -x "$NODE" ] || NODE=$(command -v node || true)
+# Node 22.18 or newer, looked for as bin/ccrc does; VS Code started from a desktop may have none on its PATH.
+ROOT=$(dirname "$(readlink -f "$0")")/..
+DATA=${CCRC_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ccrc}
+INSTALLED=
+[ -f "$ROOT/.ccrc-install.json" ] && INSTALLED=$(sed -n 's/.*"node"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/.ccrc-install.json" | head -n 1)
+NODE=
+for c in "${CCRC_NODE:-}" "$DATA/node/bin/node" "$INSTALLED" "$(command -v node || true)"; do
+  if [ -n "$c" ] && [ -x "$c" ] && "$c" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=18)?0:1)' 2>/dev/null; then
+    NODE=$c
+    break
+  fi
+done
 [ -n "$NODE" ] || exec "$@"
 
-# The relay built by `npm run build` is used while it is newer than its sources; otherwise the sources
-# run directly, which needs a Node that strips TypeScript.
-SRC=$(dirname "$(readlink -f "$0")")/../broker/src
-JS=$SRC/../dist/wrapper/main.js
-if [ -f "$JS" ] && [ -z "$(find "$SRC/wrapper" "$SRC/link" "$SRC/sessions/live.ts" -name '*.ts' -newer "$JS" 2>/dev/null | head -n 1)" ]; then
+# The relay built by `npm run build` is used while it is newer than its sources; otherwise the sources run directly.
+SRC=$ROOT/broker/src
+JS=$ROOT/broker/dist/wrapper/main.js
+if [ -f "$JS" ] && [ -z "$(find "$SRC/wrapper" "$SRC/link" "$SRC/sessions/live.ts" "$SRC/paths.ts" -name '*.ts' -newer "$JS" 2>/dev/null | head -n 1)" ]; then
   MAIN=$JS
-  if [ "$NODE" != "$DEFAULT_NODE" ]; then
-    "$NODE" -e 'process.exit(+process.versions.node.split(".")[0] >= 20 ? 0 : 1)' 2>/dev/null || exec "$@"
-  fi
 else
   MAIN=$SRC/wrapper/main.ts
-  "$NODE" -e 'process.exit(process.features.typescript ? 0 : 1)' 2>/dev/null || exec "$@"
 fi
 exec "$NODE" --no-warnings "$MAIN" "$@"

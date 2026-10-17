@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { paths } from "../paths.ts";
 
 const SIGNALS: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
 const LOG_MAX_BYTES = 1024 * 1024;
@@ -10,12 +11,7 @@ const FLUSH_WAIT_MS = 2000;
 
 const [claudePath, ...args] = process.argv.slice(2);
 
-function stateDir(): string {
-  const home = process.env.HOME ?? "";
-  return process.env.CCRC_STATE_DIR || path.join(process.env.XDG_STATE_HOME || path.join(home, ".local", "state"), "ccrc");
-}
-
-const logFile = process.env.CCRC_WRAPPER_LOG || path.join(stateDir(), "wrapper.log");
+const logFile = process.env.CCRC_WRAPPER_LOG || path.join(paths.stateDir, "wrapper.log");
 
 function log(msg: string): void {
   try {
@@ -80,7 +76,7 @@ async function main(): Promise<void> {
       hostOut: process.stdout,
       log,
       hostPid: process.ppid,
-      turns: vscode.continuesAfterReload(dataDir) ? new TurnStore({ dir: path.join(stateDir(), "turns") }) : undefined,
+      turns: vscode.continuesAfterReload(dataDir) ? new TurnStore({ dir: path.join(paths.stateDir, "turns") }) : undefined,
     });
   } catch (e) {
     return runDirect(e instanceof Error ? e.message : String(e));

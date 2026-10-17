@@ -1,10 +1,26 @@
 #!/usr/bin/env bash
-# Runs the broker CLI with Node 22.18+ (the one on PATH, else ~/.local/opt/node22).
-NODE=${CCRC_NODE:-}
-if [ -z "$NODE" ]; then
-  NODE=$(command -v node || true)
-  if [ -z "$NODE" ] || ! "$NODE" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=18)?0:1)'; then
-    NODE=$HOME/.local/opt/node22/bin/node
+# Runs the broker CLI with Node 22.18 or newer: $CCRC_NODE, the install's own Node (<dataDir>/node), the Node the
+# install info names, then the one on PATH. bin/ccrc-wrapper looks in the same order.
+ROOT=$(dirname "$(readlink -f "$0")")/..
+DATA=${CCRC_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ccrc}
+
+node_ok() {
+  [ -n "$1" ] && [ -x "$1" ] && "$1" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=18)?0:1)' 2>/dev/null
+}
+
+installed_node() {
+  [ -f "$ROOT/.ccrc-install.json" ] && sed -n 's/.*"node"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/.ccrc-install.json" | head -n 1
+}
+
+NODE=
+for c in "${CCRC_NODE:-}" "$DATA/node/bin/node" "$(installed_node)" "$(command -v node || true)"; do
+  if node_ok "$c"; then
+    NODE=$c
+    break
   fi
+done
+if [ -z "$NODE" ]; then
+  echo "ccrc needs Node.js 22.18 or newer: set CCRC_NODE, or put one on PATH" >&2
+  exit 1
 fi
-exec "$NODE" "$(dirname "$(readlink -f "$0")")/../broker/src/main.ts" "$@"
+exec "$NODE" "$ROOT/broker/src/main.ts" "$@"

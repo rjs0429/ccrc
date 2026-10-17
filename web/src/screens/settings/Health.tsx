@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { SEND_FILES_CLI, type DoctorCheck, type HealthInfo } from "../../../../broker/src/admin-protocol.ts";
 import { request } from "../../api.ts";
 import { Button, Icon, Spinner } from "../../components/ui.tsx";
+import { BROKER_SESSIONS_LABEL } from "../../labels.ts";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
 
 const RECHECK_MS = 3000;
@@ -60,6 +61,13 @@ function wrapperText(w: HealthInfo["wrapper"]): string {
   return w.thisBroker ? "켜짐" : "켜짐 · 다른 경로";
 }
 
+// The brokerSessions setting, which only the laptop changes.
+function brokerSessionsText(b: HealthInfo["brokerSessions"]): string {
+  if (!b) return "-";
+  const label = BROKER_SESSIONS_LABEL[b.mode] ?? b.mode;
+  return b.mode === "apiKey" ? `${label} · ${b.ready ? "설정됨" : "키 없음"}` : label;
+}
+
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3 py-2.5 text-[15px]">
@@ -110,6 +118,7 @@ export function HealthSection() {
           <Row label="원격 세션 CLI" value={cliText(info.brokerCli)} />
           <Row label="ccrc" value={info.brokerVersion ?? "-"} />
           <Row label="VS Code 래퍼" value={wrapperText(info.wrapper)} />
+          <Row label="원격 세션 인증" value={brokerSessionsText(info.brokerSessions)} />
         </div>
       )}
       {last && (
@@ -151,6 +160,9 @@ export function HealthSection() {
       <p className="px-1 text-xs leading-relaxed text-muted">
         VS Code 확장에 든 Claude Code를 래퍼로 띄워, 모델을 부르지 않고 첫 응답과 종료까지 확인합니다. 6시간마다 확장 버전을 보고, 바뀌었거나 지난 점검이 실패했으면 다시
         점검합니다.
+      </p>
+      <p className="px-1 text-xs leading-relaxed text-muted" data-broker-sessions-note>
+        원격 세션 인증은 여기서 새로 시작하는 Claude Code가 로그인하는 방식입니다. 노트북에서 ccrc config set brokerSessions off · apiKey · subscription 으로 바꿉니다.
       </p>
     </section>
   );

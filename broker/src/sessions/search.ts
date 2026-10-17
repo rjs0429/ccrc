@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { setImmediate as yieldNow, setTimeout as pause } from "node:timers/promises";
+import { paths } from "../paths.ts";
 import type { SessionSummary } from "../protocol.ts";
 import { SEARCH_LIMIT_MAX, SEARCH_QUERY_MAX, type Mark, type SearchResponse, type SearchResult, type SearchSnippet } from "../search-protocol.ts";
-import { PROJECTS, projectDirName } from "./history.ts";
+import { projectDirName } from "./history.ts";
 import { typedText } from "./items.ts";
 
 export interface SearchLimits {
@@ -209,7 +210,7 @@ export class SessionSearch {
   private limits: SearchLimits;
   private root: string;
 
-  constructor(limits: Partial<SearchLimits> = {}, root = PROJECTS) {
+  constructor(limits: Partial<SearchLimits> = {}, root = paths.claudeProjectsDir) {
     this.limits = { ...LIMITS, ...limits };
     this.root = root;
   }

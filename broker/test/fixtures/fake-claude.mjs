@@ -12,7 +12,7 @@
 // "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data, and
 // "/status" the same way with text only; "/help" as a command headless Claude Code cannot open, with no name; get_usage fails while the working folder holds a file named .fake-no-usage.
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
-// FAKE_REQUESTS=<file> gets a line with its arguments and environment and then one per control request or user message it receives.
+// FAKE_REQUESTS=<file> gets a line with its arguments, environment and sign-in variables and then one per control request or user message it receives.
 // get_settings reports a --model starting with "claude-" as the model; one naming "no-ultracode" does not offer Ultracode, which
 // --settings {"ultracode":true} asks for. get_task_output answers with a coloured line naming the task.
 // --version prints a version and exits.
@@ -49,8 +49,12 @@ const ultracodeAvailable = !modelArg.includes("no-ultracode");
 const sid = value("--session-id") || (args.includes("--fork-session") ? undefined : value("--resume")) || randomUUID();
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const record = (m) => process.env.FAKE_REQUESTS && fs.appendFileSync(process.env.FAKE_REQUESTS, JSON.stringify(m) + "\n");
-const { CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP, CLAUDE_CODE_ARTIFACT, CLAUDE_CODE_SEND_FEEDBACK } = process.env;
-record({ args, env: { CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP, CLAUDE_CODE_ARTIFACT, CLAUDE_CODE_SEND_FEEDBACK } });
+const { CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP, CLAUDE_CODE_ARTIFACT, CLAUDE_CODE_SEND_FEEDBACK, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN } = process.env;
+record({
+  args,
+  env: { CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_CLIENT_APP, CLAUDE_CODE_ARTIFACT, CLAUDE_CODE_SEND_FEEDBACK },
+  auth: { apiKey: ANTHROPIC_API_KEY ?? null, oauthToken: CLAUDE_CODE_OAUTH_TOKEN !== undefined },
+});
 let asks = 0;
 let holding = false;
 const queue = [];

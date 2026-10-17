@@ -1,7 +1,5 @@
-import os from "node:os";
 import path from "node:path";
-import { claudeSettingsFile } from "../claude-settings.ts";
-import { paths } from "../config.ts";
+import { paths } from "../paths.ts";
 
 export function inside(p: string, root: string): boolean {
   const rel = path.relative(root, p);
@@ -56,7 +54,7 @@ export function isSecretPath(p: string): boolean {
   if (SECRET_SUBPATHS.some((s) => `${lower}/`.includes(s))) return true;
   if (segs[0] === "proc") return true;
   // The user's Claude Code settings hold env values the settings screen hides.
-  const claudeDirs = [path.join(os.homedir(), ".claude"), path.dirname(claudeSettingsFile())].map((d) => d.toLowerCase());
+  const claudeDirs = [path.join(paths.home, ".claude"), paths.claudeConfigDir].map((d) => d.toLowerCase());
   if (/^settings(\.local)?\.json$/.test(name) && claudeDirs.includes(path.dirname(lower))) return true;
   return [paths.configDir, paths.stateDir].some((d) => inside(path.resolve(p), d));
 }

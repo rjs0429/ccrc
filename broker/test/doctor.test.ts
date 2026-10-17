@@ -53,7 +53,8 @@ test("passes when Claude Code answers through the wrapper and exits cleanly", as
   assert.equal(result.checks[2].detail, "1 models, 1 commands");
   assert.equal(result.extensionVersion, "2.1.296");
   assert.equal(result.cliVersion, "2.1.296");
-  assert.match(result.brokerVersion ?? "", /^[0-9a-f]{7,}$/);
+  // git describe of a checkout (a release tag and what came after it, or the commit before any tag), else package.json's.
+  assert.match(result.brokerVersion ?? "", /^(?:v?\d+\.\d+\.\d+\S*|[0-9a-f]{7,}(?:-dirty)?)$/);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(stateDir, "doctor.json"), "utf8")), result);
   assert.match(fs.readFileSync(path.join(stateDir, "doctor", "wrapper.log"), "utf8"), /not connecting/);
   const info = await doctor.info();

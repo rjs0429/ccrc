@@ -34,7 +34,7 @@ async function setup() {
     leases: new Leases(store, 60),
     gate: new DeviceGate([], true, async () => ({})),
     audit,
-    manager: { list: async () => [], folders: async () => [], models: [] } as unknown as SessionManager,
+    manager: { list: async () => [], folders: async () => [], models: [], brokerSessions: () => ({ mode: "apiKey", ready: false }) } as unknown as SessionManager,
     hub: { attach() {} } as unknown as Hub,
     uploads: new Uploads(tempDir()),
     push: new Push(tempDir()),
@@ -117,6 +117,7 @@ test("health: reports versions and runs a check on request, recorded in the audi
   const before = (await app.inject({ method: "GET", url: "/api/health", headers })).json() as HealthInfo;
   assert.deepEqual([before.extensionVersion, before.cliVersion, before.last, before.running], ["2.1.296", "2.1.296", undefined, false]);
   assert.deepEqual(before.wrapper, { on: false, thisBroker: false });
+  assert.deepEqual(before.brokerSessions, { mode: "apiKey", ready: false }, "the setting, and only whether a key is there");
   const res = await app.inject({ method: "POST", url: "/api/health/check", headers, payload: {} });
   assert.equal(res.statusCode, 200);
   const after = res.json() as HealthInfo;
