@@ -438,6 +438,21 @@ test("with allowed signers in the install, a tag must carry a signature from one
   assert.deepEqual(versions(unsigned), ["v0.7.0"]);
 });
 
+test("the repository's .ccrc-allowed-signers lists SSH keys for git signatures", (t) => {
+  const file = path.join(import.meta.dirname, "..", "..", ".ccrc-allowed-signers");
+  const lines = fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => l.trim() && !l.startsWith("#"));
+  assert.ok(lines.length > 0);
+  for (const line of lines) assert.match(line, /^\S+@\S+ namespaces="git" ssh-ed25519 [A-Za-z0-9+/]+=*$/);
+  if (spawnSync("ssh-keygen", ["-?"]).error) return t.skip("no ssh-keygen");
+  for (const line of lines) {
+    const r = spawnSync("ssh-keygen", ["-l", "-f", "-"], { input: line.split(" ").slice(2).join(" "), encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+  }
+});
+
 test("bin/ccrc update and rollback: options, a development checkout, and the status line", () => {
   const repo = makeRepo();
   const home = tempDir();
