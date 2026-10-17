@@ -27,7 +27,7 @@ DATA_DIR=${CCRC_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ccrc}
 STATE_DIR=${CCRC_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ccrc}
 BIN_DIR=$HOME/.local/bin
 NODE_DIST=${CCRC_NODE_DIST:-https://nodejs.org/dist/latest-v22.x}
-TOOLS=(git curl tar xz sha256sum ssh-keygen)
+TOOLS=(git curl tar xz sha256sum)
 export npm_config_update_notifier=false npm_config_fund=false npm_config_audit=false
 
 VERSION=
@@ -191,18 +191,25 @@ prepare() {
   if [ "$DRY_RUN" = 0 ]; then confirm "Go on?" || die "stopped"; fi
 }
 
+without_ssh_keygen() {
+  say "warning: going on without ssh-keygen ($1): ccrc installs and runs without it, but ccrc update checks release signatures with it and stops until it is installed; $2"
+}
+
+# ssh-keygen is installed with the base tools, but only `ccrc update` uses it: without it alone the install goes on.
 install_tools() {
   step "base tools"
-  local missing=() pkgs=() pm= t
+  local missing=() all pkgs=() pm= t
   for t in "${TOOLS[@]}"; do command -v "$t" >/dev/null 2>&1 || missing+=("$t"); done
-  if [ "${#missing[@]}" -eq 0 ]; then
-    say "found ${TOOLS[*]}"
+  all=(${missing[@]+"${missing[@]}"})
+  command -v ssh-keygen >/dev/null 2>&1 || all+=(ssh-keygen)
+  if [ "${#all[@]}" -eq 0 ]; then
+    say "found ${TOOLS[*]} ssh-keygen"
     return
   fi
   for t in apt-get dnf pacman zypper; do
     if command -v "$t" >/dev/null 2>&1; then pm=$t; break; fi
   done
-  for t in "${missing[@]}"; do
+  for t in "${all[@]}"; do
     case "$t" in
       xz) if [ "$pm" = apt-get ]; then pkgs+=(xz-utils); else pkgs+=(xz); fi ;;
       sha256sum) pkgs+=(coreutils) ;;
@@ -222,22 +229,43 @@ install_tools() {
     dnf) cmd="sudo dnf install -y ${pkgs[*]}" ;;
     pacman) cmd="sudo pacman -S --needed --noconfirm ${pkgs[*]}" ;;
     zypper) cmd="sudo zypper install -y ${pkgs[*]}" ;;
-    *) die "missing ${missing[*]}, and no apt-get, dnf, pacman or zypper to install them with: install them and run this again" ;;
+    *)
+      [ "${#missing[@]}" -eq 0 ] || die "missing ${all[*]}, and no apt-get, dnf, pacman or zypper to install them with: install them and run this again"
+      without_ssh_keygen "no apt-get, dnf, pacman or zypper to install it with" "install OpenSSH's client with the system's package manager"
+      return
+      ;;
   esac
   if [ "$DRY_RUN" = 1 ]; then
-    say "missing ${missing[*]}; would run, after asking for sudo (--yes does not cover it): $cmd"
+    say "missing ${all[*]}; would run, after asking for sudo (--yes does not cover it): $cmd"
+    [ "${#missing[@]}" -gt 0 ] || say "without ssh-keygen the install would go on, with a warning: only ccrc update needs it"
     return
   fi
-  [ "$NO_SYSTEM" = 0 ] || die "missing ${missing[*]}; --no-system does not install them: $cmd"
-  say "missing ${missing[*]}; to install them: $cmd"
-  local consent=0
-  sudo_ok "install ${missing[*]} with the system's package manager; ccrc needs them to fetch, build and check its updates" || consent=$?
+  if [ "$NO_SYSTEM" = 1 ]; then
+    [ "${#missing[@]}" -eq 0 ] || die "missing ${all[*]}; --no-system does not install them: $cmd"
+    without_ssh_keygen "--no-system does not install it" "to install it: $cmd"
+    return
+  fi
+  say "missing ${all[*]}; to install them: $cmd"
+  local consent=0 why="ccrc needs them to fetch, build and check its updates"
+  [ "${#missing[@]}" -gt 0 ] || why="ccrc update checks release signatures with it"
+  sudo_ok "install ${all[*]} with the system's package manager; $why" || consent=$?
+  if [ "${#missing[@]}" -gt 0 ]; then
+    case "$consent" in
+      0) ;;
+      2) die "sudo consent needed to install ${all[*]}: run install.sh in a terminal to be asked, or again with --allow-sudo; or install them yourself ($cmd) and run this again" ;;
+      *) die "install ${all[*]} and run this again" ;;
+    esac
+    if [ -n "$TTY" ]; then sh -c "$cmd" <"$TTY"; else sh -c "$cmd"; fi
+    return
+  fi
   case "$consent" in
     0) ;;
-    2) die "sudo consent needed to install ${missing[*]}: run install.sh in a terminal to be asked, or again with --allow-sudo; or install them yourself ($cmd) and run this again" ;;
-    *) die "install ${missing[*]} and run this again" ;;
+    2) without_ssh_keygen "sudo consent needed: run install.sh in a terminal to be asked, or with --allow-sudo" "to install it: $cmd"; return ;;
+    *) without_ssh_keygen "not installed" "to install it: $cmd"; return ;;
   esac
-  if [ -n "$TTY" ]; then sh -c "$cmd" <"$TTY"; else sh -c "$cmd"; fi
+  local code=0
+  if [ -n "$TTY" ]; then sh -c "$cmd" <"$TTY" || code=$?; else sh -c "$cmd" || code=$?; fi
+  [ "$code" -eq 0 ] || without_ssh_keygen "installing it failed with exit code $code" "to install it: $cmd"
 }
 
 fetch_node() {

@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import type { DoctorResult } from "../src/admin-protocol.ts";
 import { SetupUsageError, runSetup, type Ctx, type SetupOptions, type Where } from "../src/setup/engine.ts";
-import { withDefaults, type Choice, type Prompt, type RunResult, type Runner } from "../src/setup/io.ts";
+import { realRunner, withDefaults, type Choice, type Prompt, type RunResult, type Runner } from "../src/setup/io.ts";
 import { parseSetupArgs, rootRefusal } from "../src/setup/cli.ts";
 import { unitMatches, unitProgram, unitText } from "../src/setup/service.ts";
 import { STEPS } from "../src/setup/steps.ts";
-import { sshKeygenInstall } from "../src/ssh-keygen.ts";
-import { phones, reachesBroker } from "../src/setup/tailscale.ts";
+import { gitSshKeygenProblem, sshKeygenFix, sshKeygenInstall, sshKeygenTooOld } from "../src/ssh-keygen.ts";
+import { phones, reachesBroker, type TsNode } from "../src/setup/tailscale.ts";
 import { runUninstall, safeToRemove } from "../src/setup/uninstall.ts";
 import { WRAPPER_SETTING, changeSetting, editSettingsText, parseSettingsText } from "../src/setup/vscode-settings.ts";
 import { tempDir } from "./helpers.ts";
@@ -25,7 +26,9 @@ interface World {
   operator: boolean;
   magicDns: boolean;
   certs: boolean;
-  peers: { DNSName: string; OS: string; Online: boolean }[];
+  // This machine belongs to Tailscale user 1 (user@example.com) unless self says otherwise.
+  self?: TsNode;
+  peers: TsNode[];
   served: Record<number, string>;
   enabled: boolean;
   active: boolean;
@@ -37,6 +40,8 @@ interface World {
   code: boolean;
   qrencode: boolean;
   sshKeygen: boolean;
+  // An ssh-keygen from before OpenSSH 8.2, without -Y find-principals.
+  oldOpenSsh: boolean;
   doctor?: DoctorResult;
 }
 
@@ -59,6 +64,7 @@ function freshWorld(): World {
     code: true,
     qrencode: true,
     sshKeygen: true,
+    oldOpenSsh: false,
   };
 }
 
@@ -71,7 +77,7 @@ function readyWorld(): World {
     operator: true,
     magicDns: true,
     certs: true,
-    peers: [{ DNSName: "phone.example.ts.net.", OS: "iOS", Online: true }],
+    peers: [{ DNSName: "phone.example.ts.net.", OS: "iOS", Online: true, UserID: 1 }],
     served: { 8443: "http://127.0.0.1:8737" },
     enabled: true,
     active: true,
@@ -85,6 +91,7 @@ const fail = (stderr: string, code = 1): RunResult => ({ code, stdout: "", stder
 
 // Commands that only read; --dry-run and the checks must not run any other.
 const READ_ONLY = [
+  /^ssh-keygen -Y find-principals -f \/dev\/null -s \/dev\/null$/,
   /^tailscale status --json$/,
   /^tailscale serve status( --json)?$/,
   /auth status --json$/,
@@ -139,8 +146,9 @@ function machine(world: World, o: { extension?: boolean; vscode?: boolean } = {}
   const calls: string[] = [];
   const status = () => ({
     BackendState: world.backend,
-    Self: { DNSName: "laptop.example.ts.net.", OS: "linux", Online: true },
+    Self: world.self ?? { DNSName: "laptop.example.ts.net.", OS: "linux", Online: true, UserID: 1 },
     Peer: Object.fromEntries(world.peers.map((p, i) => [`k${i}`, p])),
+    User: { "1": { ID: 1, LoginName: "user@example.com" }, "2": { ID: 2, LoginName: "other@example.com" } },
     CurrentTailnet: { MagicDNSEnabled: world.magicDns },
     CertDomains: world.certs ? ["laptop.example.ts.net"] : null,
   });
@@ -189,6 +197,10 @@ function machine(world: World, o: { extension?: boolean; vscode?: boolean } = {}
         return ok();
       }
       if (cmd === "qrencode") return ok("[QR]\n");
+      if (line === "ssh-keygen -Y find-principals -f /dev/null -s /dev/null") {
+        if (!world.sshKeygen) return fail("spawn ssh-keygen ENOENT", 127);
+        return world.oldOpenSsh ? fail("unknown option -- Y\nusage: ssh-keygen [-q] [-b bits] [-t dsa | ecdsa | ed25519 | rsa]\n") : fail("Couldn't parse signature: missing header\n", 255);
+      }
       return fail(`unexpected: ${line}`, 99);
     },
     async attached(cmd, args) {
@@ -225,15 +237,17 @@ interface Answers {
   interactive?: boolean;
 }
 
-function fakePrompt(a: Answers = {}): Prompt & { asked: string[] } {
+function fakePrompt(a: Answers = {}): Prompt & { asked: string[]; offered: string[][] } {
   const asked: string[] = [];
+  const offered: string[][] = [];
   let waits = 0;
   return {
     asked,
+    offered,
     interactive: a.interactive ?? true,
     confirm: async (q, def) => (asked.push(q), a.confirm?.length ? a.confirm.shift()! : def),
     choose: async <T extends string>(q: string, _c: Choice<T>[], def: T) => (asked.push(q), (a.choose?.shift() as T | undefined) ?? def),
-    pick: async (q, _c, def) => (asked.push(q), a.pick?.shift() ?? def),
+    pick: async (q, c, def) => (asked.push(q), offered.push(c.map((x) => x.value)), a.pick?.shift() ?? def),
     text: async (q, def) => (asked.push(q), a.text?.shift() ?? def),
     secret: async (q) => (asked.push(q), a.secret?.shift() ?? ""),
     wait: async () => {
@@ -297,8 +311,8 @@ test("dry-run on a new machine runs only reading commands and writes nothing", a
 test("a full run on a new machine does every step, and a second run finds nothing to do", async () => {
   const m = machine(freshWorld());
   m.world.peers = [
-    { DNSName: "phone.example.ts.net.", OS: "iOS", Online: true },
-    { DNSName: "other-host.example.ts.net.", OS: "linux", Online: true },
+    { DNSName: "phone.example.ts.net.", OS: "iOS", Online: true, UserID: 1 },
+    { DNSName: "other-host.example.ts.net.", OS: "linux", Online: true, UserID: 1 },
   ];
   // The person signs in to Claude Code, then turns on HTTPS in the admin console while setup waits.
   const ctx = ctxOf(m, {}, {
@@ -538,7 +552,7 @@ test("devices waits for a phone to join the tailnet, or is left when the person 
   m.world.peers = [];
   const ctx = ctxOf(m, { only: ["devices"] }, {
     wait: (n) => {
-      if (n === 3) m.world.peers = [{ DNSName: "phone.example.ts.net.", OS: "android", Online: false }];
+      if (n === 3) m.world.peers = [{ DNSName: "phone.example.ts.net.", OS: "android", Online: false, UserID: 1 }];
       return undefined;
     },
   });
@@ -552,6 +566,145 @@ test("devices waits for a phone to join the tailnet, or is left when the person 
   const skipped = await runSetup([...STEPS], ctxOf(m2, { only: ["devices"] }, { wait: () => "skip" }));
   assert.deepEqual(outcomes(skipped), { devices: "left" });
   assert.ok(!fs.existsSync(m2.at.configFile));
+});
+
+const mine = (name: string, Online = true): TsNode => ({ DNSName: `${name}.example.ts.net.`, OS: "iOS", Online, UserID: 1 });
+const theirs = (name: string): TsNode => ({ DNSName: `${name}.example.ts.net.`, OS: "android", Online: true, UserID: 2 });
+const noWait = () => {
+  throw Error("devices waited under --yes");
+};
+
+test("devices --yes adds the phone when it is the only one of this machine's Tailscale user, online or not", async () => {
+  for (const peers of [[mine("phone")], [mine("phone", false), theirs("phone-b")]]) {
+    const m = machine(readyWorld());
+    m.world.peers = peers;
+    const { ctx, term, lines } = yesCtx(m, { only: ["devices"] }, false, [], { wait: noWait });
+    const r = await runSetup([...STEPS], ctx);
+    assert.deepEqual(outcomes(r), { devices: "done" }, lines.join("\n"));
+    assert.deepEqual(readJson(m.at.configFile).allowedDevices, ["phone"]);
+    assert.deepEqual(term.asked, []);
+    assert.match(lines.join("\n"), /add phone to allowedDevices: the only iOS or Android machine of your Tailscale user \(user@example\.com\) in the tailnet/);
+  }
+});
+
+test("devices --yes adds none when this user has two phones or none, says how to add one, and does not wait", async () => {
+  const cases = [
+    {
+      peers: [mine("tablet", false), mine("phone"), theirs("phone-b")],
+      says: "it has 2: phone, tablet (other users have phone-b).",
+      how: "Choose with `ccrc setup` in a terminal, without --yes, or name yours: ccrc config set allowedDevices '[\"phone\"]'",
+    },
+    {
+      peers: [theirs("phone-b")],
+      says: "it has none (other users have phone-b).",
+      how: "Sign in to Tailscale on the phone with the same account and run `ccrc setup` again, or name it: ccrc config set allowedDevices '[\"<name>\"]'",
+    },
+    { peers: [], says: "it has none.", how: "Sign in to Tailscale on the phone with the same account and run `ccrc setup` again" },
+  ];
+  for (const c of cases) {
+    const m = machine(readyWorld());
+    m.world.peers = c.peers;
+    const { ctx, term, lines } = yesCtx(m, { only: ["devices"] }, false, [], { wait: noWait });
+    const r = await runSetup([...STEPS], ctx);
+    assert.equal(r.ok, true);
+    assert.deepEqual(outcomes(r), { devices: "left" }, lines.join("\n"));
+    const said = lines.slice(lines.findIndex((l) => l.startsWith("No phone added")));
+    assert.equal(said[0], `No phone added: --yes adds one only when your Tailscale user (user@example.com) has exactly one iOS or Android machine in the tailnet, and ${c.says}`);
+    assert.ok(said[1].startsWith(c.how), said[1]);
+    assert.match(said[2], /^Not finished: no device allowed yet/);
+    assert.ok(!fs.existsSync(m.at.configFile));
+    assert.deepEqual(term.asked, []);
+  }
+});
+
+test("devices offers only this user's phones, and names the others as not offered", async () => {
+  const m = machine(readyWorld());
+  m.world.peers = [theirs("phone-b"), mine("tablet", false), mine("phone")];
+  const ctx = ctxOf(m, { only: ["devices"] });
+  const r = await runSetup([...STEPS], ctx);
+  assert.deepEqual(outcomes(r), { devices: "done" });
+  assert.deepEqual(ctx.ask.offered, [["phone", "tablet"]]);
+  assert.ok(ctx.ask.asked.includes("Which of your phones may use ccrc?"));
+  assert.deepEqual(readJson(m.at.configFile).allowedDevices, ["phone"], "the online ones unless chosen otherwise");
+  assert.match(ctx.lines.join("\n"), /Phones of other Tailscale users are not offered: phone-b\. To allow one anyway, list every device to allow: ccrc config set allowedDevices '\["<name>","\.\.\."\]'/);
+
+  const picked = machine(readyWorld());
+  picked.world.peers = [theirs("phone-b"), mine("tablet", false), mine("phone")];
+  await runSetup([...STEPS], ctxOf(picked, { only: ["devices"] }, { pick: [["tablet", "phone"]] }));
+  assert.deepEqual(readJson(picked.at.configFile).allowedDevices, ["tablet", "phone"]);
+});
+
+test("devices waits for a phone of this user to join, not for one of another user", async () => {
+  const m = machine(readyWorld());
+  m.world.peers = [theirs("phone-b")];
+  const ctx = ctxOf(m, { only: ["devices"] }, { wait: (n) => (n === 2 && m.world.peers.push(mine("phone", false)), undefined) });
+  const r = await runSetup([...STEPS], ctx);
+  assert.deepEqual(outcomes(r), { devices: "done" });
+  assert.deepEqual(ctx.ask.offered, [["phone"]]);
+  assert.deepEqual(readJson(m.at.configFile).allowedDevices, ["phone"]);
+  const text = ctx.lines.join("\n");
+  assert.match(text, /No phone of yours is in the tailnet yet\. On the phone, install the Tailscale app and sign in with the same account as this machine \(user@example\.com\)\./);
+  assert.match(text, /Phones of other Tailscale users are not offered: phone-b\./);
+});
+
+test("devices offers and adds no phone when Tailscale does not tell whose machines are whose", async () => {
+  const selves: TsNode[] = [
+    { DNSName: "laptop.example.ts.net.", OS: "linux", Online: true },
+    { DNSName: "laptop.example.ts.net.", OS: "linux", Online: true, UserID: 9, Tags: ["tag:server"] },
+  ];
+  const why = ["Tailscale here does not say which user each machine belongs to", "this machine is tagged (tag:server), so it belongs to no Tailscale user"];
+  for (const [i, self] of selves.entries()) {
+    for (const yes of [true, false]) {
+      const m = machine(readyWorld());
+      m.world.self = self;
+      m.world.peers = [
+        { DNSName: "phone.example.ts.net.", OS: "iOS", Online: true, UserID: 9, Tags: ["tag:phone"] },
+        { DNSName: "phone-b.example.ts.net.", OS: "android", Online: true },
+      ];
+      const ctx = ctxOf(m, { only: ["devices"], yes }, { wait: noWait });
+      const r = await runSetup([...STEPS], ctx);
+      assert.deepEqual(outcomes(r), { devices: "left" }, ctx.lines.join("\n"));
+      assert.deepEqual(ctx.ask.offered, []);
+      assert.ok(!fs.existsSync(m.at.configFile));
+      const text = ctx.lines.join("\n");
+      assert.ok(text.includes(`Setup cannot tell which phones are yours: ${why[i]}.`), text);
+      assert.ok(text.includes(`Name yours by the first label of its MagicDNS name: ccrc config set allowedDevices '["<name>"]' (iOS and Android machines in the tailnet: phone, phone-b)`), text);
+    }
+  }
+});
+
+test("devices leaves an allowedDevices list already set as it is, whoever's machines it names", async () => {
+  for (const yes of [true, false]) {
+    const m = machine(readyWorld());
+    m.world.peers = [mine("phone"), theirs("phone-b")];
+    fs.mkdirSync(m.at.configDir, { recursive: true });
+    const before = JSON.stringify({ schemaVersion: 1, allowedDevices: ["phone-b"] });
+    fs.writeFileSync(m.at.configFile, before);
+    const ctx = ctxOf(m, { only: ["devices"], yes });
+    assert.deepEqual(outcomes(await runSetup([...STEPS], ctx)), { devices: "ok" });
+    assert.equal(fs.readFileSync(m.at.configFile, "utf8"), before);
+    assert.deepEqual(ctx.ask.offered, []);
+  }
+});
+
+test("--dry-run says which phone --yes would add, or that it would add none", async () => {
+  const m = machine(readyWorld());
+  m.world.peers = [mine("phone"), theirs("phone-b")];
+  const one = ctxOf(m, { only: ["devices"], yes: true, dryRun: true });
+  await runSetup([...STEPS], one);
+  assert.match(one.lines.join("\n"), /- add phone to allowedDevices: the only iOS or Android machine of your Tailscale user \(user@example\.com\) in the tailnet$/m);
+  m.world.peers.push(mine("tablet"));
+  const two = ctxOf(m, { only: ["devices"], yes: true, dryRun: true });
+  await runSetup([...STEPS], two);
+  assert.match(two.lines.join("\n"), /- add none: --yes adds a phone only when your Tailscale user \(user@example\.com\) has exactly one in the tailnet, and it has 2 \(phone, tablet\); setup says how to add yours$/m);
+  const asked = ctxOf(m, { only: ["devices"], dryRun: true });
+  await runSetup([...STEPS], asked);
+  assert.match(asked.lines.join("\n"), /- you choose from phone, tablet, the iOS and Android machines of your Tailscale user \(user@example\.com\); the choice goes into allowedDevices$/m);
+  assert.ok(!fs.existsSync(m.at.configFile));
+
+  const fresh = ctxOf(machine(freshWorld()), { yes: true, dryRun: true });
+  await runSetup([...STEPS], fresh);
+  assert.match(fresh.lines.join("\n"), /- add your phone to allowedDevices if it is the only iOS or Android machine of your Tailscale user in the tailnet; otherwise add none and say how to add yours$/m);
 });
 
 test("serve will not take an HTTPS port that passes on elsewhere", async () => {
@@ -613,6 +766,44 @@ test("ssh-keygen: a missing one is shown with why and how to install it, without
   const checkout = machine({ ...readyWorld(), sshKeygen: false });
   checkout.at.installed = false;
   assert.deepEqual(outcomes(await runSetup([...STEPS], ctxOf(checkout, { only: ["ssh-keygen"] }))), { "ssh-keygen": "skipped" });
+});
+
+test("ssh-keygen: one older than OpenSSH 8.2 is shown with why and how to fix it, and setup goes on", async () => {
+  const m = machine({ ...readyWorld(), oldOpenSsh: true });
+  const dry = ctxOf(m, { only: ["ssh-keygen"], dryRun: true });
+  await runSetup([...STEPS], dry);
+  assert.match(dry.lines.join("\n"), /\[todo\] ssh-keygen +ssh-keygen from OpenSSH 8\.2 or newer, which ccrc update checks release signatures with \(\/usr\/bin\/ssh-keygen is older than OpenSSH 8\.2\)/);
+  assert.match(dry.lines.join("\n"), /- you install OpenSSH 8\.2 or newer and make its ssh-keygen the first on PATH \(RHEL 8 and its rebuilds ship 8\.0\)$/m);
+
+  const ctx = ctxOf(m, { only: ["ssh-keygen", "vscode"], yes: true });
+  const r = await runSetup([...STEPS], ctx);
+  assert.equal(r.ok, true);
+  assert.deepEqual(outcomes(r), { "ssh-keygen": "left", vscode: "done" });
+  const text = ctx.lines.join("\n");
+  assert.match(text, /^ccrc update checks that a release tag is signed by a key in \.ccrc-allowed-signers \(git verify-tag\), which needs ssh-keygen from OpenSSH 8\.2 or newer; \/usr\/bin\/ssh-keygen is older, so updates stop\.$/m);
+  assert.match(text, /^Install OpenSSH 8\.2 or newer and make its ssh-keygen the first on PATH \(RHEL 8 and its rebuilds ship 8\.0\)$/m);
+  assert.match(text, /Still to do: ssh-keygen \(left\)/);
+  assert.ok(m.calls.every((c) => !c.startsWith("attached")), m.calls.join("\n"));
+
+  m.world.oldOpenSsh = false;
+  assert.deepEqual(outcomes(await runSetup([...STEPS], ctxOf(m, { only: ["ssh-keygen"] }))), { "ssh-keygen": "ok" });
+});
+
+test("ssh-keygen problems as git reports them, and as ssh-keygen answers what git asks it", async (t) => {
+  assert.equal(gitSshKeygenProblem("error: cannot run ssh-keygen: No such file or directory\n"), "missing");
+  assert.equal(gitSshKeygenProblem("error: ssh-keygen -Y find-principals/verify is needed for ssh signature verification (available in openssh version 8.2p1+)\n"), "old");
+  assert.equal(gitSshKeygenProblem("error: no signature found\n"), undefined);
+  const answers = (stderr: string) => async () => ({ stderr });
+  assert.equal(await sshKeygenTooOld(answers("unknown option -- Y\nusage: ssh-keygen [-q] [-b bits]\n")), true);
+  assert.equal(await sshKeygenTooOld(answers("Couldn't parse signature: missing header\n")), false);
+  assert.equal(sshKeygenFix("missing", (cmd) => (cmd === "dnf" ? "/usr/bin/dnf" : undefined)), "install it with: sudo dnf install openssh-clients");
+  assert.equal(sshKeygenFix("old", () => "/usr/bin/apt-get"), "install OpenSSH 8.2 or newer and make its ssh-keygen the first on PATH (RHEL 8 and its rebuilds ship 8.0)");
+
+  const old = path.join(tempDir(), "ssh-keygen");
+  fs.writeFileSync(old, "#!/bin/sh\necho 'unknown option -- Y' >&2\necho 'usage: ssh-keygen [-q] [-b bits]' >&2\nexit 1\n", { mode: 0o755 });
+  assert.equal(await sshKeygenTooOld((_cmd, args) => realRunner.run(old, args)), true);
+  if (spawnSync("ssh-keygen", ["-?"]).error) return t.skip("no ssh-keygen");
+  assert.equal(await sshKeygenTooOld((cmd, args) => realRunner.run(cmd, args)), false, "this machine's ssh-keygen");
 });
 
 test("the ssh-keygen package is named for the package manager found", () => {
@@ -701,18 +892,52 @@ test("a settings.json that is a link is changed where it points", () => {
   assert.equal(fs.readFileSync(r.backup!, "utf8"), '{ "a": 1 }\n');
 });
 
-test("tailnet phones and serve targets", () => {
-  const st = {
+test("tailnet phones are told apart by the Tailscale user this machine belongs to", () => {
+  const p = phones({
+    Self: { DNSName: "laptop.example.ts.net.", OS: "linux", UserID: 1 },
     Peer: {
-      a: { DNSName: "tablet.example.ts.net.", OS: "iOS", Online: false },
-      b: { DNSName: "phone.example.ts.net.", OS: "android", Online: true },
-      c: { DNSName: "other-host.example.ts.net.", OS: "linux", Online: true },
+      a: { DNSName: "tablet.example.ts.net.", OS: "iOS", Online: false, UserID: 1 },
+      b: { DNSName: "phone.example.ts.net.", OS: "android", Online: true, UserID: 1 },
+      c: { DNSName: "other-host.example.ts.net.", OS: "linux", Online: true, UserID: 1 },
+      d: { DNSName: "phone-b.example.ts.net.", OS: "iOS", Online: true, UserID: 2 },
+      e: { DNSName: "kiosk.example.ts.net.", OS: "android", Online: true, UserID: 1, Tags: ["tag:kiosk"] },
+      f: { DNSName: "phone-c.example.ts.net.", OS: "iOS", Online: false },
+      g: { DNSName: "phone.other.example.ts.net.", OS: "iOS", Online: true, UserID: 1 },
+      h: { DNSName: "shared.example.ts.net.", OS: "iOS", Online: true, UserID: 1, ShareeNode: true },
     },
-  };
+    User: { "1": { LoginName: "user@example.com" } },
+  });
   assert.deepEqual(
-    phones(st).map((p) => p.name),
+    p.mine.map((x) => x.name),
     ["phone", "tablet"],
   );
+  assert.deepEqual(p.mine[1], { name: "tablet", os: "iOS", online: false });
+  assert.deepEqual(
+    p.others.map((x) => x.name),
+    ["kiosk", "phone-b", "phone-c"],
+    "a tagged machine belongs to its tags; one without a user is no one's",
+  );
+  assert.equal(p.user, "user@example.com");
+  assert.equal(p.unknown, undefined);
+
+  const phone = { DNSName: "phone.example.ts.net.", OS: "iOS", Online: true, UserID: 1 };
+  for (const self of [{ DNSName: "laptop.example.ts.net." }, { DNSName: "laptop.example.ts.net.", UserID: 0 }]) {
+    const old = phones({ Self: self, Peer: { a: { DNSName: "phone.example.ts.net.", OS: "iOS", Online: true } } });
+    assert.deepEqual(old.mine, []);
+    assert.deepEqual(
+      old.others.map((x) => x.name),
+      ["phone"],
+    );
+    assert.equal(old.unknown, "Tailscale here does not say which user each machine belongs to");
+    assert.deepEqual(phones({ Self: self, Peer: { a: phone } }).mine, [], "nor does a peer with a user make it so");
+  }
+  const tagged = phones({ Self: { DNSName: "laptop.example.ts.net.", UserID: 9, Tags: ["tag:server"] }, Peer: { a: { ...phone, UserID: 9, Tags: ["tag:phone"] } } });
+  assert.deepEqual(tagged.mine, []);
+  assert.equal(tagged.unknown, "this machine is tagged (tag:server), so it belongs to no Tailscale user");
+  assert.deepEqual(phones(undefined), { mine: [], others: [] });
+});
+
+test("serve targets that reach the broker", () => {
   assert.equal(reachesBroker("http://127.0.0.1:8737", 8737), true);
   assert.equal(reachesBroker("http://localhost:8737/", 8737), true);
   assert.equal(reachesBroker("127.0.0.1:8737", 8737), true);
@@ -982,8 +1207,8 @@ test("uninstall leaves <dataDir>/node while a checkout the service or VS Code ru
 });
 
 // As cli.ts builds it: --yes answers questions with their defaults, while sudo is asked of the terminal, if there is one.
-function yesCtx(m: Machine, o: Partial<SetupOptions>, terminal: boolean, sudoAnswers: boolean[] = []) {
-  const base = ctxOf(m, { yes: true, ...o }, { interactive: terminal, confirm: sudoAnswers });
+function yesCtx(m: Machine, o: Partial<SetupOptions>, terminal: boolean, sudoAnswers: boolean[] = [], answers: Answers = {}) {
+  const base = ctxOf(m, { yes: true, ...o }, { ...answers, interactive: terminal, confirm: sudoAnswers });
   const term = base.ask;
   const ctx: Ctx = { ...base, ask: withDefaults(term), sudoAsk: term };
   return { ctx, term, lines: base.lines };

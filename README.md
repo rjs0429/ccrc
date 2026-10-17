@@ -60,13 +60,15 @@ advice. Change it any time with `ccrc config set brokerSessions <value>`; a runn
 - VS Code with Anthropic's Claude Code extension, or the Claude Code CLI, signed in.
 - A Tailscale account. The installer sets up Tailscale on the machine; MagicDNS and HTTPS certificates must be on in
   the tailnet (setup shows where).
-- The Tailscale app on the phone, signed in to the same tailnet.
+- The Tailscale app on the phone, signed in with the same Tailscale account as the machine: setup offers only that
+  account's phones (another can be allowed by name).
 - Node.js 22.18 or newer with npm, git, curl, tar, xz, sha256sum and OpenSSH's `ssh-keygen` (it comes with the SSH
   client: `openssh-client` on Debian and Ubuntu, `openssh-clients` on Fedora, RHEL and openSUSE, `openssh` on Arch),
   which `ccrc update` uses from 0.7.2 to check the signatures of release tags and which must be from OpenSSH 8.2 or
-  newer (RHEL 8 has 8.0). The installer offers to install the base tools and downloads Node.js 22 (npm included) into
-  ccrc's own folder when none is found; some distributions package npm apart from Node.js. Nothing needs root except
-  the base tools, Tailscale and, if your system asks for it, `loginctl enable-linger`.
+  newer (RHEL 8 has 8.0); ccrc installs and runs without it, only `ccrc update` stops. The installer offers to install
+  the base tools and downloads Node.js 22 (npm included) into ccrc's own folder when none is found; some distributions
+  package npm apart from Node.js. Nothing needs root except the base tools, Tailscale and, if your system asks for it,
+  `loginctl enable-linger`.
 
 ## Install
 
@@ -88,14 +90,19 @@ bash install.sh --version v0.7.0
 
 1. Checks the platform (Linux, x86_64 or aarch64, a systemd user session) and refuses to run as root.
 2. Installs missing base tools (git, curl, tar, xz, sha256sum, ssh-keygen) with apt, dnf, pacman or zypper. This
-   uses sudo, so it says why and asks first, even with `--yes` (see [sudo](#sudo)).
+   uses sudo, so it says why and asks first, even with `--yes` (see [sudo](#sudo)). When only `ssh-keygen` is
+   missing and stays so (sudo not given, `--no-system`, no package manager, or its install failing), the install goes
+   on with a warning: installing does not use it, and `ccrc update` stops at its signature check, saying why, until
+   it is installed.
 3. Finds Node.js 22.18 or newer (`CCRC_NODE`, ccrc's own Node, the one an earlier install recorded, then `PATH`).
    Without one it downloads the newest Node.js 22 from nodejs.org, checks it against the `SHASUMS256.txt` there, and
    unpacks it into `~/.local/share/ccrc/node-v22.x.y-linux-<arch>`, linked as `~/.local/share/ccrc/node`. The
    checksum catches a damaged or cut-off download; that the file is Node.js's own rests on HTTPS to the source (the
    signature on `SHASUMS256.txt` is not checked).
 4. Clones the release into `~/.local/share/ccrc/versions/<version>`, runs `npm ci` and `npm run build` there,
-   records the install in `.ccrc-install.json`, and links `~/.local/share/ccrc/current` and `~/.local/bin/ccrc`.
+   records the install in `.ccrc-install.json`, and links `~/.local/share/ccrc/current` and `~/.local/bin/ccrc`. The
+   tag's signature is not checked here (see [Verifying a release](#verifying-a-release) to check it by hand);
+   `ccrc update` checks each tag it updates to.
 5. Runs `ccrc setup`. Under `curl | bash`, questions are read from the terminal (`/dev/tty`).
 
 The log is `~/.local/state/ccrc/install.log`. When a step fails, fix what it says and run the script again; finished
@@ -127,13 +134,13 @@ takes the default answer to it and to the other questions. Steps that need sudo 
 
 | Step id | Checks and does |
 |---|---|
-| `ssh-keygen` | OpenSSH's `ssh-keygen` is on `PATH`, which `ccrc update` checks release signatures with; otherwise says why and shows the command that installs it for the package manager found. Setup does not run it (no sudo); skipped when ccrc runs from a checkout |
+| `ssh-keygen` | OpenSSH's `ssh-keygen` is on `PATH` and from OpenSSH 8.2 or newer, as `ccrc update` needs to check release signatures; setup asks it what git asks it, and one without `-Y find-principals` is older. Otherwise it warns that updates will stop at that check and shows how to fix it: the command that installs it for the package manager found, or a newer OpenSSH. It installs nothing (no sudo), and the steps after it go on; skipped when ccrc runs from a checkout |
 | `claude` | The Claude Code extension or CLI is installed and signed in (`claude auth status`); otherwise offers to install the extension with `code --install-extension`, or shows how, and waits for the sign-in |
 | `tailscale-install` | Tailscale is installed and running; otherwise runs Tailscale's install script (sudo) |
 | `tailscale-login` | This machine is signed in; otherwise runs `sudo tailscale up` with no flags, so Tailscale settings already on the machine stay, and waits while you open the sign-in link it shows |
 | `tailscale-operator` | `tailscale serve` works without sudo; otherwise `sudo tailscale set --operator=$USER` |
 | `https` | MagicDNS and HTTPS certificates are on; otherwise shows the Tailscale admin page to turn them on and waits. The machine's name then appears in public certificate logs |
-| `devices` | Lets you pick your phone from the tailnet's devices for `allowedDevices` |
+| `devices` | Offers the iOS and Android machines of your Tailscale user, the one this machine belongs to (`UserID` in `tailscale status --json`), for `allowedDevices`; other users' phones in the tailnet are not offered. With `--yes` it adds your phone only when you have exactly one, and otherwise adds none and says how to add yours. A tagged machine, or a Tailscale that does not report users, gets none offered: name yours with `ccrc config set allowedDevices '["phone"]'`. A list already in config.json is left as it is |
 | `account` | Sets the ccrc login ID and password (`ccrc passwd`) |
 | `config` | Asks which folders new sessions may start in (default: home; `none` for only folders that already have sessions), sets `claudePath`, and asks how broker sessions sign in (`off`, `apiKey` with the key typed hidden, or `subscription`). Settings already in config.json are kept, an empty `roots` list too |
 | `service` | Writes `~/.config/systemd/user/ccrc.service` (runs `<dataDir>/current/bin/ccrc serve` with the Node found), enables and starts it, and checks `/api/ping`. A replaced unit is backed up first, and its `Environment` lines that setup does not write itself (a proxy, say) are kept. Linger is optional: when it is off, setup asks whether to turn it on so the broker runs while you are logged out (`--yes` leaves it off). Refuses to run inside a broker session (see [Update and roll back](#update-and-roll-back)) |
@@ -174,7 +181,7 @@ taken from `--yes`:
 
 ### On the phone
 
-1. Install the Tailscale app and sign in to the same tailnet.
+1. Install the Tailscale app and sign in with the same Tailscale account as the machine.
 2. Open the address setup showed (`https://<machine>.<tailnet>.ts.net:8443`) in Safari and sign in with the ccrc ID
    and password.
 3. Share > Add to Home Screen, then open ccrc from the home screen.
@@ -376,9 +383,10 @@ file.
   over HTTPS inside your tailnet only (not Tailscale Funnel). Nothing is exposed to the internet.
 - **Device allowlist.** A request through `tailscale serve` is let in only when its tailnet address belongs to a
   device of your tailnet whose MagicDNS name is in `allowedDevices` (looked up with `tailscale status`; machines shared
-  in from other tailnets never match). Requests from the machine itself need `allowLocal`. A program on the machine
-  can pass its request off as coming through `tailscale serve`, so `allowLocal: false` does not keep out other users
-  of the machine; the login does.
+  in from other tailnets never match). `ccrc setup` offers only the phones of the Tailscale user the machine belongs
+  to for it, and `--yes` adds one only when there is exactly one. Requests from the machine itself need `allowLocal`.
+  A program on the machine can pass its request off as coming through `tailscale serve`, so `allowLocal: false` does
+  not keep out other users of the machine; the login does.
 - **Login.** An ID and password, stored as an Argon2id hash. After five failed logins, logins lock for 5 minutes,
   doubling up to an hour, also across restarts. The session cookie is HttpOnly, Secure and SameSite=Strict;
   POST requests and WebSockets have their Origin checked, and pages carry a Content Security Policy.
@@ -508,8 +516,9 @@ also marks the tag Verified.
 it, and stops when the signature does not check out. An update from 0.7.1 or older to 0.7.2 is not checked, as those
 versions have no such file; check `v0.7.2` by hand as above if you want to. Without `ssh-keygen`, `ccrc update` on
 0.7.2 or newer cannot check and stops, with the command that installs it; `install.sh` installs it with the other base
-tools, and `ccrc setup` shows it missing. An `ssh-keygen` older than OpenSSH 8.2 cannot check SSH signatures either,
-and `ccrc update` stops saying so.
+tools (and goes on with a warning when it stays missing), and `ccrc setup` warns when it is missing. An `ssh-keygen`
+older than OpenSSH 8.2 cannot check SSH signatures either: `ccrc update` stops saying so, and `ccrc setup` warns about
+it beforehand.
 
 ## License and Anthropic's terms
 

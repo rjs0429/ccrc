@@ -474,6 +474,7 @@ test("with allowed signers but no ssh-keygen, or one too old, the update stops a
   old.deps = { ...old.deps, env: { ...GIT_ENV, PATH: oldBin } };
   assert.equal(await update({ yes: true }, old.deps), 1);
   assert.match(output(old), /could not check the signature of v0\.7\.1: git needs ssh-keygen from OpenSSH 8\.2 or newer/);
+  assert.match(output(old), /Run ccrc update again on a newer one; install OpenSSH 8\.2 or newer and make its ssh-keygen the first on PATH \(RHEL 8 and its rebuilds ship 8\.0\)$/m);
   assert.equal(current(old), path.join("versions", "v0.7.0"));
 });
 

@@ -7,7 +7,7 @@ import { changelogSections, isNewer, latestTag, listTags, quietGitEnv, releaseUr
 import { run, type Runner } from "./run.ts";
 import { inBrokerService, inServiceRefusal } from "./service-cgroup.ts";
 import { whichOn } from "./setup/io.ts";
-import { sshKeygenInstall } from "./ssh-keygen.ts";
+import { NEEDED_SSH_KEYGEN, gitSshKeygenProblem, sshKeygenFix } from "./ssh-keygen.ts";
 import { readUpdateCheck, updateCheckFile, writeUpdateCheck } from "./update-check.ts";
 
 // `ccrc update` and `ccrc rollback` on an install: <dataDir>/versions/<version>/ folders and the <dataDir>/current link.
@@ -327,14 +327,15 @@ class Updater {
     if (r.code === 0) return;
     const why = lastLine(r.stderr) || `exit code ${r.code}`;
     // git runs ssh-keygen only for an SSH signature: a tag with none, or not a tag, fails the same without it.
-    if (/cannot run ssh-keygen\b/.test(r.stderr)) {
+    const problem = gitSshKeygenProblem(r.stderr);
+    if (problem) {
       const dirs = this.d.env.PATH ?? "";
-      const install = sshKeygenInstall((cmd) => whichOn(cmd, dirs));
-      throw new UpdateError(`could not check the signature of ${tag}: git checks it with ssh-keygen, which it could not run (${why}). Run ccrc update again once it is installed; ${install}`);
-    }
-    // OpenSSH before 8.2 has no ssh-keygen -Y find-principals, which git needs (RHEL 8 ships 8.0).
-    if (/find-principals\/verify is needed/.test(r.stderr)) {
-      throw new UpdateError(`could not check the signature of ${tag}: git needs ssh-keygen from OpenSSH 8.2 or newer to check it (${why}). Run ccrc update again on a newer OpenSSH`);
+      const fix = sshKeygenFix(problem, (cmd) => whichOn(cmd, dirs));
+      throw new UpdateError(
+        problem === "missing"
+          ? `could not check the signature of ${tag}: git checks it with ssh-keygen, which it could not run (${why}). Run ccrc update again once it is installed; ${fix}`
+          : `could not check the signature of ${tag}: git needs ${NEEDED_SSH_KEYGEN} to check it (${why}). Run ccrc update again on a newer one; ${fix}`,
+      );
     }
     throw new UpdateError(`the signature of ${tag} does not check out against ${signers}: ${why}`);
   }

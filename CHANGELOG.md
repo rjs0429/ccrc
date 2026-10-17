@@ -6,6 +6,29 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Added
+
+- `ccrc setup`'s `ssh-keygen` step also checks that it is from OpenSSH 8.2 or newer, which `ccrc update` needs to
+  check release signatures: it asks ssh-keygen what git asks it, and one without `-Y find-principals` gets a warning
+  that updates will stop at that check, with how to fix it. Setup goes on either way. `ccrc update`, when it stops
+  for that reason, now says how to fix it as well.
+
+### Changed
+
+- `install.sh` no longer stops when `ssh-keygen` is the only base tool missing. It still offers to install it, asking
+  for sudo as before; when it stays missing (sudo not given, `--no-system`, no package manager, or its install
+  failing), the install goes on with a warning that `ccrc update` will stop at the signature check until it is
+  installed. Installing never used it: `install.sh` does not check tag signatures.
+
+### Security
+
+- `ccrc setup` offered every iOS and Android machine in the tailnet for `allowedDevices`, and `--yes` allowed all
+  the online ones, phones of other people in a shared tailnet included. It now offers only the machines of the
+  Tailscale user this machine belongs to, and `--yes` adds one only when there is exactly one; otherwise it adds none
+  and says how to add yours (`ccrc setup` in a terminal, or `ccrc config set allowedDevices`). A tagged machine, or a
+  Tailscale that does not report users, gets none offered. A list already in config.json is left as it is: to see
+  whether an earlier `--yes` let in phones that are not yours, look at `devices` in `ccrc status`.
+
 ## [0.7.3] - 2026-10-18
 
 ### Fixed

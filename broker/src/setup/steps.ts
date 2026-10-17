@@ -19,9 +19,9 @@ import { PushStore } from "../push/subscriptions.ts";
 import { SUDO_CONSENT_HINT, askSudo, type Ctx, type Step } from "./engine.ts";
 import type { Choice } from "./io.ts";
 import { inServiceRefusal } from "../service-cgroup.ts";
-import { sshKeygenInstall } from "../ssh-keygen.ts";
+import { NEEDED_SSH_KEYGEN, sshKeygenFix, sshKeygenTooOld, type SshKeygenProblem } from "../ssh-keygen.ts";
 import { SERVICE, keptLines, unitFile, unitMatches, unitText, writeUnit } from "./service.ts";
-import { dnsName, httpsReady, phones, reachesBroker, servedPorts, tailscaleStatus } from "./tailscale.ts";
+import { dnsName, httpsReady, phones, reachesBroker, servedPorts, tailscaleStatus, type Phone, type Phones } from "./tailscale.ts";
 import { WRAPPER_SETTING, changeSetting, readSettingsFile, settingsFile } from "./vscode-settings.ts";
 
 type Obj = Record<string, unknown>;
@@ -80,21 +80,34 @@ function findClaude(ctx: Ctx): { bin: string; label: string; vscode: boolean } |
   return cli ? { bin: cli, label: `CLI ${cli}`, vscode: false } : undefined;
 }
 
-// Only says how to install it: setup uses sudo for Tailscale and linger alone.
+async function sshKeygenState(ctx: Ctx): Promise<{ path?: string; problem?: SshKeygenProblem }> {
+  const found = ctx.run.which("ssh-keygen");
+  if (!found) return { problem: "missing" };
+  return (await sshKeygenTooOld((cmd, args) => ctx.run.run(cmd, args, { timeoutMs: 10_000 }))) ? { path: found, problem: "old" } : { path: found };
+}
+
+// Only says what to do: setup uses sudo for Tailscale and linger alone, and nothing but ccrc update needs it.
 const sshKeygen: Step = {
   id: "ssh-keygen",
-  title: "ssh-keygen, which ccrc update checks release signatures with",
+  title: `${NEEDED_SSH_KEYGEN}, which ccrc update checks release signatures with`,
   human: true,
   skip: (ctx) => (ctx.at.installed ? undefined : "ccrc update is for installs"),
   async check(ctx) {
-    const found = ctx.run.which("ssh-keygen");
-    return found ? { ok: true, detail: found } : { ok: false, detail: "not on PATH" };
+    const s = await sshKeygenState(ctx);
+    if (!s.problem) return { ok: true, detail: s.path };
+    return { ok: false, detail: s.problem === "missing" ? "not on PATH" : `${s.path} is older than OpenSSH 8.2` };
   },
-  plan: (ctx) => [`you ${sshKeygenInstall((cmd) => ctx.run.which(cmd))}`],
+  async plan(ctx) {
+    const { problem } = await sshKeygenState(ctx);
+    return problem ? [`you ${sshKeygenFix(problem, (cmd) => ctx.run.which(cmd))}`] : [];
+  },
   async apply(ctx) {
-    const install = sshKeygenInstall((cmd) => ctx.run.which(cmd));
-    ctx.out("ccrc update checks that a release tag is signed by a key in .ccrc-allowed-signers (git verify-tag), which needs ssh-keygen; without it, updates stop.");
-    ctx.out(`${install[0].toUpperCase()}${install.slice(1)}`);
+    const s = await sshKeygenState(ctx);
+    if (!s.problem) return;
+    const fix = sshKeygenFix(s.problem, (cmd) => ctx.run.which(cmd));
+    const why = "ccrc update checks that a release tag is signed by a key in .ccrc-allowed-signers (git verify-tag), which needs";
+    ctx.out(s.problem === "old" ? `${why} ${NEEDED_SSH_KEYGEN}; ${s.path} is older, so updates stop.` : `${why} ssh-keygen; without it, updates stop.`);
+    ctx.out(`${fix[0].toUpperCase()}${fix.slice(1)}`);
   },
 };
 
@@ -218,6 +231,16 @@ const https: Step = {
   },
 };
 
+const names = (list: Phone[]) => list.map((p) => p.name).join(", ");
+const setDevices = (list: string[]) => `ccrc config set allowedDevices '${JSON.stringify(list)}'`;
+const yourUser = (p: Phones) => `your Tailscale user${p.user ? ` (${p.user})` : ""}`;
+
+function notOffered(ctx: Ctx, p: Phones): void {
+  if (p.others.length) ctx.out(`Phones of other Tailscale users are not offered: ${names(p.others)}. To allow one anyway, list every device to allow: ${setDevices(["<name>", "..."])}`);
+}
+
+// Only phones of the Tailscale user this machine belongs to are offered, and --yes takes one only when it is the only
+// one. Machines allowed already stay allowed.
 const devices: Step = {
   id: "devices",
   title: "Phone allowed to connect",
@@ -228,27 +251,55 @@ const devices: Step = {
     return Array.isArray(list) && list.length ? { ok: true, detail: list.join(", ") } : { ok: false, detail: "no device allowed yet" };
   },
   async plan(ctx) {
-    const found = phones(await tailscaleStatus(ctx.run));
-    if (!found.length) return ["you install the Tailscale app on the phone and sign in with the same account; setup waits for it", "you choose the phone, which goes into allowedDevices"];
-    return [`you choose from ${found.map((p) => p.name).join(", ")}; the choice goes into allowedDevices`];
+    const st = await tailscaleStatus(ctx.run);
+    const p = phones(st);
+    if (p.unknown) return [`none offered, as ${p.unknown}: you name the phone with ${setDevices(["<name>"])}`];
+    if (ctx.o.yes) {
+      if (!st) return ["add your phone to allowedDevices if it is the only iOS or Android machine of your Tailscale user in the tailnet; otherwise add none and say how to add yours"];
+      if (p.mine.length === 1) return [`add ${p.mine[0].name} to allowedDevices: the only iOS or Android machine of ${yourUser(p)} in the tailnet`];
+      return [`add none: --yes adds a phone only when ${yourUser(p)} has exactly one in the tailnet, and it has ${p.mine.length ? `${p.mine.length} (${names(p.mine)})` : "none"}; setup says how to add yours`];
+    }
+    if (!p.mine.length) return ["you install the Tailscale app on the phone and sign in with the same Tailscale account as this machine; setup waits for it", "you choose the phone, which goes into allowedDevices"];
+    return [`you choose from ${names(p.mine)}, the iOS and Android machines of ${yourUser(p)}; the choice goes into allowedDevices`];
   },
   async apply(ctx) {
-    let found = phones(await tailscaleStatus(ctx.run));
-    if (!found.length) {
-      ctx.out("No phone is in this tailnet yet. On the phone, install the Tailscale app and sign in with the same account as this machine.");
-      ctx.out(ctx.ask.interactive ? `Waiting for it; press Enter to look again, or type "skip" to leave it for later.` : "Waiting for it.");
-      while (!found.length) {
-        const typed = await ctx.ask.wait(ctx.pollMs);
-        found = phones(await tailscaleStatus(ctx.run));
-        if (!found.length && typed !== undefined && /^s(kip)?$/i.test(typed.trim())) return;
-      }
+    let p = phones(await tailscaleStatus(ctx.run));
+    if (p.unknown) {
+      ctx.out(`Setup cannot tell which phones are yours: ${p.unknown}.`);
+      ctx.out(`Name yours by the first label of its MagicDNS name: ${setDevices(["<name>"])}${p.others.length ? ` (iOS and Android machines in the tailnet: ${names(p.others)})` : ""}`);
+      return;
     }
-    const choices: Choice[] = found.map((p) => ({ value: p.name, label: `${p.name} (${p.os}${p.online ? "" : ", offline"})` }));
-    const online = found.filter((p) => p.online).map((p) => p.name);
-    const picked = await ctx.ask.pick("Which machines may use ccrc?", choices, online.length ? online : [found[0].name]);
+    let picked: string[];
+    if (ctx.o.yes) {
+      if (p.mine.length !== 1) {
+        ctx.out(`No phone added: --yes adds one only when ${yourUser(p)} has exactly one iOS or Android machine in the tailnet, and it has ${p.mine.length ? `${p.mine.length}: ${names(p.mine)}` : "none"}${p.others.length ? ` (other users have ${names(p.others)})` : ""}.`);
+        ctx.out(
+          p.mine.length
+            ? `Choose with \`ccrc setup\` in a terminal, without --yes, or name yours: ${setDevices([p.mine[0].name])}`
+            : `Sign in to Tailscale on the phone with the same account and run \`ccrc setup\` again, or name it: ${setDevices(["<name>"])}`,
+        );
+        return;
+      }
+      picked = [p.mine[0].name];
+    } else {
+      if (!p.mine.length) {
+        ctx.out(`No phone of yours is in the tailnet yet. On the phone, install the Tailscale app and sign in with the same account as this machine${p.user ? ` (${p.user})` : ""}.`);
+        notOffered(ctx, p);
+        ctx.out(ctx.ask.interactive ? `Waiting for it; press Enter to look again, or type "skip" to leave it for later.` : "Waiting for it.");
+        while (!p.mine.length) {
+          const typed = await ctx.ask.wait(ctx.pollMs);
+          p = phones(await tailscaleStatus(ctx.run));
+          if (!p.mine.length && typed !== undefined && /^s(kip)?$/i.test(typed.trim())) return;
+        }
+      } else notOffered(ctx, p);
+      const choices: Choice[] = p.mine.map((x) => ({ value: x.name, label: `${x.name} (${x.os}${x.online ? "" : ", offline"})` }));
+      const def = p.mine.length === 1 ? [p.mine[0].name] : p.mine.filter((x) => x.online).map((x) => x.name);
+      picked = await ctx.ask.pick("Which of your phones may use ccrc?", choices, def);
+    }
     if (!picked.length) return;
     changeConfig(ctx, (raw) => {
-      raw.allowedDevices = picked;
+      const kept = Array.isArray(raw.allowedDevices) ? (raw.allowedDevices as string[]) : [];
+      raw.allowedDevices = [...new Set([...kept, ...picked])];
     });
   },
 };
