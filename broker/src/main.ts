@@ -47,7 +47,9 @@ const USAGE = `usage: ccrc <command>
   config get [key]            show the config, or one key of it
   config set <key> <value>    change a key; a value that is not JSON is taken as a string
   config set-api-key          store the Anthropic API key for brokerSessions "apiKey" (typed hidden, or from stdin)
-  migrate                     bring config.json to this version's format (serve does this too)`;
+  migrate                     bring config.json to this version's format (serve does this too)
+  setup [options]             check each part of the setup and do what is missing (setup --help)
+  uninstall [--purge]         remove the install, VS Code's setting first (uninstall --help)`;
 
 function migrate(): void {
   const r = migrateConfigFile();
@@ -259,6 +261,8 @@ if (major < 22 || (major === 22 && minor < 18)) {
 
 const command = process.argv[2] ?? "serve";
 const commands: Record<string, () => unknown> = { serve, passwd, status, logout, version, "--version": version, config, migrate };
+commands.setup = async () => (await import("./setup/cli.ts")).setup(process.argv.slice(3));
+commands.uninstall = async () => (await import("./setup/cli.ts")).uninstall(process.argv.slice(3));
 const run = commands[command];
 if (!run) {
   console.error(USAGE);
