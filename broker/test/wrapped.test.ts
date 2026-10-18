@@ -777,7 +777,7 @@ test("MCP servers are listed without VS Code's own and changed only by a name Cl
     };
   });
   const servers = [
-    { name: "github", status: "connected", scope: "user", tools: 2 },
+    { name: "github", status: "connected", scope: "user", tools: 2, auth: "oauth" },
     { name: "db", status: "failed", error: "spawn db-server ENOENT", scope: "project" },
     { name: "claude.ai Drive", status: "needs-auth", scope: "claudeai" },
   ];
@@ -1491,4 +1491,85 @@ test("a wrapper too old for side questions is not asked, and the phone is told",
   assert.equal(s.state().sideUnknown, true);
   await assert.rejects(s.sideQuestion("hi", []), /rejected by the wrapper: request not allowed/);
   assert.ok(!wrapper.frames.some((f) => f.t === "to_cli"), "nothing went to the wrapper");
+});
+
+const DIALOG_CAPS = ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question", "user_dialogs", "mcp_auth"];
+const dialog = (id: string, dialog_kind: string, payload: Msg) => ({ type: "control_request", request_id: id, request: { subtype: "request_user_dialog", dialog_kind, payload } });
+
+test("a refusal or auto mode dialog is answered from the phone through a wrapper that passes dialogs", async () => {
+  const { s, wrapper, next } = await session({ caps: DIALOG_CAPS });
+  let added = next("pending_add");
+  wrapper.out(dialog("d1", "refusal_fallback_prompt", { originalModel: "claude-opus-5-5", fallbackModel: "claude-sonnet-5", apiRefusalCategory: "cyber", retractedMessageUuids: ["x"] }));
+  const [request] = (await added) as [PendingRequest];
+  assert.equal(request.kind, "dialog");
+  assert.equal(request.localOnly, undefined);
+  assert.deepEqual(request.dialog, { kind: "refusal_fallback_prompt", model: "claude-opus-5-5", fallback: "claude-sonnet-5", category: "cyber" });
+  await assert.rejects(s.answer("d1", { kind: "dialog", choice: "consent" }), /invalid answer/);
+  await assert.rejects(s.answer("d1", { kind: "permission", decision: "allow" }), /does not match/);
+  const removed = next("pending_remove");
+  await s.answer("d1", { kind: "dialog", choice: "edit_prompt" });
+  await removed;
+  const f = await wrapper.wait((x) => x.t === "to_cli" && ((x.m as Msg).response as Msg | undefined)?.request_id === "d1", "dialog answer");
+  assert.deepEqual(((f.m as Msg).response as Msg).response, { behavior: "completed", result: "edit_prompt" });
+
+  added = next("pending_add");
+  wrapper.out(dialog("d2", "auto_mode_server_fallback", { title: "Billed", paragraphs: ["One", 7, ""], helpUrl: "https://evil.example/x" }));
+  const [notice] = (await added) as [PendingRequest];
+  assert.deepEqual(notice.dialog, { kind: "auto_mode_server_fallback", title: "Billed", paragraphs: ["One"] });
+  await s.answer("d2", { kind: "dialog", choice: "cancel" });
+  const c = await wrapper.wait((x) => x.t === "to_cli" && ((x.m as Msg).response as Msg | undefined)?.request_id === "d2", "dialog closed");
+  assert.deepEqual(((c.m as Msg).response as Msg).response, { behavior: "cancelled" });
+});
+
+test("the credits consent, a dialog without what it needs, and every dialog of an older wrapper stay with VS Code", async () => {
+  const { s, wrapper, next } = await session({ caps: DIALOG_CAPS });
+  let added = next("pending_add");
+  wrapper.out(dialog("c1", "fable_overage_consent_prompt", { overagesEnabled: true, modelName: "Fable", balanceCents: 1200, currency: "USD" }));
+  let [request] = (await added) as [PendingRequest];
+  assert.equal(request.localOnly, true);
+  assert.deepEqual(request.dialog, { kind: "fable_overage_consent_prompt", enabled: true, model: "Fable", balanceCents: 1200, currency: "USD" });
+  await assert.rejects(s.answer("c1", { kind: "dialog", choice: "cancel" }), /only be answered where the session is open/);
+  added = next("pending_add");
+  wrapper.out(dialog("c2", "refusal_fallback_prompt", { originalModel: "claude-opus-5-5" }));
+  [request] = (await added) as [PendingRequest];
+  assert.equal(request.localOnly, true);
+  assert.equal(request.dialog, undefined);
+  added = next("pending_add");
+  wrapper.out(dialog("c3", "auto_mode_outside_reads", {}));
+  [request] = (await added) as [PendingRequest];
+  assert.equal(request.localOnly, true);
+
+  const old = await session();
+  added = old.next("pending_add");
+  old.wrapper.out(dialog("o1", "refusal_fallback_prompt", { originalModel: "a", fallbackModel: "b" }));
+  [request] = (await added) as [PendingRequest];
+  assert.equal(request.localOnly, true);
+});
+
+test("an MCP sign-in goes through a wrapper that passes it, by a server Claude Code reported and a redirect to this machine; the server connects again after", async () => {
+  const { s, wrapper } = await session({ caps: DIALOG_CAPS });
+  const seen: Msg[] = [];
+  wrapper.autoReply((r) => {
+    seen.push(r);
+    if (r.subtype === "mcp_status") return { mcpServers: [{ name: "linear", status: "needs-auth", scope: "user", config: { type: "http", url: "https://mcp.example.com" } }] };
+    if (r.subtype === "mcp_authenticate") return { authUrl: "https://auth.example.com/authorize?state=s1", requiresUserAction: true, callbackExpected: true };
+    return {};
+  });
+  assert.deepEqual(await s.mcpAuthenticate("linear"), { url: "https://auth.example.com/authorize?state=s1", callback: true });
+  assert.deepEqual(seen.at(-1), { subtype: "mcp_authenticate", serverName: "linear" });
+  await assert.rejects(s.mcpAuthenticate("other"), /unknown MCP server/);
+  await assert.rejects(s.mcpOAuthCallback("linear", "https://evil.example/cb?code=1"), /invalid callback URL/);
+  seen.length = 0;
+  const url = "http://localhost:43123/callback?code=abc&state=s1";
+  assert.deepEqual(await s.mcpOAuthCallback("linear", url), [{ name: "linear", status: "needs-auth", scope: "user", auth: "oauth" }]);
+  assert.deepEqual(seen, [
+    { subtype: "mcp_status" },
+    { subtype: "mcp_oauth_callback_url", serverName: "linear", callbackUrl: url },
+    { subtype: "mcp_reconnect", serverName: "linear" },
+    { subtype: "mcp_status" },
+  ]);
+
+  const old = await session();
+  old.wrapper.autoReply((r) => (r.subtype === "mcp_status" ? { mcpServers: [{ name: "linear", status: "needs-auth" }] } : {}));
+  await assert.rejects(old.s.mcpAuthenticate("linear"), /request not allowed/);
 });

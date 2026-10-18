@@ -183,7 +183,7 @@ test("a request only VS Code can answer says so; one the auto-mode classifier ha
   detailed.manager.state({ state: "attached", busy: true });
   detailed.manager.ask("r1", "permission", "Bash", { localOnly: true });
   await sleep(50);
-  assert.deepEqual(plain.bodies().sort(), ["VS Code에서 답변하기 · 권한 요청", "VS Code에서 답변하기 · 확인 요청", "권한 요청"].sort());
+  assert.deepEqual(plain.bodies().sort(), ["VS Code에서 답변하기 · 권한 요청", "VS Code에서 답변하기 · 다른 모델로 계속할지 확인", "권한 요청"].sort());
   assert.ok(plain.sent.every((s) => s.urgency === "high"));
   assert.deepEqual(detailed.bodies(), ["VS Code에서 답변하기 · 권한 요청 · Bash"]);
   plain.notifier.close();
@@ -669,4 +669,15 @@ test("a notice told about a VS Code turn nobody here asked for leaves its sessio
   await sleep(30);
   assert.deepEqual(manager.unreadSessions(), [A]);
   notifier.close();
+});
+
+test("a dialog is named by what it asks, and the credits consent says to answer in VS Code", async () => {
+  const t = setup({ vscodeDelaySec: 0 });
+  t.manager.state({ state: "attached", busy: true });
+  t.manager.ask("d1", "dialog", "fable_overage_consent_prompt", { localOnly: true });
+  t.manager.ask("d2", "dialog", "auto_mode_server_fallback");
+  t.manager.ask("d3", "dialog", "some_new_dialog", { localOnly: true });
+  await sleep(50);
+  assert.deepEqual(t.bodies().sort(), ["Auto 모드 분류기 과금 확인", "VS Code에서 답변하기 · 사용 크레딧 동의", "VS Code에서 답변하기 · 확인 요청"].sort());
+  t.notifier.close();
 });

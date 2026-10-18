@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fieldProblem, type FieldProblem } from "../../../broker/src/elicit.ts";
-import type { Answer, ElicitField, ElicitInfo, ElicitValue, PendingRequest } from "../../../broker/src/protocol.ts";
-import { allowAlwaysLabel, dialogLabel } from "../labels.ts";
+import type { Answer, DialogInfo, ElicitField, ElicitInfo, ElicitValue, PendingRequest } from "../../../broker/src/protocol.ts";
+import { allowAlwaysLabel, creditsText, dialogLabel, modelLabel, refusalText } from "../labels.ts";
+import { useApp } from "../state.ts";
 import { Switch } from "../screens/settings/common.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { ToolInput } from "./ToolInput.tsx";
@@ -16,7 +17,7 @@ interface QuestionInput {
   options?: { label: string; description?: string }[];
 }
 
-function Card({ title, sub, children, ...rest }: { title: string; sub?: string; children: React.ReactNode; "data-elicitation"?: string }) {
+function Card({ title, sub, children, ...rest }: { title: string; sub?: string; children: React.ReactNode; "data-elicitation"?: string; "data-dialog"?: string }) {
   return (
     <div className="rounded-2xl border border-accent/40 bg-surface p-3.5 shadow-sm" {...rest}>
       <div className="text-xs font-semibold tracking-wide text-accent">{title}</div>
@@ -140,10 +141,88 @@ function PlanCard({ request, reply }: { request: PendingRequest; reply: Reply })
   );
 }
 
-function DialogCard({ request }: { request: PendingRequest }) {
+// A tap that lands as the card appears is not taken for an answer.
+const SETTLE_MS = 500;
+
+function useSettled(): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), SETTLE_MS);
+    return () => clearTimeout(t);
+  }, []);
+  return ready;
+}
+
+type Dialog<K extends DialogInfo["kind"]> = Extract<DialogInfo, { kind: K }>;
+
+function RefusalCard({ info, reply }: { info: Dialog<"refusal_fallback_prompt">; reply: Reply }) {
+  const models = useApp((s) => s.options?.models) ?? [];
+  const ready = useSettled();
+  const model = modelLabel(models, info.model);
+  const fallback = modelLabel(models, info.fallback);
+  const choose = (choice: string) => reply({ kind: "dialog", choice });
   return (
-    <Card title="확인 요청" sub={dialogLabel(request.toolName)}>
-      <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted">VS Code에 확인 창이 열려 있습니다. VS Code에서만 응답할 수 있습니다.</div>
+    <Card title="확인 요청" sub="답변이 멈췄습니다" data-dialog={info.kind}>
+      <div className="text-[15px]">{refusalText(model, fallback, info.category)}</div>
+      <div className="grid gap-2">
+        <Button kind="primary" disabled={!ready} onClick={() => choose("retry_fallback")}>
+          {fallback}로 계속
+        </Button>
+        <Button disabled={!ready} onClick={() => choose("edit_prompt")}>
+          메시지 고쳐 {model}로 다시
+        </Button>
+        <Button kind="ghost" disabled={!ready} onClick={() => choose("cancel")}>
+          닫기
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function AutoFallbackCard({ info, reply }: { info: Dialog<"auto_mode_server_fallback">; reply: Reply }) {
+  const ready = useSettled();
+  const choose = (choice: string) => reply({ kind: "dialog", choice });
+  return (
+    <Card title="확인 요청" sub="Auto 모드 분류기 과금" data-dialog={info.kind}>
+      <div className="text-[15px]">이 세션의 Auto 모드가 Claude Code에 들어 있는 분류기를 쓰고, 그 분류기 요청은 과금됩니다. 계속하면 Auto 모드로 이어 가고, 중지하면 이번 턴을 끝냅니다.</div>
+      {(info.title || info.paragraphs.length > 0) && (
+        <div className="space-y-1 rounded-xl bg-surface-2 px-3 py-2.5 text-xs text-muted" data-dialog-text>
+          {info.title && <div className="font-medium">{info.title}</div>}
+          {info.paragraphs.map((p, i) => (
+            <p key={i} className="whitespace-pre-wrap">
+              {p}
+            </p>
+          ))}
+        </div>
+      )}
+      {info.helpUrl && (
+        <a href={info.helpUrl} target="_blank" rel="noopener noreferrer" className="block text-sm font-medium text-accent">
+          자세히 보기
+        </a>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <Button kind="primary" disabled={!ready} onClick={() => choose("continue")}>
+          계속
+        </Button>
+        <Button disabled={!ready} onClick={() => choose("interrupt")}>
+          중지
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+// Dialogs the phone does not answer: the usage credits consent, and any dialog of a VS Code session whose wrapper is too
+// old to pass an answer on, or of a kind the phone does not know.
+function DialogCard({ request, reply }: { request: PendingRequest; reply: Reply }) {
+  const info = request.dialog;
+  if (!request.localOnly && info?.kind === "refusal_fallback_prompt") return <RefusalCard info={info} reply={reply} />;
+  if (!request.localOnly && info?.kind === "auto_mode_server_fallback") return <AutoFallbackCard info={info} reply={reply} />;
+  return (
+    <Card title="확인 요청" sub={dialogLabel(request.toolName)} data-dialog={request.toolName}>
+      {info?.kind === "fable_overage_consent_prompt" && <div className="text-[15px]">{creditsText(info)}</div>}
+      <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted">VS Code에 확인 창이 열려 있습니다. VS Code에서 답하세요.</div>
+      {info?.kind === "fable_overage_consent_prompt" && <div className="text-xs text-muted">답하지 않으면 정해진 시간이 지나 취소되고 이번 턴은 끝납니다.</div>}
     </Card>
   );
 }
@@ -387,7 +466,7 @@ function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
 export function PendingCard({ request, reply, agent }: { request: PendingRequest; reply: Reply; agent?: string }) {
   if (request.kind === "question") return <QuestionCard request={request} reply={reply} />;
   if (request.kind === "plan") return <PlanCard request={request} reply={reply} />;
-  if (request.kind === "dialog") return <DialogCard request={request} />;
+  if (request.kind === "dialog") return <DialogCard request={request} reply={reply} />;
   if (request.kind === "elicitation" && request.elicitation) return <ElicitationCard info={request.elicitation} reply={reply} />;
   return <PermissionCard request={request} reply={reply} agent={agent} />;
 }

@@ -52,6 +52,15 @@ export class Leases extends EventEmitter {
     return true;
   }
 
+  // A passkey confirmed the current login.
+  verified(now = Date.now()): void {
+    const lease = this.store.state.lease;
+    if (!lease) return;
+    lease.verifiedAt = now;
+    lease.lastSeen = now;
+    this.store.save();
+  }
+
   revoke(reason: string): void {
     if (!this.store.state.lease) return;
     delete this.store.state.lease;

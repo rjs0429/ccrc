@@ -1,6 +1,7 @@
 import type { WebSocket } from "ws";
 import type { Audit } from "./audit.ts";
 import type { Leases } from "./lease.ts";
+import { PASSKEY_CLOSE } from "./passkeys.ts";
 import {
   CALL_OPS,
   FOLDER_OPS,
@@ -32,9 +33,12 @@ const CHANGED_DEBOUNCE_MS = 300;
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const MAX_ATTACHMENTS = 10;
 const ELICIT_ACTIONS = new Set<unknown>(["accept", "decline", "cancel"]);
+const DIALOG_CHOICE = /^[a-z_]{1,32}$/;
 // Calls that change something are recorded in the audit log.
 const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "resume", "set_output_style", "unqueue", "rename", "archive"]);
 CHANGING_CALLS.add("background");
+// Of an MCP sign-in only the server is recorded: the address it ended on carries its authorization code.
+CHANGING_CALLS.add("mcp_authenticate").add("mcp_oauth_callback");
 // The longest session name taken as typed; it is then cut to the length Claude Code keeps.
 const TITLE_ARG_MAX = 2000;
 // A folder call refused for a folder is recorded once in this long.
@@ -126,6 +130,8 @@ export class Hub {
   private drafts = new Map<string, { at: number; started: Promise<string> }>();
   // What the window follows of the session it shows, sent to it as it changes.
   private follows: Follows;
+  // Whether a passkey has to confirm the login of a window on this device before it is answered again.
+  passkeyDue?: (device: string) => boolean;
 
   constructor(manager: SessionManager, leases: Leases, audit: Audit, uploads: Uploads, activity = new RemoteActivity()) {
     this.manager = manager;
@@ -214,6 +220,17 @@ export class Hub {
     this.manager.setViewed(this.viewing, this.viewing !== null && this.isWatching(this.viewing));
   }
 
+  private deviceOf(ws: WebSocket): string {
+    return ws === this.active ? this.device : (this.standby.get(ws) ?? "");
+  }
+
+  // A window whose login a passkey has to confirm again is closed with the code that says so, idle or not.
+  private confirmDue(ws: WebSocket): boolean {
+    if (!this.passkeyDue?.(this.deviceOf(ws))) return false;
+    ws.close(PASSKEY_CLOSE, "passkey required");
+    return true;
+  }
+
   private ping(): void {
     for (const ws of [this.active, ...this.standby.keys()]) {
       if (!ws) continue;
@@ -221,6 +238,7 @@ export class Hub {
         ws.terminate();
         continue;
       }
+      if (this.confirmDue(ws)) continue;
       this.alive.delete(ws);
       ws.ping();
     }
@@ -254,6 +272,7 @@ export class Hub {
       ws.close(4001, "lease expired");
       return;
     }
+    if (this.confirmDue(ws)) return;
     if (ws !== this.active) {
       const device = this.standby.get(ws);
       if (msg.t !== "take_window" || device === undefined) return;
@@ -376,7 +395,9 @@ export class Hub {
         const detail =
           answer?.kind === "elicitation"
             ? { action: ELICIT_ACTIONS.has(answer.action) ? answer.action : "invalid", server: m.pendingRequest(id, requestId)?.elicitation?.server }
-            : { decision: answer && "decision" in answer ? answer.decision : undefined };
+            : answer?.kind === "dialog"
+              ? { dialog: m.pendingRequest(id, requestId)?.toolName, choice: typeof answer.choice === "string" && DIALOG_CHOICE.test(answer.choice) ? answer.choice : "invalid" }
+              : { decision: answer && "decision" in answer ? answer.decision : undefined };
         this.audit.log("answer", { device, sessionId: id, kind: answer?.kind, ...detail });
         this.noteRemoteActivity(id);
         await m.answer(id, requestId, answer);

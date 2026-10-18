@@ -6,6 +6,7 @@ import { Home } from "./screens/Home.tsx";
 import { Login } from "./screens/Login.tsx";
 import { NewSession } from "./screens/NewSession.tsx";
 import { Settings } from "./screens/Settings.tsx";
+import { Verify } from "./screens/Verify.tsx";
 import { takeWindow, useApp } from "./state.ts";
 
 const TOAST_MS = 4000;
@@ -62,6 +63,7 @@ export function App() {
     );
   }
   if (!me.loggedIn) return <Login />;
+  if (me.passkey === "due") return <Verify />;
 
   return (
     <>

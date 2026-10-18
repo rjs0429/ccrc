@@ -6,6 +6,7 @@ import {
   type HookCallback,
   type ModelInfo,
   type OnElicitation,
+  type OnUserDialog,
   type PermissionResult,
   type PermissionUpdate,
   type Query,
@@ -13,10 +14,23 @@ import {
   type Settings,
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeSettingsFile } from "../claude-settings.ts";
+import { ANSWERED_DIALOGS, answerable, dialogInfo, type DialogResult } from "../dialogs.ts";
 import { elicitInfo } from "../elicit.ts";
 import type { ClaudeNotice } from "../push/rules.ts";
-import { pushHookAnswer } from "../wrapper/relay.ts";
-import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, SideTurn, TaskOutput, WorktreeChoice } from "../protocol.ts";
+import { allowedOAuthCallback, pushHookAnswer } from "../wrapper/relay.ts";
+import type {
+  ContextDetail,
+  DisplayItem,
+  UsageInfo,
+  EffortName,
+  McpAuthStart,
+  McpServerInfo,
+  PermissionModeName,
+  RewindResult,
+  SideTurn,
+  TaskOutput,
+  WorktreeChoice,
+} from "../protocol.ts";
 import { worktreeOf } from "../worktree-names.ts";
 import { rememberCommands } from "./commands.ts";
 import {
@@ -28,6 +42,7 @@ import {
   SessionCore,
   THINKING_TOKENS,
   commandInfo,
+  mcpAuthStart,
   mcpServers,
   rewindResult,
   shellOutput,
@@ -45,6 +60,8 @@ import { contextDetail, usageAnswer } from "./reports.ts";
 
 const CLOSE_WAIT_MS = 10_000;
 const REQUEST_MS = 15_000;
+// A dialog left unanswered this long is closed, which Claude Code takes as its default.
+export const DIALOG_MS = 15 * 60_000;
 const LATER_WAIT_MS = 20_000;
 // A process started for one question still has to start up and sign in.
 const PROBE_MS = 45_000;
@@ -144,7 +161,9 @@ export class BrokerSession extends SessionCore {
   private modelsRequested = false;
   private resolvers = new Map<string, (result: PermissionResult) => void>();
   private elicits = new Map<string, (result: ElicitAnswer) => void>();
+  private dialogs = new Map<string, (result: DialogResult) => void>();
   elicitMs = ELICIT_MS;
+  dialogMs = DIALOG_MS;
   // The Claude Code the process runs, while it runs.
   claudePath?: string;
   // What Claude Code last wrote to stderr, where it says why it could not start.
@@ -204,6 +223,8 @@ export class BrokerSession extends SessionCore {
         env: setOnly({ ...sessionEnv(), ...opts.env }),
         canUseTool: this.canUseTool,
         onElicitation: this.onElicitation,
+        onUserDialog: this.onUserDialog,
+        supportedDialogKinds: ANSWERED_DIALOGS,
         hooks: { PostToolUse: [{ matcher: "PushNotification", hooks: [this.pushHook] }] },
         stderr: (data) => this.noteStderr(data),
       },
@@ -330,10 +351,11 @@ export class BrokerSession extends SessionCore {
     this.touch();
   }
 
-  // An input request belongs to the turn, so it ends with it.
+  // An input request or a dialog belongs to the turn, so it ends with it.
   async interrupt(): Promise<void> {
     await this.query().interrupt();
     for (const id of [...this.elicits.keys()]) this.endElicitation(id);
+    for (const id of [...this.dialogs.keys()]) this.endDialog(id);
   }
 
   async setModel(model: string): Promise<void> {
@@ -391,6 +413,21 @@ export class BrokerSession extends SessionCore {
   async mcpReconnect(server: string): Promise<McpServerInfo[]> {
     const name = await this.knownServer(server);
     await timed(this.query().reconnectMcpServer(name), MCP_CHANGE_MS);
+    return this.mcpStatus();
+  }
+
+  async mcpAuthenticate(server: string): Promise<McpAuthStart> {
+    const serverName = await this.knownServer(server);
+    const q = this.query() as unknown as Requester;
+    return mcpAuthStart((await timed(q.request({ subtype: "mcp_authenticate", serverName }), MCP_CHANGE_MS)).response);
+  }
+
+  async mcpOAuthCallback(server: string, url: string): Promise<McpServerInfo[]> {
+    if (!allowedOAuthCallback(url)) throw Error("invalid callback URL");
+    const serverName = await this.knownServer(server);
+    const q = this.query() as unknown as Requester;
+    await timed(q.request({ subtype: "mcp_oauth_callback_url", serverName, callbackUrl: url }), MCP_CHANGE_MS);
+    await timed(this.query().reconnectMcpServer(serverName), MCP_CHANGE_MS).catch(() => {});
     return this.mcpStatus();
   }
 
@@ -463,6 +500,10 @@ export class BrokerSession extends SessionCore {
         this.endElicitation(id);
         continue;
       }
+      if (this.dialogs.has(id)) {
+        this.endDialog(id);
+        continue;
+      }
       this.unask(id);
       this.settle(id, { behavior: "deny", message: "The session was closed.", interrupt: true });
     }
@@ -492,6 +533,19 @@ export class BrokerSession extends SessionCore {
   private endElicitation(requestId: string): void {
     this.elicits.get(requestId)?.({ action: "cancel" });
     this.elicits.delete(requestId);
+    this.unask(requestId);
+  }
+
+  protected settleDialog(requestId: string, result: DialogResult): void {
+    const resolve = this.dialogs.get(requestId);
+    if (!resolve) throw Error("request is no longer pending");
+    this.dialogs.delete(requestId);
+    resolve(result);
+  }
+
+  private endDialog(requestId: string): void {
+    this.dialogs.get(requestId)?.({ behavior: "cancelled" });
+    this.dialogs.delete(requestId);
     this.unask(requestId);
   }
 
@@ -624,6 +678,23 @@ export class BrokerSession extends SessionCore {
       opts.signal.addEventListener("abort", () => this.endElicitation(id), { once: true });
       const elicitation = elicitInfo(request);
       this.ask({ requestId: id, kind: "elicitation", toolName: elicitation.server, input: {}, elicitation });
+    });
+
+  // Only the dialogs declared in supportedDialogKinds come; one whose payload cannot be shown is closed at once, as VS
+  // Code closes it.
+  private onUserDialog: OnUserDialog = (request, opts) =>
+    new Promise((resolve) => {
+      const id = opts.requestId;
+      const dialog = dialogInfo(request.dialogKind, request.payload);
+      if (!dialog || !answerable(request.dialogKind)) return resolve({ behavior: "cancelled" });
+      const timer = setTimeout(() => this.endDialog(id), this.dialogMs);
+      timer.unref();
+      this.dialogs.set(id, (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+      opts.signal.addEventListener("abort", () => this.endDialog(id), { once: true });
+      this.ask({ requestId: id, kind: "dialog", toolName: request.dialogKind, input: {}, dialog });
     });
 
   // Claude Code ending on its own during a turn is a crash; one ccrc closes is not.

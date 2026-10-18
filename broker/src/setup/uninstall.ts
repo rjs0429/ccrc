@@ -52,8 +52,8 @@ const OWN: Record<Kind, { names: string[]; patterns: RegExp[] }> = {
     patterns: [/^node-v\d+\.\d+\.\d+-linux-[a-z0-9_]+$/, /^(current|history\.json)\.\d+\.tmp$/],
   },
   config: {
-    names: ["config.json", "state.json", "push.json", "anthropic-api-key"],
-    patterns: [/^(config\.json|state\.json|push\.json|anthropic-api-key)\.\d+\.tmp$/],
+    names: ["config.json", "state.json", "push.json", "passkeys.json", "anthropic-api-key"],
+    patterns: [/^(config\.json|state\.json|push\.json|passkeys\.json|anthropic-api-key)\.\d+\.tmp$/],
   },
   state: {
     names: [

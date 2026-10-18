@@ -11,7 +11,7 @@ import type {
   SessionSummary,
   SnapshotGap,
 } from "../../broker/src/protocol.ts";
-import { api, ApiError, type Me, type Options } from "./api.ts";
+import { api, ApiError, onPasskeyDue, type Me, type Options } from "./api.ts";
 import { syncBadge } from "./push.ts";
 import { joined, placed } from "./chatItems.ts";
 import { bindSent } from "./sentPreviews.ts";
@@ -225,15 +225,27 @@ function handleApiError(e: unknown): void {
 export async function loadMe(): Promise<void> {
   const me = await api.me();
   setState({ me });
-  if (me.loggedIn) startSession();
+  if (me.loggedIn && !me.passkey) startSession();
 }
 
 export function startSession(): void {
-  setState((s) => ({ me: s.me ? { ...s.me, loggedIn: true } : s.me, loggedOutReason: undefined }));
+  setState((s) => ({ me: s.me ? { ...s.me, loggedIn: true, passkey: undefined } : s.me, loggedOutReason: undefined }));
   connect();
   void refreshSessions();
   void refreshOptions();
 }
+
+// The login holds but a passkey has to confirm it: the page shows nothing else until it does (startSession).
+export function passkeyNeeded(): void {
+  clearTimeout(retryTimer);
+  const ws = socket;
+  socket = undefined;
+  ws?.close();
+  settleCalls();
+  endFollows();
+  setState((s) => ({ me: s.me ? { ...s.me, loggedIn: true, passkey: "due" } : { configured: true, loggedIn: true, device: "", passkey: "due" }, conn: "idle" }));
+}
+onPasskeyDue(passkeyNeeded);
 
 export function loggedOut(reason: string): void {
   socket?.close();
@@ -390,7 +402,7 @@ export function takeWindow(): void {
 }
 
 export function connect(): void {
-  if (!state.me?.loggedIn) return;
+  if (!state.me?.loggedIn || state.me.passkey) return;
   clearTimeout(retryTimer);
   socket?.close();
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
@@ -404,6 +416,7 @@ export function connect(): void {
     settleCalls();
     endFollows();
     if (e.code === 4001) return loggedOut(state.loggedOutReason ?? "expired");
+    if (e.code === 4003) return passkeyNeeded();
     if (e.code === 4000) return setState({ conn: "taken" });
     setState({ conn: "offline" });
     retryTimer = window.setTimeout(connect, Math.min(1000 * 2 ** retry++, 15000));

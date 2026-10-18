@@ -187,6 +187,9 @@ taken from `--yes`:
 3. Share > Add to Home Screen, then open ccrc from the home screen.
 4. In ccrc's settings, turn on notifications and send a test one (iOS 16.4 or later; iOS allows web push only in
    home screen apps).
+5. Optionally, in 계정과 보안 (account and security), register a passkey: remote logins are then confirmed with Face ID
+   (or the phone's passcode) when they start and every `passkeyHours` (18 by default). See
+   [Security model](#security-model).
 
 Android with Chrome should work the same way, but has not been tested.
 
@@ -294,8 +297,9 @@ kept next to `settings.json` instead. Tailscale, Node.js on the system and Claud
 | `ccrc serve` | Run the broker (what the service runs) |
 | `ccrc setup [options]` | Check each part of the setup and do what is missing (`ccrc setup --help`) |
 | `ccrc passwd` | Set the login ID and password |
-| `ccrc status` | Version, config file, listen address, wrapper socket, allowed devices, newest release, broker sessions, login and current remote use |
+| `ccrc status` | Version, config file, listen address, wrapper socket, allowed devices, newest release, broker sessions, login, current remote use and passkeys |
 | `ccrc logout` | End the current remote login |
+| `ccrc passkey [list \| remove <id> \| reset [--yes]]` | List the phones' passkeys, remove one by the start of its id, or remove them all (when a phone's passkey is lost): remote logins are then confirmed by the password alone until a phone registers one again |
 | `ccrc version`, `ccrc --version` | The version: the installed release, `git describe` in a checkout, else package.json's |
 | `ccrc config path` | Where config.json is |
 | `ccrc config get [key]` | The config, or one key of it |
@@ -331,6 +335,7 @@ column, and unknown keys are only warned about. A running broker takes in change
 | `updateChannel` | `"stable"` | `"stable"`, or `"rc"` to include release candidates |
 | `updateRepo` | (unset) | Repository to look in when the install does not name its source; else `https://github.com/rjs0429/ccrc.git` |
 | `updateNotify` | `true` | Send one push notification per new release to subscribed phones |
+| `passkeyHours` | `18` | Once a phone has registered a passkey, a remote login is confirmed with one when it starts and again after this many hours. Logins on the machine itself are never asked |
 
 Other settings (notifications, Enter to send, Claude Code's own settings) are changed in the phone's settings screen.
 
@@ -366,6 +371,7 @@ while setup runs, setup writes it into the service unit too.
 | `~/.config/ccrc/config.json` | Settings |
 | `~/.config/ccrc/state.json` | Login ID, Argon2id password hash, current login, lockout |
 | `~/.config/ccrc/push.json` | Web Push keys and subscriptions |
+| `~/.config/ccrc/passkeys.json` | The phones' passkeys: credential ids and public keys, the host name each was made for, the device that registered it, and when it was registered and last used. No secrets; made when the first passkey is registered |
 | `~/.config/ccrc/anthropic-api-key` | The API key for `brokerSessions: "apiKey"` (0600) |
 | `~/.config/systemd/user/ccrc.service` | The service |
 | `~/.local/state/ccrc/audit.jsonl` | Audit log |
@@ -399,6 +405,15 @@ does the file.
   POST requests and WebSockets have their Origin checked, and pages carry a Content Security Policy.
 - **One remote login at a time.** Signing in on another device or window asks first and then ends the other login.
   The login ends after `leaseIdleMinutes` without activity.
+- **Passkey (optional).** A phone can register a passkey (WebAuthn, user verification required, so Face ID or the
+  phone's passcode) for the host name it opens ccrc at. Registering and removing one asks for the password again. Once
+  one is registered, every remote login is confirmed with a passkey when it starts and again after `passkeyHours`;
+  until then the broker answers nothing but the confirmation and logout (HTTP 401 `passkey_required`, and an open
+  WebSocket is closed with code 4003). Logins on the machine itself are never asked. The broker checks each answer
+  itself with Node's crypto: a challenge good once, for that login, for five minutes; the page's origin and host name;
+  presence and verification; the signature (ES256, EdDSA or RS256); and a sign counter that goes up where the
+  authenticator keeps one. It asks for no attestation. A lost passkey is removed on the machine with
+  `ccrc passkey reset`.
 - **No remote bypass.** The phone cannot switch any session to `bypassPermissions`: the broker refuses it, and the
   wrapper refuses any request or answer that would. The wrapper accepts only an allowlist of control requests from
   the broker.
@@ -408,7 +423,8 @@ does the file.
   sends to the phone, for `@` suggestions and for the lines of the changes sheet's git view, which also shows the
   lines of files inside the session's folders only.
 - **Audit log.** Logins, failed logins, denied devices, messages sent, answers, mode and model changes, file reads,
-  git changes read, side questions, new sessions and forks are recorded in `audit.jsonl`, without message contents.
+  git changes read, side questions, new sessions and forks, MCP sign-ins (by server, never the address they end on)
+  and passkeys registered, confirmed, refused and removed are recorded in `audit.jsonl`, without message contents.
 - **Local socket.** The wrapper socket is 0600 in a 0700 folder owned by you; both sides check this, and it never
   falls back to a shared folder such as `/tmp`.
 - **Secrets.** The API key is passed only to broker sessions' Claude Code as `ANTHROPIC_API_KEY`, and never written to
@@ -438,7 +454,12 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 - With `claudeCode.useTerminal` on, VS Code does not use the wrapper, and those sessions are view-only on the phone.
 - A model changed on the phone shows in VS Code's model picker from the next reply; a message queued on the phone shows
   in VS Code once Claude Code takes it.
-- Some VS Code dialogs (usage limit consent, for example) show on the phone but are answered in VS Code.
+- Claude Code's dialogs show on the phone. The refusal dialog (go on with the fallback model or edit the message) and
+  auto mode's billing notice are answered there through the wrapper of ccrc 0.8 or later; the usage credits consent
+  is a billing choice and is answered in VS Code only. VS Code closes the refusal dialog itself unless its own
+  experiment for it is on, and then the phone's card goes too.
+- Signing in to an MCP server from the phone opens the sign-in page on the phone; its last page is Claude Code's
+  redirect to the machine's `localhost`, which the phone cannot open, so its address is pasted back in the MCP sheet.
 - Side questions from the phone, and the changes sheet's git view as Claude Code sees it, need the wrapper of ccrc 0.8
   or later: a tab opened before an update keeps its older wrapper until it is opened again. Side questions asked from
   the phone do not show in VS Code's side panel.

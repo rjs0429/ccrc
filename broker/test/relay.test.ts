@@ -10,6 +10,10 @@ import {
   Relay,
   allowedBackground,
   allowedFlagSettings,
+  allowedMcpAuthenticate,
+  allowedMcpCallback,
+  allowedOAuthCallback,
+  mcpAuthAnswer,
   allowedRename,
   allowedSideQuestion,
   allowedThinking,
@@ -469,7 +473,7 @@ test("the broker may also turn fast mode on or off for the session, and set Thin
 test("Thinking changes from either side reach Claude Code, and a reconnecting broker gets the latest; the hello names what passes", async () => {
   const t = await setup();
   const hello = await t.broker.frames.wait((f) => f.t === "hello", "hello");
-  assert.deepEqual(hello.caps, ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question"]);
+  assert.deepEqual(hello.caps, ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question", "user_dialogs", "mcp_auth"]);
   const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
   const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
   const thinking = (f: Msg) => f.t === "in" && ((f.m as Msg).request as Msg)?.subtype === "set_max_thinking_tokens";
@@ -662,7 +666,7 @@ test("the session controls reach Claude Code; MCP setup, settings and conversati
   for (const [i, r] of allowed.entries()) await t.broker.frames.wait(replied(`ccrc-ok-${i}`), String(r.subtype));
   const refused = [
     "mcp_set_servers",
-    "mcp_authenticate",
+    "mcp_clear_auth",
     "mcp_read_resource",
     "set_mcp_permission_mode_override",
     "rewind_conversation",
@@ -1394,4 +1398,98 @@ test("the broker cancels only its own side question, and VS Code's own side ques
   t.user("hi");
   await t.broker.frames.wait(frameOut((m) => m.type === "result"), "a later turn copied");
   assert.ok(!JSON.stringify(t.broker.frames.items).includes("host-side"), "VS Code's side question never reaches the broker");
+});
+
+const dialogAnswer = (id: string, response: unknown, subtype = "success") => ({ t: "to_cli", m: { type: "control_response", response: { subtype, request_id: id, response } } });
+
+test("a dialog the phone may answer goes to Claude Code as a rebuilt answer, and VS Code is told to close its copy", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("DIALOG refusal_fallback_prompt");
+  await t.host.wait((m) => m.type === "control_request" && (m.request as Msg).subtype === "request_user_dialog", "dialog at VS Code");
+  await t.broker.frames.wait(frameOut((m) => m.type === "control_request" && m.request_id === "dialog-1"), "dialog at broker");
+  t.broker.send(dialogAnswer("dialog-1", { behavior: "completed", result: "retry_now" }));
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "dialog-1" && f.reason === "invalid answer", "an answer the dialog does not offer");
+  t.broker.send(dialogAnswer("dialog-1", { behavior: "completed", result: "retry_fallback", extra: 1 }));
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "dialog-1" && f.reason === "invalid answer" && t.broker.frames.items.filter((x) => x.t === "rejected").length === 2, "an answer with more in it");
+  t.broker.send(dialogAnswer("dialog-1", { behavior: "completed", result: "retry_fallback" }));
+  const answered = await t.host.wait((m) => m.type === "answered" && m.request_id === "dialog-1", "Claude Code got the answer");
+  assert.equal(answered.behavior, "completed");
+  assert.equal(answered.result, "retry_fallback");
+  await t.host.wait((m) => m.type === "control_cancel_request" && m.request_id === "dialog-1", "VS Code closes its copy");
+  await t.broker.frames.wait((f) => f.t === "settled" && f.id === "dialog-1" && f.by === "remote", "settled by the phone");
+  t.write({ type: "control_response", response: { subtype: "error", request_id: "dialog-1", error: "aborted" } });
+  await t.broker.frames.wait((f) => f.t === "dropped" && f.id === "dialog-1" && f.from === "host", "VS Code's late answer goes nowhere");
+});
+
+test("auto mode's billing notice takes continue, interrupt or a close; the credits consent is not answerable", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("DIALOG auto_mode_server_fallback");
+  await t.broker.frames.wait(frameOut((m) => m.request_id === "dialog-1"), "notice at broker");
+  t.broker.send(dialogAnswer("dialog-1", { behavior: "cancelled" }));
+  const closed = await t.host.wait((m) => m.type === "answered" && m.request_id === "dialog-1", "closed");
+  assert.equal(closed.behavior, "cancelled");
+  t.user("DIALOG fable_overage_consent_prompt");
+  await t.broker.frames.wait(frameOut((m) => m.request_id === "dialog-2"), "consent at broker");
+  t.broker.send(dialogAnswer("dialog-2", { behavior: "completed", result: "consent" }));
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "dialog-2" && f.reason === "not answerable", "consent refused");
+  t.broker.send(dialogAnswer("dialog-2", { behavior: "cancelled" }));
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "dialog-2" && t.broker.frames.items.filter((x) => x.t === "rejected" && x.id === "dialog-2").length === 2, "a close refused too");
+  assert.ok(!t.host.has((m) => m.type === "answered" && m.request_id === "dialog-2"), "only VS Code answers the consent");
+  t.write({ type: "control_response", response: { subtype: "success", request_id: "dialog-2", response: { behavior: "completed", result: "switch_default" } } });
+  const vs = await t.host.wait((m) => m.type === "answered" && m.request_id === "dialog-2", "VS Code's answer");
+  assert.equal(vs.result, "switch_default");
+});
+
+test("an MCP sign-in starts with a server name only, its answer comes back reduced, and the redirect goes back only to this machine", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
+  const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
+  request("ccrc-auth", { subtype: "mcp_authenticate", serverName: "linear" });
+  const started = await t.broker.frames.wait(replied("ccrc-auth"), "sign-in started");
+  assert.deepEqual(((started.m as Msg).response as Msg).response, { authUrl: "https://auth.example.com/authorize?state=s1", requiresUserAction: true, callbackExpected: true });
+  request("ccrc-auth-redirect", { subtype: "mcp_authenticate", serverName: "linear", redirectUri: "https://evil.example/cb" });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-auth-redirect" && f.reason === "invalid request", "a redirect the broker picks");
+  request("ccrc-cb", { subtype: "mcp_oauth_callback_url", serverName: "linear", callbackUrl: "http://localhost:43123/callback?code=abc&state=s1" });
+  const done = await t.broker.frames.wait(replied("ccrc-cb"), "sign-in finished");
+  assert.equal(((done.m as Msg).response as Msg).subtype, "success");
+  request("ccrc-cb-far", { subtype: "mcp_oauth_callback_url", serverName: "linear", callbackUrl: "https://evil.example/callback?code=abc&state=s1" });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-cb-far" && f.reason === "invalid request", "a redirect elsewhere");
+  request("ccrc-cb-other", { subtype: "mcp_oauth_callback_url", serverName: "linear", callbackUrl: "http://localhost:43123/callback?code=abc&state=s2" });
+  const other = await t.broker.frames.wait(replied("ccrc-cb-other"), "another attempt's redirect");
+  assert.match(String(((other.m as Msg).response as Msg).error), /not accepted/);
+  assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code sees none of the answers");
+});
+
+test("the MCP sign-in checks take only what Claude Code needs", () => {
+  assert.ok(allowedMcpAuthenticate({ subtype: "mcp_authenticate", serverName: "claude.ai Gmail" }));
+  for (const bad of [{}, { serverName: "" }, { serverName: 7 }, { serverName: "x".repeat(201) }, { serverName: "a\nb" }, { serverName: "a", redirectUri: "https://x" }]) {
+    assert.ok(!allowedMcpAuthenticate({ subtype: "mcp_authenticate", ...bad }), JSON.stringify(bad));
+  }
+  for (const ok of ["http://localhost:43123/callback?code=abc&state=s1", "http://127.0.0.1:9/callback?error=access_denied&state=s1", "http://[::1]:9/cb?code=1"]) assert.ok(allowedOAuthCallback(ok), ok);
+  const bad = [
+    "https://localhost:43123/callback?code=abc",
+    "http://localhost:43123/callback?state=s1",
+    "http://example.com/callback?code=abc",
+    "http://user:pw@localhost:1/callback?code=abc",
+    "http://localhost:1/callback?code=a\u0000",
+    `http://localhost:1/callback?code=${"a".repeat(4096)}`,
+    "javascript:alert(1)",
+    "not a url",
+    7,
+  ];
+  for (const url of bad) assert.ok(!allowedOAuthCallback(url), String(url));
+  assert.ok(allowedMcpCallback({ subtype: "mcp_oauth_callback_url", serverName: "linear", callbackUrl: "http://localhost:1/cb?code=x" }));
+  assert.ok(!allowedMcpCallback({ subtype: "mcp_oauth_callback_url", serverName: "linear", callbackUrl: "http://localhost:1/cb?code=x", extra: 1 }));
+  const reduced = JSON.parse(
+    String(
+      mcpAuthAnswer({
+        type: "control_response",
+        response: { subtype: "success", request_id: "ccrc-1", response: { authUrl: "https://a.example/x", requiresUserAction: true, callbackExpected: true, state: "s", callbackPort: 1, redirectScheme: "localhost" } },
+      }),
+    ),
+  );
+  assert.deepEqual(reduced.response.response, { authUrl: "https://a.example/x", requiresUserAction: true, callbackExpected: true });
 });

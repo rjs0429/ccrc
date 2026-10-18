@@ -12,6 +12,7 @@ import type { Doctor } from "./doctor.ts";
 import type { UpdateCheck } from "./update-check.ts";
 import type { Hub } from "./hub.ts";
 import type { Leases } from "./lease.ts";
+import { PASSKEY_CLOSE, type Passkeys } from "./passkeys.ts";
 import { PERMISSION_MODES } from "./protocol.ts";
 import type { Push } from "./push/index.ts";
 import { registerAttachments } from "./routes/attachments.ts";
@@ -19,6 +20,7 @@ import { registerAudit } from "./routes/audit.ts";
 import { registerClaudeSettings } from "./routes/claude-settings.ts";
 import { registerFiles } from "./routes/files.ts";
 import { registerHealth } from "./routes/health.ts";
+import { registerPasskeys } from "./routes/passkeys.ts";
 import { registerPush } from "./routes/push.ts";
 import { registerSearch } from "./routes/search.ts";
 import { registerUploads } from "./routes/upload.ts";
@@ -65,7 +67,10 @@ export interface ServerDeps {
   search?: SessionSearch;
   // The version /api/ping reports; the doctor's unless given.
   version?: () => string | undefined;
+  // The phones' passkeys; without them no login waits for one.
+  passkeys?: Passkeys;
 }
+
 
 // A file ticket in a URL opens the file without the login cookie until it expires, so request logs hide it.
 export function loggedUrl(url: string): string {
@@ -129,17 +134,24 @@ export async function buildServer(d: ServerDeps) {
   });
 
   const token = (req: FastifyRequest): string | undefined => req.cookies[COOKIE];
-  const authed = (req: FastifyRequest): boolean => d.leases.validate(token(req));
+  const loggedIn = (req: FastifyRequest): boolean => d.leases.validate(token(req));
+  const passkeyDue = (req: FastifyRequest): boolean => Boolean(d.passkeys?.due(d.leases.current(), req.device));
   const requireAuth = async (req: FastifyRequest, reply: FastifyReply) => {
-    if (!authed(req)) return reply.code(401).send({ error: "unauthorized" });
+    if (!loggedIn(req)) return reply.code(401).send({ error: "unauthorized" });
+    if (passkeyDue(req)) return reply.code(401).send({ error: "passkey_required" });
+  };
+  const requireLogin = async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!loggedIn(req)) return reply.code(401).send({ error: "unauthorized" });
   };
 
   const version = d.version ?? (() => d.doctor.brokerVersion());
   app.get("/api/ping", async () => ({ ok: true, version: version() ?? null }));
 
+  // passkey "due": the login holds, and a passkey has to confirm it before anything else answers.
   app.get("/api/me", async (req) => {
     d.store.reload();
-    return { configured: Boolean(d.store.state.user), loggedIn: authed(req), device: req.device };
+    const loggedInNow = loggedIn(req);
+    return { configured: Boolean(d.store.state.user), loggedIn: loggedInNow, device: req.device, ...(loggedInNow && passkeyDue(req) ? { passkey: "due" } : {}) };
   });
 
   app.post<{ Body: { id?: unknown; password?: unknown; takeover?: unknown } }>("/api/login", async (req, reply) => {
@@ -159,11 +171,11 @@ export async function buildServer(d: ServerDeps) {
     const issued = d.leases.issue(req.device);
     d.audit.log("login", { device: req.device, takeover: Boolean(current) });
     reply.setCookie(COOKIE, issued, { httpOnly: true, secure: true, sameSite: "strict", path: "/", maxAge: COOKIE_MAX_AGE_SEC });
-    return { ok: true };
+    return { ok: true, ...(d.passkeys?.due(d.leases.current(), req.device) ? { passkey: "due" } : {}) };
   });
 
   app.post("/api/logout", async (req, reply) => {
-    if (authed(req)) {
+    if (loggedIn(req)) {
       d.leases.revoke("logout");
       d.audit.log("logout", { device: req.device });
     }
@@ -196,6 +208,7 @@ export async function buildServer(d: ServerDeps) {
   }));
 
   const routes = { ...d, requireAuth };
+  if (d.passkeys) await registerPasskeys(app, { ...routes, passkeys: d.passkeys, requireLogin });
   await registerUploads(app, routes);
   await registerPush(app, routes);
   await registerClaudeSettings(app, routes);
@@ -209,6 +222,10 @@ export async function buildServer(d: ServerDeps) {
     const t = token(req);
     if (!t || !d.leases.validate(t)) {
       socket.close(4001, "unauthorized");
+      return;
+    }
+    if (passkeyDue(req)) {
+      socket.close(PASSKEY_CLOSE, "passkey required");
       return;
     }
     d.hub.attach(socket, req.device, t);

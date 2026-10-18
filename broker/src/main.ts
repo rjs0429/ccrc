@@ -26,6 +26,7 @@ import { Leases } from "./lease.ts";
 import { linkSocketPath } from "./link/protocol.ts";
 import { LinkServer } from "./link/server.ts";
 import { migrateConfigFile } from "./migrate.ts";
+import { DEFAULT_HOURS, Passkeys } from "./passkeys.ts";
 import { Push } from "./push/index.ts";
 import { RemoteActivity } from "./remote-activity.ts";
 import { buildServer } from "./server.ts";
@@ -54,6 +55,8 @@ const USAGE = `usage: ccrc <command>
   update [--check] [--to <version>] [--channel stable|rc] [--yes] [--from <repository>[@<ref>]]
                               install a newer release beside this one and switch to it, or go back on failure
   rollback [--yes]            go back to the version before the last update
+  passkey [list | remove <id> | reset [--yes]]
+                              show or remove the passkeys phones confirm remote logins with; reset when one is lost
   setup [options]             check each part of the setup and do what is missing (setup --help)
   uninstall [--purge]         remove the install, VS Code's setting first (uninstall --help)`;
 
@@ -99,11 +102,14 @@ async function serve(): Promise<void> {
   links.on("link", (link) => manager.attachLink(link));
   await links.listen();
   const gate = new DeviceGate(config.allowedDevices, config.allowLocal);
+  const passkeys = new Passkeys(paths.passkeysFile, config.passkeyHours ?? DEFAULT_HOURS);
+  hub.passkeyDue = (device) => passkeys.due(leases.current(), device);
   leases.on("revoked", (reason: string) => audit.log("lease_revoked", { reason }));
   watchConfig(paths.configFile, config, {
     apply: (c, changed) => {
       gate.update(c.allowedDevices, c.allowLocal);
       leases.setIdleMinutes(c.leaseIdleMinutes);
+      passkeys.setHours(c.passkeyHours ?? DEFAULT_HOURS);
       if (changed.includes("brokerSessions") || changed.includes("roots")) manager.emit("options_changed");
       updates.configChanged(changed);
     },
@@ -120,7 +126,7 @@ async function serve(): Promise<void> {
   });
 
   const search = new SessionSearch();
-  const app = await buildServer({ store, leases, gate, audit, manager, hub, uploads, push, doctor, updates, search, webDir: paths.webDir, logLevel: process.env.CCRC_LOG_LEVEL });
+  const app = await buildServer({ store, leases, gate, audit, manager, hub, uploads, push, doctor, updates, search, passkeys, webDir: paths.webDir, logLevel: process.env.CCRC_LOG_LEVEL });
   await app.listen({ host: config.host, port: config.port });
   // The first search after a start finds the transcripts already read.
   const warm = async () => search.prewarm(await manager.list());
@@ -205,7 +211,54 @@ function status(): void {
   console.log(`broker sessions: ${brokerSessionsText(brokerSessionsOf(config))}`);
   console.log(`login:       ${user ? `${user.id} (set ${user.changedAt})` : "not set; run: ccrc passwd"}`);
   console.log(`remote use:  ${lease ? `${lease.device}, last active ${new Date(lease.lastSeen).toLocaleString()}` : "none"}`);
+  console.log(`passkeys:    ${passkeysText(config.passkeyHours ?? DEFAULT_HOURS)}`);
   if (lockout.lockedUntil > Date.now()) console.log(`locked until ${new Date(lockout.lockedUntil).toLocaleString()}`);
+}
+
+function passkeysText(hours: number): string {
+  const keys = new Passkeys();
+  try {
+    const n = keys.list().length;
+    return n ? `${n}; a remote login is confirmed with one when it starts and every ${hours} hours` : "none (ccrc settings on the phone > Account and security)";
+  } catch {
+    return `${keys.file} cannot be read; remote logins wait for a passkey (ccrc passkey reset empties it)`;
+  }
+}
+
+const day = (ms: number) => new Date(ms).toLocaleString();
+
+// The passkeys of the phones, which the broker reads again on its next request once this changes them.
+async function passkey(): Promise<void> {
+  const [sub = "list", ...rest] = process.argv.slice(3);
+  const keys = new Passkeys();
+  const listed = () => {
+    try {
+      return keys.list();
+    } catch {
+      throw Error(`cannot read ${keys.file}; ccrc passkey reset empties it`);
+    }
+  };
+  if (sub === "list" && !rest.length) {
+    const list = listed();
+    if (!list.length) return console.log("No passkeys: remote logins are confirmed by the password alone.");
+    for (const p of list) console.log(`${p.id.slice(0, 12)}  ${p.device} for ${p.rpId}, registered ${day(p.createdAt)}${p.lastUsedAt ? `, last used ${day(p.lastUsedAt)}` : ""}`);
+    return;
+  }
+  if (sub === "remove" && rest.length === 1) {
+    listed();
+    const p = keys.find(rest[0]);
+    if (!p) throw Error(`no single passkey starts with "${rest[0]}" (ccrc passkey list shows them)`);
+    keys.remove(p.id);
+    new Audit().log("passkey_removed", { device: "local", passkey: p.id.slice(0, 12), left: keys.list().length });
+    return console.log(`Removed the passkey ${p.id.slice(0, 12)} of ${p.device}.`);
+  }
+  if (sub === "reset" && rest.every((a) => a === "--yes" || a === "-y")) {
+    if (!rest.length && !(await ask("Remove every passkey? Remote logins are then confirmed by the password alone until a phone registers one again."))) return;
+    const n = keys.reset();
+    new Audit().log("passkey_reset", { device: "local", ...(n !== undefined ? { removed: n } : {}) });
+    return console.log(n === undefined ? `Emptied ${keys.file}, which could not be read.` : `Removed ${n} passkey${n === 1 ? "" : "s"}.`);
+  }
+  throw Error("usage: ccrc passkey [list | remove <id> | reset [--yes]]");
 }
 
 function logout(): void {
@@ -321,7 +374,7 @@ if (major < 22 || (major === 22 && minor < 18)) {
 }
 
 const command = process.argv[2] ?? "serve";
-const commands: Record<string, () => unknown> = { serve, passwd, status, logout, version, "--version": version, config, migrate, update: updateCommand, rollback: rollbackCommand };
+const commands: Record<string, () => unknown> = { serve, passwd, status, logout, version, "--version": version, config, migrate, update: updateCommand, rollback: rollbackCommand, passkey };
 commands.setup = async () => (await import("./setup/cli.ts")).setup(process.argv.slice(3));
 commands.uninstall = async () => (await import("./setup/cli.ts")).uninstall(process.argv.slice(3));
 const run = commands[command];

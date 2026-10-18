@@ -35,6 +35,9 @@ export interface Config {
   updateChannel?: UpdateChannel;
   updateRepo?: string;
   updateNotify?: boolean;
+  // Once a phone has registered a passkey, a remote login is confirmed with it when it starts and again after this many
+  // hours. Unset only where a config is made in code, which means 18.
+  passkeyHours?: number;
 }
 
 export const FOLLOW_VSCODE = "vscode";
@@ -55,6 +58,7 @@ function defaults(): Config {
     updateCheck: true,
     updateChannel: "stable",
     updateNotify: true,
+    passkeyHours: 18,
   };
 }
 
@@ -111,6 +115,7 @@ const KEYS: Record<string, { ok: (v: unknown) => boolean; expected: string; rest
   updateChannel: { ok: (v) => UPDATE_CHANNELS.includes(v as UpdateChannel), expected: UPDATE_CHANNELS.map((m) => `"${m}"`).join(", ") },
   updateRepo: { ok: (v) => isText(v) && v !== "", expected: "a git URL or path" },
   updateNotify: { ok: (v) => typeof v === "boolean", expected: "true or false" },
+  passkeyHours: { ok: isPositive, expected: "a number of hours above 0" },
 };
 
 export const CONFIG_KEYS = Object.keys(KEYS);

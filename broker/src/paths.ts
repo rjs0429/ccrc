@@ -63,6 +63,10 @@ export const paths = {
   get credentialsFile(): string {
     return path.join(this.configDir, "state.json");
   },
+  // The phones' passkeys, which confirm a remote login (passkeys.ts).
+  get passkeysFile(): string {
+    return path.join(this.configDir, "passkeys.json");
+  },
   // The Anthropic API key broker sessions sign in with when brokerSessions is "apiKey".
   get apiKeyFile(): string {
     return path.join(this.configDir, "anthropic-api-key");

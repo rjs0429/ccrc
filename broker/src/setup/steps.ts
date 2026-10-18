@@ -582,6 +582,9 @@ const phone: Step = {
     ctx.out("  1. Open the address in Safari (Chrome on Android) and sign in with the ccrc ID and password.");
     ctx.out("  2. Share > Add to Home Screen, then open ccrc from the home screen.");
     ctx.out("  3. In ccrc's settings, turn on notifications and send a test one (iOS 16.4 or later).");
+    const hours = (fs.existsSync(ctx.at.configFile) ? readConfig(ctx.at.configFile).config : newConfig()).passkeyHours;
+    ctx.out("  4. Optionally, in Account and security, register a passkey: remote logins are then confirmed with Face ID when");
+    ctx.out(`     they start and every ${hours} hours (passkeyHours). One that is lost is removed here with \`ccrc passkey reset\`.`);
   },
 };
 

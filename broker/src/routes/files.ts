@@ -241,6 +241,7 @@ export async function registerFiles(app: FastifyInstance, d: RouteDeps): Promise
       });
       return reply.code(401).header("Cache-Control", "no-store").send({ error: "unauthorized" });
     }
+    if (d.passkeys?.due(d.leases.current(), req.device)) return reply.code(401).header("Cache-Control", "no-store").send({ error: "passkey_required" });
     if (t.sent) return sent.raw(req, reply, t.sessionId, t.sent, req.query.download === "1", { ticket: true });
     return serveRaw(req, reply, t.sessionId, t.path!, req.query.download === "1", { ticket: true });
   });
