@@ -189,8 +189,9 @@ taken from `--yes`:
    home screen apps).
 
 iOS sometimes opens the app from a notification without going where it points. When the app comes to the front
-within two minutes of a notification about a request that still waits for an answer, it goes to that request itself,
-once per request (not from a new session's draft).
+within two minutes of a notification about a request that still waits for an answer and no notification's tap reaches
+it, it goes to that request itself, once per request (not from a new session's draft). A tap that does reach the app
+decides where it goes.
 
 Android with Chrome should work the same way, but has not been tested.
 
@@ -236,8 +237,9 @@ later give each such session an inbox socket for messages from your other sessio
 - Claude gets it as a message from another session ("ccrc 휴대폰"), not from you. It acts on it within that session's
   own permissions and asks there before anything that matters; a "/" command in it is not run, and it never answers a
   pending prompt.
-- A session that skips permission prompts holds the message: a terminal asks there, anywhere else drops it unless the
-  mode changes within five minutes. A `crossSessionInbound` setting decides instead when the user's or the project's
+- A session that skips permission prompts holds the message: a terminal asks there, and so does a background session
+  once opened from `claude agents` (it lists as waiting on a permission prompt); anywhere else drops it unless the mode
+  changes within five minutes. A `crossSessionInbound` setting decides instead when the user's or the project's
   settings have one. The phone says so before you send, as far as the transcript's last permission mode and those
   settings tell.
 - Attachments, model and mode changes, stopping a turn and answering its prompts stay with the program that runs it.

@@ -502,7 +502,7 @@ export class SessionManager extends EventEmitter {
 
   private async inboxState(l: LiveProcess, sessionId: string, cwd: string): Promise<InboxInfo> {
     const file = transcriptPath(sessionId, cwd);
-    return inboxInfo(l.entrypoint, file ? await lastPermissionMode(file) : undefined, inboundSetting(claudeSettingsFile(), l.cwd || cwd));
+    return inboxInfo(l.host, file ? await lastPermissionMode(file) : undefined, inboundSetting(claudeSettingsFile(), l.cwd || cwd));
   }
 
   private async restate(sessionId: string): Promise<void> {

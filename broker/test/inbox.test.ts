@@ -152,14 +152,16 @@ test("posting writes the lines and ends; a socket nobody listens on fails", asyn
 });
 
 test("the gate follows the settings, then the last permission mode and where the session runs", () => {
-  assert.deepEqual(inboxInfo("cli", "default", undefined), { gate: "deliver" });
-  assert.deepEqual(inboxInfo("cli", undefined, undefined), { gate: "deliver" });
-  assert.deepEqual(inboxInfo("cli", "bypassPermissions", undefined), { gate: "approve" });
-  assert.deepEqual(inboxInfo("claude-vscode", "bypassPermissions", undefined), { gate: "held", why: "mode" });
-  assert.deepEqual(inboxInfo("sdk-cli", "bypassPermissions", undefined), { gate: "held", why: "mode" });
-  assert.deepEqual(inboxInfo("cli", "bypassPermissions", "accept"), { gate: "deliver" });
-  assert.deepEqual(inboxInfo("cli", "default", "hold"), { gate: "held", why: "setting" });
-  assert.deepEqual(inboxInfo("cli", "default", "refuse"), { gate: "refused" });
+  assert.deepEqual(inboxInfo("Terminal", "default", undefined), { gate: "deliver" });
+  assert.deepEqual(inboxInfo("Terminal", undefined, undefined), { gate: "deliver" });
+  assert.deepEqual(inboxInfo("Terminal", "bypassPermissions", undefined), { gate: "approve" });
+  assert.deepEqual(inboxInfo("Background", "bypassPermissions", undefined), { gate: "approve" });
+  assert.deepEqual(inboxInfo("Background", "default", undefined), { gate: "deliver" });
+  assert.deepEqual(inboxInfo("VS Code", "bypassPermissions", undefined), { gate: "held", why: "mode" });
+  assert.deepEqual(inboxInfo("SDK", "bypassPermissions", undefined), { gate: "held", why: "mode" });
+  assert.deepEqual(inboxInfo("Terminal", "bypassPermissions", "accept"), { gate: "deliver" });
+  assert.deepEqual(inboxInfo("Terminal", "default", "hold"), { gate: "held", why: "setting" });
+  assert.deepEqual(inboxInfo("Terminal", "default", "refuse"), { gate: "refused" });
 });
 
 test("crossSessionInbound: the user's value, or a stricter one from the project", () => {
@@ -196,8 +198,13 @@ test("the registry names the inbox only for the line format ccrc knows", () => {
   let release = register(sid, { peerProtocol: 1, messagingSocketPath: socket });
   let me = liveProcesses({ dir: sessionsDir }).find((l) => l.sessionId === sid);
   assert.equal(me?.inbox, socket);
-  assert.equal(me?.entrypoint, "cli");
+  assert.equal(me?.host, "Terminal");
   assert.equal(me?.procStart, procStart);
+  release();
+  release = register(sid, { peerProtocol: 1, messagingSocketPath: socket, kind: "bg", jobId: "j1" });
+  me = liveProcesses({ dir: sessionsDir }).find((l) => l.sessionId === sid);
+  assert.equal(me?.host, "Background", "claude --bg, though its entrypoint is cli");
+  assert.equal(me?.inbox, socket);
   release();
   release = register(sid, { peerProtocol: 2, messagingSocketPath: socket });
   me = liveProcesses({ dir: sessionsDir }).find((l) => l.sessionId === sid);
@@ -295,6 +302,24 @@ test("the gate shows a terminal session in bypass mode asks there, and the archi
     assert.equal((await call(sid, "archive", { archived: true })).ok, true);
     assert.equal((await call(sid, "inbox_send", { text: "승인 뒤에 해 줘" })).ok, true);
     assert.equal((await manager.list()).find((s) => s.id === sid)?.archived, undefined);
+  } finally {
+    release();
+    await box.close();
+  }
+});
+
+test("a background session in bypass mode lists as one and asks there too", async (t) => {
+  const { manager } = setup(t);
+  const sid = nextId();
+  transcript(sid, "bypassPermissions");
+  const box = await inbox();
+  const release = register(sid, { peerProtocol: 1, messagingSocketPath: box.file, kind: "bg", entrypoint: "claude-vscode" });
+  try {
+    assert.deepEqual((await manager.snapshot(sid)).state.inbox, { gate: "approve" });
+    let listed;
+    for (let i = 0; i < 40 && listed?.state !== "live"; i++, await sleep(100)) listed = (await manager.list()).find((s) => s.id === sid);
+    assert.equal(listed?.host, "Background");
+    assert.equal(listed?.inbox, true);
   } finally {
     release();
     await box.close();

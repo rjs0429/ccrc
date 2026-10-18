@@ -1,7 +1,7 @@
 import { Fragment, Suspense, lazy, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
-import { INBOX_SENDER, type DisplayItem, type ModelOption, type QueuedMessage } from "../../../broker/src/protocol.ts";
+import type { DisplayItem, ModelOption, QueuedMessage } from "../../../broker/src/protocol.ts";
 import { DateLine, ItemView, QueuedItem, StreamPreview, shownItems } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { reattach } from "../components/composer/attachments.ts";
@@ -32,6 +32,7 @@ import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { brokerSessionsBlocked, closedText, errorText, hostLabel, inboxNotes, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
 import { call, composerInsert, focusDone, navigate, openAt, openSettingsFrom, requestShown, send, toast, useApp } from "../state.ts";
+import { sentCount } from "../peerSent.ts";
 import { takeSent } from "../sentPreviews.ts";
 import { worktreeOf } from "../../../broker/src/worktree-names.ts";
 import { placeLabel, shownBranch } from "../worktree.ts";
@@ -53,13 +54,6 @@ interface Awaited {
   name: string;
   before: Set<string>;
   late: boolean;
-}
-
-// A message as the transcript shows it, which escapes a closing tag and cuts a long one, against the text sent.
-function sameText(shown: string, sent: string): boolean {
-  const a = shown.replace(/<\\\//g, "</").trim();
-  const b = sent.trim();
-  return a === b || (a.endsWith("…") && b.startsWith(a.slice(0, -1)));
 }
 
 // Hangs from the top edge of the to-do panel and composer, so it floats just above them whatever their height.
@@ -197,10 +191,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   // Text sent to a session open elsewhere waits here until its transcript shows it; before: how many such messages with
   // the same text it showed then.
   const [peerSent, setPeerSent] = useState<(QueuedMessage & { before: number })[]>([]);
-  const peerWaiting = useMemo(() => {
-    const same = (q: QueuedMessage) => (chat?.items ?? []).filter((i) => i.kind === "message" && i.from === "session" && i.name === INBOX_SENDER && sameText(i.text, q.text)).length;
-    return peerSent.filter((q) => same(q) <= q.before);
-  }, [peerSent, chat?.items]);
+  const peerWaiting = useMemo(() => peerSent.filter((q) => sentCount(chat?.items ?? [], q.text) <= q.before), [peerSent, chat?.items]);
   const [taking, setTaking] = useState<string | null>(null);
   // A message taken back returns to the composer with its text and the photos sent from this device.
   const takeBack = (q: QueuedMessage) => {
@@ -220,7 +211,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   const sendPeer = (text: string) => {
     if (conn !== "ready") return false;
-    const before = (chat?.items ?? []).filter((i) => i.kind === "message" && i.from === "session" && i.name === INBOX_SENDER && sameText(i.text, text)).length;
+    const before = sentCount(chat?.items ?? [], text);
     const id = `peer-${Date.now()}-${peerSent.length}`;
     setPeerSent((list) => [...list, { id, ts: new Date().toISOString(), text, from: "remote", before }]);
     follow(true);

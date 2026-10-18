@@ -20,15 +20,32 @@ export function pushBlock(): PushBlock | undefined {
   return standalone ? "ios_update" : "ios_install";
 }
 
+// Where the last notification tap took the app, and when: the service worker's message to the open app, or the address
+// the worker opened the app at, which it marks with TAP_PARAM.
+const TAP_PARAM = "tap";
+let tap: { at: number; hash: string } | undefined;
+
+export function lastTap(): { at: number; hash: string } | undefined {
+  return tap;
+}
+
 // The service worker shows the notifications; tapping one while the app is open sends the app to its session.
 export function registerServiceWorker(): void {
   if (!window.isSecureContext || !("serviceWorker" in navigator)) return;
+  const opened = new URL(location.href);
+  if (opened.searchParams.has(TAP_PARAM)) {
+    tap = { at: Date.now(), hash: opened.hash };
+    opened.searchParams.delete(TAP_PARAM);
+    history.replaceState(history.state, "", `${opened.pathname}${opened.search}${opened.hash}`);
+  }
   navigator.serviceWorker.register(SW).catch(() => {});
   navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
     const msg = e.data as { t?: unknown; url?: unknown } | null;
     if (msg?.t !== "navigate" || typeof msg.url !== "string") return;
     const url = new URL(msg.url, location.origin);
-    if (url.origin === location.origin && url.hash.startsWith("#/")) location.hash = url.hash;
+    if (url.origin !== location.origin) return;
+    tap = { at: Date.now(), hash: url.hash };
+    if (url.hash.startsWith("#/")) location.hash = url.hash;
   });
 }
 

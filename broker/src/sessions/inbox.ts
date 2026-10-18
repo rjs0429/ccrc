@@ -109,11 +109,11 @@ export function inboundSetting(userFile: string, cwd: string): Inbound | undefin
   return user;
 }
 
-// Without a setting Claude Code holds a message to a session that skips permission prompts: a terminal asks there,
-// anywhere else drops it unless the mode changes before the dialog deadline.
-export function inboxInfo(entrypoint: string | undefined, mode: string | undefined, setting: Inbound | undefined): InboxInfo {
+// Without a setting Claude Code holds a message to a session that skips permission prompts: its terminal screen, in a
+// terminal or a background session, asks there; anywhere else drops it unless the mode changes before the dialog deadline.
+export function inboxInfo(host: string | undefined, mode: string | undefined, setting: Inbound | undefined): InboxInfo {
   if (setting === "refuse") return { gate: "refused" };
   if (setting === "hold") return { gate: "held", why: "setting" };
   if (setting === "accept" || mode !== "bypassPermissions") return { gate: "deliver" };
-  return entrypoint === "cli" ? { gate: "approve" } : { gate: "held", why: "mode" };
+  return host === "Terminal" || host === "Background" ? { gate: "approve" } : { gate: "held", why: "mode" };
 }

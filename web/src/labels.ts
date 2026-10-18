@@ -89,7 +89,7 @@ const DESTINATION_LABEL: Record<string, string> = {
 };
 
 export function hostLabel(host?: string): string {
-  return host === "Terminal" ? "터미널" : host === "ccrc" ? "원격" : (host ?? "");
+  return host === "Terminal" ? "터미널" : host === "Background" ? "백그라운드" : host === "ccrc" ? "원격" : (host ?? "");
 }
 
 export interface PeerNote {
@@ -99,9 +99,10 @@ export interface PeerNote {
 
 // What becomes of a message sent to a session open in another program, shown before it is sent.
 export function inboxNotes(host: string | undefined, inbox: InboxInfo | undefined): PeerNote[] {
-  const where = host === "Terminal" ? "터미널" : host === "VS Code" ? "VS Code" : "그 세션";
+  const where = host === "Terminal" ? "터미널" : host === "Background" ? "백그라운드 세션" : host === "VS Code" ? "VS Code" : "그 세션";
   const notes: PeerNote[] = [{ text: `다른 세션 메시지로 전달됩니다. Claude가 중요한 작업은 ${where}에서 다시 묻습니다.` }];
-  if (inbox?.gate === "approve") notes.push({ text: "터미널에서 승인해야 전달됩니다.", warn: true });
+  if (inbox?.gate === "approve" && host === "Background") notes.push({ text: "claude agents에서 이 세션을 열어 승인해야 전달됩니다.", warn: true });
+  else if (inbox?.gate === "approve") notes.push({ text: "터미널에서 승인해야 전달됩니다.", warn: true });
   else if (inbox?.gate === "held" && inbox.why === "mode") notes.push({ text: "권한 확인을 건너뛰는 세션이라 5분 안에 권한 모드를 바꾸지 않으면 전달되지 않습니다.", warn: true });
   else if (inbox?.gate === "held") notes.push({ text: "이 세션의 설정(crossSessionInbound)에 따라 보류되어 전달되지 않습니다.", warn: true });
   else if (inbox?.gate === "refused") notes.push({ text: "이 세션의 설정(crossSessionInbound)에 따라 다른 세션 메시지를 받지 않습니다.", warn: true });

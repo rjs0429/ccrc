@@ -12,7 +12,7 @@ import type {
   SnapshotGap,
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, type Me, type Options } from "./api.ts";
-import { isIos, recentRequest, syncBadge } from "./push.ts";
+import { isIos, lastTap, recentRequest, syncBadge } from "./push.ts";
 import { bindSent } from "./sentPreviews.ts";
 
 export type SettingsPage = "claude" | "alerts" | "account" | "status";
@@ -166,6 +166,9 @@ export function openRequest(sessionId: string, requestId: string): void {
 }
 
 const SHOWN_REQUEST_KEY = "ccrc.shownRequest";
+// How long a notification's tap may come before or after the app comes to the front and still count for it.
+const TAP_WAIT_MS = 1500;
+const started = Date.now();
 
 function shownRequest(): string | null {
   try {
@@ -176,15 +179,22 @@ function shownRequest(): string | null {
 }
 
 // iOS can bring the app to the front from a notification without going where it points. Coming to the front shortly
-// after a request's notification, the app goes to that request itself, once per request; never from a new session's draft.
-async function toNotifiedRequest(): Promise<void> {
+// after a request's notification, the app goes to that request itself, once per request, unless a tap took it
+// somewhere else or the user moved meanwhile; never from a new session's draft.
+async function toNotifiedRequest(front: number): Promise<void> {
   if (!isIos() || !state.me?.loggedIn) return;
+  const hash = location.hash;
   const r = await recentRequest().catch(() => undefined);
-  if (!r || shownRequest() === r.requestId || state.route.name === "new") return;
+  if (!r || shownRequest() === r.requestId) return;
+  await new Promise((done) => setTimeout(done, front + TAP_WAIT_MS - Date.now()));
+  if (shownRequest() === r.requestId || state.route.name === "new") return;
+  const tap = lastTap();
+  const tapped = tap && tap.at >= front - TAP_WAIT_MS ? tap.hash : undefined;
+  if (tapped === undefined && location.hash !== hash) return;
   try {
     localStorage.setItem(SHOWN_REQUEST_KEY, r.requestId);
   } catch {}
-  openRequest(r.sessionId, r.requestId);
+  if (tapped === undefined || tapped === `#/s/${r.sessionId}`) openRequest(r.sessionId, r.requestId);
 }
 
 function onRoute(): void {
@@ -253,7 +263,7 @@ export function startSession(): void {
   connect();
   void refreshSessions();
   void refreshOptions();
-  void toNotifiedRequest();
+  void toNotifiedRequest(started);
 }
 
 export function loggedOut(reason: string): void {
@@ -393,7 +403,7 @@ document.addEventListener("visibilitychange", () => {
   }
   if (document.visibilityState === "visible") {
     badgeSoon();
-    void toNotifiedRequest();
+    void toNotifiedRequest(Date.now());
   }
 });
 

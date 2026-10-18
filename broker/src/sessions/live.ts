@@ -11,7 +11,6 @@ export interface LiveProcess {
   host: string;
   status?: string;
   procStart: string;
-  entrypoint?: string;
   inbox?: string;
 }
 
@@ -24,6 +23,9 @@ const HOSTS: Record<string, string> = {
   "sdk-ts": "SDK",
   "sdk-py": "SDK",
 };
+
+// A background session (claude --bg) runs Claude Code's terminal screen, which `claude agents` and `claude attach` open.
+const BACKGROUND = "Background";
 
 let cache: { at: number; list: LiveProcess[] } | undefined;
 
@@ -56,10 +58,9 @@ export function liveProcesses(opts: { dir?: string; fresh?: boolean } = {}): Liv
         pid: r.pid,
         sessionId: r.sessionId,
         cwd: r.cwd,
-        host: HOSTS[r.entrypoint] ?? r.entrypoint ?? "Claude Code",
+        host: r.kind === "bg" ? BACKGROUND : (HOSTS[r.entrypoint] ?? r.entrypoint ?? "Claude Code"),
         status: r.status,
         procStart: String(r.procStart),
-        ...(typeof r.entrypoint === "string" ? { entrypoint: r.entrypoint } : {}),
         ...(r.peerProtocol === INBOX_PROTOCOL && typeof r.messagingSocketPath === "string" ? { inbox: r.messagingSocketPath } : {}),
       });
     } catch {}
