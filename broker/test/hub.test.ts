@@ -294,3 +294,50 @@ test("a side question's progress goes to the window that asked; only its length 
   ]);
   hub.close();
 });
+
+test("a side question may go with an id, be waited for again by it and be cancelled by it; a thread too large for one message is refused", async () => {
+  const manager = new FakeManager();
+  const got: unknown[][] = [];
+  manager.call = async (_sessionId: string, op: string, args?: unknown, progress?: (p: Record<string, unknown>) => void) => {
+    got.push([op, args]);
+    progress?.({ status: "started" });
+    return op === "side_question_cancel" ? {} : { answer: "fine" };
+  };
+  const leases = Object.assign(new EventEmitter(), { validate: () => true }) as unknown as Leases;
+  const logged: [string, Record<string, unknown>][] = [];
+  const audit = { log: (event: string, detail: Record<string, unknown>) => logged.push([event, detail]) } as unknown as Audit;
+  const hub = new Hub(manager as unknown as SessionManager, leases, audit, new Uploads(tempDir()));
+  const ws = new FakeSocket();
+  hub.attach(ws as never, "phone", "token");
+  const send = (id: number, op: string, args: Record<string, unknown>) => ws.emit("message", JSON.stringify({ t: "call", id, sessionId: A, op, args }));
+  const long = "가".repeat(30_000);
+  send(1, "side_question", { question: "q", ask: "k1-abc" });
+  send(2, "side_question_wait", { ask: "k1-abc" });
+  send(3, "side_question_cancel", { ask: "k1-abc" });
+  send(4, "side_question_cancel", {});
+  send(5, "side_question", { question: "q", ask: "not an id!" });
+  send(6, "side_question_wait", {});
+  send(7, "side_question", { question: "q", history: [1, 2, 3].map(() => ({ question: "a", answer: long })) });
+  send(8, "side_question", { question: "q", history: [1, 2].map(() => ({ question: "a", answer: long })) });
+  await sleep(50);
+  const results = new Map(ws.sent.filter((m) => m.t === "call_result").map((m) => [m.id, m]));
+  for (const id of [1, 2, 3, 4, 8]) assert.equal(results.get(id)?.ok, true, `call ${id} answered`);
+  for (const id of [5, 6, 7]) assert.equal(results.get(id)?.ok, false, `call ${id} refused`);
+  assert.deepEqual(got.slice(0, 4), [
+    ["side_question", { question: "q", history: [], ask: "k1-abc" }],
+    ["side_question_wait", { ask: "k1-abc" }],
+    ["side_question_cancel", { ask: "k1-abc" }],
+    ["side_question_cancel", {}],
+  ]);
+  assert.deepEqual(
+    ws.sent.filter((m) => m.t === "call_progress").map((m) => m.id),
+    [1, 2, 8],
+    "the one waiting again hears of the progress too",
+  );
+  assert.deepEqual(
+    logged.map(([e]) => e),
+    ["side_question", "side_question"],
+    "waiting again and cancelling are not new questions",
+  );
+  hub.close();
+});

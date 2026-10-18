@@ -232,7 +232,10 @@ const TURN_KEYS = new Set(["question", "response", "fallback_notice"]);
 const SIDE_TEXT_MAX = 10_000;
 const SIDE_ANSWER_MAX = 100_000;
 const SIDE_HISTORY_MAX = 20;
+// The UTF-8 the texts of a thread may take together, as the broker takes them from the phone.
+const SIDE_THREAD_BYTES = 256 * 1024;
 const text = (v: unknown, max: number, empty = false): boolean => typeof v === "string" && (empty || v.length > 0) && v.length <= max;
+const utf8 = (v: unknown): number => (typeof v === "string" ? Buffer.byteLength(v) : 0);
 
 // side_question carries the question and the earlier questions and answers of its thread, text only.
 export function allowedSideQuestion(req: Record<string, unknown>): boolean {
@@ -252,7 +255,8 @@ export function allowedSideQuestion(req: Record<string, unknown>): boolean {
             text(o.response, SIDE_ANSWER_MAX, true) &&
             (o.fallback_notice === undefined || text(o.fallback_notice, SIDE_TEXT_MAX, true))
           );
-        })))
+        }) &&
+        h.reduce((n: number, t: Record<string, unknown>) => n + utf8(t.question) + utf8(t.response) + utf8(t.fallback_notice), 0) <= SIDE_THREAD_BYTES))
   );
 }
 

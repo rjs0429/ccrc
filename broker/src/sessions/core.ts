@@ -64,7 +64,10 @@ export const READ_MS = 30_000;
 export const DIFF_MS = 10_000;
 // A side question unanswered this long is cancelled, as VS Code does.
 export const SIDE_MS = 5 * 60_000;
+// Cancelling a side question waits this long for it to end.
+const SIDE_CANCEL_MS = 5000;
 const ANSWER_MAX = 100_000;
+const NOTICE_MAX = 10_000;
 // The budget VS Code turns Thinking on with; a model that thinks adaptively ignores it.
 export const THINKING_TOKENS = 31_999;
 
@@ -149,7 +152,7 @@ export function rewindResult(r: unknown): RewindResult {
 export function sideAnswer(r: unknown): SideAnswer {
   const o = isObj(r) ? r : {};
   const answer = typeof o.response === "string" && o.response.trim() ? o.response.slice(0, ANSWER_MAX) : null;
-  const notice = clipped(isObj(o.refusal_fallback) ? o.refusal_fallback.content : undefined, ANSWER_MAX);
+  const notice = clipped(isObj(o.refusal_fallback) ? o.refusal_fallback.content : undefined, NOTICE_MAX);
   return { answer, ...(answer && o.synthetic === true ? { synthetic: true } : {}), ...(answer && notice ? { notice } : {}) };
 }
 
@@ -243,8 +246,8 @@ export abstract class SessionCore extends EventEmitter {
   private streamTimer?: NodeJS.Timeout;
   private turnStartedAt?: number;
   private facts: TurnFacts = {};
-  // The side question under way; one at a time.
-  private side?: AbortController;
+  // The side question under way, one at a time: the id it was asked with, and who hears of its progress.
+  private side?: { ask?: string; ac: AbortController; hear: Set<(p: SideProgress) => void>; done: Promise<SideAnswer> };
   // When VS Code last wrote a message to Claude Code.
   protected hostInputAt?: number;
 
@@ -374,17 +377,24 @@ export abstract class SessionCore extends EventEmitter {
   }
 
   // A question beside the conversation, which Claude Code answers from it without interrupting a turn or adding to it.
-  // It is cancelled when sideMs passes, when cancelSideQuestion is called or when the session closes.
-  async sideQuestion(question: string, history: SideTurn[], onProgress: (p: SideProgress) => void = () => {}): Promise<SideAnswer> {
+  // It is cancelled when sideMs passes, when cancelSideQuestion is called or when the session closes. ask: an id to wait
+  // for it again by (sideWait).
+  async sideQuestion(question: string, history: SideTurn[], onProgress: (p: SideProgress) => void = () => {}, ask?: string): Promise<SideAnswer> {
     this.ensureOpen();
     if (this.side) throw Error("a side question is under way");
     const ac = new AbortController();
-    this.side = ac;
+    const hear = new Set([onProgress]);
+    const done = this.runSide(question, history, ac, hear);
+    this.side = { ac, hear, done, ...(ask ? { ask } : {}) };
+    return done;
+  }
+
+  private async runSide(question: string, history: SideTurn[], ac: AbortController, hear: Set<(p: SideProgress) => void>): Promise<SideAnswer> {
     const timer = setTimeout(() => ac.abort("timeout"), this.sideMs);
     timer.unref();
     const progress = (m: Record<string, unknown>) => {
       const p = sideProgress(m);
-      if (p && !ac.signal.aborted) onProgress(p);
+      if (p && !ac.signal.aborted) for (const h of hear) h(p);
     };
     try {
       return sideAnswer(await this.askSide(question, history, progress, ac.signal));
@@ -393,12 +403,30 @@ export abstract class SessionCore extends EventEmitter {
       throw e;
     } finally {
       clearTimeout(timer);
-      if (this.side === ac) this.side = undefined;
+      if (this.side?.ac === ac) this.side = undefined;
     }
   }
 
-  cancelSideQuestion(): void {
-    this.side?.abort("cancel");
+  sideRunning(ask: string): boolean {
+    return this.side?.ask === ask;
+  }
+
+  // The side question asked with `ask`, waited for again with its progress; undefined when it is not under way.
+  sideWait(ask: string, onProgress: (p: SideProgress) => void = () => {}): Promise<SideAnswer> | undefined {
+    const run = this.side;
+    if (!run || run.ask !== ask) return undefined;
+    run.hear.add(onProgress);
+    return run.done.finally(() => run.hear.delete(onProgress));
+  }
+
+  // Gives up the side question under way, only the one asked with `ask` where given, and waits a little for it to end.
+  async cancelSideQuestion(ask?: string): Promise<void> {
+    const run = this.side;
+    if (!run || (ask !== undefined && run.ask !== ask)) return;
+    run.ac.abort("cancel");
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([run.done.catch(() => {}), new Promise<void>((r) => (timer = setTimeout(r, SIDE_CANCEL_MS)))]);
+    clearTimeout(timer);
   }
 
   protected askSide(_question: string, _history: SideTurn[], _progress: (m: Record<string, unknown>) => void, _signal: AbortSignal): Promise<unknown> {
@@ -639,7 +667,7 @@ export abstract class SessionCore extends EventEmitter {
     this.closed = true;
     this.closedReason = reason;
     this.busy = false;
-    this.side?.abort("closed");
+    this.side?.ac.abort("closed");
     for (const id of [...this.pending.keys()]) this.unask(id);
     this.tasks.clear();
     this.queue.clear();

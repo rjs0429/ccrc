@@ -5,6 +5,7 @@ import {
   CALL_OPS,
   FOLDER_OPS,
   PERMISSION_MODES,
+  SIDE_THREAD_BYTES,
   type Answer,
   type CallOp,
   type ClientMsg,
@@ -38,20 +39,30 @@ const DENIED_KEEP = 100;
 const DRAFT_ID = /^[A-Za-z0-9-]{1,64}$/;
 // A start asked for again with the same draftId in this long gets the session already started.
 const DRAFT_KEEP_MS = 10 * 60_000;
-// A side question and the thread it is asked in, as the wrapper takes them.
+// A side question and the thread it is asked in, as the wrapper takes them, and the phone's id for it.
 const QUESTION_MAX = 10_000;
 const ANSWER_MAX = 100_000;
 const THREAD_MAX = 20;
+const ASK_ID = /^[A-Za-z0-9-]{1,64}$/;
 
 function sideTurns(v: unknown): SideTurn[] {
   if (v === undefined) return [];
   if (!Array.isArray(v) || v.length > THREAD_MAX) throw Error("invalid request");
-  return v.map((t) => {
+  const turns = v.map((t) => {
     const o = t as Partial<SideTurn> | null;
     if (!o || typeof o !== "object" || typeof o.answer !== "string" || o.answer.length > ANSWER_MAX) throw Error("invalid request");
     if (o.notice !== undefined && (typeof o.notice !== "string" || o.notice.length > QUESTION_MAX)) throw Error("invalid request");
     return { question: str(o.question, QUESTION_MAX), answer: o.answer, ...(o.notice ? { notice: o.notice } : {}) };
   });
+  const size = turns.reduce((n, t) => n + Buffer.byteLength(t.question) + Buffer.byteLength(t.answer) + Buffer.byteLength(t.notice ?? ""), 0);
+  if (size > SIDE_THREAD_BYTES) throw Error("invalid request");
+  return turns;
+}
+
+function askId(v: unknown, optional = false): { ask?: string } {
+  if (v === undefined && optional) return {};
+  if (typeof v !== "string" || !ASK_ID.test(v)) throw Error("invalid request");
+  return { ask: v };
 }
 
 function send(ws: WebSocket, msg: ServerMsg): void {
@@ -419,15 +430,25 @@ export class Hub {
         reply({ ok: true, data: await this.rewindConversation(sessionId, args) });
         return;
       }
-      // Of a side question only its length and its thread's are recorded; its answer comes after progress lines.
-      if (msg.op === "side_question") {
-        const question = str(args.question, QUESTION_MAX);
-        const history = sideTurns(args.history);
-        this.audit.log("side_question", { device: this.device, sessionId, chars: question.length, ...(history.length ? { thread: history.length } : {}) });
+      // Of a side question only its length and its thread's are recorded; its answer comes after progress lines, also
+      // when it is waited for again.
+      if (msg.op === "side_question" || msg.op === "side_question_wait") {
         const progress = (p: SideProgress) => {
           if (ws === this.active) send(ws, { t: "call_progress", id, ...p });
         };
-        reply({ ok: true, data: await this.manager.call(sessionId, "side_question", { question, history }, progress) });
+        if (msg.op === "side_question_wait") {
+          reply({ ok: true, data: await this.manager.call(sessionId, "side_question_wait", askId(args.ask), progress) });
+          return;
+        }
+        const question = str(args.question, QUESTION_MAX);
+        const history = sideTurns(args.history);
+        const ask = askId(args.ask, true);
+        this.audit.log("side_question", { device: this.device, sessionId, chars: question.length, ...(history.length ? { thread: history.length } : {}) });
+        reply({ ok: true, data: await this.manager.call(sessionId, "side_question", { question, history, ...ask }, progress) });
+        return;
+      }
+      if (msg.op === "side_question_cancel") {
+        reply({ ok: true, data: await this.manager.call(sessionId, "side_question_cancel", askId(args.ask, true)) });
         return;
       }
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {

@@ -263,3 +263,30 @@ test("an owned session asks Claude Code for its folder's git changes", async () 
   assert.deepEqual(await s.workspaceDiff(), { diff: null });
   assert.deepEqual(r.asked, [{ subtype: "get_workspace_diff" }]);
 });
+
+test("a side question asked with an id is waited for again with its progress, and cancelling one waits for it to end", async () => {
+  const { s } = owned();
+  const progress = (status: string) => (s as unknown as { onMessage(m: Record<string, unknown>): void }).onMessage({ type: "system", subtype: "control_request_progress", request_id: "sdk-1", status });
+  Object.assign((s as unknown as { q: object }).q, { request: requester((r) => ({ response: `answer to ${r.question}` }), 60).request });
+  const [first, again]: unknown[][] = [[], []];
+  const asked = s.sideQuestion("what now?", [], (p) => first.push(p), "ask-1");
+  assert.equal(s.sideWait("ask-2"), undefined, "another id has nothing to wait for");
+  const waited = s.sideWait("ask-1", (p) => again.push(p));
+  progress("started");
+  assert.deepEqual(await waited, { answer: "answer to what now?" });
+  assert.deepEqual(await asked, { answer: "answer to what now?" });
+  assert.deepEqual([first, again], [[{ status: "started" }], [{ status: "started" }]]);
+  assert.equal(s.sideWait("ask-1"), undefined, "an answered question is no longer under way");
+
+  Object.assign((s as unknown as { q: object }).q, { request: requester(() => ({ response: "late" }), 5000).request });
+  const slow = assert.rejects(s.sideQuestion("slow", [], undefined, "ask-3"), /side question cancelled/);
+  await s.cancelSideQuestion("ask-4");
+  const waitedSlow = s.sideWait("ask-3");
+  assert.ok(waitedSlow, "a cancel naming another id leaves it running");
+  const waitedEnd = assert.rejects(waitedSlow, /side question cancelled/);
+  await s.cancelSideQuestion("ask-3");
+  assert.equal(s.sideWait("ask-3"), undefined, "the cancel returns once it has ended");
+  await Promise.all([slow, waitedEnd]);
+  Object.assign((s as unknown as { q: object }).q, { request: requester(() => ({ response: "next" }), 1).request });
+  assert.deepEqual(await s.sideQuestion("next", []), { answer: "next" }, "another question may be asked at once");
+});

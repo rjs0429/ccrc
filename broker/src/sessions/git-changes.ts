@@ -22,7 +22,8 @@ const PARALLEL = 4;
 const BUSY = ["MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"];
 const STATUS: Record<string, GitFileChange["status"]> = { A: "added", D: "removed", R: "renamed", C: "copied" };
 const STATUSES = new Set<unknown>(["added", "modified", "removed", "renamed", "copied"]);
-const DIFF = ["-c", "diff.relative=false", "-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "-M"];
+// Paths go to git as they are: a name with glob characters names that file alone.
+const DIFF = ["--literal-pathspecs", "-c", "diff.relative=false", "-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "-M"];
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -54,27 +55,45 @@ async function shownIn(roots: string[]): Promise<(abs: string) => Promise<boolea
   };
 }
 
-// The hunks of a unified diff, at most FILE_LINES_MAX lines; cut: the lines left out.
-export function parseHunks(text: string): { hunks: Hunk[]; cut: number } {
+// The hunks of a unified diff, at most FILE_LINES_MAX lines, each taking only the lines its header counts; cut: the lines
+// left out; files: the files the text holds.
+export function parseHunks(text: string): { hunks: Hunk[]; cut: number; files: number } {
   const hunks: Hunk[] = [];
   let at: Hunk | undefined;
+  let left = { old: 0, new: 0 };
   let lines = 0;
   let cut = 0;
+  let files = 0;
   for (const line of text.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      files++;
+      at = undefined;
+      continue;
+    }
     const h = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
     if (h) {
       at = { oldStart: Number(h[1]), oldLines: Number(h[2] ?? 1), newStart: Number(h[3]), newLines: Number(h[4] ?? 1), lines: [] };
+      left = { old: at.oldLines, new: at.newLines };
       hunks.push(at);
       continue;
     }
-    if (!at || !/^[ +\-\\]/.test(line)) continue;
+    if (!at) continue;
+    if (line[0] === " " && left.old > 0 && left.new > 0) {
+      left.old--;
+      left.new--;
+    } else if (line[0] === "-" && left.old > 0) left.old--;
+    else if (line[0] === "+" && left.new > 0) left.new--;
+    else if (line[0] !== "\\") {
+      at = undefined;
+      continue;
+    }
     if (lines >= FILE_LINES_MAX) cut++;
     else {
       at.lines.push(clip(line));
       lines++;
     }
   }
-  return { hunks, cut };
+  return { hunks, cut, files };
 }
 
 // The default branch as Claude Code finds it: origin's HEAD, else origin's main or master, else main.
@@ -118,9 +137,11 @@ function shortStat(out: string): GitChanges["stats"] | undefined {
   return m ? { files: Number(m[1]), added: Number(m[2] ?? 0), removed: Number(m[3] ?? 0) } : undefined;
 }
 
+// parts: the files git shows the change as, two where a path changed its type.
 interface Row {
   file: GitFileChange;
   paths: string[];
+  parts: number;
 }
 
 // git diff --raw -z and --numstat -z against `ref`, as rows in git's order.
@@ -155,6 +176,7 @@ async function tracked(root: string, ref: string): Promise<Row[] | undefined> {
         ...(two ? { previousPath: from, newPath: to } : {}),
       },
       paths: two ? [from, to] : [to],
+      parts: m[1] === "T" ? 2 : 1,
     });
   }
   return rows;
@@ -169,7 +191,7 @@ async function untracked(root: string, since: number | undefined, known: Set<str
   for (const p of r.out.split("\0").filter(Boolean).slice(0, UNTRACKED_MAX)) {
     if (known.has(p)) continue;
     const st = await fs.promises.lstat(path.join(root, p)).catch(() => undefined);
-    if (st && Math.max(st.mtimeMs, st.ctimeMs) >= since) rows.push({ file: { path: p, status: "added", added: 0, removed: 0, untracked: true }, paths: [p] });
+    if (st && Math.max(st.mtimeMs, st.ctimeMs) >= since) rows.push({ file: { path: p, status: "added", added: 0, removed: 0, untracked: true }, paths: [p], parts: 1 });
   }
   return rows;
 }
@@ -230,7 +252,11 @@ export async function brokerChanges(cwd: string, roots: string[], since?: number
         continue;
       }
       room -= d.out.length;
-      const { hunks, cut } = parseHunks(d.out);
+      const { hunks, cut, files } = parseHunks(d.out);
+      if (files > r.parts) {
+        r.file.large = true;
+        continue;
+      }
       if (hunks.length) r.file.hunks = hunks;
       if (cut) r.file.cut = cut;
     }

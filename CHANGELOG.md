@@ -18,8 +18,11 @@ your version and the new one, and the lines under "Breaking" separately.
   400 lines a file, 2MB in all). Lines can be picked and commented into the composer as before.
 - Side questions (`/btw` in the composer, or 곁질문 in the ⋯ menu) ask Claude Code beside the conversation, without
   interrupting a turn or adding to the conversation, and show its progress. The latest 20 questions and answers stay
-  in the phone tab's sessionStorage and go with a follow-up as its thread. A question is cancelled after five minutes
-  or by the user. A session without a process is started first, when the user asks.
+  in the phone tab's sessionStorage and go with a follow-up as its thread, the latest first up to 256KB. A question is
+  cancelled after five minutes or by the user. When the phone's connection drops while it waits, it waits again once
+  it is back: the broker keeps how the question ended in memory for ten minutes. A question refused because an earlier
+  one is still being answered elsewhere can give that one up and be asked again. A session without a process is
+  started first, when the user asks.
 
 ### Changed
 

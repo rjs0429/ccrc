@@ -92,6 +92,8 @@ const FORK_NAME_MS = 30_000;
 const FORK_WRITTEN_MS = 3000;
 const FORK_KEEP_MS = 10 * 60_000;
 const FORK_TITLE_MAX = 120;
+// How a side question asked with an id ended is kept this long, for the phone that lost its connection while it waited.
+const SIDE_KEEP_MS = 10 * 60_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EFFORT_NAMES = new Set<unknown>(["low", "medium", "high", "xhigh", "max"]);
 // How a Claude Code without rewind_conversation answers it.
@@ -217,6 +219,8 @@ export class SessionManager extends EventEmitter {
   // Forks made here by the id the phone chose for them; sent: a first message went to the fork.
   private forks = new Map<string, { at: number; done: Promise<ForkResult>; sent: boolean }>();
   private exact = new Map<string, { size: number; model: string }>();
+  // The last side question asked with an id in each session, once it has ended.
+  private sideEnded = new Map<string, { ask: string; answer?: SideAnswer; error?: string }>();
   private sent = new SentIndex();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string, env?: LaunchEnv) => Promise<UsageInfo> = probeUsage;
@@ -916,18 +920,43 @@ export class SessionManager extends EventEmitter {
       case "agent_changes":
         return agentChanges(sessionId, await this.cwdOf(sessionId));
       case "side_question":
-        return this.sideQuestion(sessionId, String(args.question), (args.history as SideTurn[] | undefined) ?? [], progress);
+        return this.sideQuestion(sessionId, String(args.question), (args.history as SideTurn[] | undefined) ?? [], progress, typeof args.ask === "string" ? args.ask : undefined);
+      case "side_question_wait":
+        return this.sideWait(sessionId, String(args.ask), progress);
       case "side_question_cancel":
-        this.get(sessionId).cancelSideQuestion();
+        await this.get(sessionId).cancelSideQuestion(typeof args.ask === "string" ? args.ask : undefined);
         return {};
     }
   }
 
   // The session's process answers while it runs; one without a process is started first by the phone, by its own call.
-  sideQuestion(sessionId: string, question: string, history: SideTurn[], progress?: (p: SideProgress) => void): Promise<SideAnswer> {
+  // ask: the phone's id for the question, which keeps how it ended for a while.
+  sideQuestion(sessionId: string, question: string, history: SideTurn[], progress?: (p: SideProgress) => void, ask?: string): Promise<SideAnswer> {
     const s = this.controlled(sessionId);
     if (!s || s.closed) throw Error("session is not running here");
-    return s.sideQuestion(question, history, progress);
+    const done = s.sideQuestion(question, history, progress, ask);
+    if (ask && s.sideRunning(ask)) {
+      const keep = (end: { answer?: SideAnswer; error?: string }) => {
+        const kept = { ask, ...end };
+        this.sideEnded.set(sessionId, kept);
+        setTimeout(() => this.sideEnded.get(sessionId) === kept && this.sideEnded.delete(sessionId), SIDE_KEEP_MS).unref();
+      };
+      done.then(
+        (answer) => keep({ answer }),
+        (e: unknown) => keep({ error: e instanceof Error ? e.message : String(e) }),
+      );
+    }
+    return done;
+  }
+
+  // The side question asked with `ask`, for a phone that lost its connection while it waited: waited for again while it
+  // runs, else how it ended when that was lately.
+  sideWait(sessionId: string, ask: string, progress?: (p: SideProgress) => void): Promise<SideAnswer> {
+    const running = this.controlled(sessionId)?.sideWait(ask, progress);
+    if (running) return running;
+    const end = this.sideEnded.get(sessionId);
+    if (end?.ask !== ask) return Promise.reject(Error("side question gone"));
+    return end.answer ? Promise.resolve(end.answer) : Promise.reject(Error(end.error ?? "side question gone"));
   }
 
   // A running process works out its folder's git changes under Claude Code's own read rules; ccrc does it with git for a

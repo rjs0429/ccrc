@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { brokerSessionsBlocked, clock, hostLabel } from "../../labels.ts";
-import { askSide, cancelSide, clearSide, useSideThread, type SideEntry, type SidePending } from "../../sideQuestions.ts";
+import { askInstead, askSide, cancelSide, clearSide, useSideThread, type SideEntry, type SidePending } from "../../sideQuestions.ts";
 import { useApp } from "../../state.ts";
 import { Markdown } from "../Markdown.tsx";
 import { Button, Sheet, Spinner } from "../ui.tsx";
@@ -18,7 +18,8 @@ function Question({ text, at }: { text: string; at?: number }) {
   );
 }
 
-function Entry({ e }: { e: SideEntry }) {
+// onInstead: gives up the earlier question that kept this one from being asked, and asks this one.
+function Entry({ e, onInstead }: { e: SideEntry; onInstead?: () => void }) {
   return (
     <div className="space-y-2" data-side-entry={e.kind}>
       <Question text={e.question} at={e.at} />
@@ -31,6 +32,11 @@ function Entry({ e }: { e: SideEntry }) {
       {e.kind === "notice" && <p className="text-sm text-muted">{e.text}</p>}
       {e.kind === "none" && <p className="text-sm text-muted">답이 없습니다. 다시 묻거나 대화에서 물어보세요.</p>}
       {e.kind === "error" && <p className="text-sm text-danger">{e.text}</p>}
+      {onInstead && (
+        <SmallButton tall onClick={onInstead}>
+          앞선 곁질문 취소하고 다시 묻기
+        </SmallButton>
+      )}
       {e.kind === "cancelled" && <p className="text-sm text-muted">물음을 취소했습니다.</p>}
     </div>
   );
@@ -38,6 +44,7 @@ function Entry({ e }: { e: SideEntry }) {
 
 function waitingText(p: SidePending): string {
   if (p.status === "starting") return "세션을 이어서 실행하는 중…";
+  if (p.status === "offline") return "연결이 끊겨 다시 연결되기를 기다리는 중…";
   if (p.status === "sent") return "보내는 중…";
   if (p.status === "retry") return `API 오류로 다시 시도하는 중${p.attempt && p.maxRetries ? ` (${p.attempt}/${p.maxRetries})` : ""}…`;
   return "답을 쓰는 중…";
@@ -58,7 +65,9 @@ function Waiting({ pending, onCancel }: { pending: SidePending; onCancel: () => 
         <span className="min-w-0 flex-1">
           {waitingText(pending)} {seconds}초
         </span>
-        <SmallButton onClick={onCancel}>취소</SmallButton>
+        <SmallButton tall onClick={onCancel}>
+          취소
+        </SmallButton>
       </div>
     </div>
   );
@@ -113,12 +122,15 @@ export function SideQuestionSheet({ sessionId, question, ask, onAsked, onClose }
       {(entries.length > 0 || pending) && (
         <div className="mt-3 space-y-4" data-side-thread>
           {entries.map((e, i) => (
-            <Entry key={`${e.at}-${i}`} e={e} />
+            <Entry
+              key={`${e.at}-${i}`}
+              e={e}
+              onInstead={e.kind === "error" && e.busy && i === entries.length - 1 && !pending && !blocked ? () => void askInstead(sessionId, e, start) : undefined}
+            />
           ))}
           {pending && <Waiting pending={pending} onCancel={() => cancelSide(sessionId)} />}
         </div>
       )}
-      <div ref={endRef} />
       {blocked ? (
         <p className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-side-blocked>
           {blocked}
@@ -152,6 +164,7 @@ export function SideQuestionSheet({ sessionId, question, ask, onAsked, onClose }
           </div>
         </div>
       )}
+      <div ref={endRef} />
     </Sheet>
   );
 }

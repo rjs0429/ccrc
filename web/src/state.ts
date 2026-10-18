@@ -322,6 +322,14 @@ export function startNewSession(start: Omit<NewSessionMsg, "draftId">): boolean 
   return true;
 }
 
+const connectedHooks = new Set<() => void>();
+
+// Called each time the connection to the broker is ready, after a reconnect too.
+export function onConnected(fn: () => void): () => void {
+  connectedHooks.add(fn);
+  return () => connectedHooks.delete(fn);
+}
+
 function settleCalls(): void {
   for (const c of calls.values()) {
     clearTimeout(c.timer);
@@ -386,6 +394,7 @@ function onServer(msg: ServerMsg): void {
       send(viewMsg());
       if (startingSent) send(startingSent.msg);
       badgeSoon();
+      for (const fn of connectedHooks) fn();
       return;
     case "window_conflict":
       setState({ conn: "conflict" });

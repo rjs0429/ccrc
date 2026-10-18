@@ -1189,11 +1189,13 @@ test("a side question carries only its text and its thread; its progress and ans
     { subtype: "side_question", question: "q", history: [{ question: "a", response: "b", tools: true }] },
     { subtype: "side_question", question: "q", history: [{ question: "a", response: 7 }] },
     { subtype: "side_question", question: "q", history: Array.from({ length: 21 }, () => ({ question: "a", response: "b" })) },
+    { subtype: "side_question", question: "q", history: Array.from({ length: 3 }, () => ({ question: "a", response: "가".repeat(30_000) })) },
   ];
   bad.forEach((r, i) => request(`ccrc-side-bad-${i}`, r));
   for (const i of bad.keys()) await t.broker.frames.wait((f) => f.t === "rejected" && f.id === `ccrc-side-bad-${i}` && f.reason === "invalid request", `bad side_question ${i}`);
   assert.ok(allowedSideQuestion({ subtype: "side_question", question: "q", history: [{ question: "a", response: "", fallback_notice: "n" }] }));
   assert.ok(!allowedSideQuestion({ subtype: "side_question", question: "q", history: [null] }));
+  assert.ok(allowedSideQuestion({ subtype: "side_question", question: "q", history: Array.from({ length: 2 }, () => ({ question: "a", response: "가".repeat(30_000) })) }));
 });
 
 test("the broker cancels only its own side question, and VS Code's own side question stays between it and Claude Code", async () => {

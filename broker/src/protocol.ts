@@ -457,6 +457,9 @@ export interface AgentFileChange {
   patchCut?: number;
 }
 
+// The most UTF-8 a side question's thread may take as JSON: with the question it stays well inside one WebSocket message.
+export const SIDE_THREAD_BYTES = 256 * 1024;
+
 // An earlier side question and its answer, which a follow-up is asked with.
 export interface SideTurn {
   question: string;
@@ -510,10 +513,12 @@ export interface CallMap {
   // The file changes the session's subagents made; follow: asked again while the sheet stays open.
   agent_changes: { args: { follow?: boolean }; data: AgentFileChange[] };
   // A question beside the conversation that neither interrupts a turn nor enters the conversation, answered after
-  // call_progress lines. history: the earlier questions and answers of the same thread.
-  side_question: { args: { question: string; history?: SideTurn[] }; data: SideAnswer };
-  // Gives up the side question under way.
-  side_question_cancel: { args: Record<string, never>; data: Record<string, never> };
+  // call_progress lines. history: the earlier questions and answers of the same thread. ask: the phone's id for it.
+  side_question: { args: { question: string; history?: SideTurn[]; ask?: string }; data: SideAnswer };
+  // The side question asked with `ask`, waited for again after the connection dropped; how it ended is kept a while.
+  side_question_wait: { args: { ask: string }; data: SideAnswer };
+  // Gives up the side question under way, only the one asked with `ask` where given.
+  side_question_cancel: { args: { ask?: string }; data: Record<string, never> };
 }
 export type CallOp = keyof CallMap;
 export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume", "output_style", "set_output_style", "unqueue", "rename", "archive"];
@@ -525,7 +530,7 @@ export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage", "git"];
 CALL_OPS.push("agent_transcript", "task_output", "workflow_agents");
 CALL_OPS.push("worktree_status", "worktree_remove");
 CALL_OPS.push("fork", "rewind_conversation");
-CALL_OPS.push("git_changes", "agent_changes", "side_question", "side_question_cancel");
+CALL_OPS.push("git_changes", "agent_changes", "side_question", "side_question_wait", "side_question_cancel");
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {

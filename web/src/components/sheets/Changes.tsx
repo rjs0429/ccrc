@@ -306,7 +306,7 @@ function GitChangesTab({ sessionId, cwd, onClose }: { sessionId: string; cwd: st
           {data?.state === "none" && <span className="block">git 저장소가 아닙니다.</span>}
           {data?.state === "busy" && <span className="block">병합이나 리베이스가 진행 중이라 지금은 보여 줄 수 없습니다.</span>}
         </div>
-        <SmallButton onClick={load} disabled={loading}>
+        <SmallButton tall onClick={load} disabled={loading}>
           새로고침
         </SmallButton>
       </div>

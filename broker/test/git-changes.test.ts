@@ -140,6 +140,68 @@ test("a long change keeps its first lines and counts the rest", () => {
   assert.equal(parseHunks(`@@ -1 +1 @@\n-${"x".repeat(900)}`).hunks[0].lines[0].length, 501);
 });
 
+test("a name with glob characters shows its own lines only, never a key file's that it would match", async () => {
+  const dir = repo();
+  write(`${dir}/.en?`, "note old\n");
+  write(`${dir}/app/[id]/page.tsx`, "export const page = 1;\n");
+  write(`${dir}/app/d/page.tsx`, "export const d = 1;\n");
+  write(`${dir}/star*.txt`, "star old\n");
+  sh(dir, "add", "-A");
+  sh(dir, "commit", "-q", "-m", "glob names");
+  write(`${dir}/.env`, "TOKEN=glob-secret\n");
+  write(`${dir}/.en?`, "note new\n");
+  write(`${dir}/app/[id]/page.tsx`, "export const page = 2;\n");
+  write(`${dir}/app/d/page.tsx`, "export const d = 2;\n");
+  write(`${dir}/star*.txt`, "star new\n");
+  write(`${dir}/twin.txt`, "two\n");
+  const g = await brokerChanges(dir, [dir]);
+  const f = byPath(g);
+  assert.deepEqual(f.get(".en?")?.hunks?.flatMap((h) => h.lines), ["-note old", "+note new"]);
+  assert.deepEqual(f.get("app/[id]/page.tsx")?.hunks?.flatMap((h) => h.lines), ["-export const page = 1;", "+export const page = 2;"]);
+  assert.deepEqual(f.get("star*.txt")?.hunks?.flatMap((h) => h.lines), ["-star old", "+star new"]);
+  assert.deepEqual(f.get("twin.txt")?.hunks?.flatMap((h) => h.lines), ["-one", "+two"]);
+  assert.equal(f.get(".env")?.hidden, true);
+  assert.ok(!JSON.stringify(g).includes("glob-secret"), "the key file's value is nowhere in the answer");
+});
+
+test("a path that changed its type shows both of its parts", async () => {
+  const dir = repo();
+  fs.symlinkSync("a.txt", `${dir}/link`);
+  sh(dir, "add", "-A");
+  sh(dir, "commit", "-q", "-m", "a link");
+  fs.rmSync(`${dir}/link`);
+  write(`${dir}/link`, "now a file\n");
+  const f = byPath(await brokerChanges(dir, [dir])).get("link");
+  assert.deepEqual(f?.hunks?.map((h) => h.lines), [["-a.txt", "\\ No newline at end of file"], ["+now a file"]]);
+  assert.equal(f?.large, undefined);
+});
+
+test("a hunk takes only the lines its header counts, and a second file in the text is counted", () => {
+  const body = [
+    "diff --git a/x.sql b/x.sql",
+    "index 1111111..2222222 100644",
+    "--- a/x.sql",
+    "+++ b/x.sql",
+    "@@ -1,2 +1,2 @@",
+    "--- a comment",
+    "+++ a heading",
+    " select 1;",
+    "diff --git a/y b/y",
+    "--- a/y",
+    "+++ b/y",
+    "@@ -1 +1 @@",
+    "-y old",
+    "+y new",
+    "",
+  ].join("\n");
+  const { hunks, files } = parseHunks(body);
+  assert.equal(files, 2);
+  assert.deepEqual(
+    hunks.map((h) => h.lines),
+    [["--- a comment", "+++ a heading", " select 1;"], ["-y old", "+y new"]],
+  );
+});
+
 // The answer Claude Code 2.1.301 gave for a repository with these changes, trimmed.
 const ANSWER = {
   diff: {
