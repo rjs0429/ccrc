@@ -39,6 +39,10 @@ import { placeLabel, shownBranch } from "../worktree.ts";
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
 const NEAR_BOTTOM_PX = 160;
+// A change of height without a new item keeps the list at the bottom only from within PIN_PX of it, and not within
+// TAP_MS of a tap on the list, which opened something there.
+const PIN_PX = 2;
+const TAP_MS = 600;
 const gapBelow = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight;
 const FLASH_MS = 2500;
 const NO_MODELS: ModelOption[] = [];
@@ -101,12 +105,17 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [fork, setFork] = useState<{ before?: UserMessage; text?: string; name?: string; typed?: string } | null>(null);
   const [rewindAt, setRewindAt] = useState<string>();
   const listRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   // A smooth scroll to the bottom from the jump button, until it lands or the user touches the list; a touch
   // stops it where it is, since browsers do not all cancel a smooth scroll for one.
   const glide = useRef(false);
-  // The list's height when the user left the bottom: anything taller has arrived since.
+  // The list's height when the user left the bottom, plus what changed it since without a new item: anything taller
+  // has arrived since.
   const seen = useRef(0);
+  // The list's height as the follow effect and the resize observer below last saw it.
+  const height = useRef(0);
+  const tapped = useRef(0);
   const [away, setAway] = useState(false);
   const [unseen, setUnseen] = useState(false);
 
@@ -319,15 +328,24 @@ export function Chat({ sessionId }: { sessionId: string }) {
       if (el.scrollHeight > seen.current) setUnseen(true);
     } else if (glide.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     else el.scrollTop = el.scrollHeight;
+    height.current = el.scrollHeight;
   }, [chat?.items, chat?.stream?.text, chat?.pending.length, chat?.loaded, queued.length]);
 
-  // Resizing the list (rotation, a taller composer or to-do panel) keeps it at the bottom while it follows.
+  // Resizing the list (rotation, a taller composer or to-do panel) keeps it at the bottom while it follows. A change in
+  // what it holds that no new item made (a line under a running call, an image) is not new content.
   useEffect(() => {
     const el = listRef.current!;
-    const resized = new ResizeObserver(() => {
-      if (stick.current) el.scrollTop = el.scrollHeight;
+    const resized = new ResizeObserver((entries) => {
+      const grown = el.scrollHeight - height.current;
+      height.current = el.scrollHeight;
+      seen.current += grown;
+      const following = stick.current && entries.some((e) => e.target === el);
+      const pinned = gapBelow(el) - grown < PIN_PX && performance.now() - tapped.current > TAP_MS;
+      if (glide.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      else if (following || pinned) el.scrollTop = el.scrollHeight;
     });
     resized.observe(el);
+    resized.observe(contentRef.current!);
     return () => resized.disconnect();
   }, []);
 
@@ -415,12 +433,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
         }}
         onPointerDown={endGlide}
         onWheel={endGlide}
+        onClickCapture={() => (tapped.current = performance.now())}
         className="flex-1 overflow-y-auto overscroll-contain px-safe-0"
         data-scroll-root
       >
         <FileLinks.Provider value={openFile}>
           <FileRoots.Provider value={roots}>
-            <div className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:py-3">
+            <div ref={contentRef} className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:py-3">
               {!chat?.loaded && (
                 <div className="flex justify-center py-10 text-muted">
                   <Spinner className="size-6" />
