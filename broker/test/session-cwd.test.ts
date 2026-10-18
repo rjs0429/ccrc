@@ -75,7 +75,7 @@ test("the first cwd of a transcript is found past a first line longer than the S
   fs.rmSync(none);
 });
 
-test("the SDK lists such a session without a cwd; the manager takes the folder its project folder's sessions share", async () => {
+test("the SDK lists such a session without a cwd; the manager fills it in from the transcript", async () => {
   longStart(id(3), proj);
   short(id(4), proj);
   const sdk = (await listSessions()).find((i) => i.sessionId === id(3));
@@ -131,4 +131,23 @@ test("a session alone in its project folder, or among folders sharing the folder
   assert.equal((await found.fill([infos[0]]))[0].cwd, dashed, "rewritten shorter: read again");
 
   assert.deepEqual(await new SessionCwds(() => path.join(home, "nowhere")).fill([infos[0]]), [infos[0]], "no projects folder: left as it was");
+});
+
+test("the cwd a transcript records wins over the one other folder listed in its project folder, which may only encode alike", async () => {
+  const hex = (c: string) => `${c.repeat(8)}-0000-4000-8000-${c.repeat(12)}`;
+  const dashed = path.join(home, "c-d");
+  const dotted = path.join(home, "c.d");
+  short(hex("a"), dashed);
+  longStart(hex("b"), dotted);
+  longStart(hex("c"), undefined, { under: dashed });
+  const filled = await new SessionCwds(() => projects).fill([
+    { sessionId: hex("a"), summary: "x", lastModified: 1, cwd: dashed },
+    { sessionId: hex("b"), summary: "x", lastModified: 1 },
+    { sessionId: hex("c"), summary: "x", lastModified: 1 },
+  ]);
+  assert.deepEqual(
+    filled.map((i) => i.cwd),
+    [dashed, dotted, dashed],
+    "a transcript that records no cwd takes the folder listed there",
+  );
 });

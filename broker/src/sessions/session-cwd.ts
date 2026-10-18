@@ -46,8 +46,8 @@ function cwdOf(line: Buffer): string | undefined {
 }
 
 // The SDK reads a session's working folder from the start of its transcript, which a long first message can fill.
-// Such a session takes the one folder the other sessions in its project folder share, or else the first cwd its
-// transcript records; what a transcript gave is kept while its size and time stay, or while it only grows.
+// Such a session takes the first cwd its transcript records, kept while the file's size and time stay or it only grows.
+// Only when it records none does it take the folder the other sessions there share: other folders can encode alike.
 export class SessionCwds {
   private root: () => string;
   private found = new Map<string, { size: number; mtimeMs: number; cwd?: string }>();
@@ -68,7 +68,7 @@ export class SessionCwds {
     const cwds = new Map<string, string>();
     for (const [id, file] of await this.locate(missing)) {
       const folders = shared.get(path.basename(path.dirname(file)));
-      const cwd = folders?.size === 1 ? [...folders][0] : await this.read(file);
+      const cwd = (await this.read(file)) ?? (folders?.size === 1 ? [...folders][0] : undefined);
       if (cwd) cwds.set(id, cwd);
     }
     return infos.map((i) => (cwds.has(i.sessionId) ? { ...i, cwd: cwds.get(i.sessionId) } : i));

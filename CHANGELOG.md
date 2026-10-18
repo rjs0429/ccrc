@@ -23,7 +23,7 @@ your version and the new one, and the lines under "Breaking" separately.
 
 - Sessions whose transcript starts with a long first message (one typed while Claude worked, with pasted text or
   images) were listed under a folder with no name and could not be opened: their working folder now comes from the
-  other sessions of the same project folder, or else from the transcript.
+  transcript, or, when it names none, from the other sessions of the same project folder.
 - Turning notifications off and on again on a phone keeps the choices made before (VS Code delay, turn end, tool
   names) instead of going back to the defaults.
 
