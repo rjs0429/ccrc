@@ -23,7 +23,8 @@ export interface Hello {
   sessionId?: string;
   // Session the wrapper waits to start until the broker hands it over.
   claim?: string;
-  // What this wrapper passes on beyond what LINK_VERSION promises: "fast_mode" and "thinking" changes.
+  // What this wrapper passes on beyond what LINK_VERSION promises: "fast_mode" and "thinking" changes, "workspace_diff"
+  // reads and "side_question"s with their progress and cancelling.
   caps?: string[];
 }
 

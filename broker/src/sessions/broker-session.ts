@@ -13,11 +13,12 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeSettingsFile } from "../claude-settings.ts";
 import { elicitInfo } from "../elicit.ts";
-import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput, WorktreeChoice } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, SideTurn, TaskOutput, WorktreeChoice } from "../protocol.ts";
 import { worktreeOf } from "../worktree-names.ts";
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
+  DIFF_MS,
   ELICIT_MS,
   MCP_CHANGE_MS,
   READ_MS,
@@ -27,6 +28,7 @@ import {
   mcpServers,
   rewindResult,
   shellOutput,
+  sideHistory,
   type ContentBlock,
   type Decision,
   type ElicitAnswer,
@@ -51,7 +53,7 @@ const setOnly = (env: Record<string, string | undefined>): Record<string, string
 
 const inside = (dir: string, top: string) => dir === top || dir.startsWith(`${top}/`);
 
-type Requester = { request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> };
+type Requester = { request(r: Record<string, unknown>, opts?: { signal?: AbortSignal }): Promise<{ response?: Record<string, unknown> }> };
 
 // Claude Code's answer, or an error once `ms` pass without one.
 function timed<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -510,6 +512,23 @@ export class BrokerSession extends SessionCore {
     if (this.closed || !this.q) return undefined;
     const q = this.q as unknown as Requester;
     return timed(q.request({ subtype: "read_file", path, max_bytes: maxBytes, encoding }), READ_MS).then((r) => fileContents(r.response));
+  }
+
+  workspaceDiff(): Promise<Record<string, unknown>> | undefined {
+    if (this.closed || !this.q) return undefined;
+    const q = this.q as unknown as Requester;
+    return timed(q.request({ subtype: "get_workspace_diff" }), DIFF_MS).then((r) => r.response ?? {});
+  }
+
+  // The SDK names its requests itself, so the progress lines that come meanwhile belong to the one side question under way.
+  protected async askSide(question: string, history: SideTurn[], progress: (m: Record<string, unknown>) => void, signal: AbortSignal): Promise<unknown> {
+    const q = this.query() as unknown as Requester;
+    this.on("request_progress", progress);
+    try {
+      return (await q.request({ subtype: "side_question", question, ...(history.length ? { history: sideHistory(history) } : {}) }, { signal })).response;
+    } finally {
+      this.off("request_progress", progress);
+    }
   }
 
   // Reduced to what the wrapper passes on for a VS Code session, and the Thinking the settings start Claude Code with.

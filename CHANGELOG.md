@@ -6,6 +6,29 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Added
+
+- The changes sheet has two tabs. "이 세션" adds the files the session's subagents and workflow agents changed (Edit,
+  Write, MultiEdit and NotebookEdit calls in their transcripts), marked as an agent's. "git 전체" shows the folder's git
+  changes the way Claude Code's diff panel does: since the branch left its base branch when it is ahead of it
+  (committed and uncommitted together), else since HEAD, with untracked files the session made. A running session
+  asks its own Claude Code (`get_workspace_diff`, under its read rules); for a session without a process, or when
+  Claude Code cannot answer, the broker works it out with read-only git commands. Either way the lines of key and
+  token files and of files outside the session's folders stay hidden, and the same bounds apply (50 files, 1MB and
+  400 lines a file, 2MB in all). Lines can be picked and commented into the composer as before.
+- Side questions (`/btw` in the composer, or 곁질문 in the ⋯ menu) ask Claude Code beside the conversation, without
+  interrupting a turn or adding to the conversation, and show its progress. The latest 20 questions and answers stay
+  in the phone tab's sessionStorage and go with a follow-up as its thread. A question is cancelled after five minutes
+  or by the user. A session without a process is started first, when the user asks.
+
+### Changed
+
+- The VS Code wrapper also passes on `get_workspace_diff` (nothing else in the request) and `side_question` (the
+  question and its thread, text only), the progress of the broker's side questions and their cancelling, and tells the
+  broker so in its hello (`workspace_diff`, `side_question`). VS Code tabs opened before the update keep the older
+  wrapper until they are opened again: side questions are off there, and git changes are read by the broker.
+- A NotebookEdit call shows the cell's change when Claude Code reports the cell's source from before it.
+
 ## [0.7.3] - 2026-10-18
 
 ### Fixed

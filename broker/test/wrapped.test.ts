@@ -75,7 +75,7 @@ after(async () => {
   for (const s of servers) await s.close();
 });
 
-async function connect(): Promise<{ link: Link; wrapper: FakeWrapper }> {
+async function connect(caps?: string[]): Promise<{ link: Link; wrapper: FakeWrapper }> {
   const server = new LinkServer(path.join(tempDir(), "link.sock"));
   servers.push(server);
   await server.listen();
@@ -85,13 +85,13 @@ async function connect(): Promise<{ link: Link; wrapper: FakeWrapper }> {
   const wrapper = new FakeWrapper(sock);
   const link = await linked;
   const hello = new Promise((r) => link.once("hello", r));
-  wrapper.send({ t: "hello", v: 1, wpid: 4242, cwd: "/tmp/project", args: ["--resume", SID], sessionId: SID });
+  wrapper.send({ t: "hello", v: 1, wpid: 4242, cwd: "/tmp/project", args: ["--resume", SID], sessionId: SID, ...(caps ? { caps } : {}) });
   await hello;
   return { link, wrapper };
 }
 
-async function session(opts: { seed?: boolean } = {}) {
-  const { link, wrapper } = await connect();
+async function session(opts: { seed?: boolean; caps?: string[] } = {}) {
+  const { link, wrapper } = await connect(opts.caps);
   const s = new WrappedSession(link, SID, "/tmp/project");
   link.on("out", (m: Msg) => s.onOut(m));
   link.on("in", (m: Msg) => s.onIn(m));
@@ -1391,4 +1391,49 @@ test("a rename goes to Claude Code as the user's own, and only this session's an
   assert.equal(s.title, "VS Code에서 바꾼 이름");
   assert.deepEqual(titles, ["새 이름", "VS Code에서 바꾼 이름"]);
   assert.deepEqual(s.builder.items, [], "the announcements add nothing to the conversation");
+});
+
+test("a VS Code session asks Claude Code for its git changes only through a wrapper that passes them", async () => {
+  const old = await session();
+  assert.equal(old.s.workspaceDiff(), undefined, "an older wrapper is not asked");
+  const { s, wrapper } = await session({ caps: ["fast_mode", "thinking", "workspace_diff", "side_question"] });
+  wrapper.autoReply((r) => (r.subtype === "get_workspace_diff" ? { diff: null } : Error("unexpected")));
+  assert.deepEqual(await s.workspaceDiff(), { diff: null });
+  const sent = wrapper.frames.find((f) => f.t === "to_cli" && ((f.m as Msg).request as Msg | undefined)?.subtype === "get_workspace_diff");
+  assert.deepEqual(((sent?.m as Msg).request as Msg), { subtype: "get_workspace_diff" });
+});
+
+test("a VS Code side question goes through the wrapper with its thread, hears its progress, and can be given up", async () => {
+  const { s, wrapper } = await session({ caps: ["fast_mode", "thinking", "workspace_diff", "side_question"] });
+  assert.equal(s.state().sideUnknown, undefined);
+  const heard: unknown[] = [];
+  const asked = s.sideQuestion("what now?", [{ question: "before?", answer: "yes", notice: "n" }], (p) => heard.push(p));
+  const sent = await wrapper.wait((f) => f.t === "to_cli" && ((f.m as Msg).request as Msg | undefined)?.subtype === "side_question", "side question sent");
+  const id = (sent.m as Msg).request_id as string;
+  assert.deepEqual((sent.m as Msg).request, { subtype: "side_question", question: "what now?", history: [{ question: "before?", response: "yes", fallback_notice: "n" }] });
+  await assert.rejects(s.sideQuestion("again", []), /a side question is under way/);
+  wrapper.out({ type: "system", subtype: "control_request_progress", request_id: id, status: "started", uuid: "u1", session_id: SID });
+  wrapper.out({ type: "system", subtype: "control_request_progress", request_id: id, status: "api_retry", attempt: 2, max_retries: 10, retry_delay_ms: 500, uuid: "u2", session_id: SID });
+  wrapper.out({ type: "system", subtype: "control_request_progress", request_id: "ccrc-someone-else", status: "started", uuid: "u3", session_id: SID });
+  await new Promise((r) => setTimeout(r, 50));
+  wrapper.send({ m: { type: "control_response", response: { subtype: "success", request_id: id, response: { response: "Working on the tests.", synthetic: false } } }, t: "reply" });
+  assert.deepEqual(await asked, { answer: "Working on the tests." });
+  assert.deepEqual(heard, [{ status: "started" }, { status: "retry", attempt: 2, maxRetries: 10, retryInMs: 500 }]);
+  assert.equal(s.builder.items.length, 0, "progress lines are not conversation");
+
+  const slow = s.sideQuestion("slow one", []);
+  const second = await wrapper.wait((f) => f.t === "to_cli" && ((f.m as Msg).request as Msg | undefined)?.question === "slow one", "second side question sent");
+  s.cancelSideQuestion();
+  await assert.rejects(slow, /side question cancelled/);
+  await wrapper.wait((f) => f.t === "to_cli" && (f.m as Msg).type === "control_cancel_request" && (f.m as Msg).request_id === (second.m as Msg).request_id, "cancel sent");
+
+  s.sideMs = 50;
+  await assert.rejects(s.sideQuestion("too slow", []), /side question timed out/);
+});
+
+test("a wrapper too old for side questions is not asked, and the phone is told", async () => {
+  const { s, wrapper } = await session({ caps: ["fast_mode", "thinking"] });
+  assert.equal(s.state().sideUnknown, true);
+  await assert.rejects(s.sideQuestion("hi", []), /rejected by the wrapper: request not allowed/);
+  assert.ok(!wrapper.frames.some((f) => f.t === "to_cli"), "nothing went to the wrapper");
 });

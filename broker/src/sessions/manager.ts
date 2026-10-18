@@ -27,6 +27,9 @@ import {
   type RewindResult,
   type ServerMsg,
   type SessionSummary,
+  type GitChanges,
+  type SideAnswer,
+  type SideTurn,
   type SnapshotGap,
   type StartSettings,
   type UsageInfo,
@@ -40,16 +43,18 @@ import { ArchiveStore, transcriptIds } from "./archive-store.ts";
 import { BrokerSession, probeModels, probeUsage, probeWindow, type StartOptions } from "./broker-session.ts";
 import { lastCommands, rememberCommands } from "./commands.ts";
 import { ContextWindows, exactModel, gauge, lastModelId, lastUsage, widened, type ContextWindow } from "./context-gauge.ts";
-import type { ContentBlock, SessionCore } from "./core.ts";
+import type { ContentBlock, SessionCore, SideProgress } from "./core.ts";
 import { writeTitle } from "./custom-title.ts";
+import { additionalDirectories } from "./file-read.ts";
 import { searchFiles } from "./files.ts";
+import { brokerChanges, claudeChanges } from "./git-changes.ts";
 import { forkPoint, lastCwd, loadHistory, projectDirName, transcriptPath, turnPoint } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { SentIndex, sentCall, type SentCall } from "./sent-files.ts";
-import { agentItem, agentTranscript, workflowAgents } from "./subagents.ts";
+import { agentChanges, agentItem, agentTranscript, workflowAgents } from "./subagents.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
 import { gitFolderInfo, removeWorktree, worktreeState, worktreeStatus, worktreeTarget, type WorktreeTarget } from "./worktrees.ts";
 import { WrappedSession } from "./wrapped.ts";
@@ -847,8 +852,8 @@ export class SessionManager extends EventEmitter {
     if (ids) this.archive.prune((id) => ids.has(id));
   }
 
-  // The web client's requests about one session (CallMap in protocol.ts).
-  async call(sessionId: string, op: CallOp, args: Record<string, unknown>): Promise<unknown> {
+  // The web client's requests about one session (CallMap in protocol.ts); progress hears how a long one goes.
+  async call(sessionId: string, op: CallOp, args: Record<string, unknown>, progress?: (p: SideProgress) => void): Promise<unknown> {
     switch (op) {
       case "files":
         return searchFiles(await this.cwdOf(sessionId), typeof args.query === "string" ? args.query : "");
@@ -906,7 +911,37 @@ export class SessionManager extends EventEmitter {
         return this.worktreeStatus(sessionId);
       case "worktree_remove":
         return this.worktreeRemove(sessionId, args.discard === true);
+      case "git_changes":
+        return this.gitChanges(sessionId);
+      case "agent_changes":
+        return agentChanges(sessionId, await this.cwdOf(sessionId));
+      case "side_question":
+        return this.sideQuestion(sessionId, String(args.question), (args.history as SideTurn[] | undefined) ?? [], progress);
+      case "side_question_cancel":
+        this.get(sessionId).cancelSideQuestion();
+        return {};
     }
+  }
+
+  // The session's process answers while it runs; one without a process is started first by the phone, by its own call.
+  sideQuestion(sessionId: string, question: string, history: SideTurn[], progress?: (p: SideProgress) => void): Promise<SideAnswer> {
+    const s = this.controlled(sessionId);
+    if (!s || s.closed) throw Error("session is not running here");
+    return s.sideQuestion(question, history, progress);
+  }
+
+  // A running process works out its folder's git changes under Claude Code's own read rules; ccrc does it with git for a
+  // session without one, or when the process cannot answer.
+  async gitChanges(sessionId: string): Promise<GitChanges> {
+    const s = this.controlled(sessionId);
+    const running = s && !s.closed ? s : undefined;
+    const cwd = running?.cwd ?? (await this.cwdOf(sessionId));
+    if (!isFolder(cwd)) throw Error("folder does not exist");
+    const roots = [cwd, ...additionalDirectories(claudeSettingsFile(), cwd)];
+    const asked = running?.workspaceDiff();
+    const answered = asked && (await asked.then((r) => claudeChanges(r, cwd, roots)).catch(() => undefined));
+    if (answered) return answered;
+    return brokerChanges(cwd, roots, (await this.info(sessionId).catch(() => undefined))?.createdAt);
   }
 
   // The worktree Claude Code made for the session, as its transcript records it or its folder shows.

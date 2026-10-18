@@ -239,11 +239,18 @@ export function send(msg: ClientMsg): boolean {
 
 const CALL_TIMEOUT_MS = 30_000;
 let callSeq = 0;
-const calls = new Map<number, { resolve: (data: unknown) => void; reject: (e: Error) => void; timer: number }>();
+export type CallProgress = Omit<Extract<ServerMsg, { t: "call_progress" }>, "t" | "id">;
+const calls = new Map<number, { resolve: (data: unknown) => void; reject: (e: Error) => void; timer: number; progress?: (p: CallProgress) => void }>();
 
-// Asks the broker something about a session; rejects with the broker's error message.
-export function call<K extends CallOp>(sessionId: string, op: K, args?: CallMap[K]["args"], ms = CALL_TIMEOUT_MS): Promise<CallMap[K]["data"]> {
-  return ask((id) => ({ t: "call", id, sessionId, op, args: args ?? {} }), ms) as Promise<CallMap[K]["data"]>;
+// Asks the broker something about a session; rejects with the broker's error message. progress hears how a long call goes.
+export function call<K extends CallOp>(
+  sessionId: string,
+  op: K,
+  args?: CallMap[K]["args"],
+  ms = CALL_TIMEOUT_MS,
+  progress?: (p: CallProgress) => void,
+): Promise<CallMap[K]["data"]> {
+  return ask((id) => ({ t: "call", id, sessionId, op, args: args ?? {} }), ms, progress) as Promise<CallMap[K]["data"]>;
 }
 
 // Asks about a folder no session runs in yet, for the new-session screen.
@@ -251,7 +258,7 @@ export function callFolder<K extends FolderOp>(cwd: string, op: K, args?: CallMa
   return ask((id) => ({ t: "call", id, cwd, op, args: args ?? {} }), ms) as Promise<CallMap[K]["data"]>;
 }
 
-function ask(msg: (id: number) => ClientMsg, ms: number): Promise<unknown> {
+function ask(msg: (id: number) => ClientMsg, ms: number, progress?: (p: CallProgress) => void): Promise<unknown> {
   if (socket?.readyState !== WebSocket.OPEN || state.conn !== "ready") return Promise.reject(Error("not connected"));
   const id = ++callSeq;
   return new Promise((resolve, reject) => {
@@ -259,7 +266,7 @@ function ask(msg: (id: number) => ClientMsg, ms: number): Promise<unknown> {
       calls.delete(id);
       reject(Error("no answer"));
     }, ms);
-    calls.set(id, { resolve, reject, timer });
+    calls.set(id, { resolve, reject, timer, ...(progress ? { progress } : {}) });
     socket!.send(JSON.stringify(msg(id)));
   });
 }
@@ -445,6 +452,11 @@ function onServer(msg: ServerMsg): void {
       clearTimeout(c.timer);
       if (msg.ok) c.resolve(msg.data);
       else c.reject(Error(msg.error ?? "failed"));
+      return;
+    }
+    case "call_progress": {
+      const { t: _t, id, ...p } = msg;
+      calls.get(id)?.progress?.(p);
       return;
     }
     case "pong":

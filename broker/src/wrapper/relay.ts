@@ -50,9 +50,11 @@ const REMOTE_REQUESTS = new Set([
   "cancel_async_message",
   "rename_session",
   "set_max_thinking_tokens",
+  "get_workspace_diff",
+  "side_question",
 ]);
 // Told to the broker in the hello, so it offers what this wrapper passes on.
-const CAPS = ["fast_mode", "thinking"];
+const CAPS = ["fast_mode", "thinking", "workspace_diff", "side_question"];
 // Broker requests after which VS Code is told to read the applied settings again.
 const SETTINGS_CHANGES = new Set(["set_model", "apply_flag_settings"]);
 const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
@@ -220,6 +222,40 @@ export function allowedTaskOutput(req: Record<string, unknown>): boolean {
   return Object.keys(req).every((k) => k === "subtype" || k === "task_id") && typeof req.task_id === "string" && TASK_ID.test(req.task_id);
 }
 
+// get_workspace_diff takes nothing; Claude Code reads the changes under its own read rules.
+export function allowedWorkspaceDiff(req: Record<string, unknown>): boolean {
+  return Object.keys(req).every((k) => k === "subtype");
+}
+
+const SIDE_KEYS = new Set(["subtype", "question", "history"]);
+const TURN_KEYS = new Set(["question", "response", "fallback_notice"]);
+const SIDE_TEXT_MAX = 10_000;
+const SIDE_ANSWER_MAX = 100_000;
+const SIDE_HISTORY_MAX = 20;
+const text = (v: unknown, max: number, empty = false): boolean => typeof v === "string" && (empty || v.length > 0) && v.length <= max;
+
+// side_question carries the question and the earlier questions and answers of its thread, text only.
+export function allowedSideQuestion(req: Record<string, unknown>): boolean {
+  const h = req.history;
+  return (
+    Object.keys(req).every((k) => SIDE_KEYS.has(k)) &&
+    text(req.question, SIDE_TEXT_MAX) &&
+    (h === undefined ||
+      (Array.isArray(h) &&
+        h.length <= SIDE_HISTORY_MAX &&
+        h.every((t) => {
+          const o = plainObj(t);
+          return (
+            t === o &&
+            Object.keys(o).every((k) => TURN_KEYS.has(k)) &&
+            text(o.question, SIDE_TEXT_MAX) &&
+            text(o.response, SIDE_ANSWER_MAX, true) &&
+            (o.fallback_notice === undefined || text(o.fallback_notice, SIDE_TEXT_MAX, true))
+          );
+        })))
+  );
+}
+
 // A user message written to Claude Code, reduced to what the conversation shows of it: its text and the kind
 // of each attachment. `remote` marks one the broker sent.
 export function waitingCopy(msg: Record<string, unknown>, remote: boolean): Buffer | undefined {
@@ -347,6 +383,8 @@ export class Relay extends EventEmitter {
   private remoteAsked = new Map<string, string>();
   // The broker's Thinking changes Claude Code has not answered yet; one it takes is kept like VS Code's own.
   private thinkingAsked = new Map<string, Buffer>();
+  // The broker's side questions Claude Code has not answered yet, which only the broker may cancel.
+  private sideAsked = new Set<string>();
   // The output styles Claude Code last listed, which the broker may switch the project to.
   private styles?: string[];
   private state = new Map<string, { seq: number; t: "out" | "in"; line: Buffer }>();
@@ -527,6 +565,7 @@ export class Relay extends EventEmitter {
         if (typeof id === "string" && id.startsWith(REMOTE_PREFIX)) {
           const asked = this.remoteAsked.get(id);
           this.remoteAsked.delete(id);
+          this.sideAsked.delete(id);
           const thinking = this.thinkingAsked.get(id);
           this.thinkingAsked.delete(id);
           const usage = asked === "get_usage" || (!asked && line.includes(RATE_LIMITS));
@@ -564,6 +603,10 @@ export class Relay extends EventEmitter {
       } else if (msg?.type === "control_cancel_request" && typeof id === "string" && this.open.delete(id)) {
         withdrawn = this.unhold(id);
         this.settle(id, "cli");
+      } else if (msg?.type === "system" && msg.subtype === "control_request_progress") {
+        // Progress goes only to the side that asked.
+        if (typeof id === "string" && id.startsWith(REMOTE_PREFIX)) return this.copy("out", line);
+        shared = false;
       }
     }
     if (!held && !withdrawn) this.toHost(line);
@@ -693,6 +736,9 @@ export class Relay extends EventEmitter {
       if (req.subtype === "rename_session" && !allowedRename(req, this.sessionId)) return reject("invalid request", m.request_id);
       if (req.subtype === "update_settings" && !allowedUpdateSettings(req, this.styles)) return reject("setting not allowed", m.request_id);
       if (req.subtype === "set_max_thinking_tokens" && !allowedThinking(req)) return reject("invalid request", m.request_id);
+      if (req.subtype === "get_workspace_diff" && !allowedWorkspaceDiff(req)) return reject("invalid request", m.request_id);
+      if (req.subtype === "side_question" && !allowedSideQuestion(req)) return reject("invalid request", m.request_id);
+      if (req.subtype === "side_question") ask(this.sideAsked, m.request_id);
       // Only a message the broker sent may be taken back; VS Code shows a cancelled message of its own as sent.
       if (req.subtype === "cancel_async_message" && !this.cancellable(req)) return reject("message not allowed", m.request_id);
       if (req.subtype === "get_settings" || req.subtype === "get_usage" || req.subtype === "update_settings" || SETTINGS_CHANGES.has(req.subtype)) {
@@ -730,6 +776,12 @@ export class Relay extends EventEmitter {
       this.toChild(Buffer.from(JSON.stringify(m)));
       this.toHost(Buffer.from(JSON.stringify({ type: "control_cancel_request", request_id: id })));
       this.settle(id, "remote");
+      return;
+    }
+    if (m.type === "control_cancel_request") {
+      const id = m.request_id;
+      if (typeof id !== "string" || Object.keys(m).some((k) => k !== "type" && k !== "request_id") || !this.sideAsked.delete(id)) return reject("not cancellable", id);
+      this.toChild(Buffer.from(JSON.stringify({ type: "control_cancel_request", request_id: id })));
       return;
     }
     reject("unsupported");

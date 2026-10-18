@@ -37,7 +37,10 @@ export type AuditEvent =
   | "push_unsubscribe"
   | "doctor"
   | "fork"
-  | "rewind_conversation";
+  | "rewind_conversation"
+  | "git_changes"
+  | "agent_changes"
+  | "side_question";
 
 // Records who did what; message text and tool input are not recorded.
 export class Audit {

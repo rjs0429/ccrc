@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline";
 import { getSubagentMessages } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentTranscript, DisplayItem, WorkflowAgent, WorkflowAgentState, WorkflowInfo } from "../protocol.ts";
+import type { AgentFileChange, AgentTranscript, DisplayItem, WorkflowAgent, WorkflowAgentState, WorkflowInfo } from "../protocol.ts";
 import { projectDirName, transcriptPath, usedOutput } from "./history.ts";
-import { ItemBuilder, type RawMessage } from "./items.ts";
+import { ItemBuilder, fileChange, type RawMessage } from "./items.ts";
 
 // Ids of subagents, tool calls and workflow runs as Claude Code writes them; a path never passes.
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -24,6 +25,12 @@ const FOLDERS_KEEP = 20;
 const WORKFLOW_AGENTS_MAX = 200;
 const LABEL_MAX = 120;
 const DESCRIPTION_MAX = 1000;
+// The tools whose output says how they changed a file, and how much of the subagents' changes one answer carries: the
+// latest ones within these bounds.
+const CHANGE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+const AGENT_FILES_MAX = 300;
+const CHANGES_MAX = 500;
+const CHANGES_BUDGET = 1_500_000;
 
 type Obj = Record<string, unknown>;
 
@@ -45,6 +52,8 @@ const building = new Map<string, Promise<Built>>();
 // Where each subagent's transcript was found, and per subagents folder the subagent each Agent call started.
 const files = new Map<string, string>();
 const calls = new Map<string, Map<string, string>>();
+// The file changes read from each transcript, by file, size and time.
+const changes = new Map<string, { size: number; mtimeMs: number; list: AgentFileChange[] }>();
 
 const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v);
 const text = (v: unknown, max: number): string | undefined => (typeof v === "string" && v ? v.slice(0, max) : undefined);
@@ -363,4 +372,72 @@ export async function workflowAgents(sessionId: string, cwd: string, runIdArg: u
     done: all.filter((a) => a.state === "done").length,
     failed: all.filter((a) => a.state === "failed").length,
   };
+}
+
+// The file changes of one subagent's transcript: each Edit, Write, MultiEdit or NotebookEdit call whose output says how
+// it changed the file.
+async function changesOf(file: string, agentId: string): Promise<AgentFileChange[]> {
+  const st = await fs.promises.stat(file).catch(() => undefined);
+  if (!st || st.size > MAX_BYTES) return [];
+  const known = changes.get(file);
+  if (known && known.size === st.size && known.mtimeMs === st.mtimeMs) return known.list;
+  const meta = await readObj(file.replace(/\.jsonl$/, ".meta.json"), META_MAX);
+  const agent = text(meta?.description, LABEL_MAX) ?? text(meta?.agentType, LABEL_MAX);
+  const named = new Map<string, string>();
+  const list: AgentFileChange[] = [];
+  const lines = readline.createInterface({ input: fs.createReadStream(file, "utf8"), crlfDelay: Infinity });
+  for await (const line of lines) {
+    if (!line.includes('"tool_use"') && !line.includes('"toolUseResult"')) continue;
+    let e: unknown;
+    try {
+      e = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isObj(e) || !isObj(e.message) || !Array.isArray(e.message.content)) continue;
+    const blocks = e.message.content.filter(isObj);
+    if (e.type === "assistant") {
+      for (const b of blocks) if (b.type === "tool_use" && typeof b.id === "string" && typeof b.name === "string") named.set(b.id, b.name);
+      continue;
+    }
+    const call = blocks.find((b) => b.type === "tool_result" && typeof b.tool_use_id === "string")?.tool_use_id as string | undefined;
+    const name = call && named.get(call);
+    if (e.type !== "user" || !call || !name || !CHANGE_TOOLS.has(name) || !ID.test(call)) continue;
+    const c = fileChange(e.toolUseResult);
+    if (!c.file || !c.patch) continue;
+    list.push({
+      id: call,
+      agentId,
+      ...(agent ? { agent } : {}),
+      name,
+      ...(typeof e.timestamp === "string" ? { ts: e.timestamp } : {}),
+      file: c.file,
+      patch: c.patch,
+      ...(c.patchCut ? { patchCut: c.patchCut } : {}),
+    });
+  }
+  remember(changes, file, { size: st.size, mtimeMs: st.mtimeMs, list }, AGENT_FILES_MAX);
+  return list;
+}
+
+// The file changes the session's subagents and workflow agents made, oldest first: the latest that fit one answer.
+export async function agentChanges(sessionId: string, cwd: string): Promise<AgentFileChange[]> {
+  const where = folderOf(sessionId, cwd);
+  if (!where) return [];
+  const found = await scan(where.dir, (n) => n.startsWith("agent-") && n.endsWith(".jsonl"));
+  const all: AgentFileChange[] = [];
+  for (const file of found.slice(0, AGENT_FILES_MAX)) {
+    const id = path.basename(file).slice("agent-".length, -".jsonl".length);
+    const real = ID.test(id) ? inside(file, where.dir) : undefined;
+    if (real) all.push(...(await changesOf(real, id)));
+  }
+  all.sort((a, b) => (a.ts ?? "").localeCompare(b.ts ?? ""));
+  let bytes = 0;
+  let from = all.length;
+  while (from > 0 && all.length - from < CHANGES_MAX) {
+    bytes += Buffer.byteLength(JSON.stringify(all[from - 1]));
+    if (bytes > CHANGES_BUDGET) break;
+    from--;
+  }
+  return all.slice(from);
 }

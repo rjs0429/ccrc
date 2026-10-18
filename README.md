@@ -390,9 +390,10 @@ file.
 - **Files.** The file viewer reads within a session's folders only and answers "denied" for anything else, whether it
   exists or not. Secret files (`.env*`, key files, `.ssh`, `.gnupg`, cloud and package-manager credentials, Claude
   Code's settings and credentials, ccrc's own folders, `/proc`) are blocked for every session, also for files Claude
-  sends to the phone and for `@` suggestions.
+  sends to the phone, for `@` suggestions and for the lines of the changes sheet's git view, which also shows the
+  lines of files inside the session's folders only.
 - **Audit log.** Logins, failed logins, denied devices, messages sent, answers, mode and model changes, file reads,
-  new sessions and forks are recorded in `audit.jsonl`, without message contents.
+  git changes read, side questions, new sessions and forks are recorded in `audit.jsonl`, without message contents.
 - **Local socket.** The wrapper socket is 0600 in a 0700 folder owned by you; both sides check this, and it never
   falls back to a shared folder such as `/tmp`.
 - **Secrets.** The API key is passed only to broker sessions' Claude Code as `ANTHROPIC_API_KEY`, and never written to
@@ -421,6 +422,9 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 - A model changed on the phone shows in VS Code's model picker from the next reply; a message queued on the phone shows
   in VS Code once Claude Code takes it.
 - Some VS Code dialogs (usage limit consent, for example) show on the phone but are answered in VS Code.
+- Side questions from the phone, and the changes sheet's git view as Claude Code sees it, need the wrapper of ccrc 0.8
+  or later: a tab opened before an update keeps its older wrapper until it is opened again. Side questions asked from
+  the phone do not show in VS Code's side panel.
 - When removing ccrc by hand, remove the VS Code setting before the files (`ccrc uninstall` does this).
 
 ## Limitations

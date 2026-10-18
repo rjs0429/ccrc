@@ -15,6 +15,8 @@
 // FAKE_REQUESTS=<file> gets a line with its arguments, environment and sign-in variables and then one per control request or user message it receives.
 // get_settings reports a --model starting with "claude-" as the model; one naming "no-ultracode" does not offer Ultracode, which
 // --settings {"ultracode":true} asks for. get_task_output answers with a coloured line naming the task.
+// side_question sends a control_request_progress line and answers with the question and the size of its history; "SLOW"
+// waits until a control_cancel_request for it. get_workspace_diff answers with one changed file.
 // --version prints a version and exits.
 // rename_session is checked and saved as Claude Code saves a name (custom-title and agent-name rows when the transcript
 // under CLAUDE_CONFIG_DIR exists, the title file beside it) and announced with session_title_changed, which a resume
@@ -57,6 +59,7 @@ record({
 });
 let asks = 0;
 let holding = false;
+const sides = new Set();
 const queue = [];
 const lifecycle = (id, state) => out({ type: "command_lifecycle", command_uuid: id, state, uuid: randomUUID(), session_id: sid });
 const STYLES = ["default", "Proactive", "Concise", "Explanatory", "Learning"];
@@ -258,6 +261,29 @@ function handle(m) {
         response: { contents: part.toString(base64 ? "base64" : "utf8"), absPath: abs, truncated: data.length > max, ...(base64 ? { encoding: "base64" } : {}) },
       });
     }
+    if (m.request.subtype === "side_question") {
+      const { question, history = [] } = m.request;
+      out({ type: "system", subtype: "control_request_progress", request_id: m.request_id, status: "started", uuid: randomUUID(), session_id: sid });
+      if (question === "SLOW") {
+        sides.add(m.request_id);
+        return;
+      }
+      const response = { response: `side: ${question} (history ${history.length})`, synthetic: false };
+      setTimeout(() => out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response } }), 30);
+      return;
+    }
+    if (m.request.subtype === "get_workspace_diff") {
+      const diff = {
+        stats: { filesCount: 1, linesAdded: 1, linesRemoved: 1 },
+        perFileStats: [{ path: "a.txt", added: 1, removed: 1, isBinary: false, isUntracked: false, status: "modified" }],
+        hunks: [{ path: "a.txt", hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-old", "+new"] }] }],
+        skippedLarge: [],
+        restricted: [],
+        source: { kind: "working-tree" },
+      };
+      out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { diff } } });
+      return;
+    }
     if (m.request.subtype === "get_task_output") {
       const output = `\u001b[32m${m.request.task_id}\u001b[0m "applied": {"rate_limits": 1}\n`;
       out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { output, total_bytes: Buffer.byteLength(output), truncated: false } } });
@@ -304,6 +330,11 @@ function handle(m) {
           : {};
     out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { subtype: m.request.subtype, ...extra } } });
     if (m.request.subtype === "set_permission_mode") out({ type: "system", subtype: "status", permissionMode: m.request.mode, session_id: sid });
+    return;
+  }
+  if (m.type === "control_cancel_request") {
+    record({ cancel: m.request_id });
+    if (sides.delete(m.request_id)) out({ type: "control_response", response: { subtype: "error", request_id: m.request_id, error: "Side question cancelled" } });
     return;
   }
   if (m.type === "control_response") {

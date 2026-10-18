@@ -231,3 +231,49 @@ test("a VS Code session whose Claude Code crashes mid-turn ends as crashed with 
   await until(() => !manager.isControlled(Y), "ended");
   assert.deepEqual(ends, [[X, "crashed", true]], "a wrapper that does not say how Claude Code ended reports no crash");
 });
+
+test("a running session's git changes come from Claude Code, and from ccrc when it cannot answer or no process runs", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const G = "3b4c5d6e-7f80-4a9b-8c1d-2e3f4a5b6c7d";
+  const repo = fs.realpathSync(tempDir("ccrc-repo-"));
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-C", repo, ...args]);
+  git("init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "base");
+  fs.writeFileSync(path.join(repo, "a.txt"), "two\n");
+  const dir = path.join(home, ".claude", "projects", projectDirName(repo));
+  fs.mkdirSync(dir, { recursive: true });
+  const row = { sessionId: G, cwd: repo, type: "user", uuid: "3b4c5d6e-0000-4000-8000-000000000001", parentUuid: null, timestamp: new Date(Date.now() - 60_000).toISOString() };
+  fs.writeFileSync(path.join(dir, `${G}.jsonl`), JSON.stringify({ ...row, message: { role: "user", content: "change a.txt" } }) + "\n");
+  fs.writeFileSync(path.join(repo, "made-by-the-session.txt"), "new\n");
+
+  const { manager, connect } = await setup();
+  const stopped = (await manager.call(G, "git_changes", {})) as { via: string; files: { path: string; untracked?: boolean; hunks?: unknown[] }[] };
+  assert.equal(stopped.via, "broker");
+  assert.deepEqual(
+    stopped.files.map((f) => [f.path, Boolean(f.untracked), Boolean(f.hunks?.length)]),
+    [
+      ["a.txt", false, true],
+      ["made-by-the-session.txt", true, false],
+    ],
+  );
+
+  const w = await connect({ sessionId: G, cwd: repo, caps: ["fast_mode", "thinking", "workspace_diff", "side_question"] });
+  await until(() => manager.isControlled(G), "attached");
+  const answer = (diff: unknown, error?: string) =>
+    void w.wait((f) => f.t === "to_cli" && ((f.m as Msg).request as Msg | undefined)?.subtype === "get_workspace_diff" && !answered.has((f.m as Msg).request_id), "diff asked").then((f) => {
+      const id = (f.m as Msg).request_id;
+      answered.add(id);
+      w.send({ m: { type: "control_response", response: error ? { subtype: "error", request_id: id, error } : { subtype: "success", request_id: id, response: { diff } } }, t: "reply" });
+    });
+  const answered = new Set<unknown>();
+  answer({ stats: { filesCount: 1, linesAdded: 1, linesRemoved: 1 }, perFileStats: [{ path: "a.txt", added: 1, removed: 1, isBinary: false, isUntracked: false, status: "modified" }], hunks: [], skippedLarge: [], restricted: [], source: { kind: "working-tree" } });
+  const live = (await manager.call(G, "git_changes", {})) as { via: string; root: string };
+  assert.equal(live.via, "claude");
+  assert.equal(live.root, repo);
+  answer(undefined, "Unsupported control request subtype: get_workspace_diff");
+  const fallback = (await manager.call(G, "git_changes", {})) as { via: string };
+  assert.equal(fallback.via, "broker");
+  w.sock.destroy();
+});

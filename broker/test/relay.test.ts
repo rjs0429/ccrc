@@ -10,8 +10,10 @@ import {
   Relay,
   allowedFlagSettings,
   allowedRename,
+  allowedSideQuestion,
   allowedThinking,
   allowedTaskOutput,
+  allowedWorkspaceDiff,
   allowedUpdateSettings,
   appliedAnswer,
   elicitAnswer,
@@ -462,7 +464,7 @@ test("the broker may also turn fast mode on or off for the session, and set Thin
 test("Thinking changes from either side reach Claude Code, and a reconnecting broker gets the latest; the hello names what passes", async () => {
   const t = await setup();
   const hello = await t.broker.frames.wait((f) => f.t === "hello", "hello");
-  assert.deepEqual(hello.caps, ["fast_mode", "thinking"]);
+  assert.deepEqual(hello.caps, ["fast_mode", "thinking", "workspace_diff", "side_question"]);
   const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
   const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
   const thinking = (f: Msg) => f.t === "in" && ((f.m as Msg).request as Msg)?.subtype === "set_max_thinking_tokens";
@@ -1151,4 +1153,65 @@ test("Claude Code may send the user files by path unless VS Code's environment t
   assert.deepEqual(await seen({}), ["1", "files sent to the user go by path: 1"]);
   assert.deepEqual(await seen({ CCRC_SEND_FILES: "0" }), [null, "files sent to the user go by path: off"]);
   assert.deepEqual(await seen({ CLAUDE_CODE_ATTACHMENTS_BY_PATH: "0" }), ["0", "files sent to the user go by path: 0"]);
+});
+
+test("get_workspace_diff reaches Claude Code with nothing else, and its answer only the broker", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
+  request("ccrc-diff", { subtype: "get_workspace_diff" });
+  const reply = await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-diff", "diff answered");
+  const diff = ((((reply.m as Msg).response as Msg).response as Msg).diff ?? {}) as Msg;
+  assert.equal((diff.perFileStats as Msg[])[0].path, "a.txt");
+  request("ccrc-diff-bad", { subtype: "get_workspace_diff", path: "/etc" });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-diff-bad" && f.reason === "invalid request", "extra keys refused");
+  assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code sees none of the answers");
+  assert.ok(allowedWorkspaceDiff({ subtype: "get_workspace_diff" }));
+  assert.ok(!allowedWorkspaceDiff({ subtype: "get_workspace_diff", base: "main" }));
+});
+
+test("a side question carries only its text and its thread; its progress and answer reach the broker only", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
+  request("ccrc-side", { subtype: "side_question", question: "what now?", history: [{ question: "before?", response: "yes" }] });
+  await t.broker.frames.wait(frameOut((m) => m.subtype === "control_request_progress" && m.request_id === "ccrc-side"), "progress to the broker");
+  const reply = await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-side", "answer to the broker");
+  assert.equal((((reply.m as Msg).response as Msg).response as Msg).response, "side: what now? (history 1)");
+  assert.ok(!t.host.has((m) => m.subtype === "control_request_progress"), "VS Code does not hear of the broker's side question");
+  assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code sees none of the answers");
+  const bad: Msg[] = [
+    { subtype: "side_question" },
+    { subtype: "side_question", question: "" },
+    { subtype: "side_question", question: "x".repeat(10_001) },
+    { subtype: "side_question", question: "q", model: "opus" },
+    { subtype: "side_question", question: "q", history: "none" },
+    { subtype: "side_question", question: "q", history: [{ question: "a", response: "b", tools: true }] },
+    { subtype: "side_question", question: "q", history: [{ question: "a", response: 7 }] },
+    { subtype: "side_question", question: "q", history: Array.from({ length: 21 }, () => ({ question: "a", response: "b" })) },
+  ];
+  bad.forEach((r, i) => request(`ccrc-side-bad-${i}`, r));
+  for (const i of bad.keys()) await t.broker.frames.wait((f) => f.t === "rejected" && f.id === `ccrc-side-bad-${i}` && f.reason === "invalid request", `bad side_question ${i}`);
+  assert.ok(allowedSideQuestion({ subtype: "side_question", question: "q", history: [{ question: "a", response: "", fallback_notice: "n" }] }));
+  assert.ok(!allowedSideQuestion({ subtype: "side_question", question: "q", history: [null] }));
+});
+
+test("the broker cancels only its own side question, and VS Code's own side question stays between it and Claude Code", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-slow", request: { subtype: "side_question", question: "SLOW" } } });
+  await t.broker.frames.wait(frameOut((m) => m.subtype === "control_request_progress" && m.request_id === "ccrc-slow"), "slow side question taken up");
+  t.broker.send({ t: "to_cli", m: { type: "control_cancel_request", request_id: "ccrc-other" } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-other" && f.reason === "not cancellable", "another id refused");
+  t.broker.send({ t: "to_cli", m: { type: "control_cancel_request", request_id: "ccrc-slow", extra: 1 } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-slow" && f.reason === "not cancellable", "a cancel with more in it refused");
+  t.broker.send({ t: "to_cli", m: { type: "control_cancel_request", request_id: "ccrc-slow" } });
+  const reply = await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-slow", "cancelled side question answered");
+  assert.equal(((reply.m as Msg).response as Msg).error, "Side question cancelled");
+  t.write({ type: "control_request", request_id: "host-side", request: { subtype: "side_question", question: "from VS Code" } });
+  await t.host.wait((m) => m.subtype === "control_request_progress" && m.request_id === "host-side", "VS Code hears of its own side question");
+  await t.host.wait((m) => m.type === "control_response" && (m.response as Msg).request_id === "host-side", "VS Code gets its answer");
+  t.user("hi");
+  await t.broker.frames.wait(frameOut((m) => m.type === "result"), "a later turn copied");
+  assert.ok(!JSON.stringify(t.broker.frames.items).includes("host-side"), "VS Code's side question never reaches the broker");
 });
