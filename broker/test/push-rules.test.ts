@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import type { Hub } from "../src/hub.ts";
-import type { DisplayItem, LiveState, PendingKind, PendingRequest, SentFile, ServerMsg, SessionSummary } from "../src/protocol.ts";
+import type { DisplayItem, LiveState, PendingKind, PendingRequest, SentFile, ServerMsg, SessionSummary, ToolResult } from "../src/protocol.ts";
 import { Notifier, endText, type ClaudeNotice, type Urgency } from "../src/push/rules.ts";
 import type { Subscription } from "../src/push/subscriptions.ts";
 import { DEFAULT_PREFS, type PushPayload, type PushPrefs } from "../src/push/types.ts";
@@ -58,10 +58,16 @@ class FakeManager extends EventEmitter {
     this.unread.seen(id);
     this.emit("seen", id);
   }
-  // Claude's PushNotification call as the conversation shows it.
-  push(toolUseId: string, message: string, id = A): void {
-    const item: DisplayItem = { kind: "tool", id: toolUseId, name: "PushNotification", summary: message, input: { message, status: "proactive" } };
+  // Claude's PushNotification call as the conversation shows it: the call, then with its result.
+  pushItem(toolUseId: string, input: Record<string, unknown>, result?: ToolResult, id = A): void {
+    const item: DisplayItem = { kind: "tool", id: toolUseId, name: "PushNotification", summary: String(input.message ?? ""), input, ...(result ? { result } : {}) };
     this.emit("event", id, { t: "item", sessionId: id, item } satisfies ServerMsg);
+  }
+  // A call Claude Code ran.
+  push(toolUseId: string, message: string, id = A): void {
+    const input = { message, status: "proactive" };
+    this.pushItem(toolUseId, input, undefined, id);
+    this.pushItem(toolUseId, input, { text: "Mobile push requested.", isError: false, truncated: false }, id);
   }
 }
 
@@ -518,6 +524,38 @@ test("Claude's notification is left out while the user looks at the session, or 
   for (const s of [watching, opened, some, none]) s.notifier.close();
 });
 
+test("a PushNotification call Claude Code refused or that failed sends nothing, nor stands in for the turn's end", async () => {
+  const { manager, hub, notifier, bodies } = setup();
+  hub.activity = Date.now();
+  manager.state({ busy: true });
+  manager.pushItem("toolu_x1", { message: "끝났습니다" });
+  await sleep(40);
+  assert.deepEqual(bodies(), [], "nothing goes before Claude Code ran the call");
+  const invalid = "<tool_use_error>InputValidationError: PushNotification failed due to the following issue:\nThe required parameter `status` is missing</tool_use_error>";
+  manager.pushItem("toolu_x1", { message: "끝났습니다" }, { text: invalid, isError: true, truncated: false });
+  manager.pushItem("toolu_x2", { message: "끝났습니다", status: "proactive" });
+  manager.pushItem("toolu_x2", { message: "끝났습니다", status: "proactive" }, { text: "Permission to use PushNotification has been denied.", isError: true, truncated: false });
+  await sleep(40);
+  assert.deepEqual(bodies(), [], "a call it refused");
+  manager.push("toolu_x3", "끝났습니다");
+  await sleep(40);
+  assert.deepEqual(bodies(), ["Claude의 알림"], "the call it ran goes, once");
+  manager.state({ busy: false });
+  manager.end();
+  await sleep(40);
+  assert.deepEqual(bodies(), ["Claude의 알림"]);
+
+  manager.state({ busy: true });
+  manager.pushItem("toolu_x4", { message: "끝" });
+  manager.pushItem("toolu_x4", { message: "끝" }, { text: invalid, isError: true, truncated: false });
+  await sleep(20);
+  manager.state({ busy: false });
+  manager.end();
+  await sleep(40);
+  assert.deepEqual(bodies(), ["Claude의 알림", "작업을 마쳤습니다"], "a turn whose only call failed is told as it ends");
+  notifier.close();
+});
+
 test("the session's hook and the conversation decide a call once; the manager asks the notifier while it runs", async () => {
   const { manager, notifier, sent } = setup();
   assert.equal(manager.claudeNotice?.(A, "toolu_h1", "배포 끝"), "sent", "the hook comes first");
@@ -613,6 +651,9 @@ test("a turn leaves the session unread when the broker runs it or the remote use
   assert.equal(await run({}), true, "a broker session's turn, the remote user's or not");
   assert.equal(await run({ attached: true }), false, "a VS Code turn nobody here asked for");
   assert.equal(await run({ attached: true }, (s) => (s.hub.activity = Date.now())), true, "a VS Code turn the phone sent");
+  assert.equal(await run({ attached: true, hostInputAt: Date.now() - 60_000 }, (s) => (s.hub.activity = Date.now())), true, "the phone answered in it after VS Code's message");
+  assert.equal(await run({ attached: true, hostInputAt: Date.now() }, (s) => (s.hub.activity = Date.now() - 60_000)), false, "VS Code asked for it after the phone's message");
+  assert.equal(await run({ attached: true }, (s) => (s.hub.activity = Date.now() - 3 * HOUR)), false, "the phone's message is hours old");
   assert.equal(await run({ attached: true, outcome: "crashed" }, (s) => (s.hub.activity = Date.now())), true);
   assert.equal(await run({ outcome: "interrupted" }), false);
   assert.equal(await run({ outcome: "local" }), false);

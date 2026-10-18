@@ -605,7 +605,6 @@ export function Chat({ sessionId }: { sessionId: string }) {
           )}
           <Choice
             label="읽지 않음으로 표시"
-            hint="목록으로 돌아갑니다. 다시 열 때까지 점이 남습니다"
             onClick={() => {
               setMenu(false);
               void setUnread(sessionId, true).then((ok) => ok && navigate({ name: "home" }));

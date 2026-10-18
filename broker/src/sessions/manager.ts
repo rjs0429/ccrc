@@ -189,7 +189,8 @@ const probeDir = (cwd: string): string => (isFolder(cwd) ? cwd : paths.home);
 // Emits "event" (sessionId, ServerMsg) for one session, "changed" when the session list changed, and
 // "attached" / "detached" (sessionId) when a session gains or loses a process the broker can drive;
 // "turn_end" (sessionId, TurnEnd) when a turn of one ends, and "seen" (sessionId) when the remote user opens one.
-// A wrapper that says it can ("claude_push") hears whether Claude's notifications reach a device.
+// A wrapper that says it can ("claude_push") hears whether Claude's notifications reach a device, and whether the
+// remote user has its session in front of them.
 export class SessionManager extends EventEmitter {
   models: ModelOption[] = loadModels();
   private modelsAsked?: Promise<void>;
@@ -213,7 +214,9 @@ export class SessionManager extends EventEmitter {
   private archive = new ArchiveStore(path.join(paths.stateDir, "archived.json"));
   private unread = new UnreadStore(path.join(paths.stateDir, "unread.json"));
   private claudePush = false;
-  private pushLinks = new Set<Link>();
+  private watched: string | null = null;
+  // Wrappers that can hear of Claude's notifications, with what each was last told.
+  private pushLinks = new Map<Link, string>();
   private probing = new Map<string, Promise<ContextWindow | undefined>>();
   // Forks made here by the id the phone chose for them; sent: a first message went to the fork.
   private forks = new Map<string, { at: number; done: Promise<ForkResult>; sent: boolean }>();
@@ -248,10 +251,13 @@ export class SessionManager extends EventEmitter {
     this.sweeper.unref();
   }
 
-  setViewed(sessionId: string | null): void {
+  // The session the remote user has open, and whether it is in front of them now (watching).
+  setViewed(sessionId: string | null, watching = false): void {
     this.viewed = sessionId;
+    this.watched = watching ? sessionId : null;
     const s = sessionId ? this.owned.get(sessionId) : undefined;
     if (s) s.lastActivity = Date.now();
+    for (const link of this.pushLinks.keys()) this.tellPush(link);
   }
 
   markSeen(sessionId: string): void {
@@ -273,9 +279,19 @@ export class SessionManager extends EventEmitter {
   }
 
   setClaudePush(on: boolean): void {
-    if (on === this.claudePush) return;
     this.claudePush = on;
-    for (const link of this.pushLinks) link.send({ t: "claude_push", on });
+    for (const link of this.pushLinks.keys()) this.tellPush(link);
+  }
+
+  // Tells a wrapper whether a notification Claude sends from its session reaches a device now, when that changed.
+  private tellPush(link: Link): void {
+    const told = this.pushLinks.get(link);
+    if (told === undefined) return;
+    const watching = this.claudePush && link.sessionId !== undefined && link.sessionId === this.watched;
+    const now = `${this.claudePush} ${watching}`;
+    if (now === told) return;
+    this.pushLinks.set(link, now);
+    link.send({ t: "claude_push", on: this.claudePush, watching });
   }
 
   // Sessions with a request waiting for an answer.
@@ -1185,8 +1201,8 @@ export class SessionManager extends EventEmitter {
     };
     link.on("hello", (h: Hello) => {
       if (Array.isArray(h.caps) && h.caps.includes("claude_push")) {
-        this.pushLinks.add(link);
-        link.send({ t: "claude_push", on: this.claudePush });
+        this.pushLinks.set(link, "");
+        this.tellPush(link);
       }
       if (!h.claim) {
         if (link.sessionId) bind(link.sessionId);
@@ -1207,6 +1223,7 @@ export class SessionManager extends EventEmitter {
     });
     link.on("session", (id: string) => {
       if (!claiming) bind(id);
+      this.tellPush(link);
     });
     link.on("out", (m: Record<string, unknown>) => (session ? session.onOut(m) : keep("out", m)));
     link.on("in", (m: Record<string, unknown>) => (session ? session.onIn(m) : keep("in", m)));

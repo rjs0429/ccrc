@@ -1195,18 +1195,22 @@ test("VS Code's initialize gets one more hook, for PushNotification; any other s
   assert.equal(withPushHook({ type: "control_request", request_id: "i", request: { subtype: "interrupt" } }), undefined);
 });
 
-test("the hook's answer says the push was requested only while the broker sends them and Claude Code could not", () => {
+test("the hook's answer says the push was requested while the broker sends it, not needed while the user watches, and Claude Code's own otherwise", () => {
   const input = { tool_name: "PushNotification", tool_response: { message: "끝", pushSent: false, localSent: true, disabledReason: "no_transport", sentAt: "t" } };
-  assert.deepEqual(pushHookAnswer(input, true), {
+  assert.deepEqual(pushHookAnswer(input, "sent"), {
     hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: { message: "끝", pushSent: true, localSent: false } },
   });
-  assert.deepEqual(pushHookAnswer(input, false), {}, "no device takes them");
-  assert.deepEqual(pushHookAnswer({ ...input, tool_response: { message: "끝", pushSent: true } }, true), {}, "Claude Code pushed it itself");
-  assert.deepEqual(pushHookAnswer({ ...input, tool_name: "Bash" }, true), {});
-  assert.deepEqual(pushHookAnswer({ tool_name: "PushNotification", tool_response: "Error: x" }, true), {});
+  assert.deepEqual(pushHookAnswer(input, "watching"), {
+    hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: { message: "끝", pushSent: false, localSent: false, disabledReason: "user_present" } },
+  });
+  assert.deepEqual(pushHookAnswer(input, "off"), {}, "no device takes them");
+  assert.deepEqual(pushHookAnswer(input, undefined), {}, "nothing decided it");
+  assert.deepEqual(pushHookAnswer({ ...input, tool_response: { message: "끝", pushSent: true } }, "sent"), {}, "Claude Code pushed it itself");
+  assert.deepEqual(pushHookAnswer({ ...input, tool_name: "Bash" }, "sent"), {});
+  assert.deepEqual(pushHookAnswer({ tool_name: "PushNotification", tool_response: "Error: x" }, "watching"), {});
 });
 
-test("the wrapper answers its PushNotification hook itself: requested while the broker sends Claude's notifications, as Claude Code made it otherwise", async () => {
+test("the wrapper answers its PushNotification hook itself: requested while the broker sends Claude's notifications, not needed while the user watches the session, as Claude Code made it otherwise", async () => {
   const dir = tempDir();
   const log = path.join(dir, "requests.jsonl");
   const t = await setup({ env: { FAKE_REQUESTS: log } });
@@ -1235,19 +1239,27 @@ test("the wrapper answers its PushNotification hook itself: requested while the 
   assert.ok(!t.host.has((m) => (m.request as Msg | undefined)?.subtype === "hook_callback"), "VS Code never sees the wrapper's hook");
   assert.ok(!t.broker.frames.has((f) => JSON.stringify(f).includes('"hook_callback"')), "nor does the broker");
 
+  t.broker.send({ t: "claude_push", on: true, watching: true });
+  await new Promise((r) => setTimeout(r, 50));
+  t.user("PUSH 보는 중");
+  assert.equal(await nth(3), "Not sent \u2014 this terminal is active, so your output here already reaches the user; a separate notification would be redundant.", "the user has the session in front of them");
+
   t.broker.send({ t: "claude_push", on: false });
   await new Promise((r) => setTimeout(r, 50));
   t.user("PUSH 끈 뒤");
-  assert.equal(await nth(3), "Mobile push not sent (Remote Control inactive).", "no device takes them now");
+  assert.equal(await nth(4), "Mobile push not sent (Remote Control inactive).", "no device takes them now");
 
-  t.broker.send({ t: "claude_push", on: true });
+  t.broker.send({ t: "claude_push", on: true, watching: true });
   await new Promise((r) => setTimeout(r, 50));
   t.broker.dropConnections();
   await new Promise((r) => setTimeout(r, 20));
   t.user("PUSH 브로커 없이");
-  assert.equal(await nth(4), "Mobile push not sent (Remote Control inactive).", "a broker that went away sends nothing");
-  const answers = requests(log).filter((r) => "hookAnswer" in r).map((r) => Boolean((r.hookAnswer as Msg).hookSpecificOutput));
-  assert.deepEqual(answers, [false, true, false, false]);
+  assert.equal(await nth(5), "Mobile push not sent (Remote Control inactive).", "a broker that went away sends nothing");
+  const answers = requests(log)
+    .filter((r) => "hookAnswer" in r)
+    .map((r) => ((r.hookAnswer as Msg).hookSpecificOutput as Msg | undefined)?.updatedToolOutput as Msg | undefined)
+    .map((o) => (o ? (o.disabledReason ?? o.pushSent) : null));
+  assert.deepEqual(answers, [null, true, "user_present", null, null]);
 });
 
 test("VS Code's own hooks still reach VS Code, and its answers Claude Code", async () => {

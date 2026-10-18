@@ -80,7 +80,11 @@ test("a broker session's PushNotification call reads as requested once ccrc send
   assert.equal(pushed(items)!.summary, "테스트가 끝났습니다", "the call shows its message");
   const own = "Mobile push not sent (Remote Control inactive).";
   answer = "watching";
-  assert.equal((await result("보는 중")).text, own, "the user is looking at it: nothing went, as Claude Code says");
+  assert.equal(
+    (await result("보는 중")).text,
+    "Not sent \u2014 this terminal is active, so your output here already reaches the user; a separate notification would be redundant.",
+    "the user is looking at it: nothing went, as Claude Code says of its own terminal",
+  );
   answer = "off";
   assert.equal((await result("꺼짐")).text, own);
   answer = undefined;
@@ -144,7 +148,7 @@ class FakeWrapper {
   }
 }
 
-test("wrappers that can are told whether Claude's notifications reach a device, at hello and on each change; a message from VS Code reads its session", async () => {
+test("wrappers that can are told whether Claude's notifications reach a device and whether the user watches their session, at hello and on each change; a message from VS Code reads its session", async () => {
   const { m } = manager();
   const server = new LinkServer(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ccrc-link-")), "link.sock"));
   servers.push(server);
@@ -157,7 +161,7 @@ test("wrappers that can are told whether Claude's notifications reach a device, 
     w.send({ t: "hello", v: 1, wpid: 1, cwd, args: [], ...hello });
     return w;
   };
-  const pushFrames = (w: FakeWrapper) => w.frames.filter((f) => f.t === "claude_push").map((f) => f.on);
+  const pushFrames = (w: FakeWrapper) => w.frames.filter((f) => f.t === "claude_push").map((f) => [f.on, f.watching]);
   m.setClaudePush(true);
   const able = await connect({ sessionId: X, caps: ["fast_mode", "thinking", "claude_push"] });
   const old = await connect({ sessionId: Y, caps: ["fast_mode", "thinking"] });
@@ -165,7 +169,22 @@ test("wrappers that can are told whether Claude's notifications reach a device, 
   m.setClaudePush(true);
   m.setClaudePush(false);
   await until(() => pushFrames(able).length === 2, "told of the change");
-  assert.deepEqual(pushFrames(able), [true, false]);
+  m.setViewed(X, true);
+  m.setClaudePush(true);
+  m.setViewed(X, false);
+  m.setViewed(X, true);
+  m.setViewed(Y, true);
+  m.setViewed(null);
+  await until(() => pushFrames(able).length === 6, "told of the user watching its session");
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(pushFrames(able), [
+    [true, false],
+    [false, false],
+    [true, true],
+    [true, false],
+    [true, true],
+    [true, false],
+  ]);
   assert.deepEqual(pushFrames(old), [], "a wrapper that cannot is not told");
 
   await until(() => m.isControlled(X), "attached");
@@ -178,6 +197,10 @@ test("wrappers that can are told whether Claude's notifications reach a device, 
   assert.deepEqual(m.unreadSessions(), [X], "the phone's own message is not VS Code's");
   able.send({ m: { type: "user", uuid: "11111111-2222-4333-8444-777777777777", timestamp: new Date().toISOString(), message: { role: "user", content: [{ type: "text", text: "new" }] } }, t: "in" });
   await until(() => m.unreadSessions().length === 0, "VS Code's new message reads it");
+  m.setViewed(Y, true);
+  able.send({ t: "out", m: { type: "system", subtype: "init", session_id: Y } });
+  await until(() => pushFrames(able).length === 7, "told as its session becomes the one watched");
+  assert.deepEqual(pushFrames(able).at(-1), [true, true]);
   able.sock.destroy();
   old.sock.destroy();
 });

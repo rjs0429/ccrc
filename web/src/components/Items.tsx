@@ -153,7 +153,7 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
   const active = background || (!item.result && running);
   // A subagent known by its id alone has done nothing to show yet.
   const sub = item.sub && (item.sub.tools || item.sub.recent.length || item.sub.text) ? item.sub : undefined;
-  const notice = item.name === "PushNotification";
+  const notice = item.name === "PushNotification" && !item.result?.isError;
   const status =
     item.result && !background ? (
       notice ? (

@@ -153,8 +153,9 @@ export class Notifier {
     return { badge: new Set([...this.manager.waitingSessions(), ...unseen]).size, unseen };
   }
 
-  // A PushNotification call, from the conversation or from the session's hook, whichever comes first; each call is
-  // decided once. Without a device that wants it, or with the user looking at the session, nothing goes.
+  // A PushNotification call Claude Code ran, from its result in the conversation or from the session's PostToolUse
+  // hook, whichever comes first; each call is decided once. Without a device that wants it, or with the user looking at
+  // the session, nothing goes.
   claudeCall(sessionId: string, toolUseId: string, message: string): ClaudeNotice {
     const known = this.claudeCalls.get(toolUseId);
     if (known) return known;
@@ -173,10 +174,12 @@ export class Notifier {
     else if (msg.t === "item") this.onItem(sessionId, msg.item);
   }
 
-  // A SendUserFile call counts once, when its result names a file that opens.
+  // A SendUserFile call counts once, when its result names a file that opens. A PushNotification call counts once
+  // Claude Code ran it: one it refused or that failed sends nothing.
   private onItem(sessionId: string, item: DisplayItem): void {
     if (item.kind !== "tool") return;
     if (item.name === "PushNotification") {
+      if (!item.result || item.result.isError) return;
       const message = record(item.input).message;
       this.claudeCall(sessionId, item.id, typeof message === "string" ? message : "");
       return;
@@ -285,11 +288,17 @@ export class Notifier {
     return at !== undefined && at >= end.startedAt - REMOTE_WINDOW_MS;
   }
 
-  // A turn of a session the broker runs, or one the remote user waits for, leaves the session unread unless the user is
-  // looking at it as it ends.
+  // The remote user did so after VS Code's last message to the session.
+  private remoteLast(sessionId: string, end: TurnEnd): boolean {
+    const at = this.hub.remoteActivity(sessionId);
+    return at !== undefined && at >= (end.hostInputAt ?? 0);
+  }
+
+  // A turn of a session the broker runs, or a VS Code turn the remote user waits for (theirs, with the last word), leaves
+  // the session unread unless the user is looking at it as it ends; another VS Code turn does once a notice of it goes.
   private noteEnd(sessionId: string, end: TurnEnd): void {
     if (end.outcome === "interrupted" || end.outcome === "local" || end.queued || this.hub.isWatching(sessionId)) return;
-    if (!end.attached || this.remoteTurn(sessionId, end)) this.manager.markUnread(sessionId);
+    if (!end.attached || (this.remoteTurn(sessionId, end) && this.remoteLast(sessionId, end))) this.manager.markUnread(sessionId);
   }
 
   // "remote" devices hear of a turn the remote user sent, started or answered in since REMOTE_WINDOW_MS before it
@@ -306,9 +315,8 @@ export class Notifier {
     this.timers.set(key, timers);
     const { title } = await this.describe(sessionId, this.states.get(sessionId));
     if (this.timers.get(key) !== timers) return;
-    const at = this.hub.remoteActivity(sessionId);
     const recent = this.remoteTurn(sessionId, end);
-    const remoteLast = at !== undefined && at >= (end.hostInputAt ?? 0);
+    const remoteLast = this.remoteLast(sessionId, end);
     const wants = (s: Subscription) => s.prefs.turnEnd === "all" || (s.prefs.turnEnd === "remote" && recent);
     for (const sub of this.d.subscriptions()) {
       if (!wants(sub)) continue;

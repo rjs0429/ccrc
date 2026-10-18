@@ -205,9 +205,9 @@ broker is down, and the wrapper reconnects when it comes back.
   in the permission mode VS Code remembered.
 - When Claude sends a notification (its PushNotification tool), ccrc sends it to the phone. The wrapper adds one
   PostToolUse hook to the extension's `initialize` and answers it itself: while a phone takes those notifications,
-  Claude reads "Mobile push requested." rather than Claude Code's "not sent"; nothing else about the call changes, and
-  VS Code's own hooks reach VS Code as before. Tabs opened with an older wrapper still get the push, and Claude reads
-  Claude Code's own answer.
+  Claude reads "Mobile push requested." rather than Claude Code's "not sent", or, while the phone shows that session,
+  that a notification was not needed; nothing else about the call changes, and VS Code's own hooks reach VS Code as
+  before. Tabs opened with an older wrapper still get the push, and Claude reads Claude Code's own answer.
 - To turn ccrc off for VS Code, remove the setting, or add `CCRC_WRAPPER=off` to
   `claudeCode.environmentVariables`.
 

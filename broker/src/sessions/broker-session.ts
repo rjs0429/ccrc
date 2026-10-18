@@ -581,13 +581,12 @@ export class BrokerSession extends SessionCore {
       );
     });
 
-  // ccrc sends Claude's notifications itself; once it has, Claude reads that the push was requested.
+  // ccrc sends Claude's notifications itself, and Claude reads what became of each.
   private pushHook: HookCallback = async (input, toolUseId) => {
     const i = input as { tool_input?: unknown; tool_use_id?: unknown };
     const id = typeof i.tool_use_id === "string" ? i.tool_use_id : toolUseId;
     const message = i.tool_input !== null && typeof i.tool_input === "object" ? (i.tool_input as Record<string, unknown>).message : undefined;
-    const notice = id ? this.pushNotice?.(id, typeof message === "string" ? message : "") : undefined;
-    return pushHookAnswer(input, notice === "sent");
+    return pushHookAnswer(input, id ? this.pushNotice?.(id, typeof message === "string" ? message : "") : undefined);
   };
 
   private onElicitation: OnElicitation = (request, opts) =>
