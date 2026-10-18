@@ -291,6 +291,7 @@ export interface WorktreeChoice {
 // Whether a new session can start in a worktree of the folder. root: the checkout worktrees go under; origin: the ref
 // "fresh" starts from when known here, "origin" when only the remote is; hook: a WorktreeCreate hook makes it instead.
 // existing: worktrees Claude Code opens again by that name; blocked: names whose branch is left without its worktree.
+// changed: of a session's folder, the files git status lists, which a worktree made from its HEAD leaves behind.
 export interface GitFolderInfo {
   repo: boolean;
   root?: string;
@@ -301,6 +302,7 @@ export interface GitFolderInfo {
   suggested: string;
   existing: string[];
   blocked: string[];
+  changed?: number;
 }
 
 // A session's worktree as it is now. changed: files git status lists, each new file counted; commits: commits no other
@@ -379,13 +381,15 @@ export interface RewindResult {
 
 // id: the new session's id, chosen by the phone. before: the message the copy leaves out with all after it.
 // text and attachments (POST /api/upload ids): the fork's first message, which starts it at once. name: the fork's name
-// in place of the original's with " (fork)".
+// in place of the original's with " (fork)". worktree: the fork runs in a worktree Claude Code makes by this name from
+// the HEAD of the original's folder.
 export type ForkArgs = {
   id: string;
   before?: string;
   text?: string;
   attachments?: string[];
   name?: string;
+  worktree?: { name: string };
 };
 
 // sent: the fork has its first message, from this request or an earlier one with the same id. draft: the message starts
@@ -465,6 +469,24 @@ export interface CallMap {
   mark_unread: { args: { unread: boolean }; data: { unread: boolean } };
 }
 CALL_OPS.push("mark_unread");
+
+// One image or document of a user message made an upload again, or why it could not be: "unreadable" when it is not one
+// the phone attaches, "too_large" past the upload limits.
+export type ReattachedFile = { upload: UploadInfo } | { failed: "unreadable" | "too_large" };
+
+// files: in the order the message holds them. gone: the transcript no longer holds the message.
+export interface ReattachResult {
+  files: ReattachedFile[];
+  gone?: boolean;
+}
+
+// fork_git: the folder call git about the folder a fork of the session starts in. reattach: a message's images and
+// documents as uploads, for the message a fork or a rewind puts back in a composer.
+export interface CallMap {
+  fork_git: { args: Record<string, never>; data: GitFolderInfo };
+  reattach: { args: { messageId: string }; data: ReattachResult };
+}
+CALL_OPS.push("fork_git", "reattach");
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {

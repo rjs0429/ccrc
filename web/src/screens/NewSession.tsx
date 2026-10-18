@@ -57,8 +57,8 @@ onDraftStarted((sessionId, text) => {
 
 // Opens the new-session screen on a folder with a message to start with, as a fork from a conversation's first message
 // stands in for a copy that would hold nothing.
-export function openNewSession(cwd: string, text: string, start: StartSettings = {}): void {
-  kept = { cwd, start };
+export function openNewSession(cwd: string, text: string, start: StartSettings = {}, worktree?: WorktreeDraft): void {
+  kept = { cwd, start, ...(worktree ? { worktree } : {}) };
   saveKept(kept);
   saveDraft(NEW_SESSION_SCOPE, text);
   navigate({ name: "new" });

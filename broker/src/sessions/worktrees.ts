@@ -105,6 +105,13 @@ export async function gitFolderInfo(dir: string, now = new Date()): Promise<GitF
   };
 }
 
+// How many files git status lists in the folder's checkout, a new folder counted once and Claude Code's own .claude
+// folder (its worktrees, local settings) left out; undefined when git cannot say soon.
+export async function uncommitted(dir: string): Promise<number | undefined> {
+  const r = await git(dir, ["status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=dirty"]);
+  return r.code === 0 ? r.out.split("\n").filter((l) => l && !/^.. "?\.claude\//.test(l)).length : undefined;
+}
+
 // The worktree a session works in as Claude Code recorded it.
 export interface WorktreeState {
   worktreePath?: string;

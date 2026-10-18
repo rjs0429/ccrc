@@ -3,6 +3,7 @@ import type { Audit } from "./audit.ts";
 import type { Leases } from "./lease.ts";
 import { CALL_OPS, FOLDER_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg, type WorktreeChoice, type WorktreeRemoved } from "./protocol.ts";
 import { RemoteActivity } from "./remote-activity.ts";
+import { messageBlocks } from "./sessions/attachments.ts";
 import type { SessionManager } from "./sessions/manager.ts";
 import { cleanTitle } from "./titles.ts";
 import type { Uploads } from "./uploads.ts";
@@ -397,6 +398,10 @@ export class Hub {
         reply({ ok: true, data: await this.rewindConversation(sessionId, args) });
         return;
       }
+      if (msg.op === "reattach") {
+        reply({ ok: true, data: await this.reattach(sessionId, sid(args.messageId)) });
+        return;
+      }
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
         const detail = Object.fromEntries(
           Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style", "messageId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
@@ -434,6 +439,9 @@ export class Hub {
     const forkId = sid(args.id);
     const before = args.before === undefined ? undefined : sid(args.before);
     const name = args.name === undefined ? undefined : str(args.name, TITLE_ARG_MAX);
+    const w = args.worktree as { name?: unknown } | undefined;
+    if (w !== undefined && (!w || typeof w !== "object")) throw Error("invalid request");
+    const worktree = w ? str(w.name, WORKTREE_NAME_MAX) : undefined;
     const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
     this.audit.log("fork", {
       device: this.device,
@@ -442,11 +450,23 @@ export class Hub {
       ...(before ? { before } : {}),
       ...(text ? { chars: text.length } : {}),
       ...(ids.length ? { attachments: ids.length } : {}),
+      ...(worktree ? { worktree } : {}),
     });
     if (text || blocks) this.noteRemoteActivity(forkId);
-    const r = await this.manager.fork(sessionId, { id: forkId, before, text, blocks, name });
+    const r = await this.manager.fork(sessionId, { id: forkId, before, text, blocks, name, worktree });
     this.changed();
     return r;
+  }
+
+  // The images and documents a user message carried, read from the session's transcript and kept as uploads again.
+  private async reattach(sessionId: string, messageId: string): Promise<unknown> {
+    const file = await this.manager.transcriptFile(sessionId);
+    const blocks = file ? await messageBlocks(file, messageId.toLowerCase()) : undefined;
+    if (!blocks) return { files: [], gone: true };
+    const files = await this.uploads.again(blocks);
+    const made = files.filter((f) => "upload" in f).length;
+    if (made) this.audit.log("reattach", { device: this.device, sessionId, messageId, files: made });
+    return { files };
   }
 
   // A rewind in place gives the window that shows the session the conversation as it now stands.

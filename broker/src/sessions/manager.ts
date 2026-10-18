@@ -20,6 +20,7 @@ import {
   type EffortName,
   type BrokerSessionsInfo,
   type ForkResult,
+  type GitFolderInfo,
   type LiveState,
   type ModelOption,
   type PendingRequest,
@@ -54,7 +55,7 @@ import { SessionCwds } from "./session-cwd.ts";
 import { agentItem, agentTranscript, workflowAgents } from "./subagents.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
 import { UnreadStore } from "./unread-store.ts";
-import { gitFolderInfo, removeWorktree, worktreeState, worktreeStatus, worktreeTarget, type WorktreeTarget } from "./worktrees.ts";
+import { gitFolderInfo, removeWorktree, uncommitted, worktreeState, worktreeStatus, worktreeTarget, type WorktreeTarget } from "./worktrees.ts";
 import { WrappedSession } from "./wrapped.ts";
 
 const CATALOG_MS = 3000;
@@ -102,13 +103,14 @@ export interface ManagerTiming {
   worktreeStartMs: number;
 }
 
-// A fork's first message, if any, starts it at once.
+// A fork's first message, if any, starts it at once. worktree: the name of the worktree it runs in.
 export interface ForkRequest {
   id: string;
   before?: string;
   text?: string;
   blocks?: ContentBlock[];
   name?: string;
+  worktree?: string;
 }
 
 export interface Snapshot {
@@ -658,6 +660,23 @@ export class SessionManager extends EventEmitter {
     if (place && isFolder(place)) s.moveTo(place);
   }
 
+  // The folder a fork of the session starts in: where it works now, or where it would resume.
+  private async forkFolder(sourceId: string): Promise<{ cwd: string; source?: SessionCore; info?: SDKSessionInfo }> {
+    const source = this.controlled(sourceId);
+    const info = await this.info(sourceId);
+    if (!source && !info?.cwd) throw Error("unknown session");
+    const cwd = source ? source.cwd : await this.resumeFolder(sourceId, info!.cwd!);
+    if (!isFolder(cwd)) throw Error(`working folder is missing: ${cwd}`);
+    return { cwd, source, info };
+  }
+
+  // Whether a fork of the session can run in a worktree of its own, and what of the folder it would leave behind.
+  private async forkGit(sourceId: string): Promise<GitFolderInfo> {
+    const { cwd } = await this.forkFolder(sourceId);
+    const [info, changed] = await Promise.all([gitFolderInfo(cwd), uncommitted(cwd)]);
+    return info.repo && changed !== undefined ? { ...info, changed } : info;
+  }
+
   // A copy of the session's conversation that runs here. Claude Code copies the transcript up to the fork point with its
   // message ids and file checkpoints, and writes the copy once its first input comes, which names it. The same id gives
   // the same fork, which takes a first message the earlier request for it did not bring; one before the conversation's
@@ -690,34 +709,40 @@ export class SessionManager extends EventEmitter {
     return sent;
   }
 
-  // Without a message to cut at, a fork leaves out the turn running now.
+  // Without a message to cut at, a fork leaves out the turn running now. One asked for in a worktree runs in the worktree
+  // Claude Code makes from the HEAD of the original's folder, under the repository's main checkout, and keeps its
+  // transcript in that worktree's project folder; a worktree made for a fork that then failed goes again if it holds nothing.
   private async makeFork(sourceId: string, req: ForkRequest): Promise<ForkResult> {
     const taken = this.controlled(req.id);
     if (taken) return { sessionId: taken.id, cwd: taken.cwd, title: taken.title ?? "" };
     const kept = transcriptPath(req.id) ? await this.info(req.id) : undefined;
     if (kept?.cwd) return { sessionId: req.id, cwd: kept.cwd, title: titleOf(kept) };
     const env = this.launchEnv();
-    const source = this.controlled(sourceId);
-    const info = await this.info(sourceId);
-    if (!source && !info?.cwd) throw Error("unknown session");
-    const cwd = source ? source.cwd : await this.resumeFolder(sourceId, info!.cwd!);
-    if (!isFolder(cwd)) throw Error(`working folder is missing: ${cwd}`);
+    const { cwd, source, info } = await this.forkFolder(sourceId);
     const busy = source ? source.busy : liveProcesses({ fresh: true }).find((l) => l.sessionId === sourceId)?.status === "busy";
     const point = req.before ? await forkPoint(sourceId, cwd, req.before) : busy ? await turnPoint(sourceId, cwd) : undefined;
     if (!point && req.before) throw Error("unknown message");
     if (point && point.at === undefined) return { draft: { cwd } };
+    const worktree = req.worktree === undefined ? undefined : { name: req.worktree, base: "head" as const };
+    const made = worktree ? await this.worktreeFor(cwd, worktree) : undefined;
+    const fresh = made !== undefined && !isFolder(made);
     const title = forkTitle((info ? titleOf(info) : "") || source?.title || "", req.name);
     const cli = await this.claude();
     const s = new BrokerSession(req.id, cwd, [], title);
     this.adopt(s);
-    s.start({ fork: { from: sourceId, ...(point?.at ? { at: point.at } : {}) }, claudePath: cli.path, env, ...this.forkSettings(sourceId, source) });
+    s.start({ fork: { from: sourceId, ...(point?.at ? { at: point.at } : {}) }, ...(worktree ? { worktree } : {}), claudePath: cli.path, env, ...this.forkSettings(sourceId, source) });
     this.logCli(s.id, cli);
     try {
-      await s.started(FORK_START_MS);
+      await s.started(worktree ? this.timing.worktreeStartMs : FORK_START_MS);
+      if (made && isFolder(made)) s.moveTo(made);
       await s.command(`/rename ${title}`, FORK_NAME_MS);
     } catch (e) {
       await s.close("fork_failed");
-      if (!transcriptPath(req.id, cwd)) fs.rmSync(path.join(paths.claudeConfigDir, "file-history", req.id), { recursive: true, force: true });
+      if (!transcriptPath(req.id, s.cwd)) {
+        for (const d of ["file-history", "session-env"]) fs.rmSync(path.join(paths.claudeConfigDir, d, req.id), { recursive: true, force: true });
+        const t = fresh && isFolder(made!) ? worktreeTarget(made!) : undefined;
+        if (t) await removeWorktree(t, false).catch(() => undefined);
+      }
       throw Error(`fork failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     s.builder.seed(await this.written(s));
@@ -726,7 +751,7 @@ export class SessionManager extends EventEmitter {
     this.emit("changed");
     const first = Boolean(req.text || req.blocks?.length);
     if (first) s.send(req.text ?? "", req.blocks);
-    return { sessionId: s.id, cwd, title: s.title || title, ...(first ? { sent: true } : {}) };
+    return { sessionId: s.id, cwd: s.cwd, title: s.title || title, ...(first ? { sent: true } : {}) };
   }
 
   // What a fork starts with: the original's permission mode where it can run here, its model, Effort, Ultracode and
@@ -969,6 +994,8 @@ export class SessionManager extends EventEmitter {
         return this.worktreeStatus(sessionId);
       case "worktree_remove":
         return this.worktreeRemove(sessionId, args.discard === true);
+      case "fork_git":
+        return this.forkGit(sessionId);
     }
   }
 

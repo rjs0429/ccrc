@@ -4,7 +4,8 @@ import { clock, errorText, hostLabel, shortPath } from "../../labels.ts";
 import { call, composerInsert, navigate, toast, useApp } from "../../state.ts";
 import { openNewSession } from "../../screens/NewSession.tsx";
 import { loadDraft, saveDraft } from "../Composer.tsx";
-import { actionable, excerpt, filesBack, filesDone, filesError, lastSeen, type UserMessage } from "../messageActions.ts";
+import { NEW_SESSION_SCOPE, reattachMessage, useAttachments } from "../composer/attachments.ts";
+import { actionable, excerpt, filesBack, filesDone, filesError, lastSeen, reattachNote, type UserMessage } from "../messageActions.ts";
 import { Button, Sheet } from "../ui.tsx";
 import { newId, startOf } from "./Fork.tsx";
 import { Failed, Waiting } from "./parts.tsx";
@@ -144,22 +145,32 @@ export function RewindSheet({ sessionId, initial, onClose }: SheetProps & { init
       .finally(() => setStarting(false));
   };
 
-  const done = (r: RewindConversationResult) => {
+  // The composer that gets the message back holds its text and, uploaded again, its images and documents in place of what
+  // it had; what could not be attached is told with the outcome.
+  const done = (r: RewindConversationResult, message?: UserMessage) => {
     const filesFailed = r.files && !r.files.canRewind ? filesError(r.files) : undefined;
     onClose();
+    let said: string;
     if (r.mode === "in_place") {
       if (r.prefill) composerInsert(r.prefill, true);
-      toast(filesFailed ? `대화는 되돌렸지만 파일은 되돌리지 못했습니다: ${filesFailed}` : `되돌렸습니다${r.files?.canRewind ? filesDone(r.files, files.length) : ""}`);
-      return;
+      said = filesFailed ? `대화는 되돌렸지만 파일은 되돌리지 못했습니다: ${filesFailed}` : `되돌렸습니다${r.files?.canRewind ? filesDone(r.files, files.length) : ""}`;
+    } else {
+      if (r.mode === "draft") openNewSession(r.cwd, r.prefill, startOf(st));
+      else {
+        saveDraft(r.sessionId, r.prefill);
+        navigate({ name: "chat", sessionId: r.sessionId });
+      }
+      const opened =
+        r.mode === "draft" ? "첫 메시지라 같은 폴더의 새 세션으로 엽니다" : r.fallback ? "이 Claude Code는 제자리 되돌리기를 지원하지 않아 새 세션으로 열었습니다" : "새 세션으로 열었습니다";
+      said = filesFailed ? `${opened}. 파일은 되돌리지 못했습니다: ${filesFailed}` : r.files?.canRewind ? `${opened}. ${filesBack(r.files, files.length)}` : opened;
     }
-    if (r.mode === "draft") openNewSession(r.cwd, r.prefill, startOf(st));
-    else {
-      saveDraft(r.sessionId, r.prefill);
-      navigate({ name: "chat", sessionId: r.sessionId });
-    }
-    const opened =
-      r.mode === "draft" ? "첫 메시지라 같은 폴더의 새 세션으로 엽니다" : r.fallback ? "이 Claude Code는 제자리 되돌리기를 지원하지 않아 새 세션으로 열었습니다" : "새 세션으로 열었습니다";
-    toast(filesFailed ? `${opened}. 파일은 되돌리지 못했습니다: ${filesFailed}` : r.files?.canRewind ? `${opened}. ${filesBack(r.files, files.length)}` : opened);
+    const list = message?.attachments ?? [];
+    if (!message || (!list.length && !r.prefill)) return toast(said);
+    const scope = r.mode === "in_place" ? sessionId : r.mode === "draft" ? NEW_SESSION_SCOPE : r.sessionId;
+    void reattachMessage(scope, sessionId, message.id, list, true).then((failed) => {
+      const note = reattachNote(failed);
+      toast(note ? `${said}. ${note}` : said);
+    });
   };
 
   const apply = (id: string, way: Way) => {
@@ -182,15 +193,20 @@ export function RewindSheet({ sessionId, initial, onClose }: SheetProps & { init
       return;
     }
     const seen = lastSeen(items ?? []);
-    call(sessionId, "rewind_conversation", { userMessageId: id, choice: way, ...(seen ? { lastSeen: seen } : {}), forkId }, REWIND_WAIT_MS).then(done, (e: Error) => {
-      setError(errorText(e.message));
-      setApplying(null);
-    });
+    const message = messages.find((m) => m.id === id);
+    call(sessionId, "rewind_conversation", { userMessageId: id, choice: way, ...(seen ? { lastSeen: seen } : {}), forkId }, REWIND_WAIT_MS).then(
+      (r) => done(r, message),
+      (e: Error) => {
+        setError(errorText(e.message));
+        setApplying(null);
+      },
+    );
   };
 
   const inPlace = kind === "owned";
   const elsewhere = kind === "attached" ? "VS Code" : hostLabel(st?.host);
-  const draft = inPlace && Boolean(loadDraft(sessionId).trim());
+  const composerFiles = useAttachments(sessionId);
+  const draft = inPlace && (Boolean(loadDraft(sessionId).trim()) || composerFiles.length > 0);
   const armedText = (way: Way) => (armed?.way !== way ? undefined : way !== "conversation" && outside.length && armed.step === 1 ? "다른 폴더의 파일도 되돌립니다 · 한 번 더 누르세요" : "한 번 더 누르면 되돌립니다");
   const ways: { way: Way; label: string; hint: string; disabled: boolean }[] =
     kind === "live"
@@ -259,7 +275,11 @@ export function RewindSheet({ sessionId, initial, onClose }: SheetProps & { init
                 {applied?.error && <Trouble text={applied.error} />}
                 {error && <Trouble text={error} />}
                 {busy && !applied && kind !== "live" && <div className="px-1 text-xs text-muted">Claude가 작업 중입니다. {inPlace ? "작업이 끝난 뒤 되돌릴 수 있습니다" : "코드는 작업이 끝난 뒤 되돌릴 수 있습니다"}</div>}
-                {draft && !applied && <div className="px-1 text-xs text-muted">대화를 되돌리면 입력창의 글이 이 메시지 글로 바뀝니다</div>}
+                {draft && !applied && (
+                  <div className="px-1 text-xs text-muted">
+                    {composerFiles.length ? "대화를 되돌리면 입력창의 글과 첨부가 이 메시지 것으로 바뀝니다" : "대화를 되돌리면 입력창의 글이 이 메시지 글로 바뀝니다"}
+                  </div>
+                )}
                 {!applied && (preview || !controllable) && kind !== "inactive" && (
                   <div className="space-y-1.5">
                     {ways.map((w) => (

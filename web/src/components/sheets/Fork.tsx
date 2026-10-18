@@ -1,15 +1,16 @@
-import { useId, useRef, useState } from "react";
-import { PERMISSION_MODES, type LiveState, type PermissionModeName, type StartSettings } from "../../../../broker/src/protocol.ts";
+import { useEffect, useId, useRef, useState } from "react";
+import { PERMISSION_MODES, type GitFolderInfo, type LiveState, type PermissionModeName, type StartSettings } from "../../../../broker/src/protocol.ts";
 import { errorText, shortPath } from "../../labels.ts";
 import { rememberSent } from "../../sentPreviews.ts";
 import { call, navigate, toast, useApp } from "../../state.ts";
 import { openNewSession } from "../../screens/NewSession.tsx";
 import { saveDraft } from "../Composer.tsx";
 import { AttachmentChips } from "../composer/AttachmentChips.tsx";
-import { ATTACH_ACCEPT, NEW_SESSION_SCOPE, addFiles, moveAttachments, takeAttachments, useAttachments } from "../composer/attachments.ts";
+import { ATTACH_ACCEPT, NEW_SESSION_SCOPE, addFiles, clearAttachments, moveAttachments, reattachMessage, takeAttachments, useAttachments } from "../composer/attachments.ts";
 import { afterKeyboard } from "../composer/picker.ts";
-import type { UserMessage } from "../messageActions.ts";
+import { reattachNote, type UserMessage } from "../messageActions.ts";
 import { Button, Icon, Sheet, Spinner } from "../ui.tsx";
+import { WorktreeOption, worktreeBlocked, worktreeChoice, type FolderGit, type WorktreeDraft } from "../WorktreeOption.tsx";
 import { Failed } from "./parts.tsx";
 
 // Claude Code starts the copy and names it before the fork is there.
@@ -42,8 +43,9 @@ export function startOf(st?: LiveState): StartSettings {
 }
 
 // Copies the conversation into a new session ccrc runs, up to a message or as it stands, and either starts it with a
-// message while the phone stays here or opens it with the message waiting in its composer. onDone: the fork is made and
-// the sheet goes; onClose: it goes without one.
+// message while the phone stays here or opens it with the message waiting in its composer. A fork from a message brings
+// its text and its images and documents; the fork can run in a worktree of its own made from the folder's HEAD. onDone:
+// the fork is made and the sheet goes; onClose: it goes without one, and so do the files attached here.
 export function ForkSheet({
   sessionId,
   before,
@@ -73,12 +75,40 @@ export function ForkSheet({
   const [text, setText] = useState(given ?? before?.text ?? "");
   const [going, setGoing] = useState<"open" | "start" | null>(null);
   const [error, setError] = useState<string>();
+  const [unattached, setUnattached] = useState<string>();
+  const [git, setGit] = useState<FolderGit>("loading");
+  const [worktree, setWorktree] = useState<WorktreeDraft>({ on: false, base: "head" });
   const attachments = useAttachments(scope);
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const uploading = attachments.some((a) => !a.uploaded);
   const filled = text.trim() !== "" || attachments.length > 0;
-  const blocked = folderMissing || uploading || Boolean(going);
+  const worktreeOn = worktree.on && !worktreeBlocked(git);
+  const picked = worktreeOn ? worktreeChoice(git as GitFolderInfo, worktree) : undefined;
+  const worktreeHold = worktree.on && git === "loading" ? "worktree를 쓸 수 있는지 확인하는 중입니다" : picked && "problem" in picked ? picked.problem : undefined;
+  const blocked = folderMissing || uploading || Boolean(going) || Boolean(worktreeHold);
+
+  // The sheet starts from the message's files, and what it holds goes with it unless a fork takes it.
+  useEffect(() => {
+    let live = true;
+    if (before?.attachments?.length) void reattachMessage(scope, sessionId, before.id, before.attachments, true).then((failed) => live && setUnattached(reattachNote(failed)));
+    return () => {
+      live = false;
+    };
+  }, []);
+  useEffect(() => () => clearAttachments(scope), []);
+
+  useEffect(() => {
+    if (folderMissing) return;
+    let live = true;
+    call(sessionId, "fork_git", {}).then(
+      (info) => live && setGit(info),
+      (e: Error) => live && setGit({ failed: e.message }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [sessionId, folderMissing]);
 
   const attach = () => {
     const input = fileRef.current;
@@ -95,19 +125,21 @@ export function ForkSheet({
     setError(undefined);
     const message = text.trim();
     const ids = start ? attachments.map((a) => a.uploaded!.id) : [];
+    const choice = picked && "choice" in picked ? picked.choice : undefined;
     const args = {
       id,
       ...(before ? { before: before.id } : {}),
       ...(start && message ? { text: message } : {}),
       ...(ids.length ? { attachments: ids } : {}),
       ...(name ? { name } : {}),
+      ...(choice ? { worktree: { name: choice.name } } : {}),
     };
     call(sessionId, "fork", args, FORK_WAIT_MS).then(
       (r) => {
-        onDone();
         if ("draft" in r) {
+          clearAttachments(NEW_SESSION_SCOPE);
           moveAttachments(scope, NEW_SESSION_SCOPE);
-          openNewSession(r.draft.cwd, text, startOf(st));
+          openNewSession(r.draft.cwd, text, startOf(st), choice ? { on: true, base: "head", name: choice.name } : undefined);
           toast("첫 메시지라 같은 폴더의 새 세션으로 엽니다");
         } else if (start) {
           rememberSent(r.sessionId, message, takeAttachments(scope));
@@ -121,6 +153,7 @@ export function ForkSheet({
           }
           navigate({ name: "chat", sessionId: r.sessionId });
         }
+        onDone();
       },
       (e: Error) => {
         setError(errorText(e.message));
@@ -189,6 +222,21 @@ export function ForkSheet({
             />
           </span>
         </div>
+      )}
+      {unattached && (
+        <p className="mt-1.5 px-1 text-xs text-warn" data-fork-unattached>
+          {unattached}
+        </p>
+      )}
+      {!folderMissing && (
+        <WorktreeOption
+          info={git}
+          draft={worktree}
+          onChange={setWorktree}
+          disabled={Boolean(going)}
+          head
+          className="mt-3 rounded-2xl border border-line px-3 pb-0.5"
+        />
       )}
       {error && (
         <div className="mt-3">

@@ -39,7 +39,8 @@ const BASES: [WorktreeChoice["base"], string][] = [
 ];
 
 function baseNote(info: GitFolderInfo, base: WorktreeChoice["base"]): string {
-  const head = `지금 커밋(${[info.branch, info.head].filter(Boolean).join(" · ")})에서 시작합니다. 커밋하지 않은 변경은 가져가지 않습니다.`;
+  const left = info.changed ? `커밋하지 않은 변경(파일 ${info.changed}개)은` : "커밋하지 않은 변경은";
+  const head = `지금 커밋(${[info.branch, info.head].filter(Boolean).join(" · ")})에서 시작합니다. ${left} 가져가지 않습니다.`;
   if (base === "head") return head;
   if (!info.origin) return `원격이 없어 ${head}`;
   const from = info.origin === "origin" ? "origin의 기본 브랜치에서 시작합니다(받아오지 못하면 지금 커밋)." : `${info.origin}에서 시작합니다.`;
@@ -47,8 +48,25 @@ function baseNote(info: GitFolderInfo, base: WorktreeChoice["base"]): string {
 }
 
 // Sits under the chosen folder in the new-session screen's list: a switch for the session's own worktree, its name and
-// the commit it starts from. error: why the last start in a worktree failed.
-export function WorktreeOption({ info, draft, onChange, error, disabled }: { info: FolderGit; draft: WorktreeDraft; onChange: (d: WorktreeDraft) => void; error?: string; disabled?: boolean }) {
+// the commit it starts from. error: why the last start in a worktree failed. head: the commit is the folder's HEAD, as
+// for a fork, with no choice; className: the frame, where it stands elsewhere.
+export function WorktreeOption({
+  info,
+  draft,
+  onChange,
+  error,
+  disabled,
+  head,
+  className = "border-b border-line bg-accent-soft/40 pr-3 pb-1 pl-10 last:border-0",
+}: {
+  info: FolderGit;
+  draft: WorktreeDraft;
+  onChange: (d: WorktreeDraft) => void;
+  error?: string;
+  disabled?: boolean;
+  head?: boolean;
+  className?: string;
+}) {
   const id = useId();
   const blocked = worktreeBlocked(info);
   const git = blocked ? undefined : (info as GitFolderInfo);
@@ -59,7 +77,7 @@ export function WorktreeOption({ info, draft, onChange, error, disabled }: { inf
   const reopens = git && !problem && git.existing.includes(name);
   const hint = blocked ?? (!on || problem ? "이 폴더는 그대로 두고 새 브랜치에서 작업합니다" : git!.hook ? "WorktreeCreate 훅이 worktree를 만듭니다" : undefined);
   return (
-    <div className="border-b border-line bg-accent-soft/40 pr-3 pb-1 pl-10 last:border-0" data-worktree-option>
+    <div className={className} data-worktree-option>
       <button
         role="switch"
         aria-checked={on}
@@ -109,7 +127,12 @@ export function WorktreeOption({ info, draft, onChange, error, disabled }: { inf
               </p>
             )}
           </div>
-          {!git.hook && (
+          {!git.hook && head && (
+            <p className="text-xs text-muted" data-worktree-base-note>
+              {baseNote(git, "head")}
+            </p>
+          )}
+          {!git.hook && !head && (
             <div>
               <div id={`${id}-base`} className="mb-1 text-xs font-medium text-muted">
                 시작할 커밋

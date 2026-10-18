@@ -25,6 +25,7 @@ export type AuditEvent =
   | "attach"
   | "handoff"
   | "upload"
+  | "reattach"
   | "file_read"
   | "agent_transcript"
   | "call"

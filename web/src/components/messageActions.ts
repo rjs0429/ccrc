@@ -34,3 +34,18 @@ export function filesDone(r: RewindResult, previewed: number): string {
 export function filesBack(r: RewindResult, previewed: number): string {
   return r.skippedLinks ? `파일을 되돌렸습니다 · 링크라서 건너뛴 파일 ${r.skippedLinks}개` : `파일 ${previewed}개를 되돌렸습니다`;
 }
+
+// Why one of a message's files was not attached again: the broker's reasons, "too_many" past the composer's limit, or
+// "failed" when the broker could not be asked.
+export type ReattachFailure = "gone" | "unreadable" | "too_large" | "too_many" | "failed";
+
+const NOT_ATTACHED: Record<ReattachFailure, string> = { gone: "기록에 없음", unreadable: "붙일 수 없는 형식", too_large: "너무 큼", too_many: "10개 넘음", failed: "가져오지 못함" };
+
+// What of a message's files could not be attached again, in one line; nothing when all were.
+export function reattachNote(failed: ReattachFailure[]): string | undefined {
+  if (!failed.length) return undefined;
+  const counts = new Map<ReattachFailure, number>();
+  for (const f of failed) counts.set(f, (counts.get(f) ?? 0) + 1);
+  const why = [...counts].map(([f, n]) => (counts.size > 1 ? `${NOT_ATTACHED[f]} ${n}개` : NOT_ATTACHED[f])).join(", ");
+  return `첨부 ${failed.length}개는 다시 붙이지 못했습니다 (${why})`;
+}

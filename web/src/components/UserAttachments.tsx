@@ -4,11 +4,11 @@ import type { UserAttachment } from "../../../broker/src/protocol.ts";
 import { sizeText } from "../labels.ts";
 import { sentPreview } from "../sentPreviews.ts";
 import { useApp } from "../state.ts";
+import { SERVED_IMAGES, messageImageUrl } from "./composer/attachments.ts";
 import { Icon, Spinner } from "./ui.tsx";
 
 // Larger images wait for a tap before they are fetched.
 export const BIG_IMAGE_BYTES = 1024 * 1024;
-const SERVED = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // A message sent while Claude works reaches the transcript only when it is delivered, which can take
 // minutes, so a thumbnail in view keeps retrying at the last interval.
@@ -226,10 +226,7 @@ export function UserAttachments({ messageId, list, waiting }: { messageId: strin
   const images: Shown[] = entries
     .filter((e) => e.a.kind === "image")
     .map(({ a, i }) => {
-      const remote =
-        servable && SERVED.has(a.mediaType)
-          ? `/api/sessions/${encodeURIComponent(sessionId!)}/messages/${encodeURIComponent(messageId)}/attachments/${i}`
-          : undefined;
+      const remote = servable && SERVED_IMAGES.has(a.mediaType) ? messageImageUrl(sessionId!, messageId, i) : undefined;
       return { local: sentPreview(messageId, i), remote, size: a.size };
     });
   const docs = list.filter((a) => a.kind === "document");
