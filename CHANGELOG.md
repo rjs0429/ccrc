@@ -60,11 +60,13 @@ your version and the new one, and the lines under "Breaking" separately.
   (with `switchModelsOnFlag` off), the card offers going on with the fallback model, editing the message (which comes
   back in the composer) or closing it; auto mode's notice that its classifier now runs billed requests offers going on
   or stopping the turn. The buttons take a tap only after the card has shown for half a second. Broker sessions declare
-  these two dialogs to Claude Code, so it asks instead of ending the turn on the refusal or going on silently; one left
-  unanswered for 15 minutes is closed as Claude Code's default. VS Code sessions need this version's wrapper
-  (`user_dialogs` in the hello's `caps`), which passes on only an answer the dialog offers and tells VS Code to close
-  its copy. Fable's usage credits consent stays with VS Code: the phone shows what it asks and the credits left, read
-  only. The notification of a dialog names what it asks.
+  the refusal dialog to Claude Code, so it asks instead of ending the turn; they leave auto mode's notice undeclared, so
+  there Claude Code goes on in auto mode without asking, as before. A dialog nobody answers is closed by Claude Code
+  after its `dialogExpiry` (5 minutes by default) with the dialog's default: the refusal stands and the turn ends, and
+  auto mode's notice stops the turn. VS Code sessions need this version's wrapper (`user_dialogs` in the hello's
+  `caps`), which passes on only an answer the dialog offers and tells VS Code to close its copy. Fable's usage credits
+  consent stays with VS Code: the phone shows what it asks and the credits left, read only. The notification of a
+  dialog names what it asks.
 - Signing in to an MCP server from the phone: the MCP sheet offers 인증 for an HTTP or SSE server or a claude.ai
   connector that needs it. Claude Code starts the sign-in (`mcp_authenticate`) and the phone opens its page; its last
   page is Claude Code's redirect to the machine's `localhost`, which the phone cannot open, so its address is pasted
@@ -75,10 +77,14 @@ your version and the new one, and the lines under "Breaking" separately.
 - Passkeys (Face ID) confirm remote logins. In 계정과 보안 a phone registers one, after its password, for the host name
   it opens ccrc at. From then on every login from a device other than the machine itself is confirmed with a passkey
   when it starts and again after `passkeyHours` (new config key, 18 by default), as Claude's own Remote Control does
-  for trusted devices; until then the phone shows only the passkey screen. Removing one asks for the password too;
-  `ccrc passkey [list | remove <id> | reset]` lists and removes them on the machine, for a lost phone. Kept in
-  `~/.config/ccrc/passkeys.json` (0600; public keys and when each was used), which `ccrc uninstall --purge` removes.
-  The broker checks registrations and confirmations itself with Node's crypto; there is no new dependency.
+  for trusted devices; until then the phone shows only the passkey screen. Another allowed device, a second phone or a
+  tablet, registers its own on that screen at its first login, after the password; a device that has registered one
+  confirms with it. Removing one asks for the password too; `ccrc passkey [list | remove <id> | reset]` lists and
+  removes them on the machine, for a lost phone. Kept in `~/.config/ccrc/passkeys.json` (0600; public keys and when
+  each was used), which `ccrc uninstall --purge` removes. The broker checks registrations and confirmations itself
+  with Node's crypto; there is no new dependency. `ccrc rollback` to 0.7.x turns the confirmation off: 0.7 does not
+  read `passkeys.json`, so the password alone logs in. The passkeys stay, and updating again brings the confirmation
+  back.
 
 ### Changed
 

@@ -188,8 +188,8 @@ taken from `--yes`:
 4. In ccrc's settings, turn on notifications and send a test one (iOS 16.4 or later; iOS allows web push only in
    home screen apps).
 5. Optionally, in 계정과 보안 (account and security), register a passkey: remote logins are then confirmed with Face ID
-   (or the phone's passcode) when they start and every `passkeyHours` (18 by default). See
-   [Security model](#security-model).
+   (or the phone's passcode) when they start and every `passkeyHours` (18 by default), and another phone or tablet
+   registers its own at its first login. See [Security model](#security-model).
 
 Android with Chrome should work the same way, but has not been tested.
 
@@ -263,6 +263,8 @@ ccrc.service`). `ccrc rollback` exits with 4 when the service cannot be restarte
 `ccrc rollback` returns to the version before the last update and puts back the config and state files that update's
 migration reported changing (the current ones are backed up first), so later password changes and notification
 subscriptions are kept. Ctrl-C is held while a switch is being confirmed, so a cut-off run can still be rolled back.
+Going back to 0.7.x turns the passkey confirmation off: 0.7 does not read `passkeys.json`, so the password alone logs
+in. The passkeys stay, and updating again brings the confirmation back.
 
 Change versions with `ccrc update`, not `install.sh --version`: `install.sh` does not record the switch in
 `history.json`, so `ccrc rollback` cannot undo it.
@@ -409,11 +411,13 @@ does the file.
   phone's passcode) for the host name it opens ccrc at. Registering and removing one asks for the password again. Once
   one is registered, every remote login is confirmed with a passkey when it starts and again after `passkeyHours`;
   until then the broker answers nothing but the confirmation and logout (HTTP 401 `passkey_required`, and an open
-  WebSocket is closed with code 4003). Logins on the machine itself are never asked. The broker checks each answer
-  itself with Node's crypto: a challenge good once, for that login, for five minutes; the page's origin and host name;
-  presence and verification; the signature (ES256, EdDSA or RS256); and a sign counter that goes up where the
-  authenticator keeps one. It asks for no attestation. A lost passkey is removed on the machine with
-  `ccrc passkey reset`.
+  WebSocket is closed with code 4003). As with Claude's own trusted devices, each device enrolls once: an allowed
+  device with no passkey of its own registers one in place of the confirmation, after the password, and from then on
+  confirms with it. Until it has, such a device is kept out by the password alone, so list in `allowedDevices` only
+  the devices you use. Logins on the machine itself are never asked. The broker checks each answer itself with Node's
+  crypto: a challenge good once, for that login, for five minutes; the page's origin and host name; presence and
+  verification; the signature (ES256, EdDSA or RS256); and a sign counter that goes up where the authenticator keeps
+  one. It asks for no attestation. A lost passkey is removed on the machine with `ccrc passkey reset`.
 - **No remote bypass.** The phone cannot switch any session to `bypassPermissions`: the broker refuses it, and the
   wrapper refuses any request or answer that would. The wrapper accepts only an allowlist of control requests from
   the broker.

@@ -14,7 +14,7 @@ import {
   type Settings,
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeSettingsFile } from "../claude-settings.ts";
-import { ANSWERED_DIALOGS, answerable, dialogInfo, type DialogResult } from "../dialogs.ts";
+import { BROKER_DIALOGS, dialogInfo, type DialogResult } from "../dialogs.ts";
 import { elicitInfo } from "../elicit.ts";
 import type { ClaudeNotice } from "../push/rules.ts";
 import { allowedOAuthCallback, pushHookAnswer } from "../wrapper/relay.ts";
@@ -60,8 +60,6 @@ import { contextDetail, usageAnswer } from "./reports.ts";
 
 const CLOSE_WAIT_MS = 10_000;
 const REQUEST_MS = 15_000;
-// A dialog left unanswered this long is closed, which Claude Code takes as its default.
-export const DIALOG_MS = 15 * 60_000;
 const LATER_WAIT_MS = 20_000;
 // A process started for one question still has to start up and sign in.
 const PROBE_MS = 45_000;
@@ -163,7 +161,6 @@ export class BrokerSession extends SessionCore {
   private elicits = new Map<string, (result: ElicitAnswer) => void>();
   private dialogs = new Map<string, (result: DialogResult) => void>();
   elicitMs = ELICIT_MS;
-  dialogMs = DIALOG_MS;
   // The Claude Code the process runs, while it runs.
   claudePath?: string;
   // What Claude Code last wrote to stderr, where it says why it could not start.
@@ -224,7 +221,7 @@ export class BrokerSession extends SessionCore {
         canUseTool: this.canUseTool,
         onElicitation: this.onElicitation,
         onUserDialog: this.onUserDialog,
-        supportedDialogKinds: ANSWERED_DIALOGS,
+        supportedDialogKinds: BROKER_DIALOGS,
         hooks: { PostToolUse: [{ matcher: "PushNotification", hooks: [this.pushHook] }] },
         stderr: (data) => this.noteStderr(data),
       },
@@ -680,19 +677,14 @@ export class BrokerSession extends SessionCore {
       this.ask({ requestId: id, kind: "elicitation", toolName: elicitation.server, input: {}, elicitation });
     });
 
-  // Only the dialogs declared in supportedDialogKinds come; one whose payload cannot be shown is closed at once, as VS
-  // Code closes it.
+  // Only the dialogs declared in supportedDialogKinds come, and Claude Code cancels one nobody answers by its own
+  // deadline (dialogExpiry); one whose payload cannot be shown is closed at once, as VS Code closes it.
   private onUserDialog: OnUserDialog = (request, opts) =>
     new Promise((resolve) => {
       const id = opts.requestId;
       const dialog = dialogInfo(request.dialogKind, request.payload);
-      if (!dialog || !answerable(request.dialogKind)) return resolve({ behavior: "cancelled" });
-      const timer = setTimeout(() => this.endDialog(id), this.dialogMs);
-      timer.unref();
-      this.dialogs.set(id, (result) => {
-        clearTimeout(timer);
-        resolve(result);
-      });
+      if (!dialog || !BROKER_DIALOGS.includes(request.dialogKind)) return resolve({ behavior: "cancelled" });
+      this.dialogs.set(id, resolve);
       opts.signal.addEventListener("abort", () => this.endDialog(id), { once: true });
       this.ask({ requestId: id, kind: "dialog", toolName: request.dialogKind, input: {}, dialog });
     });

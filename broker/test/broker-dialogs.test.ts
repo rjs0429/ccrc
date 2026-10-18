@@ -47,11 +47,11 @@ function started(): BrokerSession {
 
 const nextPending = (s: BrokerSession) => new Promise<PendingRequest>((r) => s.once("pending_add", r));
 
-test("a session the broker runs declares the dialogs the phone answers and passes the answer on", async () => {
+test("a session the broker runs declares the refusal dialog and passes the answer on", async () => {
   const s = started();
   await s.started(30_000);
   const init = await until(() => recorded(s).find((r) => r.request?.subtype === "initialize"), "initialize");
-  assert.deepEqual(init.request!.supportedDialogKinds, ["refusal_fallback_prompt", "auto_mode_server_fallback"]);
+  assert.deepEqual(init.request!.supportedDialogKinds, ["refusal_fallback_prompt"]);
   let asked = nextPending(s);
   s.send("DIALOG refusal_fallback_prompt");
   const refusal = await asked;
@@ -65,43 +65,36 @@ test("a session the broker runs declares the dialogs the phone answers and passe
   assert.deepEqual(got.response, { behavior: "completed", result: "retry_fallback" });
 
   asked = nextPending(s);
-  s.send("DIALOG auto_mode_server_fallback");
-  const notice = await asked;
-  assert.equal(notice.dialog?.kind, "auto_mode_server_fallback");
-  await s.answer(notice.id, { kind: "dialog", choice: "cancel" });
-  const closed = await until(() => recorded(s).find((r) => r.dialogAnswer === notice.id), "the close");
+  s.send("DIALOG refusal_fallback_prompt");
+  const again = await asked;
+  await s.answer(again.id, { kind: "dialog", choice: "cancel" });
+  const closed = await until(() => recorded(s).find((r) => r.dialogAnswer === again.id), "the close");
   assert.deepEqual(closed.response, { behavior: "cancelled" });
 });
 
-test("a dialog left unanswered is closed, and a dialog it cannot show is closed at once", async () => {
-  const s = started();
-  s.dialogMs = 200;
-  await s.started(30_000);
-  const asked = nextPending(s);
-  s.send("DIALOG auto_mode_server_fallback");
-  const notice = await asked;
-  const gone = new Promise((r) => s.once("pending_remove", r));
-  assert.equal(await gone, notice.id);
-  const closed = await until(() => recorded(s).find((r) => r.dialogAnswer === notice.id), "the close");
-  assert.deepEqual(closed.response, { behavior: "cancelled" });
-
+test("a dialog it cannot show or did not declare is closed at once, auto mode's notice among them", async () => {
+  const s = new BrokerSession(randomUUID(), cwd);
   const ask = (s as unknown as { onUserDialog: (r: unknown, o: unknown) => Promise<unknown> }).onUserDialog;
   const ac = new AbortController();
   assert.deepEqual(await ask({ dialogKind: "refusal_fallback_prompt", payload: { originalModel: "a" } }, { signal: ac.signal, requestId: "x1" }), { behavior: "cancelled" });
   assert.deepEqual(await ask({ dialogKind: "fable_overage_consent_prompt", payload: { overagesEnabled: true } }, { signal: ac.signal, requestId: "x2" }), { behavior: "cancelled" });
+  assert.deepEqual(await ask({ dialogKind: "auto_mode_server_fallback", payload: { title: "t", paragraphs: [] } }, { signal: ac.signal, requestId: "x3" }), { behavior: "cancelled" });
   assert.equal(s.pending.size, 0);
 });
 
-test("an aborted dialog leaves the phone, and closing the session closes its dialogs", async () => {
+test("a dialog Claude Code cancels (its deadline) leaves the phone, and closing the session closes its dialogs", async () => {
   const s = new BrokerSession(randomUUID(), cwd);
   const ask = (s as unknown as { onUserDialog: (r: unknown, o: unknown) => Promise<unknown> }).onUserDialog;
+  const refusal = { dialogKind: "refusal_fallback_prompt", payload: { originalModel: "claude-opus-5-5", fallbackModel: "claude-sonnet-5" } };
   const ac = new AbortController();
-  const first = ask({ dialogKind: "auto_mode_server_fallback", payload: { title: "t", paragraphs: [] } }, { signal: ac.signal, requestId: "y1" });
+  const first = ask(refusal, { signal: ac.signal, requestId: "y1" });
   assert.equal(s.pending.size, 1);
+  const gone = new Promise((r) => s.once("pending_remove", r));
   ac.abort();
+  assert.equal(await gone, "y1");
   assert.deepEqual(await first, { behavior: "cancelled" });
   assert.equal(s.pending.size, 0);
-  const second = ask({ dialogKind: "auto_mode_server_fallback", payload: { title: "t", paragraphs: [] } }, { signal: new AbortController().signal, requestId: "y2" });
+  const second = ask(refusal, { signal: new AbortController().signal, requestId: "y2" });
   await s.close("test");
   assert.deepEqual(await second, { behavior: "cancelled" });
 });

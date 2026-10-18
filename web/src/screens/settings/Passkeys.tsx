@@ -17,6 +17,7 @@ const FAILURE: Record<string, string> = {
   challenge_expired: "시간이 지났습니다. 다시 시도하세요",
   passkey_invalid: "패스키 응답을 확인하지 못했습니다. 다시 시도하세요",
   not_found: "이미 지워진 패스키입니다",
+  passkey_required: "이 기기의 패스키로 먼저 확인하세요",
 };
 
 function failure(e: unknown): string {
@@ -27,7 +28,7 @@ function failure(e: unknown): string {
 const when = (ms: number) => dateTime(new Date(ms).toISOString());
 
 // Registering takes two taps: the password goes first, so the second tap can call WebAuthn at once, as Safari asks.
-function AddSheet({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
+export function AddSheet({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
   const [password, setPassword] = useState("");
   const [options, setOptions] = useState<Record<string, unknown>>();
   const [error, setError] = useState<string>();
@@ -81,7 +82,7 @@ function AddSheet({ onClose, onAdded }: { onClose: () => void; onAdded: () => vo
           </form>
         ) : (
           <>
-            <p className="text-[15px]">이 휴대폰에 패스키를 만듭니다. Face ID(또는 휴대폰 암호)로 확인하세요.</p>
+            <p className="text-[15px]">이 기기에 패스키를 만듭니다. Face ID(또는 이 기기의 암호)로 확인하세요.</p>
             {error && <div className="text-sm text-danger">{error}</div>}
             <Button kind="primary" className="w-full" disabled={busy} onClick={() => void register()}>
               {busy ? "등록 중…" : "Face ID로 등록"}
@@ -157,6 +158,7 @@ export function PasskeySection() {
     setRound((r) => r + 1);
   };
   const supported = passkeysSupported();
+  const own = list?.passkeys.some((p) => p.mine && p.here);
 
   return (
     <section className="space-y-2" data-passkeys>
@@ -168,14 +170,17 @@ export function PasskeySection() {
       ) : (
         <>
           <p className="px-1 text-sm text-muted">
-            패스키를 등록하면 노트북 밖에서 로그인할 때와 그 뒤 {list.hours}시간마다 패스키로 다시 확인합니다. 노트북에서 연 화면은 묻지 않습니다.
+            패스키를 등록하면 노트북 밖에서 로그인할 때와 그 뒤 {list.hours}시간마다 패스키로 다시 확인합니다. 다른 기기는 처음 로그인할 때 그 기기의 패스키를 등록합니다. 노트북에서 연 화면은 묻지 않습니다.
           </p>
           {list.passkeys.length > 0 && (
             <div className="overflow-hidden rounded-xl bg-surface">
               {list.passkeys.map((p) => (
                 <div key={p.id} className="flex items-center gap-3 border-b border-line px-3.5 py-2.5 last:border-0" data-passkey={p.id.slice(0, 12)}>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[15px] font-medium">{p.device}</div>
+                    <div className="text-[15px] font-medium">
+                      {p.device}
+                      {p.mine && <span className="ml-1.5 text-xs font-normal text-muted">이 기기</span>}
+                    </div>
                     <div className="text-xs text-muted">
                       {when(p.createdAt)} 등록{p.lastUsedAt ? ` · 마지막 사용 ${when(p.lastUsedAt)}` : ""}
                       {p.backedUp ? " · 동기화됨" : ""}
@@ -193,9 +198,9 @@ export function PasskeySection() {
             <p className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm">노트북에서 연 화면에서는 패스키를 등록하지 않습니다. 휴대폰의 ccrc에서 등록하세요.</p>
           ) : !supported ? (
             <p className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm">이 브라우저는 패스키를 지원하지 않습니다.</p>
-          ) : (
+          ) : own ? null : (
             <Button className="w-full" onClick={() => setAdding(true)}>
-              {list.passkeys.length ? "패스키 하나 더 등록" : "패스키 등록"}
+              {list.passkeys.length ? "이 기기에 패스키 등록" : "패스키 등록"}
             </Button>
           )}
           <p className="px-1 text-xs text-muted">

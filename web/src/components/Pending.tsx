@@ -166,10 +166,10 @@ function RefusalCard({ info, reply }: { info: Dialog<"refusal_fallback_prompt">;
       <div className="text-[15px]">{refusalText(model, fallback, info.category)}</div>
       <div className="grid gap-2">
         <Button kind="primary" disabled={!ready} onClick={() => choose("retry_fallback")}>
-          {fallback}로 계속
+          {fallback} 모델로 계속
         </Button>
         <Button disabled={!ready} onClick={() => choose("edit_prompt")}>
-          메시지 고쳐 {model}로 다시
+          메시지 고쳐 {model} 모델로 다시
         </Button>
         <Button kind="ghost" disabled={!ready} onClick={() => choose("cancel")}>
           닫기

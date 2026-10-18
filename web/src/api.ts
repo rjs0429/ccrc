@@ -16,6 +16,7 @@ export interface PasskeyView {
   lastUsedAt?: number;
   backedUp?: boolean;
   here: boolean;
+  mine: boolean;
 }
 
 export interface PasskeyList {
@@ -111,7 +112,7 @@ export const api = {
   passkeys: () => request<PasskeyList>("GET", "/api/passkeys"),
   passkeyRegisterOptions: (password: string) => request<WebAuthnOptions>("POST", "/api/passkeys/register/options", { password }),
   passkeyRegister: (credential: unknown) => request<{ passkey: PasskeyView }>("POST", "/api/passkeys/register", { credential }),
-  passkeyVerifyOptions: () => request<WebAuthnOptions>("POST", "/api/passkeys/verify/options", {}),
+  passkeyVerifyOptions: () => request<{ options?: Record<string, unknown>; enroll?: true }>("POST", "/api/passkeys/verify/options", {}),
   passkeyVerify: (credential: unknown) => request<{ ok: true }>("POST", "/api/passkeys/verify", { credential }),
   passkeyRemove: (id: string, password: string) => request<{ ok: true }>("POST", "/api/passkeys/remove", { id, password }),
 };

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ANSWERED_DIALOGS, answerable, dialogAnswer, dialogInfo, dialogResult } from "../src/dialogs.ts";
+import { BROKER_DIALOGS, answerable, dialogAnswer, dialogInfo, dialogResult } from "../src/dialogs.ts";
 import { creditsText, errorText, refusalText } from "../../web/src/labels.ts";
 
-test("the phone answers the refusal and auto mode dialogs, never the credits consent", () => {
-  assert.deepEqual(ANSWERED_DIALOGS, ["refusal_fallback_prompt", "auto_mode_server_fallback"]);
+test("the phone answers the refusal and auto mode dialogs, never the credits consent; broker sessions declare the refusal alone", () => {
+  assert.deepEqual(BROKER_DIALOGS, ["refusal_fallback_prompt"]);
   assert.ok(answerable("refusal_fallback_prompt"));
+  assert.ok(answerable("auto_mode_server_fallback"));
   assert.ok(!answerable("fable_overage_consent_prompt"));
   assert.ok(!answerable("toString"));
   assert.deepEqual(dialogResult("refusal_fallback_prompt", "retry_fallback"), { behavior: "completed", result: "retry_fallback" });
@@ -71,11 +72,11 @@ test("payloads are reduced to what the phone shows, and one without what it need
 test("the phone tells the dialogs and the MCP sign-in errors in Korean", () => {
   assert.equal(
     refusalText("Opus 5.5", "Sonnet 5", "cyber"),
-    "Opus 5.5의 안전장치가 이 메시지를 막았습니다. 안전장치를 넓게 잡아 정상적인 코딩·보안 작업도 가끔 걸립니다. Sonnet 5로 계속하거나, 메시지를 고쳐 Opus 5.5로 다시 보내세요.",
+    "Opus 5.5의 안전장치가 이 메시지를 막았습니다. 안전장치를 넓게 잡아 정상적인 코딩·보안 작업도 가끔 걸립니다. Sonnet 5 모델로 계속하거나, 메시지를 고쳐 Opus 5.5 모델로 다시 보내세요.",
   );
   assert.match(refusalText("Opus 5.5", "Sonnet 5"), /평범한 대화에서도/);
   assert.match(creditsText({ model: "Fable", enabled: true, balanceCents: 1200, currency: "USD" }), /US\$12\.00|\$12\.00/);
-  assert.match(creditsText({ enabled: false }), /^Fable는 .*아직 사용 크레딧이 없습니다/);
+  assert.match(creditsText({ enabled: false }), /^Fable 모델은 .*아직 사용 크레딧이 없습니다/);
   assert.match(creditsText({ enabled: true, balanceCents: 500, currency: "KRW" }), /500/);
   assert.equal(errorText("No active OAuth flow for server: linear"), "진행 중인 인증이 없습니다. '인증'을 다시 누르세요");
   assert.match(errorText("Callback URL not accepted: it belongs to a different sign-in attempt (OAuth state mismatch)"), /다른 로그인 시도/);

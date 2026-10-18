@@ -13,8 +13,10 @@ export const DIALOG_CHOICES: Readonly<Record<string, readonly string[]>> = {
   [AUTO_FALLBACK]: ["continue", "interrupt"],
 };
 
-// The kinds a session the broker runs declares it renders, so Claude Code asks instead of taking the default.
-export const ANSWERED_DIALOGS = Object.keys(DIALOG_CHOICES);
+// The kinds a session the broker runs declares it renders: Claude Code then asks before ending the turn on a refusal.
+// Auto mode's billing notice stays undeclared, so Claude Code goes on in auto mode as it does with no one to ask;
+// declared, a notice nobody answers before Claude Code's dialog deadline would stop the turn.
+export const BROKER_DIALOGS = [REFUSAL];
 
 export type DialogResult = { behavior: "completed"; result: string } | { behavior: "cancelled" };
 

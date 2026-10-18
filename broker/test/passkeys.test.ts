@@ -147,6 +147,7 @@ test("a login waits for a passkey once one is registered: when it starts and aft
   const now = 100 * HOUR;
   assert.equal(keys.due(lease(), "phone", now), false, "no passkey yet");
   registered(keys);
+  assert.deepEqual([keys.hasOwn("phone"), keys.hasOwn("tablet")], [true, false]);
   assert.equal(keys.due(undefined, "phone", now), false, "no login");
   assert.equal(keys.due(lease(), "phone", now), true, "a login no passkey confirmed");
   assert.equal(keys.due(lease(), "local", now), false, "this machine");
@@ -164,6 +165,7 @@ test("a passkeys file that cannot be read keeps asking, and reset empties it", (
   const keys = new Passkeys(file);
   assert.equal(keys.any(), true);
   assert.equal(keys.due(lease(), "phone"), true);
+  assert.equal(keys.hasOwn("tablet"), true, "no device registers in place of confirming");
   assert.throws(() => keys.verifyOptions(lease(), where), /unreadable/);
   assert.equal(keys.reset(), undefined);
   assert.deepEqual(keys.list(), []);

@@ -46,7 +46,8 @@ export class PasskeyError extends Error {}
 
 // The passkeys registered from phones and the confirmations they give. Once one is registered, a login from any device
 // but this machine is confirmed with a passkey when it starts and again each `hours` after (Face ID, or the phone's
-// own unlock); the file is read again whenever it changes, as `ccrc passkey` edits it while the broker runs.
+// own unlock); a device without one of its own registers one instead, once. The file is read again whenever it
+// changes, as `ccrc passkey` edits it while the broker runs.
 export class Passkeys {
   readonly file: string;
   private windowMs: number;
@@ -99,6 +100,16 @@ export class Passkeys {
   any(): boolean {
     try {
       return this.list().length > 0;
+    } catch {
+      return true;
+    }
+  }
+
+  // Whether a passkey was registered from this device. A file that cannot be read counts as one, so no device registers
+  // one in place of confirming.
+  hasOwn(device: string): boolean {
+    try {
+      return this.list().some((p) => p.device === device);
     } catch {
       return true;
     }

@@ -5,7 +5,7 @@ import type { StoredLease } from "../store.ts";
 import { WebAuthnError, passkeyOrigin } from "../webauthn.ts";
 import type { RouteDeps } from "./types.ts";
 
-// What the phone lists of a passkey; here: made for the host the page is on.
+// What the phone lists of a passkey; here: made for the host the page is on; mine: registered from the asking device.
 export interface PasskeyView {
   id: string;
   device: string;
@@ -13,6 +13,7 @@ export interface PasskeyView {
   lastUsedAt?: number;
   backedUp?: boolean;
   here: boolean;
+  mine: boolean;
 }
 
 export type PasskeyDeps = RouteDeps & {
@@ -25,8 +26,16 @@ const ID_MAX = 2048;
 
 const host = (req: FastifyRequest): string => String([req.headers["x-forwarded-host"]].flat()[0] || req.headers.host || "").replace(/:\d+$/, "");
 
-function view(p: StoredPasskey, rpId: string): PasskeyView {
-  return { id: p.id, device: p.device, createdAt: p.createdAt, ...(p.lastUsedAt ? { lastUsedAt: p.lastUsedAt } : {}), ...(p.backedUp ? { backedUp: true } : {}), here: p.rpId === rpId };
+function view(p: StoredPasskey, rpId: string, device: string): PasskeyView {
+  return {
+    id: p.id,
+    device: p.device,
+    createdAt: p.createdAt,
+    ...(p.lastUsedAt ? { lastUsedAt: p.lastUsedAt } : {}),
+    ...(p.backedUp ? { backedUp: true } : {}),
+    here: p.rpId === rpId,
+    mine: p.device === device,
+  };
 }
 
 // Registering and removing a passkey asks for the password again, so a phone left logged in cannot change them.
@@ -34,6 +43,15 @@ export async function registerPasskeys(app: FastifyInstance, d: PasskeyDeps): Pr
   const auth = { preHandler: d.requireAuth };
   const login = { preHandler: d.requireLogin };
   const lease = (): StoredLease | undefined => d.leases.current();
+  const due = (req: FastifyRequest): boolean => d.passkeys.due(lease(), req.device);
+
+  // A login still to be confirmed registers a passkey only from a device with none of its own, which confirms it (each
+  // device enrolls once, with the password); a device that has one confirms with it.
+  const enrolling = (req: FastifyRequest, reply: FastifyReply): boolean => {
+    if (!due(req) || !d.passkeys.hasOwn(req.device)) return true;
+    reply.code(401).send({ error: "passkey_required" });
+    return false;
+  };
 
   const fail = (req: FastifyRequest, reply: FastifyReply, e: unknown, what: string) => {
     if (!(e instanceof PasskeyError) && !(e instanceof WebAuthnError)) throw e;
@@ -69,14 +87,15 @@ export async function registerPasskeys(app: FastifyInstance, d: PasskeyDeps): Pr
     const here = host(req);
     const l = lease();
     return {
-      passkeys: d.passkeys.list().map((p) => view(p, here)),
+      passkeys: d.passkeys.list().map((p) => view(p, here, req.device)),
       hours: d.passkeys.hours,
       local: req.device === "local",
       ...(l?.verifiedAt ? { verifiedAt: l.verifiedAt } : {}),
     };
   });
 
-  app.post<{ Body: { password?: unknown } }>("/api/passkeys/register/options", auth, async (req, reply) => {
+  app.post<{ Body: { password?: unknown } }>("/api/passkeys/register/options", login, async (req, reply) => {
+    if (!enrolling(req, reply)) return reply;
     const w = where(req, reply);
     if (!w || !(await password(req, reply))) return reply;
     try {
@@ -86,24 +105,30 @@ export async function registerPasskeys(app: FastifyInstance, d: PasskeyDeps): Pr
     }
   });
 
-  app.post<{ Body: { credential?: unknown } }>("/api/passkeys/register", auth, async (req, reply) => {
+  app.post<{ Body: { credential?: unknown } }>("/api/passkeys/register", login, async (req, reply) => {
+    if (!enrolling(req, reply)) return reply;
     const l = lease()!;
     try {
       const p = d.passkeys.register(l, req.body?.credential, req.device);
       d.leases.verified();
       d.audit.log("passkey_registered", { device: req.device, passkey: p.id.slice(0, 12), backedUp: Boolean(p.backedUp) });
-      return { passkey: view(p, p.rpId) };
+      return { passkey: view(p, p.rpId, req.device) };
     } catch (e) {
       return fail(req, reply, e, "register");
     }
   });
 
+  // enroll: this device has no passkey of its own and may register one instead; options are left out when no passkey
+  // is made for this host.
   app.post("/api/passkeys/verify/options", login, async (req, reply) => {
+    if (!due(req)) return reply.code(409).send({ error: "not_due" });
     const w = passkeyOrigin(req.headers.origin);
     if (!w) return reply.code(400).send({ error: "insecure_origin" });
+    const enroll = !d.passkeys.hasOwn(req.device);
     try {
-      return { options: d.passkeys.verifyOptions(lease()!, w) };
+      return { options: d.passkeys.verifyOptions(lease()!, w), ...(enroll ? { enroll } : {}) };
     } catch (e) {
+      if (enroll && e instanceof PasskeyError && e.message === "none_here") return { enroll };
       return fail(req, reply, e, "verify");
     }
   });

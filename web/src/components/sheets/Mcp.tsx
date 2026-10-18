@@ -52,6 +52,19 @@ const SCOPE_LABEL: Record<string, string> = {
   agent: "에이전트",
 };
 
+// Inside the sign-in panel a button stands apart from the panel's own colour and keeps a full 44px tap target.
+function PanelButton({ children, onClick, disabled, primary }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; primary?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`min-h-11 shrink-0 rounded-lg px-4 text-sm font-medium disabled:opacity-40 ${primary ? "bg-accent text-white" : "border border-line bg-surface"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 // A sign-in under way: the page to open, then the address it ended on, pasted back while Claude Code waits for it.
 function AuthPanel({ server, start, busy, onSend, onCancel }: { server: string; start: McpAuthStart; busy: boolean; onSend: (url: string) => void; onCancel: () => void }) {
   const [url, setUrl] = useState("");
@@ -63,7 +76,7 @@ function AuthPanel({ server, start, busy, onSend, onCancel }: { server: string; 
   return (
     <div className="mt-2 space-y-2 rounded-xl bg-surface-2 p-3 text-sm" data-mcp-auth={server}>
       {start.url ? (
-        <a href={start.url} target="_blank" rel="noopener noreferrer" className="block rounded-lg bg-accent px-3 py-2.5 text-center font-medium text-white">
+        <a href={start.url} target="_blank" rel="noopener noreferrer" className="flex min-h-11 items-center justify-center rounded-lg bg-accent px-3 font-medium text-white">
           로그인 페이지 열기
         </a>
       ) : (
@@ -83,28 +96,28 @@ function AuthPanel({ server, start, busy, onSend, onCancel }: { server: string; 
               autoCorrect="off"
               spellCheck={false}
               inputMode="url"
-              className="min-w-0 flex-1 rounded-lg border border-line bg-bg px-2.5 py-2 text-[16px] outline-none focus:border-accent"
+              className="min-h-11 min-w-0 flex-1 rounded-lg border border-line bg-bg px-2.5 py-2 text-[16px] outline-none focus:border-accent"
             />
             {typeof navigator.clipboard?.readText === "function" && (
-              <SmallButton onClick={() => void paste()} disabled={busy}>
+              <PanelButton onClick={() => void paste()} disabled={busy}>
                 붙여넣기
-              </SmallButton>
+              </PanelButton>
             )}
           </div>
           <div className="flex justify-end gap-2">
-            <SmallButton onClick={onCancel} disabled={busy}>
+            <PanelButton onClick={onCancel} disabled={busy}>
               그만두기
-            </SmallButton>
-            <SmallButton onClick={() => onSend(url.trim())} disabled={busy || !url.trim()} tone="text-accent">
+            </PanelButton>
+            <PanelButton onClick={() => onSend(url.trim())} disabled={busy || !url.trim()} primary>
               {busy ? "인증 중…" : "보내기"}
-            </SmallButton>
+            </PanelButton>
           </div>
         </>
       ) : (
         <>
           <p className="text-muted">로그인과 연결을 마친 뒤 &lsquo;다시 연결&rsquo;을 누르세요.</p>
           <div className="flex justify-end">
-            <SmallButton onClick={onCancel}>닫기</SmallButton>
+            <PanelButton onClick={onCancel}>닫기</PanelButton>
           </div>
         </>
       )}

@@ -104,11 +104,12 @@ export function dialogLabel(kind: string): string {
 
 const REFUSAL_FIELD: Record<string, string> = { cyber: "정상적인 코딩·보안 작업", bio: "정상적인 생명과학 작업" };
 
-// Why a turn stopped at a refusal and what the user can do, as VS Code tells it.
+// Why a turn stopped at a refusal and what the user can do, as VS Code tells it. A particle after a model's name would
+// depend on how the name ends, so "모델" carries it.
 export function refusalText(model: string, fallback: string, category?: string): string {
   const field = category && Object.hasOwn(REFUSAL_FIELD, category) ? REFUSAL_FIELD[category] : undefined;
   const why = field ? `안전장치를 넓게 잡아 ${field}도 가끔 걸립니다.` : "평범한 대화에서도 가끔 일어납니다.";
-  return `${model}의 안전장치가 이 메시지를 막았습니다. ${why} ${fallback}로 계속하거나, 메시지를 고쳐 ${model}로 다시 보내세요.`;
+  return `${model}의 안전장치가 이 메시지를 막았습니다. ${why} ${fallback} 모델로 계속하거나, 메시지를 고쳐 ${model} 모델로 다시 보내세요.`;
 }
 
 const ZERO_DECIMAL = new Set(["JPY", "KRW", "VND"]);
@@ -127,7 +128,7 @@ function money(cents: number, currency = "USD"): string {
 export function creditsText(info: { model?: string; enabled: boolean; balanceCents?: number; currency?: string }): string {
   const model = info.model ?? "Fable";
   const balance = info.balanceCents !== undefined ? ` 남은 크레딧은 ${money(info.balanceCents, info.currency)}입니다.` : "";
-  const base = `${model}는 요금제와 따로 과금되는 사용 크레딧으로 실행됩니다.`;
+  const base = `${model} 모델은 요금제와 따로 과금되는 사용 크레딧으로 실행됩니다.`;
   return info.enabled ? `${base}${balance} 크레딧을 쓸지는 계정의 과금 결정이라 VS Code에서만 답할 수 있습니다.` : `${base} 이 계정에는 아직 사용 크레딧이 없습니다.`;
 }
 
