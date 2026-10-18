@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fieldProblem, type FieldProblem } from "../../../broker/src/elicit.ts";
 import type { Answer, ElicitField, ElicitInfo, ElicitValue, PendingRequest } from "../../../broker/src/protocol.ts";
 import { allowAlwaysLabel, dialogLabel } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
-import { Markdown } from "./Markdown.tsx";
+import { LineMarks, Markdown } from "./Markdown.tsx";
+import { lineSpan, planComments, planFeedback, planQuote, type PlanComment } from "./planComments.ts";
 import { ToolInput } from "./ToolInput.tsx";
 import { Button, Icon } from "./ui.tsx";
 
@@ -123,18 +124,107 @@ function QuestionCard({ request, reply }: { request: PendingRequest; reply: Repl
 
 function PlanCard({ request, reply }: { request: PendingRequest; reply: Reply }) {
   const plan = typeof request.input.plan === "string" ? request.input.plan : "";
+  const lines = useMemo(() => plan.split("\n"), [plan]);
+  const [comments, setComments] = useState<PlanComment[]>(() => planComments.get(request.id) ?? []);
+  const [picked, setPicked] = useState<{ line: number; end: number }>();
+  const [draft, setDraft] = useState("");
+  useEffect(() => {
+    planComments.set(request.id, comments);
+  }, [request.id, comments]);
+  const marks = useMemo(() => ({ picked: picked?.line, marked: new Set(comments.map((c) => c.line)) }), [picked, comments]);
+  const open = (at: { line: number; end: number }) => {
+    setPicked(at);
+    setDraft(comments.find((c) => c.line === at.line)?.text ?? "");
+  };
+  // A tap on a block of the plan comments on the lines it was drawn from; links, and text being selected, stay as they are.
+  const tap = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("a, button, input, textarea") || window.getSelection()?.toString()) return;
+    const block = target.closest<HTMLElement>("[data-line]");
+    const line = Number(block?.dataset.line);
+    if (!block || !Number.isInteger(line) || line < 1) return;
+    const end = Number(block.dataset.end);
+    open({ line, end: Number.isInteger(end) && end >= line ? end : line });
+  };
+  const save = () => {
+    if (!picked) return;
+    const text = draft.trim();
+    setComments((cs) => [...cs.filter((c) => c.line !== picked.line), ...(text ? [{ ...picked, quote: planQuote(lines, picked.line, picked.end), text }] : [])].sort((a, b) => a.line - b.line));
+    setPicked(undefined);
+    setDraft("");
+  };
+  const had = picked && comments.some((c) => c.line === picked.line);
+  const pickedQuote = picked && planQuote(lines, picked.line, picked.end);
+  const answer = (a: Answer) => {
+    planComments.delete(request.id);
+    reply(a);
+  };
   return (
     <Card title="계획 승인">
-      <div className="max-h-[45dvh] overflow-y-auto rounded-xl border border-line bg-bg p-3">
-        <Markdown text={plan} className="text-[14px]" />
+      <div className="max-h-[45dvh] overflow-y-auto rounded-xl border border-line bg-bg p-3" onClick={tap} data-plan>
+        <LineMarks.Provider value={marks}>
+          <Markdown text={plan} className="text-[14px]" lines />
+        </LineMarks.Provider>
       </div>
+      {!picked && <div className="-mt-1 px-1 text-xs text-muted">줄을 누르면 그 줄에 코멘트를 달 수 있습니다</div>}
+      {picked && (
+        <div className="space-y-2 rounded-xl border border-accent/40 bg-bg p-3" data-plan-editor={picked.line}>
+          <div className="truncate text-xs text-muted">
+            {lineSpan(picked)}
+            {pickedQuote && ` · ${pickedQuote}`}
+          </div>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={2}
+            autoFocus
+            onFocus={(e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)}
+            placeholder="이 줄에 대한 코멘트"
+            className="block w-full resize-none rounded-xl border border-line bg-surface px-3 py-2 text-[16px] outline-none focus:border-accent"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <Button onClick={() => (setPicked(undefined), setDraft(""))}>취소</Button>
+            <Button kind="primary" disabled={!draft.trim() && !had} onClick={save}>
+              {!draft.trim() && had ? "코멘트 지우기" : had ? "코멘트 고치기" : "코멘트 달기"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {comments.length > 0 && (
+        <div className="space-y-1.5" data-plan-comments={comments.length}>
+          <div className="px-1 text-xs font-medium text-muted">코멘트 {comments.length}개 · 계속 계획하기를 누르면 함께 보냅니다</div>
+          {comments.map((c) => (
+            <div key={c.line} className="flex items-start gap-1 rounded-xl bg-surface-2 pl-3" data-plan-comment={c.line}>
+              <button onClick={() => open(c)} className="min-w-0 flex-1 py-2 text-left">
+                <span className="block truncate text-xs text-muted">
+                  {lineSpan(c)}
+                  {c.quote && ` · ${c.quote}`}
+                </span>
+                <span className="block text-[14px] break-words whitespace-pre-wrap">{c.text}</span>
+              </button>
+              <button
+                onClick={() => setComments((cs) => cs.filter((x) => x.line !== c.line))}
+                aria-label={`${lineSpan(c)} 코멘트 지우기`}
+                className="flex size-11 shrink-0 items-center justify-center text-muted"
+              >
+                <Icon.x className="size-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="grid gap-2">
-        <Button kind="primary" onClick={() => reply({ kind: "plan", decision: "auto" })}>
+        {comments.length > 0 && <div className="px-1 text-xs text-warn">승인하면 단 코멘트는 보내지 않습니다</div>}
+        <Button kind={comments.length ? undefined : "primary"} onClick={() => answer({ kind: "plan", decision: "auto" })}>
           예, Auto 모드로 진행
         </Button>
-        <Button onClick={() => reply({ kind: "plan", decision: "acceptEdits" })}>예, 편집은 자동 허용</Button>
-        <Button onClick={() => reply({ kind: "plan", decision: "default" })}>예, 편집마다 직접 승인</Button>
-        <DenyBox placeholder="고칠 점 (선택)" label="아니요, 계속 계획하기" onSend={(feedback) => reply({ kind: "plan", decision: "keep_planning", feedback })} />
+        <Button onClick={() => answer({ kind: "plan", decision: "acceptEdits" })}>예, 편집은 자동 허용</Button>
+        <Button onClick={() => answer({ kind: "plan", decision: "default" })}>예, 편집마다 직접 승인</Button>
+        <DenyBox
+          placeholder="고칠 점 (선택)"
+          label={comments.length ? `코멘트 ${comments.length}개와 계속 계획하기` : "아니요, 계속 계획하기"}
+          onSend={(feedback) => answer({ kind: "plan", decision: "keep_planning", feedback: planFeedback(feedback, comments) })}
+        />
       </div>
     </Card>
   );

@@ -41,7 +41,8 @@ export type AuditEvent =
   | "rewind_conversation"
   | "git_changes"
   | "agent_changes"
-  | "side_question";
+  | "side_question"
+  | "export";
 
 // Records who did what; message text and tool input are not recorded.
 export class Audit {

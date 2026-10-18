@@ -10,6 +10,7 @@ import {
   type CallOp,
   type ClientMsg,
   type EffortName,
+  type ExportInfo,
   type GitChanges,
   type HistoryPage,
   type ServerMsg,
@@ -453,6 +454,7 @@ export class Hub {
       if (msg.op === "rename") str(args.title, TITLE_ARG_MAX);
       if (msg.op === "archive" && typeof args.archived !== "boolean") throw Error("invalid request");
       if (msg.op === "mark_unread" && typeof args.unread !== "boolean") throw Error("invalid request");
+      if (msg.op === "export" && ((args.tools !== undefined && typeof args.tools !== "boolean") || (args.tz !== undefined && typeof args.tz !== "string"))) throw Error("invalid request");
       if (msg.op === "fork") {
         reply({ ok: true, data: await this.fork(sessionId, args) });
         return;
@@ -516,6 +518,10 @@ export class Hub {
       if (msg.op === "git_changes") {
         const g = data as GitChanges;
         this.audit.log("git_changes", { device: this.device, sessionId, via: g.via, state: g.state, files: g.files.length });
+      }
+      if (msg.op === "export") {
+        const x = data as ExportInfo;
+        this.audit.log("export", { device: this.device, sessionId, messages: x.messages, chars: x.text.length });
       }
       // A worktree removal is recorded once done, with what went with it.
       if (msg.op === "worktree_remove") {

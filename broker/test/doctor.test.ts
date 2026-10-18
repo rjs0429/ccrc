@@ -50,7 +50,7 @@ test("passes when Claude Code answers through the wrapper and exits cleanly", as
       ["exit", true],
     ],
   );
-  assert.equal(result.checks[2].detail, "1 models, 1 commands");
+  assert.equal(result.checks[2].detail, "1 models, 8 commands");
   assert.equal(result.extensionVersion, "2.1.296");
   assert.equal(result.cliVersion, "2.1.296");
   // git describe of a checkout (a release tag and what came after it, or the commit before any tag), else package.json's.

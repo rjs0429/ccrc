@@ -1,5 +1,5 @@
-import { memo, useContext, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { createContext, createElement, memo, useContext, useState } from "react";
+import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { FileImages, FileLinks, isWebLink, urlTransform } from "./fileLinks.ts";
@@ -40,12 +40,35 @@ function Image({ src, alt }: { src?: unknown; alt?: string }) {
   return <img src={url} alt={alt ?? ""} onError={() => setFailed(url)} className="max-w-full rounded-md" />;
 }
 
-const components = { a: Link, img: Image };
+const components: Components = { a: Link, img: Image };
 
-export const Markdown = memo(function Markdown({ text, className = "" }: { text: string; className?: string }) {
+// The source lines a text's blocks were drawn from, for a view that comments on them: the block being commented on
+// and the blocks that have a comment, by their first line.
+export const LineMarks = createContext<{ picked?: number; marked: ReadonlySet<number> } | null>(null);
+
+const BLOCKS = ["p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "tr"] as const;
+
+function lined(tag: (typeof BLOCKS)[number]) {
+  return function Lined({ node, className, ...props }: React.HTMLAttributes<HTMLElement> & ExtraProps) {
+    const marks = useContext(LineMarks);
+    const start = node?.position?.start.line;
+    const mark = start === undefined ? "" : marks?.picked === start ? "md-picked" : marks?.marked.has(start) ? "md-marked" : "";
+    return createElement(tag, { ...props, className: [className, mark].filter(Boolean).join(" ") || undefined, "data-line": start, "data-end": node?.position?.end.line });
+  };
+}
+
+const lineComponents: Components = { ...components, ...Object.fromEntries(BLOCKS.map((t) => [t, lined(t)])) };
+
+// lines: each block names the lines of the text it was drawn from (data-line, data-end).
+export const Markdown = memo(function Markdown({ text, className = "", lines }: { text: string; className?: string; lines?: boolean }) {
   return (
     <div className={`md ${className}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]} components={components} urlTransform={urlTransform}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
+        components={lines ? lineComponents : components}
+        urlTransform={urlTransform}
+      >
         {text}
       </ReactMarkdown>
     </div>

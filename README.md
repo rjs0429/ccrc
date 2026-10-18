@@ -410,7 +410,8 @@ does the file.
   sends to the phone, for `@` suggestions and for the lines of the changes sheet's git view, which also shows the
   lines of files inside the session's folders only.
 - **Audit log.** Logins, failed logins, denied devices, messages sent, answers, mode and model changes, file reads,
-  git changes read, side questions, new sessions and forks are recorded in `audit.jsonl`, without message contents.
+  git changes read, side questions, conversation exports, new sessions and forks are recorded in `audit.jsonl`,
+  without message contents.
 - **Local socket.** The wrapper socket is 0600 in a 0700 folder owned by you; both sides check this, and it never
   falls back to a shared folder such as `/tmp`.
 - **Secrets.** The API key is passed only to broker sessions' Claude Code as `ANTHROPIC_API_KEY`, and never written to
@@ -442,8 +443,9 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
   in VS Code once Claude Code takes it.
 - Some VS Code dialogs (usage limit consent, for example) show on the phone but are answered in VS Code.
 - Side questions from the phone, "백그라운드로" (move to background) on cards and in the agent map, the changes sheet's
-  git view as Claude Code sees it, and Claude being told that its PushNotification reached the phone need the wrapper
-  of ccrc 0.8 or later: a tab opened before an update keeps its older wrapper until it is opened again. Side questions
+  git view as Claude Code sees it, the usage causes from the session's own Claude Code, the latest "/" list for a
+  broker that connects again, and Claude being told that its PushNotification reached the phone need the wrapper of
+  ccrc 0.8 or later: a tab opened before an update keeps its older wrapper until it is opened again. Side questions
   asked from the phone do not show in VS Code's side panel.
 - When removing ccrc by hand, remove the VS Code setting before the files (`ccrc uninstall` does this).
 

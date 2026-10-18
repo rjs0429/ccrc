@@ -26,6 +26,7 @@ const STYLES = Buffer.from('"available_output_styles"');
 const LIFECYCLE = Buffer.from('"command_lifecycle"');
 const REPLAY = Buffer.from('"isReplay":true');
 const TASK_EVENT = Buffer.from('"subtype":"task_');
+const COMMANDS = Buffer.from('"subtype":"commands_changed"');
 // The broker sees the conversation, these requests from Claude Code (can_use_tool, and an elicitation the
 // broker took, may be answered remotely), the answer to VS Code's initialize, the applied part of its get_settings answers, and these
 // settings changes from VS Code; other control traffic between VS Code and Claude Code stays between them.
@@ -57,7 +58,7 @@ const REMOTE_REQUESTS = new Set([
 ]);
 // Told to the broker in the hello, so it offers what this wrapper passes on. `ccrc update` compares this list between
 // the old and the new version to say when VS Code tabs opened before need the new wrapper.
-const CAPS = ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question"];
+const CAPS = ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question", "usage_causes"];
 // The id of the hook this wrapper adds to VS Code's initialize and answers itself.
 export const PUSH_HOOK = "ccrc_push_notification";
 // Broker requests after which VS Code is told to read the applied settings again.
@@ -68,9 +69,14 @@ const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const APPLIED_KEYS = ["model", "effort", "ultracode", "ultracodeAvailable"];
 const STYLE_NAME_MAX = 200;
 const STYLES_MAX = 100;
-// The only parts of a get_usage answer that leave the wrapper: the plan's limit windows and the session totals.
+// The only parts of a get_usage answer that leave the wrapper: the plan's limit windows, the session totals, and what
+// the usage went to: the names and shares of its traits, subagents, skills, plugins and MCP servers.
 const USAGE_WINDOWS = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"];
 const SESSION_TOTALS = ["total_cost_usd", "total_duration_ms", "total_api_duration_ms", "total_lines_added", "total_lines_removed"];
+const CAUSE_LISTS = ["agents", "skills", "plugins", "mcp_servers"];
+const TRAIT_KEY = /^[A-Za-z0-9_.-]{1,64}$/;
+const CAUSE_NAME_MAX = 200;
+const CAUSES_MAX = 50;
 const SETTLED_KEEP = 500;
 const WAITING_KEEP = 100;
 const ASKED_KEEP = 100;
@@ -218,6 +224,11 @@ export function elicitAnswer(r: unknown): { action: string; content?: Record<str
   const entries = Object.entries(c);
   if (entries.length > ELICIT_FIELDS_MAX || !entries.every(([k, v]) => k.length <= ELICIT_KEY_MAX && elicitValue(v))) return undefined;
   return { action: "accept", content: Object.fromEntries(entries) };
+}
+
+// get_usage asks for the answer with or without the causes of usage, nothing else.
+export function allowedUsage(req: Record<string, unknown>): boolean {
+  return Object.keys(req).every((k) => k === "subtype" || k === "skip_behaviors") && (req.skip_behaviors === undefined || typeof req.skip_behaviors === "boolean");
 }
 
 const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -368,7 +379,27 @@ export function appliedAnswer(msg: Record<string, unknown>, styles?: readonly st
   }));
 }
 
-// A get_usage answer reduced to the limit windows and the session totals.
+const finite = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+function causeWindow(v: unknown): Record<string, unknown> {
+  const w = plainObj(v);
+  const out: Record<string, unknown> = { request_count: finite(w.request_count), session_count: finite(w.session_count) };
+  out.behaviors = (Array.isArray(w.behaviors) ? w.behaviors : [])
+    .map(plainObj)
+    .filter((b) => typeof b.key === "string" && TRAIT_KEY.test(b.key))
+    .slice(0, CAUSES_MAX)
+    .map((b) => ({ key: b.key, pct: finite(b.pct), count: finite(b.count) }));
+  for (const k of CAUSE_LISTS) {
+    out[k] = (Array.isArray(w[k]) ? w[k] : [])
+      .map(plainObj)
+      .filter((x) => typeof x.name === "string" && x.name !== "")
+      .slice(0, CAUSES_MAX)
+      .map((x) => ({ name: (x.name as string).slice(0, CAUSE_NAME_MAX), pct: finite(x.pct) }));
+  }
+  return out;
+}
+
+// A get_usage answer reduced to the limit windows, the session totals and, when Claude Code gave them, the causes.
 export function usageAnswer(msg: Record<string, unknown>): Buffer {
   const r = plainObj(msg.response);
   return reply(r, () => {
@@ -380,7 +411,9 @@ export function usageAnswer(msg: Record<string, unknown>): Buffer {
     if (Array.isArray(limits.model_scoped)) windows.model_scoped = limits.model_scoped.map((m) => usageWindow(m, plainObj(m).display_name));
     const totals: Record<string, unknown> = {};
     for (const k of SESSION_TOTALS) if (typeof session[k] === "number") totals[k] = session[k];
-    return { session: totals, rate_limits: windows };
+    const b = a.behaviors;
+    const causes = typeof b === "object" && b !== null && !Array.isArray(b) ? { behaviors: { day: causeWindow(plainObj(b).day), week: causeWindow(plainObj(b).week) } } : {};
+    return { session: totals, rate_limits: windows, ...causes };
   });
 }
 
@@ -780,6 +813,7 @@ export class Relay extends EventEmitter {
     if (line.includes(INIT)) key = "init";
     else if (line.includes(STATE)) key = "state";
     else if (line.includes(TASKS)) key = "tasks";
+    else if (line.includes(COMMANDS)) key = "commands";
     else if (line.includes(STATUS) && line.includes(MODE)) key = "status";
     else if (parsed?.type === "control_response" && line.includes(MODELS)) key = "models";
     if (!key) return;
@@ -813,6 +847,7 @@ export class Relay extends EventEmitter {
       if (req.subtype === "get_task_output" && !allowedTaskOutput(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "background_tasks" && !allowedBackground(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "background_tasks" && ![...this.foreground.values()].includes(req.tool_use_id as string)) return reject("not running", m.request_id);
+      if (req.subtype === "get_usage" && !allowedUsage(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "set_permission_mode" && req.mode === "bypassPermissions") return reject("mode not allowed", m.request_id);
       if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
       if (req.subtype === "read_file" && !allowedReadFile(req)) return reject("invalid request", m.request_id);

@@ -216,6 +216,16 @@ body {
 .md hr {
   border-color: var(--line);
 }
+/* A block of a plan being commented on, and the blocks that have a comment. */
+.md .md-marked {
+  background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
+  border-radius: 4px;
+}
+.md .md-picked {
+  background: var(--accent-soft);
+  border-radius: 4px;
+  outline: 1px solid var(--accent);
+}
 
 .hljs-comment,
 .hljs-quote {

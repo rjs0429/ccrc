@@ -11,6 +11,8 @@ import { tempDir } from "./helpers.ts";
 
 type Msg = Record<string, unknown>;
 const SID = "0b7cf2a4-2f5e-4c39-9a51-3f1c2a9d8e11";
+// The command lists sessions remember go to a folder of the test's own.
+process.env.CCRC_STATE_DIR = path.join(tempDir(), "state");
 
 // Plays the wrapper side of one link.
 class FakeWrapper {
@@ -1491,4 +1493,84 @@ test("a wrapper too old for side questions is not asked, and the phone is told",
   assert.equal(s.state().sideUnknown, true);
   await assert.rejects(s.sideQuestion("hi", []), /rejected by the wrapper: request not allowed/);
   assert.ok(!wrapper.frames.some((f) => f.t === "to_cli"), "nothing went to the wrapper");
+});
+
+test("the command list follows Claude Code's initialize answer and every list it pushes; each turn's init only takes out the terminal's", async () => {
+  const { s, wrapper } = await session();
+  const settled = (pred: () => boolean) =>
+    new Promise<void>((resolve) => {
+      const check = () => pred() && (s.off("state", check), resolve());
+      s.on("state", check);
+      check();
+    });
+  const states: (string | undefined)[] = [];
+  s.on("state", () => states.at(-1) !== s.state().commands && states.push(s.state().commands));
+  const init = { name: "compact", description: "Compact the conversation", argumentHint: "" };
+  const color = { name: "color", description: "Set the color", argumentHint: "" };
+  // A skill synced from claude.ai: the list shows its short name and keeps the full one, which init uses, as an alias.
+  const docx = { name: "docx", description: "Use this skill for Word documents (claude.ai)", argumentHint: "", aliases: ["anthropic-skills:docx"] };
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "init-1", response: { models: [], commands: [init, color, docx] } } });
+  await settled(() => s.commands?.length === 3);
+  const first = s.state().commands;
+  assert.ok(first, "the state names the list");
+  const names = ["compact", "color", "anthropic-skills:docx", "skill-turned-off"];
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m", slash_commands: names, terminal_slash_commands: ["color"] });
+  await settled(() => s.commands?.length === 2);
+  const compact = { name: "compact", description: "Compact the conversation" };
+  const shortDocx = { name: "docx", description: "Use this skill for Word documents (claude.ai)" };
+  assert.deepEqual(s.commands, [compact, shortDocx], "the terminal's leave the phone's menu; init's other names change nothing");
+  const second = s.state().commands;
+  assert.notEqual(second, first);
+  const pushed = [init, color, docx, { name: "gamma", description: "Gamma skill (project)", argumentHint: "" }];
+  wrapper.out({ type: "system", subtype: "commands_changed", commands: pushed, session_id: SID, uuid: "u1" });
+  await settled(() => s.commands?.some((c) => c.name === "gamma") === true);
+  assert.deepEqual(s.commands, [compact, shortDocx, { name: "gamma", description: "Gamma skill (project)" }]);
+  assert.ok(!s.builder.items.length, "the push is not a conversation item");
+  const third = s.state().commands;
+  assert.notEqual(third, second);
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "init-2", response: { models: [], commands: [init] } } });
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m", slash_commands: [...names, "gamma"], terminal_slash_commands: ["color"] });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(s.commands?.map((c) => c.name), ["compact", "docx", "gamma"], "an initialize answer after a push leaves the pushed list, and the next turn's init changes it no more");
+  assert.equal(s.state().commands, third, "the same list keeps its name");
+  assert.deepEqual(states, [first, second, third], "the phone is told of each list once");
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m", slash_commands: names });
+  await settled(() => s.commands?.some((c) => c.name === "color") === true);
+  assert.deepEqual(s.commands?.map((c) => c.name), ["compact", "color", "docx", "gamma"], "an init that names no terminal commands has none");
+});
+
+test("the prompt cache follows the main conversation's requests and responses, and a compaction", async () => {
+  const { s, wrapper } = await session();
+  const cached = () => new Promise<void>((resolve) => s.once("state", () => resolve()));
+  const usage = { input_tokens: 3, cache_read_input_tokens: 0, cache_creation_input_tokens: 900, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 900 }, output_tokens: 10 };
+  const before = Date.now();
+  wrapper.out({ type: "user", session_id: SID, uuid: "u-1", message: { role: "user", content: "hi" }, isReplay: true });
+  await new Promise((r) => setTimeout(r, 30));
+  wrapper.out({ type: "assistant", session_id: SID, uuid: "a-sub", parent_tool_use_id: "toolu_x", message: { id: "msg_sub", model: "m", content: [], usage: { ...usage, cache_creation: { ephemeral_5m_input_tokens: 900 } } } });
+  const st = cached();
+  wrapper.out({ type: "assistant", session_id: SID, uuid: "a-1", message: { id: "msg_1", model: "claude-opus-5-5", content: [{ type: "text", text: "hello" }], usage } });
+  await st;
+  const c = s.state().cache!;
+  assert.equal(c.ttl, "1h", "a subagent's 5m cache is its own");
+  assert.equal(c.tokens, 903);
+  assert.ok(c.at! >= before && c.at! < Date.now() - 20, "the time of the request: the user's message, not the reply");
+  const compacted = cached();
+  wrapper.out({ type: "system", subtype: "compact_boundary", session_id: SID, uuid: "cb", compact_metadata: { trigger: "manual", pre_tokens: 1 } });
+  await compacted;
+  assert.ok(typeof s.state().cache?.compactedAt === "number");
+});
+
+test("the causes of usage are asked of a wrapper that passes them on, without skip_behaviors and with time to read a week of transcripts", async () => {
+  const old = await session();
+  await assert.rejects(old.s.usageCauses(), /not available/);
+  const { s, wrapper } = await session({ caps: ["fast_mode", "thinking", "claude_push", "usage_causes"] });
+  const asked: Msg[] = [];
+  wrapper.autoReply((r) => {
+    asked.push(r);
+    return { behaviors: { day: { request_count: 3, session_count: 1, behaviors: [{ key: "cache_miss", pct: 40, count: 2 }], agents: [], skills: [], plugins: [], mcp_servers: [] } } };
+  });
+  const c = await s.usageCauses();
+  assert.deepEqual(asked, [{ subtype: "get_usage" }]);
+  assert.deepEqual(c.day?.traits, [{ key: "cache_miss", pct: 40, count: 2 }]);
+  assert.equal(c.week, undefined);
 });

@@ -64,6 +64,25 @@ your version and the new one, and the lines under "Breaking" separately.
 - A fork from a message, and a rewind to one, put the message's photos and documents back in the composer with its
   text, uploaded again from the transcript. The ones that cannot be (gone from the transcript, of a kind the phone does
   not attach, too large, past the composer's ten) are named.
+- Claude's replies can be copied: a long press on a reply, or the ⋯ before its time, shows its Markdown as Claude wrote
+  it, to copy whole or to select part of, and `/copy` copies the latest reply, as in VS Code.
+- The conversation can be exported as a Markdown file, from the ⋯ menu (대화 내보내기 under 더 보기), `/export` or a
+  reply's actions: a heading for each turn with its time in the phone's time zone, Claude's text as written and, unless turned
+  off, a line for each tool call. The broker makes it from the transcript, so a stopped session exports too. It copies
+  whole or downloads through a ticket that lasts a minute, as files do; each export is recorded in the audit log
+  without its text.
+- The usage sheet (`/usage`) shows, after the plan's limits, what the usage of the last day and week went to, as Claude
+  Code reads it from this machine's transcripts for VS Code's Account & usage: the traits over a tenth of it with what to
+  do about them (named in Korean where Claude Code 2.1.301 names them, by Claude Code's key otherwise), the subagent,
+  skill, plugin and MCP server it came from most, and tables of each. The Context sheet has "사용량 원인 보기". The
+  answer comes from the session's own Claude Code, another running one, or one started for the question, and is kept
+  five minutes. A VS Code session answers it itself once its tab runs the wrapper of this version.
+- Beside the Context ring, as in VS Code's prompt box, the minutes the prompt cache has left after the last reply, or
+  that it ran out; the Context sheet says how long the session has been idle and how many tokens the next message
+  caches again. It follows the time to live Claude Code asked for (`cache_creation`) from the request of the last
+  response, and a stopped session's comes from its transcript.
+- A plan's lines take comments: tap a line of the plan to write one, tap it again to change it. "계속 계획하기" sends
+  them after the feedback as `줄 n "<the line>": <comment>`, a code block by its first line of code.
 
 ### Changed
 
@@ -105,8 +124,12 @@ your version and the new one, and the lines under "Breaking" separately.
 - A NotebookEdit call shows the cell's change when Claude Code reports the cell's source from before it.
 - The session's ⋯ menu keeps its four tiles and the rows used most: 곁질문, 되돌리기, 변경 사항, Context와 사용량 and
   에이전트 지도. MCP 서버, 출력 스타일, 읽지 않음으로 표시, worktree 정리 and 원격 실행 끝내기 moved under its last row,
-  더 보기, which shows them in the same sheet and leads back to the menu where it was. The menu has the same rows in
-  every session and, with 이번 턴 중지 on top while a turn runs, still fits a 390×844 screen.
+  더 보기, which shows them in the same sheet and leads back to the menu where it was; 대화 내보내기 is there too. The
+  menu has the same rows in every session and, with 이번 턴 중지 on top while a turn runs, still fits a 390×844 screen.
+- The "/" list follows the commands Claude Code announces during a session (when a command or skill file is written,
+  or plugins or skills reload), in sessions the broker runs and in VS Code, and leaves out the commands Claude Code
+  binds to its own terminal (such as `/color` and `/focus`). A broker session's list is known from its start instead
+  of its first turn. The wrapper hands the latest list again to a broker that connects anew.
 
 ### Fixed
 
@@ -139,6 +162,9 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ### Security
 
+- The wrapper passed the broker's `get_usage` on to Claude Code with whatever else the request carried. It now takes
+  only `skip_behaviors`, and passes back the causes of usage (traits, and the names and shares of subagents, skills,
+  plugins and MCP servers) besides the limits and session totals, nothing else of the answer.
 - `ccrc setup` offered every iOS and Android machine in the tailnet for `allowedDevices`, and `--yes` allowed all
   the online ones, phones of other people in a shared tailnet included. It now offers only the machines of the
   Tailscale user this machine belongs to, and `--yes` adds one only when there is exactly one; otherwise it adds none
@@ -158,8 +184,9 @@ your version and the new one, and the lines under "Breaking" separately.
 - After `ccrc update`, reload VS Code windows (Developer: Reload Window): updating from 0.7 does not say so, and a
   Claude tab opened before the update keeps the wrapper of 0.7 until it is opened again. Until then, in that tab's
   session, the side question sheet and the cards and agent map that would offer "백그라운드로" say to open Claude Code again
-  instead, the changes sheet's git view is read by the broker, and Claude reads Claude Code's "not sent" after a
-  PushNotification call that reached the phone.
+  instead, the changes sheet's git view is read by the broker, the usage sheet's causes come from another Claude Code,
+  a "/" list Claude Code changed while the broker was away shows from its next change, and Claude reads Claude Code's
+  "not sent" after a PushNotification call that reached the phone.
 
 ## [0.7.3] - 2026-10-18
 

@@ -235,6 +235,7 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^git diff failed$/, "git에서 변경을 읽지 못했습니다"],
   [/^Unsupported control request subtype/, "이 Claude Code 버전은 이 요청을 처리하지 못합니다"],
   [/^no answer$/, "응답이 없습니다"],
+  [/^nothing to export$/, "내보낼 대화가 아직 없습니다"],
   [/^not connected$/, "연결되어 있지 않습니다"],
   [/^unsupported_push_service$/, "이 브라우저의 푸시 서비스로는 알림을 보낼 수 없습니다"],
   [/^invalid_subscription$/, "알림 구독 정보가 올바르지 않습니다"],
@@ -336,6 +337,49 @@ export function usageResetText(at: string, now = new Date()): string {
   const time = clock(at);
   const day = d.toDateString() === now.toDateString() ? "오늘" : `${d.getMonth() + 1}월 ${d.getDate()}일`;
   return `${day} ${time} 초기화`;
+}
+
+// What a trait of usage Claude Code names went to, and what to do about it, as VS Code words them. Claude Code may name
+// traits not listed here; they show by their key alone.
+export const USAGE_TRAIT: Record<string, { name: string; advice: string }> = {
+  cache_miss: {
+    name: "10만 토큰 넘는 캐시 미스",
+    advice: "캐시되지 않은 입력은 비쌉니다. 쉬던 세션에 메시지를 보낼 때 자주 생깁니다. 자리를 비우기 전에 /compact 하면 다시 시작할 때 부담이 작습니다.",
+  },
+  long_context: { name: "15만 토큰 넘는 Context", advice: "캐시되어 있어도 긴 세션은 더 비쌉니다. 작업 중간에 /compact, 새 작업으로 넘어갈 때는 /clear 하세요." },
+  subagent_heavy: { name: "서브에이전트를 많이 쓴 세션", advice: "서브에이전트는 저마다 요청을 보냅니다. 꼭 필요할 때만 띄우고, 간단한 서브에이전트에는 더 싼 모델을 지정해 보세요." },
+  high_parallel: { name: "세션 4개 이상 동시 실행", advice: "모든 세션이 한 한도를 나눠 씁니다. 한꺼번에 돌릴 필요가 없으면 차례로 돌리는 편이 고르게 씁니다." },
+  cron: { name: "8시간 넘게 이어진 세션", advice: "대개 백그라운드나 반복 세션입니다. 계속 쓰면 빨리 쌓이니 의도한 것인지 확인하세요." },
+  max_effort: { name: "Effort Max", advice: "Max는 단계마다 훨씬 오래 생각합니다. 가장 어려운 작업에만 쓰고 평소에는 낮은 단계를 쓰세요." },
+  workflow: {
+    name: "워크플로",
+    advice: "워크플로는 작업을 여러 에이전트에 나눠 저마다 요청을 보냅니다. 큰 작업에만 쓰세요. Ultracode는 모든 작업에 워크플로를 쓰며 Effort에서 끌 수 있습니다.",
+  },
+  always_on_context: {
+    name: "4만 토큰 넘게 늘 붙는 Context",
+    advice: "CLAUDE.md, MCP 도구, 스킬, 메모리는 요청마다 함께 갑니다. /context로 무엇이 자리를 차지하는지 보고 필요 없는 것은 줄이거나 끄세요.",
+  },
+  large_tool_results: {
+    name: "1만 토큰 넘는 도구 결과",
+    advice: "큰 결과는 요약하거나 지울 때까지 이후 요청마다 다시 듭니다. 읽기·검색·명령 출력을 좁히거나, 시끄러운 작업은 서브에이전트에 맡기세요.",
+  },
+};
+
+export type UsageGroup = "skills" | "agents" | "plugins" | "mcpServers";
+
+export const USAGE_GROUP: Record<UsageGroup, { title: string; advice: string; label?: (name: string) => string }> = {
+  skills: { title: "스킬", label: (n) => `/${n}`, advice: "무거운 스킬은 범위를 줄이거나, 스킬 머리말(frontmatter)에서 더 싼 모델을 지정할 수 있습니다." },
+  agents: { title: "서브에이전트", advice: "자주 돈다면 그 서브에이전트에 더 싼 모델을 지정하거나 프롬프트를 줄여 보세요." },
+  plugins: { title: "플러그인", advice: "이 플러그인이 더하는 에이전트, 스킬, MCP 도구가 모두 한도에 들어갑니다." },
+  mcpServers: { title: "MCP 서버", advice: "MCP 도구 결과는 세션이 끝날 때까지 Context에 남습니다. /compact로 비우거나 쓰지 않는 서버는 끄세요." },
+};
+
+// How long the user has been away, as VS Code tells it: "12분", "3시간 4분", "2일 5시간".
+export function idleText(ms: number): string {
+  const m = Math.max(0, Math.floor(ms / 60_000));
+  if (m < 60) return `${m}분`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}시간 ${m % 60}분` : `${Math.floor(h / 24)}일 ${h % 24}시간`;
 }
 
 // How long something took: "12초", "3분 4초", "1시간 2분".

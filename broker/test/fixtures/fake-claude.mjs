@@ -5,12 +5,13 @@
 // limit as Claude Code reports them. Its init line reports whether it was asked to continue a cut-off turn. Control
 // requests get a success response, and each control_response it receives is reported back as
 // {"type":"answered"}. FAKE_BURST=1 writes a long line and an error result at start and exits at once;
-// FAKE_LINGER_MS keeps it running that long after its input ends.
-// The answer to initialize lists models and commands; FAKE_NO_INIT=1 leaves initialize unanswered.
+// FAKE_LINGER_MS keeps it running that long after its input ends. "COMMANDS" announces two changes of the command list.
+// The answer to initialize lists models and a few of the commands Claude Code lists; FAKE_NO_INIT=1 leaves initialize unanswered.
 // While a "HOLD" turn runs, user messages are queued with command_lifecycle lines as Claude Code reports them;
 // cancel_async_message drops one and "interrupt" ends the turn after taking the queued ones in, as a stop the user made.
 // "/usage" answers as Claude Code answers a local command, with a synthetic message carrying its data, and
-// "/status" the same way with text only; "/help" as a command headless Claude Code cannot open, with no name; get_usage fails while the working folder holds a file named .fake-no-usage.
+// "/status" the same way with text only; "/help" as a command headless Claude Code cannot open, with no name; get_usage fails while the working folder holds a file named .fake-no-usage,
+// and answers the causes of usage unless asked to skip them.
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
 // FAKE_REQUESTS=<file> gets a line with its arguments, environment and sign-in variables and then one per control request or user message it receives.
 // "PUSH <text>" calls PushNotification as Claude Code 2.1.301 runs it: the PreToolUse and PostToolUse hooks initialize
@@ -50,6 +51,17 @@ const flagSettings = (() => {
     return {};
   }
 })();
+// The commands Claude Code lists for a session it runs headless, a few of them.
+const COMMANDS = [
+  { name: "compact", description: "Compact the conversation", argumentHint: "" },
+  { name: "context", description: "Show current context usage", argumentHint: "" },
+  { name: "usage", description: "Show plan usage limits", argumentHint: "" },
+  { name: "mcp", description: "Manage MCP servers", argumentHint: "" },
+  { name: "model", description: "Set the AI model for Claude Code", argumentHint: "[model]" },
+  { name: "effort", description: "Set effort level", argumentHint: "[low|medium|high|xhigh|max|auto]" },
+  { name: "config", description: "Open config panel", argumentHint: "" },
+  { name: "output-style", description: "Set the output style", argumentHint: "" },
+];
 const modelArg = value("--model") ?? "";
 const appliedModel = modelArg.startsWith("claude-") ? modelArg : "claude-haiku-5-5";
 const ultracodeAvailable = !modelArg.includes("no-ultracode");
@@ -265,6 +277,13 @@ function handle(m) {
       out({ type: "control_request", request_id: "mcp-1", request: { subtype: "mcp_message", server_name: "claude-vscode", message: { method: "x" } } });
       return;
     }
+    if (text === "COMMANDS") {
+      for (const n of [1, 2]) {
+        const commands = [...COMMANDS, { name: `skill-${n}`, description: `Skill ${n}`, argumentHint: "" }];
+        out({ type: "system", subtype: "commands_changed", commands, uuid: randomUUID(), session_id: sid });
+      }
+      return;
+    }
     if (text === "ELICIT" || text === "ELICIT_CANCEL") {
       const request_id = `elicit-${++asks}`;
       const requested_schema = { type: "object", properties: { name: { type: "string", title: "Name" } }, required: ["name"] };
@@ -377,7 +396,7 @@ function handle(m) {
       fs.writeFileSync(LOCAL_SETTINGS, JSON.stringify({ outputStyle: style }));
     }
     const extra = init
-      ? { models: [{ value: "default", displayName: "Default" }], commands: [{ name: "compact", description: "Compact the conversation", argumentHint: "" }], current_permission_mode: "default", output_style: style ?? "default", available_output_styles: STYLES }
+      ? { models: [{ value: "default", displayName: "Default" }], commands: COMMANDS, current_permission_mode: "default", output_style: style ?? "default", available_output_styles: STYLES }
       : m.request.subtype === "get_settings"
         ? {
             effective: { env: { SECRET_TOKEN: "s3cret" }, hooks: { Stop: [{ command: "hook-cmd" }] }, ...(style ? { outputStyle: style } : {}) },
@@ -403,7 +422,26 @@ function handle(m) {
                 model_scoped: [{ display_name: "Fable", utilization: 0, resets_at: "2026-10-17T13:00:00Z", id: "s3cret" }],
                 extra_usage: { is_enabled: true, monthly_limit: 5000, used_credits: 1200, utilization: 24, currency: "USD" },
               },
-              behaviors: { day: { request_count: 1, project: "s3cret" } },
+              behaviors:
+                m.request.skip_behaviors === true
+                  ? null
+                  : {
+                      day: {
+                        request_count: 12,
+                        session_count: 2,
+                        project: "s3cret",
+                        behaviors: [
+                          { key: "cache_miss", pct: 34, count: 5, prompt: "s3cret" },
+                          { key: "brand_new_trait", pct: 12, count: 1 },
+                          { key: "<b>not a key</b>", pct: 50, count: 9 },
+                        ],
+                        agents: [{ name: "general-purpose", pct: 40, transcript: "s3cret" }],
+                        skills: [],
+                        plugins: [],
+                        mcp_servers: [{ name: "github", pct: 11 }],
+                      },
+                      week: { request_count: 80, session_count: 9, behaviors: [{ key: "long_context", pct: 61, count: 40 }], agents: [], skills: [{ name: "dataviz", pct: 3 }], plugins: [], mcp_servers: [] },
+                    },
             }
           : {};
     out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { subtype: m.request.subtype, ...extra } } });

@@ -102,17 +102,23 @@ export function useFileSuggestions(target: SuggestTarget | undefined, query: str
 }
 
 const commandLists = new Map<string, CommandInfo[]>();
+const latestLists = new Map<string, CommandInfo[]>();
 
-// The "/" commands, asked once per session or folder while the app is open.
-export function useCommands(target: SuggestTarget | undefined, wanted: boolean): CommandInfo[] | undefined {
-  const key = targetKey(target);
+// The "/" commands, asked once per session or folder while the app is open, and again for a session whose list
+// changed (`version`, the session's state names it); the list before stays until the new one comes.
+export function useCommands(target: SuggestTarget | undefined, wanted: boolean, version?: string): CommandInfo[] | undefined {
+  const base = targetKey(target);
+  const key = base && version ? `${base}#${version}` : base;
   const [, setLoaded] = useState(0);
   useEffect(() => {
-    if (!target || !key || !wanted || commandLists.has(key)) return;
+    if (!target || !base || !key || !wanted || commandLists.has(key)) return;
     let live = true;
     commands(target).then(
       (list) => {
-        if (list.length) commandLists.set(key, list);
+        if (list.length) {
+          commandLists.set(key, list);
+          latestLists.set(base, list);
+        }
         if (live) setLoaded((n) => n + 1);
       },
       () => {},
@@ -121,5 +127,5 @@ export function useCommands(target: SuggestTarget | undefined, wanted: boolean):
       live = false;
     };
   }, [key, wanted]);
-  return key ? commandLists.get(key) : undefined;
+  return key && base ? (commandLists.get(key) ?? latestLists.get(base)) : undefined;
 }
