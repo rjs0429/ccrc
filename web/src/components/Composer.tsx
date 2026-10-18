@@ -9,7 +9,7 @@ import { toast, useApp } from "../state.ts";
 import { commandName, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import { bareCommandSheet } from "./commandSheets.ts";
 import { ContextRing } from "./ContextRing.tsx";
-import { AgentChip, agentChipWidths } from "./agents/AgentChip.tsx";
+import { AgentChip, agentChipWidth } from "./agents/AgentChip.tsx";
 import type { AgentMap } from "./agents/tree.ts";
 import { AttachmentChips } from "./composer/AttachmentChips.tsx";
 import { ATTACH_ACCEPT, MAX_MESSAGE_BYTES, NEW_SESSION_SCOPE, addFiles, takeAttachments, useAttachments } from "./composer/attachments.ts";
@@ -190,9 +190,10 @@ interface Props {
   onCommand?: (name: string, args?: string) => boolean | "kept";
   // Opens the model or effort sheet when `at` changes.
   openSheet?: { name: "model" | "effort"; at: number };
-  // The context ring next to the model chip; absent where there is no session.
+  // The context ring next to the paperclip; absent where there is no session.
   onContext?: () => void;
-  // The agent chip, while the conversation has subagents or workflows.
+  // Given onAgents, the agent chip shows for the whole conversation, also beside a reason that stands in for the
+  // composer; agents is absent while the conversation has no subagent or workflow.
   agents?: AgentMap["chip"];
   onAgents?: () => void;
 }
@@ -329,7 +330,7 @@ export function Composer({
       left: groupWidth(left, modelRef.current),
       right: groupWidth(right, modeRef.current),
       round: round.getBoundingClientRect().width + (parseFloat(getComputedStyle(round).marginLeft) || 0),
-      agent: agentRef.current ? agentChipWidths(agentRef.current) : undefined,
+      agent: agentRef.current ? agentChipWidth(agentRef.current) : undefined,
     });
   };
   useLayoutEffect(() => {
@@ -356,16 +357,26 @@ export function Composer({
     };
   }, [hasRows]);
 
-  useLayoutEffect(() => {
+  // The textarea fits its text as it changes, as the textarea appears, and as the window's size changes its width or
+  // its line height.
+  const fit = () => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_PX)}px`;
-    if (nextCaret.current !== null) {
+  };
+  useLayoutEffect(() => {
+    fit();
+    const el = ref.current;
+    if (el && nextCaret.current !== null) {
       el.setSelectionRange(nextCaret.current, nextCaret.current);
       nextCaret.current = null;
     }
-  }, [text]);
+  }, [text, hasRows]);
+  useEffect(() => {
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
 
   useEffect(() => saveDraft(scope, text), [scope, text]);
 
@@ -549,11 +560,21 @@ export function Composer({
   };
 
   if (disabledReason) {
-    return <div className="pb-safe border-t border-line bg-bg px-safe-4 pt-3 text-center text-sm text-muted short:pt-2">{disabledReason}</div>;
+    if (!onAgents) return <div className="pb-safe border-t border-line bg-bg px-safe-4 pt-3 text-center text-sm text-muted short:pt-2">{disabledReason}</div>;
+    return (
+      <div className="pb-safe border-t border-line bg-bg px-safe-4 pt-2 short:pt-1">
+        <div className="mx-auto flex max-w-3xl items-center gap-2">
+          <AgentChip chip={agents} word onClick={openAgents} />
+          <p className="min-w-0 flex-1 text-sm break-keep text-balance text-muted" data-disabled-reason>
+            {disabledReason}
+          </p>
+        </div>
+      </div>
+    );
   }
 
   const two = layout.lines === "two";
-  const agentChip = agents && onAgents && <AgentChip ref={agentRef} chip={agents} word={layout.word} onClick={openAgents} className={two ? "col-start-1 row-start-1" : ""} />;
+  const agentChip = onAgents && <AgentChip ref={agentRef} chip={agents} word={layout.word} onClick={openAgents} className={two ? "col-start-1 row-start-1" : ""} />;
   // Sharing a line with the right group, the left group never shrinks: a longer name is measured in full and takes
   // the chips to two lines instead of being cut. On two lines the agent chip and the right group take line 1, the left
   // group and the round button line 2.
@@ -633,6 +654,7 @@ export function Composer({
                     />
                   </span>
                 )}
+                {onContext && <ContextRing gauge={state?.context} onClick={onContext} />}
                 <Chip name="model" className="min-w-0" disabled={!choosable} onClick={() => setSheet("model")}>
                   <span ref={modelRef} className="truncate">{modelLabel(models, model)}</span>
                   <Icon.chevronDown className="size-3 shrink-0" />
@@ -651,7 +673,6 @@ export function Composer({
               </div>
               {agentChip}
               <div ref={rightRef} className={`flex min-w-0 items-center justify-end ${two ? "col-[2/4] row-start-1" : "ml-auto shrink-0"}`} data-chip-group="right">
-                {onContext && <ContextRing gauge={state?.context} onClick={onContext} className="mr-0.5" />}
                 <Chip name="mode" className="min-w-0" disabled={!choosable} onClick={() => setSheet("mode")}>
                   <span ref={modeRef} className="truncate">{MODE_LABEL[mode ?? ""] ?? "권한 모드"}</span>
                   <Icon.chevronDown className="size-3 shrink-0" />
