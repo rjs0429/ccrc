@@ -37,7 +37,7 @@ import { brokerSessionsBlocked, closedText, errorText, hostLabel, inboxNotes, se
 import { api } from "../api.ts";
 import { call, composerInsert, focusDone, loadMore, navigate, openAt, openSettingsFrom, refreshChat, requestShown, send, toast, useApp } from "../state.ts";
 import { withEarlier } from "../chatItems.ts";
-import { sentCount } from "../peerSent.ts";
+import { markShown, newest, type PeerSent } from "../peerSent.ts";
 import { takeSent } from "../sentPreviews.ts";
 import { worktreeOf } from "../../../broker/src/worktree-names.ts";
 import { placeLabel, shownBranch } from "../worktree.ts";
@@ -322,10 +322,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const shown = new Set((chat?.items ?? []).map((i) => i.id));
     return (st?.queued ?? []).filter((q) => !shown.has(q.id));
   }, [chat?.items, st?.queued]);
-  // Text sent to a session open elsewhere waits here until its transcript shows it; before: how many such messages with
-  // the same text it showed then.
-  const [peerSent, setPeerSent] = useState<(QueuedMessage & { before: number })[]>([]);
-  const peerWaiting = useMemo(() => peerSent.filter((q) => sentCount(chat?.items ?? [], q.text) <= q.before), [peerSent, chat?.items]);
+  // Text sent to a session open elsewhere waits here until its transcript shows it.
+  const [peerSent, setPeerSent] = useState<PeerSent[]>([]);
+  const peerMarked = useMemo(() => markShown(peerSent, chat?.items ?? []), [peerSent, chat?.items]);
+  const peerWaiting = useMemo(() => peerMarked.filter((q) => !q.shown), [peerMarked]);
+  useEffect(() => {
+    if (peerMarked !== peerSent) setPeerSent((list) => markShown(list, chat?.items ?? []));
+  }, [peerMarked, peerSent, chat?.items]);
   const [taking, setTaking] = useState<string | null>(null);
   // A message taken back returns to the composer with its text and the photos sent from this device.
   const takeBack = (q: QueuedMessage) => {
@@ -345,12 +348,14 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   const sendPeer = (text: string) => {
     if (conn !== "ready") return false;
-    const before = sentCount(chat?.items ?? [], text);
     const id = `peer-${Date.now()}-${peerSent.length}`;
-    setPeerSent((list) => [...list, { id, ts: new Date().toISOString(), text, from: "remote", before }]);
+    setPeerSent((list) => [...list, { id, ts: new Date().toISOString(), text, from: "remote", since: newest(chat?.items ?? []) }]);
     follow(true);
     call(sessionId, "inbox_send", { text }).then(
-      () => toast("다른 세션 메시지로 보냈습니다"),
+      ({ msgId }) => {
+        setPeerSent((list) => list.map((q) => (q.id === id ? { ...q, msgId } : q)));
+        toast("다른 세션 메시지로 보냈습니다");
+      },
       (e: Error) => {
         setPeerSent((list) => list.filter((q) => q.id !== id));
         composerInsert(text);

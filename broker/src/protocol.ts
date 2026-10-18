@@ -157,8 +157,8 @@ export type DisplayItem =
   | { kind: "command"; id: string; ts?: string; name?: string; args?: string; text: string; usage?: UsageInfo; context?: ContextDetail }
   // A message Claude Code passed to the model from someone other than the user: a subagent's report ("agent"),
   // another Claude session ("session") or a channel ("channel"). text: Markdown, without the frame Claude Code
-  // puts around a report.
-  | { kind: "message"; id: string; ts?: string; from: "agent" | "session" | "channel"; name?: string; text: string }
+  // puts around a report. msgId: the id another session's message came with, as inbox_send gives one.
+  | { kind: "message"; id: string; ts?: string; from: "agent" | "session" | "channel"; name?: string; text: string; msgId?: string }
   // Claude Code's notice to the model about a background task: how it ended, its summary, and the result or
   // event it carried.
   | { kind: "task"; id: string; ts?: string; status?: "completed" | "failed" | "stopped"; summary: string; text?: string }
@@ -684,8 +684,8 @@ CALL_OPS.push("export", "usage_causes");
 
 export interface CallMap {
   // Sends text to a session open in another program through its inbox socket; Claude gets it as a message from
-  // another session. What becomes of it shows in the transcript.
-  inbox_send: { args: { text: string }; data: Record<string, never> };
+  // another session. What becomes of it shows in the transcript, where its message has msgId.
+  inbox_send: { args: { text: string }; data: { msgId: string } };
 }
 CALL_OPS.push("inbox_send");
 

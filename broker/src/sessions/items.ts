@@ -78,6 +78,8 @@ const SENDERS: Record<string, "agent" | "session" | "channel"> = { "agent-messag
 const HANDBACK = "[Subagent hand-back]";
 const SHELL_INPUT = /^<bash-input>([\s\S]*)<\/bash-input>$/;
 const TRANSCRIPT_ID = /^[A-Za-z0-9_-]{1,128}$/;
+// Claude Code keeps the id a message from another session came with when it is a UUID.
+const MSG_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Claude Code ends a subagent's result text with a line naming its id.
 const AGENT_ID = /^agentId: ([A-Za-z0-9_-]+)/gm;
 const ENTITIES: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'" };
@@ -296,7 +298,7 @@ function handedBack(body: string): string {
   return [unindent(lines.slice(at + 1)), unindent(lines.slice(0, at))].filter(Boolean).join("\n\n");
 }
 
-type Sent = Pick<Extract<DisplayItem, { kind: "message" }>, "from" | "name" | "text">;
+type Sent = Pick<Extract<DisplayItem, { kind: "message" }>, "from" | "name" | "text" | "msgId">;
 
 // Who sent a message Claude Code passed on, and its body. A sender is named as Claude Code names it, or by the
 // start of its id when a long id is all there is.
@@ -313,7 +315,8 @@ function sentMessage(text: string, origin?: Record<string, unknown>): Sent | und
   const id = attr("from");
   const name = senderName(from === "channel" ? attr("source") || named : named || attr("from-name") || (id && id.length > 12 ? id.slice(0, 8) : id));
   const body = text.slice(open[0].length, close);
-  return { from, ...(name ? { name } : {}), text: clipped(from === "agent" ? handedBack(body) : body.trim(), MESSAGE_LIMIT) };
+  const msgId = from === "session" && typeof origin?.msg_id === "string" && MSG_ID.test(origin.msg_id) ? origin.msg_id : undefined;
+  return { from, ...(name ? { name } : {}), text: clipped(from === "agent" ? handedBack(body) : body.trim(), MESSAGE_LIMIT), ...(msgId ? { msgId } : {}) };
 }
 
 // The output Claude Code records for a "!" command, stdout then stderr.

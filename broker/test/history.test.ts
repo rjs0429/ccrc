@@ -245,7 +245,7 @@ test("messages Claude Code passed on load as the live view showed them, never as
   const origin = { kind: "peer", from: agent, senderTaskId: agent, name: "general-purpose", body: `${notice}\n  Saved the report.\n  \n  - two files`, handback: true };
   const peerText =
     'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/peer.sock" from-name="리뷰 세션" from-mode="prompting">\n검토를 마쳤습니다.\n</cross-session-message>\n\nThis came from another Claude session — not typed by your user.';
-  const peerOrigin = { kind: "peer", from: "uds:/tmp/peer.sock", verifiedPeerPid: 4242, msg_id: "m1", name: "리뷰 세션", fromMode: "prompting", body: "검토를 마쳤습니다." };
+  const peerOrigin = { kind: "peer", from: "uds:/tmp/peer.sock", verifiedPeerPid: 4242, msg_id: "5e1f0c3a-7b2d-4c8e-9a10-3f6b2d8e4c71", name: "리뷰 세션", fromMode: "prompting", body: "검토를 마쳤습니다." };
   const taskText =
     '<task-notification>\n<task-id>b7</task-id>\n<tool-use-id>toolu_bg</tool-use-id>\n<output-file>/tmp/b7.output</output-file>\n<status>completed</status>\n<summary>Background command "npm test" completed (exit code 0)</summary>\n</task-notification>';
   const taskOrigin = { kind: "task-notification", producer: "session-task" };
@@ -347,7 +347,7 @@ test("messages Claude Code passed on load as the live view showed them, never as
   );
   assert.deepEqual(loaded, live.items, "a reload shows what the live view showed");
   assert.deepEqual(loaded[2], { kind: "message", id: src, ts: "2026-10-14T13:42:02.418Z", from: "agent", name: "general-purpose", text: "Saved the report.\n\n- two files" });
-  assert.deepEqual(loaded[4], { kind: "message", id: "p7", ts: "2026-10-14T13:50:00.000Z", from: "session", name: "리뷰 세션", text: "검토를 마쳤습니다." });
+  assert.deepEqual(loaded[4], { kind: "message", id: "p7", ts: "2026-10-14T13:50:00.000Z", from: "session", name: "리뷰 세션", text: "검토를 마쳤습니다.", msgId: "5e1f0c3a-7b2d-4c8e-9a10-3f6b2d8e4c71" });
   assert.deepEqual(loaded[6], { kind: "task", id: "p9", ts: "2026-10-14T14:00:00.000Z", status: "completed", summary: 'Background command "npm test" completed (exit code 0)' });
 });
 

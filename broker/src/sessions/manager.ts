@@ -925,19 +925,22 @@ export class SessionManager extends EventEmitter {
   }
 
   // Text to a session open in a program this broker cannot drive, through its inbox socket, as Claude Code's other
-  // sessions send one; like a message from here it brings an archived session back to the list.
-  async sendToInbox(sessionId: string, text: string): Promise<void> {
+  // sessions send one; like a message from here it brings an archived session back to the list. The id it gives the
+  // message, which the transcript keeps with it.
+  async sendToInbox(sessionId: string, text: string): Promise<string> {
     const l = this.controlled(sessionId) ? undefined : liveProcesses({ fresh: true }).find((p) => p.sessionId === sessionId);
     if (!l) throw Error("session is not open elsewhere");
     const socket = inboxOf(l);
     if (!socket) throw Error("session takes no messages");
     const token = inboxToken(paths.claudeSessionsDir, l.pid, l.procStart);
+    const msgId = randomUUID();
     try {
-      await postToInbox(socket, [...(token ? [JSON.stringify({ type: "auth", token })] : []), inboxLine(sessionId, text)]);
+      await postToInbox(socket, [...(token ? [JSON.stringify({ type: "auth", token })] : []), inboxLine(sessionId, text, msgId)]);
     } catch (e) {
       throw Error(`inbox send failed: ${(e as NodeJS.ErrnoException).code ?? (e instanceof Error ? e.message : String(e))}`);
     }
     await this.broughtBack(sessionId);
+    return msgId;
   }
 
   // Names a session where Claude Code keeps names. A process this broker drives saves the name itself; a session
@@ -1107,8 +1110,7 @@ export class SessionManager extends EventEmitter {
       case "usage_causes":
         return this.accountCausesFor(await this.cwdOf(sessionId), this.controlled(sessionId));
       case "inbox_send":
-        await this.sendToInbox(sessionId, String(args.text));
-        return {};
+        return { msgId: await this.sendToInbox(sessionId, String(args.text)) };
       case "worktree_status":
         return this.worktreeStatus(sessionId);
       case "worktree_remove":

@@ -276,10 +276,11 @@ test("a session open in a terminal takes the phone's text through its inbox, wit
     assert.equal(listed?.inbox, true);
     assert.deepEqual((await manager.snapshot(sid)).state.inbox, { gate: "deliver" });
     const r = await call(sid, "inbox_send", { text: "테스트를 돌려 줘" });
-    assert.deepEqual(r, { t: "call_result", id: 1, ok: true, data: {} });
     await until(() => box.lines.length === 2, "two lines");
     assert.deepEqual(JSON.parse(box.lines[0]), { type: "auth", token: TOKEN });
     const msg = JSON.parse(box.lines[1]);
+    assert.match(msg.msg_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.deepEqual(r, { t: "call_result", id: 1, ok: true, data: { msgId: msg.msg_id } }, "the answer names the message's id");
     assert.equal(msg.session_id, sid);
     assert.equal(msg.message.content, `<cross-session-message from-name="ccrc 휴대폰" from-mode="prompting">\n테스트를 돌려 줘\n</cross-session-message>`);
     assert.equal("from" in msg, false, "no reply address");
