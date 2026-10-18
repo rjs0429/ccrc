@@ -6,6 +6,19 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Changed
+
+- Claude Code settings on the phone are saved as soon as they are changed: a switch or choice when it is picked, text
+  on Enter or on leaving the field, a rule or folder when it is added or removed. A toast says what was saved and can
+  undo it; the save bar, "변경 취소" and the confirmation sheet are gone. Saves go one at a time in the order made,
+  each against the file the last one left, and a key changed again before its turn is saved once. When the file
+  changed meanwhile, the change still goes through if its own key was left alone; otherwise the file's value is shown.
+- Backups of Claude Code's settings (`settings.json.ccrc-<time>.bak`) are made once per ten minutes of editing instead
+  of once per save, and the one from before ccrc first changed the file is kept besides the last ten.
+- Effort in the Claude Code settings is set per model (`modelSettings.<model>.effortLevel`, where `/effort` saves it),
+  for each model Claude Code offers with effort levels and each the file names. A top-level `effortLevel`, which Claude
+  Code no longer applies to the 5.5 models, is shown read-only.
+
 ### Fixed
 
 - Sessions whose transcript starts with a long first message (one typed while Claude worked, with pasted text or

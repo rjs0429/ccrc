@@ -16,7 +16,6 @@ export const CLAUDE_SETTING_FIELDS: SettingField[] = [
   { key: "permissions.ask", kind: "rules" },
   { key: "permissions.deny", kind: "rules" },
   { key: "permissions.additionalDirectories", kind: "dirs" },
-  { key: "effortLevel", kind: "choice", values: ["low", "medium", "high", "xhigh"] },
   { key: "alwaysThinkingEnabled", kind: "bool" },
   { key: "showThinkingSummaries", kind: "bool" },
   { key: "language", kind: "text", pattern: /^[\p{L}\p{M}][\p{L}\p{M} ()-]{0,39}$/u },
@@ -25,6 +24,38 @@ export const CLAUDE_SETTING_FIELDS: SettingField[] = [
   { key: "includeGitInstructions", kind: "bool" },
   { key: "respectGitignore", kind: "bool" },
 ];
+
+// Claude Code keeps the effort each model starts with as modelSettings.<model>.effortLevel, keyed by the canonical
+// model name, as /effort saves it; a top-level effortLevel reaches only models older than the 5.5 ones.
+export const MODEL_EFFORTS = ["low", "medium", "high", "xhigh"];
+const MODEL_NAME = /^[a-z0-9][a-z0-9_-]{0,99}$/;
+const EFFORT_KEY = /^modelSettings\.([^.]+)\.effortLevel$/;
+
+export function isModelName(name: string): boolean {
+  return MODEL_NAME.test(name) && !Object.hasOwn(Object.prototype, name);
+}
+
+export function modelEffortKey(model: string): string {
+  return `modelSettings.${model}.effortLevel`;
+}
+
+export function effortKeyModel(key: string): string | undefined {
+  const m = EFFORT_KEY.exec(key);
+  return m && isModelName(m[1]) ? m[1] : undefined;
+}
+
+export function settingField(key: string): SettingField | undefined {
+  return CLAUDE_SETTING_FIELDS.find((f) => f.key === key) ?? (effortKeyModel(key) ? { key, kind: "choice", values: MODEL_EFFORTS } : undefined);
+}
+
+// The name Claude Code keys a model's settings by: no 1M suffix, no date.
+export function canonicalModel(model: string): string {
+  return model
+    .trim()
+    .toLowerCase()
+    .replace(/\[[12]m\]$/, "")
+    .replace(/-\d{8}$/, "");
+}
 
 export const MAX_RULES = 500;
 export const MAX_DIRS = 100;
@@ -50,9 +81,9 @@ export function isAbsoluteDir(dir: string): boolean {
     .every((part) => part !== "" && part !== "." && part !== "..");
 }
 
-// Why a key of the file is not offered here: it runs commands, it concerns security, or its
-// current value is not one that can be picked here.
-export type SettingNoteReason = "command" | "security" | "value";
+// Why a key of the file is not offered here: it runs commands, it concerns security, it is the effort kept before
+// efforts were kept per model, or its current value is not one that can be picked here.
+export type SettingNoteReason = "command" | "security" | "legacy" | "value";
 
 export interface ClaudeSettingsView {
   path: string;
