@@ -7,7 +7,8 @@ import { usePrefs } from "../prefs.ts";
 import { rememberSent } from "../sentPreviews.ts";
 import { toast, useApp } from "../state.ts";
 import { commandName, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
-import { bareCommandSheet } from "./commandSheets.ts";
+import { bareCommandSheet, withPhoneCommands } from "./commandSheets.ts";
+import { CacheClock } from "./CacheClock.tsx";
 import { ContextRing } from "./ContextRing.tsx";
 import { AgentChip, agentChipWidth } from "./agents/AgentChip.tsx";
 import type { AgentMap } from "./agents/tree.ts";
@@ -288,8 +289,8 @@ export function Composer({
   const mention = target && !dismissed ? mentionAt(text, caret) : undefined;
   const command = target && !dismissed && !mention ? commandQuery(text) : undefined;
   const files = useFileSuggestions(target, mention?.query);
-  const listed = useCommands(target, command !== undefined);
-  const commands = draft ? listed?.filter((c) => !DRAFT_HIDDEN.has(c.name)) : listed;
+  const listed = useCommands(target, command !== undefined, state?.commands);
+  const commands = draft ? listed?.filter((c) => !DRAFT_HIDDEN.has(c.name)) : withPhoneCommands(listed);
   const rows: SuggestRow[] =
     mention && files
       ? files.map((f) => ({ key: f, label: baseName(f), hint: f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : undefined }))
@@ -655,6 +656,7 @@ export function Composer({
                   </span>
                 )}
                 {onContext && <ContextRing gauge={state?.context} onClick={onContext} />}
+                {onContext && <CacheClock cache={state?.cache} onClick={onContext} />}
                 <Chip name="model" className="min-w-0" disabled={!choosable} onClick={() => setSheet("model")}>
                   <span ref={modelRef} className="truncate">{modelLabel(models, model)}</span>
                   <Icon.chevronDown className="size-3 shrink-0" />

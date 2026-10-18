@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { claudeSettingsFile } from "../claude-settings.ts";
-import type { FileView, SentRef } from "../protocol.ts";
+import type { ExportArgs, FileView, SentRef } from "../protocol.ts";
 import type { SessionCore } from "../sessions/core.ts";
 import {
   MAX_BINARY_BYTES,
@@ -34,14 +34,23 @@ const TICKETS_MAX = 64;
 
 // Lets a page outside the app, which has no cookie (a new window from the home-screen app), fetch one
 // file: bound to the device and login that asked for it, reusable until it expires since PDF viewers
-// may fetch more than once. A file Claude sent is named by its call, not by its path.
+// may fetch more than once. A file Claude sent is named by its call, not by its path; an export is made from the
+// transcript when fetched.
 interface Ticket {
   sessionId: string;
   path?: string;
   sent?: SentRef;
+  export?: ExportArgs;
   device: string;
   lease: string;
   expires: number;
+}
+
+function exportArgs(v: unknown): ExportArgs | undefined {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const { tools, tz, ...rest } = v as Record<string, unknown>;
+  if (Object.keys(rest).length || (tools !== undefined && typeof tools !== "boolean") || (tz !== undefined && (typeof tz !== "string" || tz.length > 64))) return undefined;
+  return { ...(tools !== undefined ? { tools } : {}), ...(tz !== undefined ? { tz } : {}) };
 }
 
 interface Access {
@@ -211,20 +220,34 @@ export async function registerFiles(app: FastifyInstance, d: RouteDeps): Promise
     while (tickets.size >= TICKETS_MAX) tickets.delete(tickets.keys().next().value!);
   };
 
-  app.post<{ Params: { id: string }; Body: { path?: unknown; sent?: unknown } }>("/api/sessions/:id/file/ticket", { preHandler: d.requireAuth }, async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { path?: unknown; sent?: unknown; export?: unknown } }>("/api/sessions/:id/file/ticket", { preHandler: d.requireAuth }, async (req, reply) => {
     reply.header("Cache-Control", "no-store");
-    const ref = req.body?.sent === undefined ? undefined : sentRef(req.body.sent);
-    const p = req.body?.sent === undefined ? absolute(req.body?.path) : undefined;
-    if (!p && !ref) return reply.code(400).send({ error: "invalid" });
+    const ex = req.body?.export === undefined ? undefined : exportArgs(req.body.export);
+    const ref = req.body?.sent === undefined || ex ? undefined : sentRef(req.body.sent);
+    const p = req.body?.sent === undefined && !ex ? absolute(req.body?.path) : undefined;
+    if (!p && !ref && !ex) return reply.code(400).send({ error: "invalid" });
     if (!(await access(req.params.id))) return reply.code(404).send({ error: "unknown_session" });
     const lease = d.leases.current();
     if (!lease) return reply.code(401).send({ error: "unauthorized" });
     const now = Date.now();
     prune(now);
     const id = randomBytes(32).toString("base64url");
-    tickets.set(id, { sessionId: req.params.id, ...(ref ? { sent: ref } : { path: p }), device: req.device, lease: lease.tokenHash, expires: now + TICKET_MS });
+    tickets.set(id, { sessionId: req.params.id, ...(ex ? { export: ex } : ref ? { sent: ref } : { path: p }), device: req.device, lease: lease.tokenHash, expires: now + TICKET_MS });
     return { url: `/api/file-ticket/${id}`, expiresInMs: TICKET_MS };
   });
+
+  // The conversation's Markdown, made when it is fetched; it always downloads.
+  const serveExport = async (req: FastifyRequest, reply: FastifyReply, sessionId: string, args: ExportArgs) => {
+    reply.header("Cache-Control", "no-store");
+    try {
+      const x = await d.manager.exportConversation(sessionId, { ...args });
+      d.audit.log("export", { device: req.device, sessionId, messages: x.messages, chars: x.text.length, ticket: true });
+      return rawHeaders(reply, x.name, "text/markdown; charset=utf-8", true).send(x.text);
+    } catch (e) {
+      d.audit.log("export", { device: req.device, sessionId, ticket: true, outcome: "failed" });
+      return reply.code(e instanceof Error && e.message === "nothing to export" ? 404 : 502).send({ error: "failed" });
+    }
+  };
 
   // The broker's device check has already run; the ticket stands in for the login cookie.
   app.get<{ Params: { ticket: string }; Querystring: { download?: unknown } }>("/api/file-ticket/:ticket", async (req, reply) => {
@@ -234,13 +257,14 @@ export async function registerFiles(app: FastifyInstance, d: RouteDeps): Promise
       if (t && t.expires <= now) tickets.delete(req.params.ticket);
       d.audit.log("file_read", {
         device: req.device,
-        ...(t ? { sessionId: t.sessionId, ...(t.path ? { path: t.path.slice(0, LOGGED_PATH_MAX) } : {}), ...(t.sent ? { sent: true, ...t.sent } : {}) } : {}),
+        ...(t ? { sessionId: t.sessionId, ...(t.path ? { path: t.path.slice(0, LOGGED_PATH_MAX) } : {}), ...(t.sent ? { sent: true, ...t.sent } : {}), ...(t.export ? { export: true } : {}) } : {}),
         outcome: t && t.expires <= now ? "ticket_expired" : "ticket_invalid",
         raw: true,
         ticket: true,
       });
       return reply.code(401).header("Cache-Control", "no-store").send({ error: "unauthorized" });
     }
+    if (t.export) return serveExport(req, reply, t.sessionId, t.export);
     if (t.sent) return sent.raw(req, reply, t.sessionId, t.sent, req.query.download === "1", { ticket: true });
     return serveRaw(req, reply, t.sessionId, t.path!, req.query.download === "1", { ticket: true });
   });

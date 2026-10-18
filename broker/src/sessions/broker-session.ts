@@ -16,17 +16,16 @@ import { claudeSettingsFile } from "../claude-settings.ts";
 import { elicitInfo } from "../elicit.ts";
 import type { ClaudeNotice } from "../push/rules.ts";
 import { pushHookAnswer } from "../wrapper/relay.ts";
-import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput, WorktreeChoice } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, UsageCauses, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput, WorktreeChoice } from "../protocol.ts";
 import { worktreeOf } from "../worktree-names.ts";
-import { rememberCommands } from "./commands.ts";
 import {
+  CAUSES_MS,
   CONTEXT_MS,
   ELICIT_MS,
   MCP_CHANGE_MS,
   READ_MS,
   SessionCore,
   THINKING_TOKENS,
-  commandInfo,
   mcpServers,
   rewindResult,
   shellOutput,
@@ -39,7 +38,7 @@ import { sessionEnv } from "./entrypoint.ts";
 import { fileContents, type FileContents } from "./file-read.ts";
 import type { RawMessage } from "./items.ts";
 import type { TurnEnd } from "./outcome.ts";
-import { contextDetail, usageAnswer } from "./reports.ts";
+import { contextDetail, usageAnswer, usageCauses } from "./reports.ts";
 
 const CLOSE_WAIT_MS = 10_000;
 const REQUEST_MS = 15_000;
@@ -210,6 +209,7 @@ export class BrokerSession extends SessionCore {
     this.q
       .initializationResult()
       .then(async (r) => {
+        this.adoptCommands(r.commands);
         this.adoptStyles(r.output_style, r.available_output_styles);
         this.adoptFast(r.fast_mode_state, r.fast_mode_disabled_reason, true);
         if (opts.later) await this.applyLater(opts.later).catch(() => {});
@@ -376,6 +376,10 @@ export class BrokerSession extends SessionCore {
     return usageAnswer((await this.request({ subtype: "get_usage", skip_behaviors: true })).response);
   }
 
+  async usageCauses(): Promise<UsageCauses> {
+    return usageCauses((await this.request({ subtype: "get_usage" }, CAUSES_MS)).response);
+  }
+
   async mcpStatus(): Promise<McpServerInfo[]> {
     return mcpServers(await timed(this.query().mcpServerStatus(), REQUEST_MS));
   }
@@ -503,13 +507,6 @@ export class BrokerSession extends SessionCore {
       .supportedModels()
       .then((models: ModelInfo[]) => this.emit("models", models))
       .catch(() => {});
-    this.q
-      .initializationResult()
-      .then((r) => {
-        this.commands = commandInfo(r.commands);
-        rememberCommands(this.cwd, this.commands);
-      })
-      .catch(() => {});
   }
 
   readFile(path: string, maxBytes: number, encoding: "utf-8" | "base64"): Promise<FileContents> | undefined {
@@ -545,8 +542,8 @@ export class BrokerSession extends SessionCore {
   }
 
   // A control request the SDK sends but does not declare.
-  private request(r: Record<string, unknown>): Promise<{ response?: Record<string, unknown> }> {
-    return timed((this.query() as unknown as Requester).request(r), REQUEST_MS);
+  private request(r: Record<string, unknown>, ms = REQUEST_MS): Promise<{ response?: Record<string, unknown> }> {
+    return timed((this.query() as unknown as Requester).request(r), ms);
   }
 
   private query(): Query {
@@ -649,7 +646,7 @@ export function probeSettings(file = claudeSettingsFile()): { env: Record<string
 
 // Asks a Claude Code process started for this question alone: it loads no settings files or MCP servers, writes no
 // transcript and never starts a turn.
-async function probe<T>(cwd: string, claudePath: string | undefined, model: string | undefined, env: Record<string, string | undefined>, ask: (q: Query) => Promise<T>): Promise<T> {
+async function probe<T>(cwd: string, claudePath: string | undefined, model: string | undefined, env: Record<string, string | undefined>, ask: (q: Query) => Promise<T>, ms = PROBE_MS): Promise<T> {
   let release = () => {};
   const held = new Promise<void>((r) => (release = r));
   async function* nothing(): AsyncGenerator<SDKUserMessage> {
@@ -676,7 +673,7 @@ async function probe<T>(cwd: string, claudePath: string | undefined, model: stri
     } catch {}
   })();
   try {
-    return await timed(ask(q), PROBE_MS);
+    return await timed(ask(q), ms);
   } finally {
     release();
     q.close();
@@ -687,6 +684,12 @@ async function probe<T>(cwd: string, claudePath: string | undefined, model: stri
 export async function probeUsage(cwd: string, claudePath?: string, env: Record<string, string | undefined> = {}): Promise<UsageInfo> {
   const r = await probe(cwd, claudePath, undefined, env, (q) => (q as unknown as Requester).request({ subtype: "get_usage", skip_behaviors: true }));
   return { limits: usageAnswer(r.response).limits };
+}
+
+// What the account's usage of the last day and week went to, from the transcripts on this machine.
+export async function probeUsageCauses(cwd: string, claudePath?: string, env: Record<string, string | undefined> = {}): Promise<UsageCauses> {
+  const r = await probe(cwd, claudePath, undefined, env, (q) => (q as unknown as Requester).request({ subtype: "get_usage" }), PROBE_MS + CAUSES_MS);
+  return usageCauses(r.response);
 }
 
 // The context window of a model and where auto-compact starts, from the default settings.

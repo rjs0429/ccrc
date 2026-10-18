@@ -270,6 +270,16 @@ export interface ContextGauge {
   last?: boolean;
 }
 
+// The prompt cache as the last response of the main conversation left it, read the way VS Code reads it: at, when the
+// request that wrote or read it went out (ms since the epoch); ttl, how long Claude Code asked to keep it; tokens, what
+// the next request re-caches once it expired. compactedAt: a compaction since, which the cache does not hold.
+export interface PromptCache {
+  at?: number;
+  ttl?: "5m" | "1h";
+  tokens?: number;
+  compactedAt?: number;
+}
+
 // What a session without a process starts with when the broker next starts it.
 export interface StartSettings {
   model?: string;
@@ -357,6 +367,37 @@ export interface UsageLimit {
 export interface UsageInfo {
   limits: UsageLimit[];
   session?: { costUsd: number; durationMs: number; apiDurationMs: number; linesAdded: number; linesRemoved: number };
+}
+
+// A trait of the usage in a window as Claude Code names it (an open set: cache_miss, long_context, ...): its share of the
+// weighted usage, the traits overlapping, and the requests that show it.
+export interface UsageTrait {
+  key: string;
+  pct: number;
+  count: number;
+}
+
+export interface UsageShare {
+  name: string;
+  pct: number;
+}
+
+export interface UsageWindowCauses {
+  requests: number;
+  sessions: number;
+  traits: UsageTrait[];
+  agents: UsageShare[];
+  skills: UsageShare[];
+  plugins: UsageShare[];
+  mcpServers: UsageShare[];
+}
+
+// What the usage of the last day and week went to, from Claude Code's scan of this machine's transcripts. none: Claude
+// Code gave no answer to it (not a claude.ai subscription, or the scan failed).
+export interface UsageCauses {
+  day?: UsageWindowCauses;
+  week?: UsageWindowCauses;
+  none?: boolean;
 }
 
 export interface McpServerInfo {
@@ -452,8 +493,8 @@ export interface CallMap {
 export type CallOp = keyof CallMap;
 export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume", "output_style", "set_output_style", "unqueue", "rename", "archive"];
 // The calls the new-session screen makes about a folder before any session runs in it.
-export type FolderOp = "files" | "commands" | "usage" | "git";
-export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage", "git"];
+export type FolderOp = "files" | "commands" | "usage" | "git" | "usage_causes";
+export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage", "git", "usage_causes"];
 
 // The agent map's reads, about one session like the calls above.
 CALL_OPS.push("agent_transcript", "task_output", "workflow_agents");
@@ -465,6 +506,28 @@ export interface CallMap {
   mark_unread: { args: { unread: boolean }; data: { unread: boolean } };
 }
 CALL_OPS.push("mark_unread");
+
+// The conversation as a Markdown file, made from the transcript. tools: with a line per tool call; tz: the phone's time
+// zone, which the times are written in.
+export type ExportArgs = {
+  tools?: boolean;
+  tz?: string;
+};
+
+export interface ExportInfo {
+  name: string;
+  text: string;
+  messages: number;
+  // Items left out at the end to keep the file within its limit.
+  cut?: number;
+}
+
+export interface CallMap {
+  export: { args: ExportArgs; data: ExportInfo };
+  // Slow: Claude Code reads every transcript of the last seven days.
+  usage_causes: { args: Record<string, never>; data: UsageCauses };
+}
+CALL_OPS.push("export", "usage_causes");
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {
@@ -614,6 +677,9 @@ export interface LiveState {
   thinking?: boolean;
   // The VS Code wrapper is too old to change Fast mode and Thinking.
   optionsUnknown?: boolean;
+  cache?: PromptCache;
+  // Changes whenever the session's "/" command list does, so the phone asks for it again.
+  commands?: string;
 }
 
 export type ClientMsg =

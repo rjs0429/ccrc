@@ -407,7 +407,7 @@ does the file.
   Code's settings and credentials, ccrc's own folders, `/proc`) are blocked for every session, also for files Claude
   sends to the phone and for `@` suggestions.
 - **Audit log.** Logins, failed logins, denied devices, messages sent, answers, mode and model changes, file reads,
-  new sessions and forks are recorded in `audit.jsonl`, without message contents.
+  conversation exports, new sessions and forks are recorded in `audit.jsonl`, without message contents.
 - **Local socket.** The wrapper socket is 0600 in a 0700 folder owned by you; both sides check this, and it never
   falls back to a shared folder such as `/tmp`.
 - **Secrets.** The API key is passed only to broker sessions' Claude Code as `ANTHROPIC_API_KEY`, and never written to

@@ -11,6 +11,8 @@ import { tempDir } from "./helpers.ts";
 
 type Msg = Record<string, unknown>;
 const SID = "0b7cf2a4-2f5e-4c39-9a51-3f1c2a9d8e11";
+// The command lists sessions remember go to a folder of the test's own.
+process.env.CCRC_STATE_DIR = path.join(tempDir(), "state");
 
 // Plays the wrapper side of one link.
 class FakeWrapper {
@@ -75,7 +77,7 @@ after(async () => {
   for (const s of servers) await s.close();
 });
 
-async function connect(): Promise<{ link: Link; wrapper: FakeWrapper }> {
+async function connect(caps?: string[]): Promise<{ link: Link; wrapper: FakeWrapper }> {
   const server = new LinkServer(path.join(tempDir(), "link.sock"));
   servers.push(server);
   await server.listen();
@@ -85,13 +87,13 @@ async function connect(): Promise<{ link: Link; wrapper: FakeWrapper }> {
   const wrapper = new FakeWrapper(sock);
   const link = await linked;
   const hello = new Promise((r) => link.once("hello", r));
-  wrapper.send({ t: "hello", v: 1, wpid: 4242, cwd: "/tmp/project", args: ["--resume", SID], sessionId: SID });
+  wrapper.send({ t: "hello", v: 1, wpid: 4242, cwd: "/tmp/project", args: ["--resume", SID], sessionId: SID, ...(caps ? { caps } : {}) });
   await hello;
   return { link, wrapper };
 }
 
-async function session(opts: { seed?: boolean } = {}) {
-  const { link, wrapper } = await connect();
+async function session(opts: { seed?: boolean; caps?: string[] } = {}) {
+  const { link, wrapper } = await connect(opts.caps);
   const s = new WrappedSession(link, SID, "/tmp/project");
   link.on("out", (m: Msg) => s.onOut(m));
   link.on("in", (m: Msg) => s.onIn(m));
@@ -1391,4 +1393,73 @@ test("a rename goes to Claude Code as the user's own, and only this session's an
   assert.equal(s.title, "VS Code에서 바꾼 이름");
   assert.deepEqual(titles, ["새 이름", "VS Code에서 바꾼 이름"]);
   assert.deepEqual(s.builder.items, [], "the announcements add nothing to the conversation");
+});
+
+test("the command list follows Claude Code: its initialize answer, every list it pushes, and each turn's names without the terminal's", async () => {
+  const { s, wrapper } = await session();
+  const settled = (pred: () => boolean) =>
+    new Promise<void>((resolve) => {
+      const check = () => pred() && (s.off("state", check), resolve());
+      s.on("state", check);
+      check();
+    });
+  const init = { name: "compact", description: "Compact the conversation", argumentHint: "" };
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "init-1", response: { models: [], commands: [init, { name: "color", description: "Set the color", argumentHint: "" }] } } });
+  await settled(() => s.commands?.length === 2);
+  const first = s.state().commands;
+  assert.ok(first, "the state names the list");
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m", slash_commands: ["compact", "color", "review"], terminal_slash_commands: ["color"] });
+  await settled(() => s.commands?.some((c) => c.name === "review") === true);
+  const compact = { name: "compact", description: "Compact the conversation" };
+  assert.deepEqual(s.commands, [compact, { name: "review", description: "" }], "a name the list lacked joins it, the terminal's leave the phone's menu");
+  const second = s.state().commands;
+  assert.notEqual(second, first);
+  const pushed = [init, { name: "gamma", description: "Gamma skill (project)", argumentHint: "" }];
+  wrapper.out({ type: "system", subtype: "commands_changed", commands: pushed, session_id: SID, uuid: "u1" });
+  await settled(() => s.commands?.some((c) => c.name === "gamma") === true);
+  assert.deepEqual(s.commands, [compact, { name: "gamma", description: "Gamma skill (project)" }]);
+  assert.ok(!s.builder.items.length, "the push is not a conversation item");
+  const third = s.state().commands;
+  assert.notEqual(third, second);
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "init-2", response: { models: [], commands: [init] } } });
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m", slash_commands: ["compact", "gamma"] });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(s.commands?.map((c) => c.name), ["compact", "gamma"], "an initialize answer after a push leaves the pushed list");
+  assert.equal(s.state().commands, third, "the same list keeps its name");
+});
+
+test("the prompt cache follows the main conversation's requests and responses, and a compaction", async () => {
+  const { s, wrapper } = await session();
+  const cached = () => new Promise<void>((resolve) => s.once("state", () => resolve()));
+  const usage = { input_tokens: 3, cache_read_input_tokens: 0, cache_creation_input_tokens: 900, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 900 }, output_tokens: 10 };
+  const before = Date.now();
+  wrapper.out({ type: "user", session_id: SID, uuid: "u-1", message: { role: "user", content: "hi" }, isReplay: true });
+  await new Promise((r) => setTimeout(r, 30));
+  wrapper.out({ type: "assistant", session_id: SID, uuid: "a-sub", parent_tool_use_id: "toolu_x", message: { id: "msg_sub", model: "m", content: [], usage: { ...usage, cache_creation: { ephemeral_5m_input_tokens: 900 } } } });
+  const st = cached();
+  wrapper.out({ type: "assistant", session_id: SID, uuid: "a-1", message: { id: "msg_1", model: "claude-opus-5-5", content: [{ type: "text", text: "hello" }], usage } });
+  await st;
+  const c = s.state().cache!;
+  assert.equal(c.ttl, "1h", "a subagent's 5m cache is its own");
+  assert.equal(c.tokens, 903);
+  assert.ok(c.at! >= before && c.at! < Date.now() - 20, "the time of the request: the user's message, not the reply");
+  const compacted = cached();
+  wrapper.out({ type: "system", subtype: "compact_boundary", session_id: SID, uuid: "cb", compact_metadata: { trigger: "manual", pre_tokens: 1 } });
+  await compacted;
+  assert.ok(typeof s.state().cache?.compactedAt === "number");
+});
+
+test("the causes of usage are asked of a wrapper that passes them on, without skip_behaviors and with time to read a week of transcripts", async () => {
+  const old = await session();
+  await assert.rejects(old.s.usageCauses(), /not available/);
+  const { s, wrapper } = await session({ caps: ["fast_mode", "thinking", "claude_push", "usage_causes"] });
+  const asked: Msg[] = [];
+  wrapper.autoReply((r) => {
+    asked.push(r);
+    return { behaviors: { day: { request_count: 3, session_count: 1, behaviors: [{ key: "cache_miss", pct: 40, count: 2 }], agents: [], skills: [], plugins: [], mcp_servers: [] } } };
+  });
+  const c = await s.usageCauses();
+  assert.deepEqual(asked, [{ subtype: "get_usage" }]);
+  assert.deepEqual(c.day?.traits, [{ key: "cache_miss", pct: 40, count: 2 }]);
+  assert.equal(c.week, undefined);
 });

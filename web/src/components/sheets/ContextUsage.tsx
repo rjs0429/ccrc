@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import type { ContextDetail, LiveState, SessionState, UsageInfo } from "../../../../broker/src/protocol.ts";
 import { errorText, hostLabel } from "../../labels.ts";
 import { call } from "../../state.ts";
+import { useCacheNow } from "../CacheClock.tsx";
+import { cacheText } from "../promptCache.ts";
 import { Ring } from "../ContextRing.tsx";
 import { Button, Icon, Sheet } from "../ui.tsx";
 import { ContextGroups, DETAIL_WAIT_MS, compactLeftText, tokens } from "./Context.tsx";
 import { Failed, SmallButton, Waiting } from "./parts.tsx";
-import { UsageView } from "./Usage.tsx";
+import { UsageCausesSection, UsageView } from "./Usage.tsx";
 
 // The broker starts a short-lived process for the plan limits when no session can say.
 const USAGE_WAIT_MS = 60_000;
@@ -46,6 +48,9 @@ export function ContextUsageSheet({ sessionId, state, kind, starting, cannotStar
   const [usageError, setUsageError] = useState<string>();
   const [usageRound, setUsageRound] = useState(0);
   const [keep, setKeep] = useState("");
+  const [causes, setCauses] = useState(false);
+  const cache = useCacheNow(state?.cache);
+  const told = cache && cacheText(cache, tokens);
 
   useEffect(() => {
     if (controllable) call(sessionId, "context", { summary: true }).catch(() => {});
@@ -139,10 +144,27 @@ export function ContextUsageSheet({ sessionId, state, kind, starting, cannotStar
         )}
       </Section>
 
+      {cache && told && (
+        <Section name="cache" title="프롬프트 캐시">
+          <div className={`px-1 text-[14px] ${cache.kind === "warm" ? "" : "text-muted"}`} data-cache-text={cache.kind === "warm" ? "warm" : cache.reason}>
+            {told.head}
+          </div>
+          <div className="mt-0.5 px-1 text-xs text-muted">{told.hint}</div>
+        </Section>
+      )}
+
       <Section name="plan" title="요금제">
         {usage && <UsageView usage={{ limits: usage.limits }} />}
         {!usage && !usageError && <Waiting text="요금제 사용량을 불러오는 중입니다" />}
         {usageError && !usage && <Failed text={usageError} onRetry={() => setUsageRound((r) => r + 1)} />}
+        {!causes && (
+          <div className="mt-3 px-1">
+            <SmallButton tall onClick={() => setCauses(true)}>
+              사용량 원인 보기
+            </SmallButton>
+          </div>
+        )}
+        <UsageCausesSection sessionId={sessionId} start={causes} />
       </Section>
 
       <Section name="compact" title="Compact">

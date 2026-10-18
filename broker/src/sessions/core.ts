@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import path from "node:path";
 import {
@@ -16,17 +17,21 @@ import {
   type PendingKind,
   type PendingRequest,
   type PermissionModeName,
+  type PromptCache,
   type QueuedMessage,
   type RewindResult,
   type TaskOutput,
+  type UsageCauses,
   type UsageInfo,
 } from "../protocol.ts";
 import { elicitResult } from "../elicit.ts";
 import { cleanTitle } from "../titles.ts";
+import { rememberCommands } from "./commands.ts";
 import { gaugeOf } from "./context-gauge.ts";
 import type { FileContents } from "./file-read.ts";
 import { ItemBuilder, clipInput, typedContent, type RawMessage } from "./items.ts";
 import { classify, noteFact, type TurnEnd, type TurnFacts } from "./outcome.ts";
+import { CacheClock } from "./prompt-cache.ts";
 import { TaskBook } from "./tasks.ts";
 
 const STREAM_FLUSH_MS = 80;
@@ -58,6 +63,8 @@ export const ELICIT_MS = 15 * 60_000;
 export const ELICIT_UNWATCHED_MS = 2 * 60_000;
 // A file of up to 10MB travels base64-encoded in one line.
 export const READ_MS = 30_000;
+// What the usage went to comes from a read of every transcript of the last seven days.
+export const CAUSES_MS = 120_000;
 // The budget VS Code turns Thinking on with; a model that thinks adaptively ignores it.
 export const THINKING_TOKENS = 31_999;
 
@@ -158,6 +165,7 @@ interface StreamEvent {
   type: string;
   content_block?: { type: string };
   delta?: { type: string; text?: string; thinking?: string };
+  message?: { id?: unknown; usage?: unknown };
 }
 
 // A session whose Claude Code process the broker can drive: one it runs itself ("owned") or one
@@ -176,7 +184,14 @@ export abstract class SessionCore extends EventEmitter {
   readonly queue = new Map<string, QueuedMessage>();
   private held = new Set<string>();
   private takingBack = new Set<string>();
+  // The "/" commands a phone offers: Claude Code's list without the ones it binds to its own terminal.
   commands?: CommandInfo[];
+  private allCommands?: CommandInfo[];
+  private terminalCommands = new Set<string>();
+  private commandsKey?: string;
+  // A list Claude Code pushed during the session wins over the one it started with.
+  protected commandsPushed = false;
+  readonly cache = new CacheClock();
   busy = false;
   model?: string;
   permissionMode?: string;
@@ -252,6 +267,8 @@ export abstract class SessionCore extends EventEmitter {
       closedReason: this.closedReason,
       ...(this.tasks.size ? { tasks: this.tasks.values() } : {}),
       ...(this.queue.size ? { queued: [...this.queue.values()] } : {}),
+      ...(this.cache.value() ? { cache: this.cache.value() } : {}),
+      ...(this.commandsKey ? { commands: this.commandsKey } : {}),
     };
   }
 
@@ -261,6 +278,10 @@ export abstract class SessionCore extends EventEmitter {
   }
 
   usage(): Promise<UsageInfo> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  usageCauses(): Promise<UsageCauses> {
     return Promise.reject(Error("not available for this session"));
   }
 
@@ -592,6 +613,7 @@ export abstract class SessionCore extends EventEmitter {
   protected onMessage(m: RawMessage & Record<string, unknown>, at = new Date().toISOString()): void {
     if (m.type === "assistant" || m.type === "user" || m.type === "result" || m.type === "stream_event") this.lastActivity = Date.now();
     noteFact(this.facts, m);
+    this.noteCache(m, Date.parse(at));
     if (m.type === "stream_event") {
       if (!m.parent_tool_use_id) this.onStream(m.event as StreamEvent);
       return;
@@ -611,6 +633,7 @@ export abstract class SessionCore extends EventEmitter {
         this.adoptStyles(m.output_style);
         this.adoptFast(m.fast_mode_state, m.fast_mode_disabled_reason, true);
         if (typeof m.cwd === "string") this.initCwd(m.cwd, typeof m.original_cwd === "string" ? m.original_cwd : undefined);
+        this.adoptNames(m.slash_commands, m.terminal_slash_commands);
         this.emit("state");
         this.onInit();
         this.refreshApplied();
@@ -640,6 +663,10 @@ export abstract class SessionCore extends EventEmitter {
         this.outOfCredits();
         return;
       }
+      if (m.subtype === "commands_changed") {
+        this.adoptCommands(m.commands, true);
+        return;
+      }
       if (TaskBook.handles(m.subtype)) this.tasks.on(m);
     }
     if (m.type === "assistant" && !m.parent_tool_use_id) this.endStream();
@@ -659,6 +686,59 @@ export abstract class SessionCore extends EventEmitter {
   }
 
   protected onInit(): void {}
+
+  // The main conversation's requests and responses set the prompt cache; a subagent's have their own cache.
+  private noteCache(m: RawMessage & Obj, at: number): void {
+    if (m.parent_tool_use_id) return;
+    const msg: Obj = isObj(m.message) ? m.message : {};
+    const ev = m.type === "stream_event" && isObj(m.event) ? (m.event as unknown as StreamEvent) : undefined;
+    let changed = false;
+    if (m.type === "user") {
+      if (m.isCompactSummary === true) changed = this.cache.compact(at);
+      else this.cache.request(at);
+    } else if (m.type === "assistant" && msg.model !== "<synthetic>") changed = this.cache.response(msg.id, msg.usage, at);
+    else if (ev?.type === "message_start") changed = this.cache.response(ev.message?.id, ev.message?.usage, at);
+    else if (m.type === "system" && m.subtype === "compact_boundary") changed = this.cache.compact(at);
+    if (changed) this.emit("state");
+  }
+
+  // What the transcript last left of the prompt cache, until the session reports more.
+  seedCache(v: PromptCache | undefined): void {
+    if (this.cache.seed(v)) this.emit("state");
+  }
+
+  // Claude Code's command list as it started, or as it pushes it whenever it changes during the session.
+  protected adoptCommands(list: unknown, pushed = false): void {
+    if (!Array.isArray(list)) return;
+    if (pushed) this.commandsPushed = true;
+    else if (this.commandsPushed) return;
+    this.allCommands = commandInfo(list);
+    this.offerCommands();
+  }
+
+  // A turn's init line names every command and the ones bound to Claude Code's own terminal; names the list lacks or no
+  // longer has change it by name.
+  private adoptNames(names: unknown, terminal: unknown): void {
+    if (Array.isArray(terminal)) this.terminalCommands = new Set(terminal.filter((n): n is string => typeof n === "string"));
+    const all = this.allCommands;
+    const want = new Set(Array.isArray(names) ? names.filter((n): n is string => typeof n === "string" && n !== "") : []);
+    const have = new Set(all?.map((c) => c.name));
+    if (all && want.size && (want.size !== have.size || [...want].some((n) => !have.has(n)))) {
+      this.allCommands = [...all.filter((c) => want.has(c.name)), ...[...want].filter((n) => !have.has(n)).map((name) => ({ name, description: "" }))];
+    }
+    this.offerCommands();
+  }
+
+  private offerCommands(): void {
+    if (!this.allCommands) return;
+    const menu = this.allCommands.filter((c) => !this.terminalCommands.has(c.name));
+    const key = createHash("sha256").update(JSON.stringify(menu)).digest("base64url").slice(0, 12);
+    if (key === this.commandsKey) return;
+    this.commands = menu;
+    this.commandsKey = key;
+    rememberCommands(this.cwd, menu);
+    this.emit("state");
+  }
 
   // The folders a turn's init line names: where Claude Code's shell is, and, from Claude Code 2.1.301, the folder it
   // works from. A process type that follows them overrides this.

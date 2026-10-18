@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { elicitInfo } from "../elicit.ts";
 import type { Link } from "../link/server.ts";
-import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, ElicitInfo, UsageCauses, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput } from "../protocol.ts";
 import { argValue } from "../wrapper/relay.ts";
-import { rememberCommands } from "./commands.ts";
 import {
+  CAUSES_MS,
   CONTEXT_MS,
   ELICIT_MS,
   ELICIT_UNWATCHED_MS,
@@ -12,7 +12,6 @@ import {
   READ_MS,
   SessionCore,
   THINKING_TOKENS,
-  commandInfo,
   mcpServers,
   rewindResult,
   shellOutput,
@@ -22,7 +21,7 @@ import {
 } from "./core.ts";
 import { fileContents, type FileContents } from "./file-read.ts";
 import type { RawMessage } from "./items.ts";
-import { contextDetail, usageAnswer } from "./reports.ts";
+import { contextDetail, usageAnswer, usageCauses } from "./reports.ts";
 
 type Obj = Record<string, unknown>;
 type Held = { from: "out" | "in" | "settled"; v: unknown; at: string };
@@ -63,6 +62,8 @@ export class WrappedSession extends SessionCore {
   elicitMs = ELICIT_MS;
   unwatchedMs = ELICIT_UNWATCHED_MS;
   private startThinking: boolean;
+  // A wrapper that predates them drops the causes of usage from Claude Code's answer.
+  readonly causes: boolean;
 
   // Thinking starts as VS Code launched Claude Code; an older wrapper does not pass on VS Code's later changes.
   constructor(link: Link, id: string, cwd: string, title?: string) {
@@ -71,6 +72,7 @@ export class WrappedSession extends SessionCore {
     this.lastActivity = 0;
     const caps: unknown[] = Array.isArray(link.hello?.caps) ? link.hello.caps : [];
     this.optionsUnknown = !caps.includes("fast_mode") || !caps.includes("thinking");
+    this.causes = caps.includes("usage_causes");
     this.startThinking = thinkingArg(link.hello?.args ?? []);
     this.thinking = this.startThinking;
   }
@@ -111,6 +113,7 @@ export class WrappedSession extends SessionCore {
     if (this.hold("in", m)) return;
     if (m.type === "user" && typeof m.uuid === "string") {
       const now = Date.now();
+      this.cache.request(Math.min(Date.parse(str(m.timestamp) ?? "") || now, now));
       if (m.remote !== true) {
         this.hostInputAt = Math.min(Date.parse(str(m.timestamp) ?? "") || now, now);
         this.emit("host_input", this.hostInputAt);
@@ -256,6 +259,12 @@ export class WrappedSession extends SessionCore {
   async usage(): Promise<UsageInfo> {
     this.ensureOpen();
     return usageAnswer(await this.link.request({ subtype: "get_usage", skip_behaviors: true }));
+  }
+
+  async usageCauses(): Promise<UsageCauses> {
+    this.ensureOpen();
+    if (!this.causes) throw Error("not available for this session");
+    return usageCauses(await this.link.request({ subtype: "get_usage" }, CAUSES_MS));
   }
 
   async mcpStatus(): Promise<McpServerInfo[]> {
@@ -425,10 +434,7 @@ export class WrappedSession extends SessionCore {
       this.adoptFast(r.fast_mode_state, r.fast_mode_disabled_reason, true);
       this.refreshApplied();
     }
-    if (Array.isArray(r.commands)) {
-      this.commands = commandInfo(r.commands);
-      rememberCommands(this.cwd, this.commands);
-    }
+    if (Array.isArray(r.commands)) this.adoptCommands(r.commands);
     if (typeof r.current_permission_mode === "string" && r.current_permission_mode !== this.permissionMode) {
       this.permissionMode = r.current_permission_mode;
       this.emit("state");

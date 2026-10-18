@@ -1,6 +1,7 @@
 import { commandName, parseCommand } from "../../../broker/src/dialog-commands.ts";
+import type { CommandInfo } from "../../../broker/src/protocol.ts";
 
-export type CommandSheet = "context" | "usage" | "mcp" | "agents" | "rewind" | "model" | "effort" | "config" | "permissions" | "outputStyle" | "fork";
+export type CommandSheet = "context" | "usage" | "mcp" | "agents" | "rewind" | "model" | "effort" | "config" | "permissions" | "outputStyle" | "fork" | "export" | "copy";
 
 // Bare "/" commands the phone answers with a sheet or page of its own instead of sending them, the way VS Code
 // opens a dialog. live: the sheet needs the session's Claude Code process. Aliases resolve through commandName.
@@ -15,6 +16,8 @@ export const COMMAND_SHEETS: Record<string, { sheet: CommandSheet; title: string
   fork: { sheet: "fork", title: "갈래 만들기" },
   branch: { sheet: "fork", title: "갈래 만들기" },
   "output-style": { sheet: "outputStyle", title: "출력 스타일", live: true },
+  export: { sheet: "export", title: "대화 내보내기" },
+  copy: { sheet: "copy", title: "답 복사" },
   config: { sheet: "config", title: "Claude Code 설정" },
   permissions: { sheet: "permissions", title: "권한 규칙" },
 };
@@ -27,4 +30,16 @@ export function commandSheet(name: string): (typeof COMMAND_SHEETS)[string] | un
 export function bareCommandSheet(text: string): string | undefined {
   const c = parseCommand(text);
   return c && !c.args && commandSheet(c.name) ? c.name : undefined;
+}
+
+// Commands the phone answers itself that Claude Code does not list for a session it runs headless.
+export const PHONE_COMMANDS: CommandInfo[] = [
+  { name: "copy", description: "Claude의 마지막 답을 마크다운 원문으로 복사합니다" },
+  { name: "export", description: "대화를 Markdown 파일로 내보냅니다" },
+];
+
+// The "/" commands to offer for a session: Claude Code's, then the phone's own it does not list.
+export function withPhoneCommands(listed: CommandInfo[] | undefined): CommandInfo[] {
+  const names = new Set((listed ?? []).map((c) => c.name));
+  return [...(listed ?? []), ...PHONE_COMMANDS.filter((c) => !names.has(c.name))];
 }

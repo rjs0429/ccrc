@@ -19,6 +19,7 @@ import {
   type DisplayItem,
   type EffortName,
   type BrokerSessionsInfo,
+  type ExportInfo,
   type ForkResult,
   type LiveState,
   type ModelOption,
@@ -30,6 +31,7 @@ import {
   type SessionSummary,
   type SnapshotGap,
   type StartSettings,
+  type UsageCauses,
   type UsageInfo,
   type WorktreeChoice,
   type WorktreeRemoved,
@@ -38,16 +40,18 @@ import {
 import { cleanTitle } from "../titles.ts";
 import { worktreeBranch, worktreeNameProblem, worktreeOf, worktreePath } from "../worktree-names.ts";
 import { ArchiveStore, transcriptIds } from "./archive-store.ts";
-import { BrokerSession, probeModels, probeUsage, probeWindow, type StartOptions } from "./broker-session.ts";
+import { BrokerSession, probeModels, probeUsage, probeUsageCauses, probeWindow, type StartOptions } from "./broker-session.ts";
 import { lastCommands, rememberCommands } from "./commands.ts";
 import { ContextWindows, exactModel, gauge, lastModelId, lastUsage, widened, type ContextWindow } from "./context-gauge.ts";
 import type { ContentBlock, SessionCore } from "./core.ts";
 import { writeTitle } from "./custom-title.ts";
+import { exportMarkdown, timeZone } from "./export.ts";
 import { searchFiles } from "./files.ts";
 import { forkPoint, lastCwd, loadHistory, projectDirName, transcriptPath, turnPoint } from "./history.ts";
 import { liveProcesses } from "./live.ts";
 import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
+import { lastCache } from "./prompt-cache.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { SentIndex, sentCall, type SentCall } from "./sent-files.ts";
 import { SessionCwds } from "./session-cwd.ts";
@@ -77,6 +81,7 @@ const EARLY_LINES_MAX = 500;
 const ENDED_KEEP_MS = 10 * 60_000;
 const CRASHED_KEEP_MS = 24 * 3600_000;
 const USAGE_KEEP_MS = 30_000;
+const CAUSES_KEEP_MS = 5 * 60_000;
 // A model whose window could not be asked is asked again after this long.
 const PROBE_RETRY_MS = 60_000;
 // How long a call waits for a process of this broker that is closing to end.
@@ -208,6 +213,7 @@ export class SessionManager extends EventEmitter {
   private sweeper: NodeJS.Timeout;
   private timing: ManagerTiming;
   private accountUsage?: { at: number; value: Promise<UsageInfo> };
+  private accountCauses?: { at: number; value: Promise<UsageCauses> };
   // What sessions without a process start with when the broker next starts them.
   private starts = new StartStore(path.join(paths.stateDir, "start-settings.json"));
   private windows = new ContextWindows(path.join(paths.stateDir, "context-windows.json"));
@@ -226,6 +232,7 @@ export class SessionManager extends EventEmitter {
   private cwds = new SessionCwds();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string, env?: LaunchEnv) => Promise<UsageInfo> = probeUsage;
+  causesProbe: (cwd: string, claudePath?: string, env?: LaunchEnv) => Promise<UsageCauses> = probeUsageCauses;
   // Whether a phone can be reached now (connected, or the signed-in device gets notifications), so a VS Code
   // session's MCP input request is better answered there than declined by VS Code.
   remoteReachable: () => boolean = () => false;
@@ -472,6 +479,8 @@ export class SessionManager extends EventEmitter {
     const l = liveProcesses({ fresh: true }).find((p) => p.sessionId === sessionId);
     const ended = this.ended.get(sessionId);
     const context = await this.lastGauge(sessionId, cwd, () => void this.restate(sessionId));
+    const file = transcriptPath(sessionId, cwd);
+    const cache = file ? await lastCache(file).catch(() => undefined) : undefined;
     const start = l ? undefined : this.starts.get(sessionId);
     const folder = await this.resumeFolder(sessionId, cwd);
     const origin = l || isFolder(folder) ? undefined : await worktreeOrigin(sessionId, folder);
@@ -484,6 +493,7 @@ export class SessionManager extends EventEmitter {
       busy: l?.status === "busy",
       ...(ended ? { closedReason: ended.reason } : {}),
       ...(context ? { context } : {}),
+      ...(cache ? { cache } : {}),
       ...(start ? { start } : {}),
       ...(l || isFolder(folder) ? {} : origin ? { resumeIn: origin } : { folderMissing: true }),
     };
@@ -547,6 +557,12 @@ export class SessionManager extends EventEmitter {
     return undefined;
   }
 
+  // A session started or reached here shows the prompt cache its transcript last left until a response comes.
+  private seedCache(s: SessionCore): void {
+    const file = transcriptPath(s.id, s.cwd);
+    if (file) void lastCache(file).then((c) => this.current(s) && s.seedCache(c), () => {});
+  }
+
   // A session started or reached here shows the transcript's last gauge until Claude Code counts.
   private seedGauge(s: SessionCore): void {
     const fill = (): void =>
@@ -602,6 +618,7 @@ export class SessionManager extends EventEmitter {
       this.starts.delete(sessionId);
       if (start) this.audit?.log("start_settings", { sessionId, ...start });
       this.seedGauge(s);
+      this.seedCache(s);
       return s;
     })();
     this.starting.set(sessionId, p);
@@ -965,6 +982,10 @@ export class SessionManager extends EventEmitter {
         return this.setArchived(sessionId, args.archived === true);
       case "mark_unread":
         return this.setUnread(sessionId, args.unread === true);
+      case "export":
+        return this.exportConversation(sessionId, args);
+      case "usage_causes":
+        return this.accountCausesFor(await this.cwdOf(sessionId), this.controlled(sessionId));
       case "worktree_status":
         return this.worktreeStatus(sessionId);
       case "worktree_remove":
@@ -1017,6 +1038,8 @@ export class SessionManager extends EventEmitter {
         return lastCommands(dir);
       case "usage":
         return this.accountUsageFor(dir);
+      case "usage_causes":
+        return this.accountCausesFor(dir);
       case "git":
         return gitFolderInfo(dir);
     }
@@ -1058,6 +1081,41 @@ export class SessionManager extends EventEmitter {
     const env = this.probeEnv();
     if (!env) return { limits: [] };
     return this.usageProbe(probeDir(cwd), (await this.claude()).path, env);
+  }
+
+  // What the usage went to is read from every transcript of the machine, so any process answers it alike: the session's
+  // own first, then any running one, else one started for the question. An answer without causes is not kept.
+  private accountCausesFor(cwd: string, first?: SessionCore): Promise<UsageCauses> {
+    const kept = this.accountCauses;
+    if (kept && Date.now() - kept.at < CAUSES_KEEP_MS) return kept.value;
+    const value = this.freshCauses(cwd, first);
+    const entry = { at: Date.now(), value };
+    this.accountCauses = entry;
+    const forget = () => {
+      if (this.accountCauses === entry) this.accountCauses = undefined;
+    };
+    value.then((c) => c.none && forget(), forget);
+    return value;
+  }
+
+  private async freshCauses(cwd: string, first?: SessionCore): Promise<UsageCauses> {
+    for (const s of new Set([first, ...this.owned.values(), ...this.wrapped.values()])) {
+      if (!s || s.closed) continue;
+      try {
+        return await s.usageCauses();
+      } catch {}
+    }
+    return this.causesProbe(probeDir(cwd), (await this.claude()).path, this.launchEnv());
+  }
+
+  // The conversation as Claude Code keeps it in the transcript, whether a process runs it or not.
+  async exportConversation(sessionId: string, args: Record<string, unknown>): Promise<ExportInfo> {
+    const cwd = await this.cwdOf(sessionId);
+    const items = await loadHistory(sessionId, cwd);
+    if (!items.length) throw Error("nothing to export");
+    const info = await this.info(sessionId).catch(() => undefined);
+    const title = this.controlled(sessionId)?.title || (info ? titleOf(info) : "");
+    return exportMarkdown(items, { title, cwd, sessionId, at: new Date(), tz: timeZone(args.tz), tools: args.tools !== false });
   }
 
   // What reading a linked file needs: the folder the session started in, the one it last worked in,
@@ -1195,6 +1253,7 @@ export class SessionManager extends EventEmitter {
         .then((history) => {
           s.seed(history);
           this.seedGauge(s);
+          this.seedCache(s);
           if (this.current(s)) this.emit("attached", id);
         });
     };

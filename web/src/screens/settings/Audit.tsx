@@ -44,6 +44,7 @@ const EVENT_LABEL: Record<string, string> = {
   worktree_remove: "worktree 지우기",
   fork: "갈래",
   rewind_conversation: "대화 되돌리기",
+  export: "대화 내보내기",
 };
 
 const CALL_LABEL: Record<string, string> = {
@@ -122,6 +123,8 @@ function detail(e: AuditEntry): string {
       return e.by === "send" ? "메시지를 보내서" : "";
     case "claude_settings":
       return Array.isArray(e.keys) ? e.keys.join(", ") : "";
+    case "export":
+      return [typeof e.messages === "number" ? `메시지 ${e.messages}개` : "", e.ticket ? "내려받기" : "", e.outcome === "failed" ? "실패" : ""].filter(Boolean).join(" · ");
     case "file_read":
       return [typeof e.path === "string" ? baseName(e.path) : "", e.ticket && e.outcome === "ok" ? "임시 링크" : "", named(e.outcome, READ_OUTCOME)].filter(Boolean).join(" · ");
     case "new_session":

@@ -19,6 +19,9 @@ import { OutputStyleSheet, outputStyleLabel } from "../components/sheets/OutputS
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
 import { ForkSheet } from "../components/sheets/Fork.tsx";
 import { MessageActionsSheet } from "../components/sheets/MessageActions.tsx";
+import { ExportSheet } from "../components/sheets/Export.tsx";
+import { ReplySheet, type Reply } from "../components/sheets/Reply.tsx";
+import { copyText } from "../components/clipboard.ts";
 import type { UserMessage } from "../components/messageActions.ts";
 import { AgentMapSheet } from "../components/sheets/AgentMap.tsx";
 import { agentMap } from "../components/agents/tree.ts";
@@ -45,7 +48,7 @@ const NO_MODELS: ModelOption[] = [];
 // How long a command sent from here may take before its sheet says it gave no result, once the session is idle.
 const RESULT_LATE_MS = 15_000;
 const RESUME_WAIT_MS = 60_000;
-type SheetName = "agents" | "changes" | "context" | "contextUsage" | "mcp" | "outputStyle" | "rewind" | "usage";
+type SheetName = "agents" | "changes" | "context" | "contextUsage" | "export" | "mcp" | "outputStyle" | "rewind" | "usage";
 type CommandItem = Extract<DisplayItem, { kind: "command" }>;
 // A dialog command sent from here: its result shows in a sheet once a new result of that command arrives.
 interface Awaited {
@@ -97,6 +100,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [archiving, setArchiving] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [message, setMessage] = useState<UserMessage | null>(null);
+  const [reply, setReply] = useState<Reply | null>(null);
   // typed: the "/fork" or "/branch" message that opened the sheet, back in the composer when the sheet goes without a fork.
   const [fork, setFork] = useState<{ before?: UserMessage; text?: string; name?: string; typed?: string } | null>(null);
   const [rewindAt, setRewindAt] = useState<string>();
@@ -251,6 +255,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     else if (target === "config") openSettingsFrom("claude");
     else if (target === "permissions") openSettingsFrom("claude", "permissions");
     else if (target === "fork") setFork({});
+    else if (target === "copy") copyLatest();
     else if (target === "usage") {
       setUsageCommand(name);
       setSheet("usage");
@@ -310,6 +315,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (!href.startsWith("#")) setFile({ href });
   }, []);
   const openMessage = useCallback((m: UserMessage) => setMessage(m), []);
+  const openReply = useCallback((m: Reply) => setReply(m), []);
+  // "/copy" copies Claude's latest reply as VS Code's does, within the tap that sent it.
+  const copyLatest = () => {
+    const last = (chat?.items ?? []).findLast((i): i is Reply => i.kind === "assistant");
+    if (last) copyText(last.text, "답을 복사했습니다");
+    else toast("복사할 답이 없습니다");
+  };
   const roots = useMemo(() => (cwd ? [cwd] : []), [cwd]);
 
   useLayoutEffect(() => {
@@ -441,7 +453,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
                     data-item={item.id}
                     className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
                   >
-                    <ItemView item={item} running={busy} onMessage={openMessage} />
+                    <ItemView item={item} running={busy} onMessage={openMessage} onReply={openReply} />
                   </div>
                 </Fragment>
               ))}
@@ -603,6 +615,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               <Choice label="출력 스타일" value={st?.outputStyle && outputStyleLabel(st.outputStyle)} onClick={() => (setSheet("outputStyle"), setMenu(false))} />
             </>
           )}
+          <Choice label="대화 내보내기" onClick={() => (setSheet("export"), setMenu(false))} />
           <Choice
             label="읽지 않음으로 표시"
             onClick={() => {
@@ -674,6 +687,17 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {sheet === "mcp" && <McpSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "outputStyle" && <OutputStyleSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "rewind" && <RewindSheet sessionId={sessionId} initial={rewindAt} onClose={() => (setSheet(null), setRewindAt(undefined))} />}
+      {sheet === "export" && <ExportSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {reply && (
+        <ReplySheet
+          reply={reply}
+          onExport={() => {
+            setReply(null);
+            setSheet("export");
+          }}
+          onClose={() => setReply(null)}
+        />
+      )}
       {message && (
         <MessageActionsSheet
           message={message}

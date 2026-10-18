@@ -1,7 +1,7 @@
 import type { WebSocket } from "ws";
 import type { Audit } from "./audit.ts";
 import type { Leases } from "./lease.ts";
-import { CALL_OPS, FOLDER_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg, type WorktreeChoice, type WorktreeRemoved } from "./protocol.ts";
+import { CALL_OPS, FOLDER_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ExportInfo, type ServerMsg, type WorktreeChoice, type WorktreeRemoved } from "./protocol.ts";
 import { RemoteActivity } from "./remote-activity.ts";
 import type { SessionManager } from "./sessions/manager.ts";
 import { cleanTitle } from "./titles.ts";
@@ -389,6 +389,7 @@ export class Hub {
       if (msg.op === "rename") str(args.title, TITLE_ARG_MAX);
       if (msg.op === "archive" && typeof args.archived !== "boolean") throw Error("invalid request");
       if (msg.op === "mark_unread" && typeof args.unread !== "boolean") throw Error("invalid request");
+      if (msg.op === "export" && ((args.tools !== undefined && typeof args.tools !== "boolean") || (args.tz !== undefined && typeof args.tz !== "string"))) throw Error("invalid request");
       if (msg.op === "fork") {
         reply({ ok: true, data: await this.fork(sessionId, args) });
         return;
@@ -411,6 +412,10 @@ export class Hub {
         this.audit.log("agent_transcript", { device: this.device, sessionId, ...Object.fromEntries(ids) });
       }
       const data = await this.manager.call(sessionId, msg.op, args);
+      if (msg.op === "export") {
+        const x = data as ExportInfo;
+        this.audit.log("export", { device: this.device, sessionId, messages: x.messages, chars: x.text.length });
+      }
       // A worktree removal is recorded once done, with what went with it.
       if (msg.op === "worktree_remove") {
         const w = data as WorktreeRemoved;

@@ -66,14 +66,33 @@ function UserItem({ item, onActions }: { item: UserMessage; onActions?: (m: User
 // The line under a Claude reply's text that holds its time; while the reply streams, the same line holds the caret.
 const REPLY_LINE = "mt-1 h-4 leading-4";
 
-function AssistantItem({ item }: { item: Extract<DisplayItem, { kind: "assistant" }> }) {
+type AssistantMessage = Extract<DisplayItem, { kind: "assistant" }>;
+
+// A reply opens its actions as a message does: by a long press on its text, or from the button before its time. On a
+// touch screen its text is selected in the actions sheet instead.
+function AssistantItem({ item, onActions }: { item: AssistantMessage; onActions?: (m: AssistantMessage) => void }) {
   const at = stampTime(item);
+  const open = onActions ? () => onActions(item) : undefined;
+  const press = useLongPress(() => open?.());
   return (
     <div>
-      <Markdown text={item.text} className="text-[15px]" />
-      {at && (
-        <div className={`${REPLY_LINE} text-[11px] text-muted`}>
-          <Stamp at={at} />
+      <div {...(open ? press : {})} className={open ? "pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none]" : ""}>
+        <Markdown text={item.text} className="text-[15px]" />
+      </div>
+      {(at || open) && (
+        <div className={`${REPLY_LINE} flex items-center gap-1 text-[11px] text-muted`}>
+          {open && (
+            <button
+              onClick={open}
+              aria-label="답 동작"
+              aria-haspopup="dialog"
+              className="relative -ml-1 flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-inset-y-3.5 active:text-fg"
+              data-reply-actions
+            >
+              <Icon.dots className="size-4" />
+            </button>
+          )}
+          {at && <Stamp at={at} />}
         </div>
       )}
     </div>
@@ -375,13 +394,23 @@ export function shownItems(all: DisplayItem[]): DisplayItem[] {
   });
 }
 
-// onMessage: opens the actions of a message the user sent; without it, messages offer none.
-export const ItemView = memo(function ItemView({ item, running, onMessage }: { item: DisplayItem; running: boolean; onMessage?: (m: UserMessage) => void }) {
+// onMessage, onReply: open the actions of a message the user sent and of Claude's reply; without them, they offer none.
+export const ItemView = memo(function ItemView({
+  item,
+  running,
+  onMessage,
+  onReply,
+}: {
+  item: DisplayItem;
+  running: boolean;
+  onMessage?: (m: UserMessage) => void;
+  onReply?: (m: AssistantMessage) => void;
+}) {
   switch (item.kind) {
     case "user":
       return <UserItem item={item} onActions={onMessage} />;
     case "assistant":
-      return <AssistantItem item={item} />;
+      return <AssistantItem item={item} onActions={onReply} />;
     case "thinking":
       return <Thinking text={item.text} />;
     case "tool":

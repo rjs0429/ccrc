@@ -1,9 +1,11 @@
-import type { ContextDetail, UsageInfo, UsageLimit } from "../protocol.ts";
+import type { ContextDetail, UsageCauses, UsageInfo, UsageLimit, UsageShare, UsageWindowCauses } from "../protocol.ts";
 
 const NAME_MAX = 200;
 const PATH_MAX = 4096;
 const WORD_MAX = 40;
 const LIST_MAX = 50;
+// Claude Code's names for the traits of usage: an open set, kept when it looks like one.
+const TRAIT_KEY = /^[A-Za-z0-9_.-]{1,64}$/;
 const CONTEXT_KINDS = new Set<unknown>(["used", "free", "buffer", "deferred"]);
 // get_usage's windows, as the kinds and scopes /usage reports its limits with.
 const WINDOWS: [key: string, kind: string, scope?: string][] = [
@@ -103,4 +105,42 @@ export function usageAnswer(r: unknown): UsageInfo {
   }
   const session = sessionTotals(o.session);
   return { limits, ...(session ? { session } : {}) };
+}
+
+const share = (v: unknown): number => Math.min(100, Math.max(0, count(v)));
+const whole = (v: unknown): number => Math.max(0, Math.round(count(v)));
+
+function shares(v: unknown): UsageShare[] {
+  return (Array.isArray(v) ? v.filter(isObj) : [])
+    .flatMap((o) => {
+      const name = clipped(o.name, NAME_MAX);
+      return name ? [{ name, pct: share(o.pct) }] : [];
+    })
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, LIST_MAX);
+}
+
+function windowCauses(v: unknown): UsageWindowCauses | undefined {
+  if (!isObj(v)) return undefined;
+  const traits = (Array.isArray(v.behaviors) ? v.behaviors.filter(isObj) : [])
+    .flatMap((b) => (typeof b.key === "string" && TRAIT_KEY.test(b.key) ? [{ key: b.key, pct: share(b.pct), count: whole(b.count) }] : []))
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, LIST_MAX);
+  return {
+    requests: whole(v.request_count),
+    sessions: whole(v.session_count),
+    traits,
+    agents: shares(v.agents),
+    skills: shares(v.skills),
+    plugins: shares(v.plugins),
+    mcpServers: shares(v.mcp_servers),
+  };
+}
+
+// The behaviors section of a get_usage answer asked for without skip_behaviors.
+export function usageCauses(r: unknown): UsageCauses {
+  const b = isObj(r) && isObj(r.behaviors) ? r.behaviors : undefined;
+  const day = windowCauses(b?.day);
+  const week = windowCauses(b?.week);
+  return day || week ? { ...(day ? { day } : {}), ...(week ? { week } : {}) } : { none: true };
 }

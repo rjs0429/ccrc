@@ -13,6 +13,7 @@ import {
   allowedThinking,
   allowedTaskOutput,
   allowedUpdateSettings,
+  allowedUsage,
   appliedAnswer,
   elicitAnswer,
   launchSession,
@@ -302,6 +303,24 @@ test("a reconnecting broker gets the latest list of background tasks again", asy
   assert.equal(t.broker.frames.items.filter((f) => f.t === "out" && (f.m as Msg).subtype === "background_tasks_changed").length, 1);
 });
 
+test("a reconnecting broker gets the latest command list Claude Code pushed again, after its initialize answer", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.write({ type: "control_request", request_id: "init-1", request: { subtype: "initialize" } });
+  await t.broker.frames.wait(frameOut((m) => m.type === "control_response" && JSON.stringify(m).includes('"models"')), "initialize answer shared");
+  t.user("COMMANDS");
+  const latest = (m: Msg) => m.subtype === "commands_changed" && JSON.stringify(m.commands).includes("skill-2");
+  await t.broker.frames.wait(frameOut(latest), "list shared");
+  t.broker.frames = new Inbox();
+  t.broker.dropConnections();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello again");
+  await t.broker.frames.wait(frameOut(latest), "latest list re-sent");
+  const outs = t.broker.frames.items.filter((f) => f.t === "out").map((f) => f.m as Msg);
+  assert.equal(outs.filter((m) => m.subtype === "commands_changed").length, 1, "only the latest list");
+  const answer = outs.findIndex((m) => m.type === "control_response");
+  assert.ok(answer !== -1 && answer < outs.findIndex(latest), "the initialize answer comes before the pushed list");
+});
+
 test("claim: waits for claim_ok before starting Claude Code", async () => {
   const dir = tempDir();
   const socketPath = path.join(dir, "link.sock");
@@ -465,7 +484,7 @@ test("the broker may also turn fast mode on or off for the session, and set Thin
 test("Thinking changes from either side reach Claude Code, and a reconnecting broker gets the latest; the hello names what passes", async () => {
   const t = await setup();
   const hello = await t.broker.frames.wait((f) => f.t === "hello", "hello");
-  assert.deepEqual(hello.caps, ["fast_mode", "thinking", "claude_push"]);
+  assert.deepEqual(hello.caps, ["fast_mode", "thinking", "claude_push", "usage_causes"]);
   const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
   const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
   const thinking = (f: Msg) => f.t === "in" && ((f.m as Msg).request as Msg)?.subtype === "set_max_thinking_tokens";
@@ -544,6 +563,42 @@ test("the broker's get_usage is answered with the limit windows and session tota
   const seen = JSON.stringify(t.broker.frames.items);
   for (const leak of ["s3cret", "extra_usage", "subscription_type", "model_usage", "behaviors"]) assert.ok(!seen.includes(leak), leak);
   assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code does not see the broker's answer");
+});
+
+test("the broker's get_usage without skip_behaviors gets the causes of usage, names and shares only", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-gc", request: { subtype: "get_usage" } } });
+  const f = await t.broker.frames.wait((x) => x.t === "reply" && ((x.m as Msg).response as Msg).request_id === "ccrc-gc", "reply");
+  const answer = ((f.m as Msg).response as Msg).response as Msg;
+  assert.deepEqual(answer.behaviors, {
+    day: {
+      request_count: 12,
+      session_count: 2,
+      behaviors: [
+        { key: "cache_miss", pct: 34, count: 5 },
+        { key: "brand_new_trait", pct: 12, count: 1 },
+      ],
+      agents: [{ name: "general-purpose", pct: 40 }],
+      skills: [],
+      plugins: [],
+      mcp_servers: [{ name: "github", pct: 11 }],
+    },
+    week: { request_count: 80, session_count: 9, behaviors: [{ key: "long_context", pct: 61, count: 40 }], agents: [], skills: [{ name: "dataviz", pct: 3 }], plugins: [], mcp_servers: [] },
+  });
+  const seen = JSON.stringify(t.broker.frames.items);
+  for (const leak of ["s3cret", "not a key", "subscription_type", "model_usage"]) assert.ok(!seen.includes(leak), leak);
+});
+
+test("get_usage from the broker asks with or without the causes, nothing else", async () => {
+  for (const ok of [{}, { skip_behaviors: true }, { skip_behaviors: false }]) assert.ok(allowedUsage({ subtype: "get_usage", ...ok }), JSON.stringify(ok));
+  for (const bad of [{ skip_behaviors: "yes" }, { skip_behaviors: 1 }, { since: "2026-10-01" }, { skip_behaviors: true, project: "x" }]) {
+    assert.ok(!allowedUsage({ subtype: "get_usage", ...bad }), JSON.stringify(bad));
+  }
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-gx", request: { subtype: "get_usage", project: "/home/user" } } });
+  await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-gx", "a get_usage with other keys refused");
 });
 
 test("a get_usage answer keeps only an error's message", () => {
