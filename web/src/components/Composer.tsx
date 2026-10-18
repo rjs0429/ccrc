@@ -342,7 +342,8 @@ export function Composer({
     const next = measure();
     if (next && !sameLayout(next, layout)) setLayout(next);
   });
-  const hasRows = !disabledReason;
+  // Which textarea shows, if any: the composer's, or the one for a session open elsewhere. A new one is watched and fitted.
+  const shownField = disabledReason ? undefined : peer ? "peer" : "rows";
   // The textarea spans the chip rows and its height never follows them, so watching it sees each width change
   // and never the layout chosen here.
   useEffect(() => {
@@ -360,7 +361,7 @@ export function Composer({
       resized.disconnect();
       document.fonts.removeEventListener("loadingdone", update);
     };
-  }, [hasRows]);
+  }, [shownField]);
 
   // The textarea fits its text as it changes, as the textarea appears, and as the window's size changes its width or
   // its line height.
@@ -381,7 +382,7 @@ export function Composer({
       el.setSelectionRange(nextCaret.current, nextCaret.current);
       nextCaret.current = null;
     }
-  }, [text, hasRows]);
+  }, [text, shownField]);
   useEffect(() => {
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
