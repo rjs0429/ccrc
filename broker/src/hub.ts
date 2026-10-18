@@ -236,6 +236,11 @@ export class Hub {
     }, CHANGED_DEBOUNCE_MS);
   }
 
+  // The password was set again: each window asks /api/me, by which the phone's copy kept under the one before goes.
+  loginChanged(): void {
+    for (const ws of [this.active, ...this.standby.keys()]) if (ws) send(ws, { t: "login_changed" });
+  }
+
   private revokeAll(reason: string): void {
     for (const ws of [this.active, ...this.standby.keys()]) {
       if (!ws) continue;

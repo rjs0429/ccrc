@@ -916,6 +916,8 @@ export type ServerMsg =
   | { t: "sessions_changed" }
   // What /api/options gives changed: the folders new sessions may start in, or how broker sessions sign in.
   | { t: "options_changed" }
+  // The password was set again (`ccrc passwd` while the broker runs): /api/me says when.
+  | { t: "login_changed" }
   | { t: "error"; message: string; sessionId?: string; draftId?: string }
   | { t: "call_result"; id: number; ok: boolean; data?: unknown; error?: string }
   // A change in what the phone follows: the transcript since `base`, where the broker's last word left it, or the output

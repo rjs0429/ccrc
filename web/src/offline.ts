@@ -1,7 +1,7 @@
 import type { SessionSummary } from "../../broker/src/protocol.ts";
 import type { Me } from "./api.ts";
 import { getPrefs } from "./prefs.ts";
-import { COPY_IDLE_MINUTES, COPY_SESSIONS, copied, passwordChanged, untilAfter, usable, type CopyLogin, type SavedChat } from "./offlineCopy.ts";
+import { COPY_IDLE_MINUTES, COPY_SESSIONS, Contact, copied, passwordChanged, untilAfter, usable, type CopyLogin, type SavedChat } from "./offlineCopy.ts";
 import type { Chat } from "./state.ts";
 
 // The phone's copy of recent conversations in IndexedDB, and in localStorage until when it may show. It belongs to the
@@ -13,6 +13,7 @@ const LOGIN_KEY = "ccrc.copyLogin";
 // Each answer of the broker moves the copy's end; writing it down at most this often leaves it a little short of the
 // login's.
 const WRITE_MS = 30_000;
+const END_CHECK_MAX_MS = 3_600_000;
 
 let db: Promise<IDBDatabase> | undefined;
 
@@ -75,8 +76,11 @@ let signedIn = false;
 let lastKept: { items: Chat["items"]; title: string } | undefined;
 let idleMinutes = COPY_IDLE_MINUTES;
 let stamp: string | undefined;
-let contact = 0;
+const contact = new Contact();
 let written = 0;
+// The copy went because its time ran out; the next contact clears it.
+let ended = false;
+let endTimer: number | undefined;
 
 function readLogin(): CopyLogin | undefined {
   try {
@@ -88,31 +92,64 @@ function readLogin(): CopyLogin | undefined {
 }
 
 function writeLogin(): void {
-  if (!signedIn || !contact) return;
+  if (!signedIn || !contact.at) return;
   written = Date.now();
   try {
-    localStorage.setItem(LOGIN_KEY, JSON.stringify({ until: untilAfter(contact, idleMinutes), ...(stamp ? { stamp } : {}) }));
+    localStorage.setItem(LOGIN_KEY, JSON.stringify({ until: untilAfter(contact.at, idleMinutes), ...(stamp ? { stamp } : {}) }));
   } catch {}
+  checkEnd();
+}
+
+// Until when the copy may show: from this page's contact while it knows its login, else as written down.
+function login(): CopyLogin | undefined {
+  return signedIn && contact.at ? { until: untilAfter(contact.at, idleMinutes) } : readLogin();
 }
 
 // When the copy stops showing; undefined when there is none to show.
 export function copyEnd(): number | undefined {
-  if (signedIn && contact) return untilAfter(contact, idleMinutes);
-  return readLogin()?.until;
+  return login()?.until;
 }
 
-function showable(): boolean {
-  return getPrefs().keepCopies && usable(signedIn && contact ? { until: untilAfter(contact, idleMinutes) } : readLogin());
+function shows(): boolean {
+  return getPrefs().keepCopies && usable(login());
 }
+
+// The copy went because its time ran out.
+export function copyEnded(): boolean {
+  return ended;
+}
+
+// The copy goes once its end comes, also while a screen shows it, and is looked at again whenever the page shows: a
+// page the phone suspended runs its timers late.
+function checkEnd(): void {
+  clearTimeout(endTimer);
+  endTimer = undefined;
+  const l = login();
+  if (!l || ended) return;
+  const left = l.until - Date.now();
+  if (left > 0) {
+    endTimer = window.setTimeout(checkEnd, Math.min(left, END_CHECK_MAX_MS));
+    return;
+  }
+  ended = true;
+  void forgetCopies();
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") checkEnd();
+});
+window.addEventListener("pageshow", checkEnd);
+checkEnd();
 
 // What /api/me said of this browser's login.
 export function copyLogin(me: Me): void {
   if (!me.loggedIn) return copyLoggedOut();
   if (passwordChanged(readLogin(), me.loginSetAt)) void forgetCopies();
-  signedIn = true;
   idleMinutes = me.leaseIdleMinutes ?? COPY_IDLE_MINUTES;
   stamp = me.loginSetAt;
-  contact = Date.now();
+  if (!signedIn) contact.answered(Date.now());
+  signedIn = true;
+  ended = false;
   writeLogin();
 }
 
@@ -122,15 +159,31 @@ export function copySignedIn(): boolean {
 
 export function copyLoggedOut(): void {
   signedIn = false;
-  contact = 0;
+  contact.reset();
+  ended = false;
   void forgetCopies();
 }
 
-// The broker answered this login.
-export function noteContact(): void {
-  if (!signedIn) return;
-  contact = Date.now();
-  if (contact - written >= WRITE_MS) writeLogin();
+function moved(): void {
+  ended = false;
+  if (contact.at - written >= WRITE_MS) writeLogin();
+}
+
+export function noteAnswered(madeAt: number): void {
+  if (signedIn && contact.answered(madeAt)) moved();
+}
+
+// Something went on the socket, or it opened.
+export function noteSent(): void {
+  if (signedIn) contact.sent(Date.now());
+}
+
+export function noteHeard(): void {
+  if (signedIn && contact.heard()) moved();
+}
+
+export function noteLost(): void {
+  contact.lost();
 }
 
 export function flushContact(): void {
@@ -139,7 +192,7 @@ export function flushContact(): void {
 
 // Keeps the end of the chat on screen, as the newest of the copy.
 export function keepCopy(chat: Chat, summary?: SessionSummary): Promise<void> {
-  if (!signedIn || !getPrefs().keepCopies || !chat.loaded) return Promise.resolve();
+  if (!signedIn || !shows() || !chat.loaded) return Promise.resolve();
   const title = summary?.title || chat.state?.title || "";
   if (lastKept?.items === chat.items && lastKept.title === title) return Promise.resolve();
   lastKept = { items: chat.items, title };
@@ -167,9 +220,16 @@ export function keepCopy(chat: Chat, summary?: SessionSummary): Promise<void> {
     .catch(() => {});
 }
 
+// A copy that may no longer show goes when it is asked for. The watchers are not told: they are the ones asking.
+function gone<T>(none: T): Promise<T> {
+  const l = login();
+  if (l && !usable(l)) ended = true;
+  return drop().then(() => none);
+}
+
 // The conversations kept, newest first; none once the copy may no longer show, which then goes.
 export function savedCopies(): Promise<SavedChat[]> {
-  if (!showable()) return forgetCopies().then(() => []);
+  if (!shows()) return gone([]);
   return queued(async () => {
     const all = await answer((await open()).transaction(STORE).objectStore(STORE).getAll() as IDBRequest<SavedChat[]>);
     return all.sort((a, b) => b.savedAt - a.savedAt);
@@ -177,7 +237,7 @@ export function savedCopies(): Promise<SavedChat[]> {
 }
 
 export function savedCopy(sessionId: string): Promise<SavedChat | undefined> {
-  if (!showable()) return forgetCopies().then(() => undefined);
+  if (!shows()) return gone(undefined);
   return queued(async () => {
     const found = await answer((await open()).transaction(STORE).objectStore(STORE).get(sessionId) as IDBRequest<SavedChat | undefined>);
     return found ?? undefined;
@@ -192,7 +252,7 @@ export function copySize(): Promise<{ count: number; bytes: number }> {
   }).catch(() => ({ count: 0, bytes: 0 }));
 }
 
-export function forgetCopies(): Promise<void> {
+function drop(): Promise<void> {
   try {
     localStorage.removeItem(LOGIN_KEY);
   } catch {}
@@ -202,7 +262,9 @@ export function forgetCopies(): Promise<void> {
     const t = (await open()).transaction(STORE, "readwrite");
     t.objectStore(STORE).clear();
     await finished(t);
-  })
-    .then(changed)
-    .catch(() => {});
+  }).catch(() => {});
+}
+
+export function forgetCopies(): Promise<void> {
+  return drop().then(changed);
 }

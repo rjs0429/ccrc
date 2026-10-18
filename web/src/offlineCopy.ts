@@ -104,6 +104,45 @@ export function passwordChanged(login: CopyLogin | undefined, stamp: string | un
   return Boolean(login?.stamp && stamp && login.stamp !== stamp);
 }
 
+// The broker moves a login's last activity at most once a minute, so the login may end up to a minute before its idle
+// time counted from the phone's last contact.
+const LAST_SEEN_STEP_MS = 60_000;
+
 export function untilAfter(contact: number, idleMinutes = COPY_IDLE_MINUTES): number {
-  return contact + idleMinutes * 60_000;
+  return contact + idleMinutes * 60_000 - LAST_SEEN_STEP_MS;
+}
+
+// When the broker last took in something the phone sent, which is what it counts the login's idle time from: a request
+// from when it was made, once answered; what went on the socket, and the socket's opening, once the broker's next
+// message shows that the connection carried it. The broker's own messages say nothing of the phone's activity.
+export class Contact {
+  at = 0;
+  private unheard = 0;
+
+  // Whether the contact moved.
+  answered(madeAt: number): boolean {
+    if (madeAt <= this.at) return false;
+    this.at = madeAt;
+    return true;
+  }
+
+  sent(at: number): void {
+    this.unheard = at;
+  }
+
+  heard(): boolean {
+    const sent = this.unheard;
+    this.unheard = 0;
+    return sent ? this.answered(sent) : false;
+  }
+
+  // The socket closed: what it did not answer may not have arrived.
+  lost(): void {
+    this.unheard = 0;
+  }
+
+  reset(): void {
+    this.at = 0;
+    this.unheard = 0;
+  }
 }

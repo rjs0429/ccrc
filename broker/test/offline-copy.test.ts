@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DisplayItem } from "../src/protocol.ts";
 import { dayClock, minutesText } from "../../web/src/labels.ts";
-import { COPY_CHARS, COPY_ITEMS, copied, keptItem, passwordChanged, untilAfter, usable } from "../../web/src/offlineCopy.ts";
+import { COPY_CHARS, COPY_ITEMS, Contact, copied, keptItem, passwordChanged, untilAfter, usable } from "../../web/src/offlineCopy.ts";
 
 const user = (id: string, text = "물음"): DisplayItem => ({ kind: "user", id, ts: "2026-10-18T01:00:00.000Z", text });
 const reply = (id: string, text = "답"): DisplayItem => ({ kind: "assistant", id, text });
@@ -100,8 +100,8 @@ test("with a gap, the copy keeps only the part after it", () => {
 
 test("the copy shows until the login would end, and goes with a password set again", () => {
   const at = Date.UTC(2026, 9, 18, 3);
-  assert.equal(untilAfter(at, 60), at + 3_600_000);
-  assert.equal(untilAfter(at), at + 720 * 60_000, "the broker's default when it does not say");
+  assert.equal(untilAfter(at, 60), at + 3_600_000 - 60_000, "a minute short: the broker moves the login's last activity once a minute");
+  assert.equal(untilAfter(at), at + 720 * 60_000 - 60_000, "the broker's default when it does not say");
   assert.equal(usable({ until: at + 1 }, at), true);
   assert.equal(usable({ until: at }, at), false);
   assert.equal(usable(undefined, at), false);
@@ -109,6 +109,27 @@ test("the copy shows until the login would end, and goes with a password set aga
   assert.equal(passwordChanged({ until: 0, stamp: "2026-10-18T00:00:00.000Z" }, "2026-10-18T00:00:00.000Z"), false);
   assert.equal(passwordChanged({ until: 0 }, "2026-10-18T00:00:00.000Z"), false, "nothing to compare with");
   assert.equal(passwordChanged({ until: 0, stamp: "2026-10-18T00:00:00.000Z" }, undefined), false, "a broker that does not say");
+});
+
+test("the phone's contact is the last thing the broker took in from it, not what the broker sent", () => {
+  const c = new Contact();
+  assert.equal(c.answered(1000), true, "a request answered counts from when it was made");
+  assert.equal(c.answered(900), false, "an earlier request answered late moves nothing");
+  c.sent(2000);
+  c.sent(3000);
+  assert.equal(c.at, 1000, "sent on the socket, not yet shown to have arrived");
+  assert.equal(c.heard(), true);
+  assert.equal(c.at, 3000, "the broker's next message shows what went before it arrived");
+  assert.equal(c.heard(), false, "the broker's own messages move nothing");
+  assert.equal(c.at, 3000);
+  c.sent(4000);
+  c.lost();
+  assert.equal(c.heard(), false, "what a socket that closed did not answer does not count");
+  assert.equal(c.at, 3000);
+  c.sent(5000);
+  c.reset();
+  assert.equal(c.heard(), false);
+  assert.equal(c.at, 0);
 });
 
 test("how long and until when the copy shows read in Korean", () => {

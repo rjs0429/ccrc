@@ -1,6 +1,6 @@
 import type { SearchResponse, Thread } from "../../broker/src/search-protocol.ts";
 import type { BrokerSessionsInfo, ModelOption, PermissionModeName, SessionSummary, UploadInfo } from "../../broker/src/protocol.ts";
-import { noteContact } from "./offline.ts";
+import { noteAnswered } from "./offline.ts";
 
 // leaseIdleMinutes and loginSetAt, while logged in: how long the login lasts without activity, and when its password
 // was set; the phone's copy of recent conversations goes by them.
@@ -34,6 +34,7 @@ export class ApiError extends Error {
 }
 
 export async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const at = Date.now();
   const res = await fetch(url, {
     method,
     credentials: "same-origin",
@@ -43,7 +44,7 @@ export async function request<T>(method: string, url: string, body?: unknown, si
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) throw new ApiError(res.status, data);
-  noteContact();
+  noteAnswered(at);
   return data as T;
 }
 
@@ -63,13 +64,14 @@ function upload(file: Blob, name: string, onProgress: (fraction: number) => void
         body = JSON.parse(xhr.responseText) as Record<string, unknown>;
       } catch {}
       if (xhr.status >= 200 && xhr.status < 300) {
-        noteContact();
+        noteAnswered(at);
         resolve(body as unknown as UploadInfo);
       } else reject(new ApiError(xhr.status, body));
     };
     xhr.onerror = () => reject(new ApiError(0, { error: "network" }));
     xhr.onabort = () => reject(new DOMException("aborted", "AbortError"));
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    const at = Date.now();
     xhr.send(file);
   });
 }

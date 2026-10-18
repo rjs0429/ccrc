@@ -457,12 +457,14 @@ does the file.
   keeps the end of the last five it showed in its browser's storage (IndexedDB, 160KB each at most), and the app
   itself in its service worker's cache. The copy holds what was said and tool calls by name and summary; tool input
   and output, diffs, command output, thinking and pictures are not kept. It shows read only, and only as long as the
-  phone's login would last without activity (`leaseIdleMinutes` from the phone's last contact). It is deleted on
-  logout, when that time runs out, and when the phone next reaches the machine and learns that its login ended
-  (`ccrc logout`, a login elsewhere), that the password was changed (on the phone or with `ccrc passwd`) or that the
-  device is no longer allowed. The phone's settings (계정과 보안 > "최근 대화를 휴대폰에 저장", on by default) turn it
-  off and delete it. A lost phone that cannot reach the machine shows the copy to whoever unlocks it until the time
-  runs out: run `ccrc logout` on the machine, and rely on the phone's lock.
+  phone's login would last without activity (`leaseIdleMinutes` from the last request or message of the phone's that
+  the broker took in, less a minute). It is deleted on logout, when that time runs out (also from a screen showing
+  it), at once when the password is changed (on the phone, or with `ccrc passwd` while the phone is connected), and
+  otherwise when the phone next reaches the machine and learns that its login ended (`ccrc logout`, a login
+  elsewhere), that the password was changed or that the device is no longer allowed. The phone's settings
+  (계정과 보안 > "최근 대화를 휴대폰에 저장", on by default) turn it off and delete it. A lost phone that cannot reach the
+  machine shows the copy to whoever unlocks it until the time runs out: run `ccrc logout` on the machine, and rely on
+  the phone's lock.
 
 ### What leaves your machine
 

@@ -106,11 +106,12 @@ your version and the new one, and the lines under "Breaking" separately.
   file names. Tool input and output, diffs, command output, thinking and pictures stay on the machine. When the broker
   cannot be reached (the machine off or asleep, Tailscale down, the broker stopped or answering with an error), the
   app still opens and lists them; a conversation opens read only and says so, and the app goes back to the live ones
-  once the broker answers. The copy belongs to the login: logging out, a new password (on the phone or with
-  `ccrc passwd`), a login ended at the machine (`ccrc logout`, idle time, a login on another device), the device
-  leaving `allowedDevices`, and `leaseIdleMinutes` passing without reaching the broker all delete it. "최근 대화를
-  휴대폰에 저장" under 계정과 보안 (on by default) turns it off and deletes it, and shows how much it holds. `/api/me`
-  also gives a logged-in phone `leaseIdleMinutes` and when the password was set (`loginSetAt`).
+  once the broker answers. The copy belongs to the login: logging out, a new password (on the phone, or with
+  `ccrc passwd`, which a connected phone hears of at once), a login ended at the machine (`ccrc logout`, idle time, a
+  login on another device), the device leaving `allowedDevices`, and `leaseIdleMinutes` passing without reaching the
+  broker (also while the copy is on screen) all delete it. "최근 대화를 휴대폰에 저장" under 계정과 보안 (on by
+  default) turns it off and deletes it, and shows how much it holds. `/api/me` also gives a logged-in phone
+  `leaseIdleMinutes` and when the password was set (`loginSetAt`).
 
 ### Changed
 

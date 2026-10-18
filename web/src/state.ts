@@ -14,7 +14,7 @@ import type {
 import { api, ApiError, type Me, type Options } from "./api.ts";
 import { isIos, lastTap, recentRequest, syncBadge } from "./push.ts";
 import { joined, placed } from "./chatItems.ts";
-import { copyLoggedOut, copyLogin, copySignedIn, flushContact, keepCopy, noteContact } from "./offline.ts";
+import { copyLoggedOut, copyLogin, copySignedIn, flushContact, keepCopy, noteHeard, noteLost, noteSent } from "./offline.ts";
 import { bindSent } from "./sentPreviews.ts";
 
 export type SettingsPage = "claude" | "alerts" | "account" | "status";
@@ -408,7 +408,7 @@ let retryTimer: number | undefined;
 export function send(msg: ClientMsg): boolean {
   if (socket?.readyState !== WebSocket.OPEN || state.conn !== "ready") return false;
   socket.send(JSON.stringify(msg));
-  noteContact();
+  noteSent();
   return true;
 }
 
@@ -443,7 +443,7 @@ function ask(msg: (id: number) => ClientMsg, ms: number, progress?: (p: CallProg
     }, ms);
     calls.set(id, { resolve, reject, timer, ...(progress ? { progress } : {}) });
     socket!.send(JSON.stringify(msg(id)));
-    noteContact();
+    noteSent();
   });
 }
 
@@ -556,13 +556,17 @@ export function connect(): void {
   socket?.close();
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   socket = ws;
+  noteSent();
   // While it tries again after a drop, the page stays offline, so what shows does not flicker with each try.
   setState({ conn: state.conn === "offline" ? "offline" : "connecting" });
   ws.onmessage = (e) => {
-    if (ws === socket) onServer(JSON.parse(String(e.data)) as ServerMsg);
+    if (ws !== socket) return;
+    noteHeard();
+    onServer(JSON.parse(String(e.data)) as ServerMsg);
   };
   ws.onclose = (e) => {
     if (ws !== socket) return;
+    noteLost();
     settleCalls();
     endFollows();
     if (e.code === 4001) return loggedOut(state.loggedOutReason ?? "expired");
@@ -734,6 +738,9 @@ function onServer(msg: ServerMsg): void {
       calls.get(id)?.progress?.(p);
       return;
     }
+    case "login_changed":
+      void api.me().then(meAgain, () => {});
+      return;
     case "pong":
       return;
   }

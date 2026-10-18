@@ -7,7 +7,7 @@ import { dayLines } from "../components/stamps.ts";
 import { TitleText } from "../components/TitleText.tsx";
 import { Button, Icon, Spinner } from "../components/ui.tsx";
 import { dayClock, relTime, sessionTitle } from "../labels.ts";
-import { copyEnd, forgetCopies, savedCopies, savedCopy } from "../offline.ts";
+import { copyEnd, copyEnded, forgetCopies, onCopies, savedCopies, savedCopy } from "../offline.ts";
 import type { SavedChat } from "../offlineCopy.ts";
 import { getPrefs } from "../prefs.ts";
 import { navigate, reconnect, toast, useApp } from "../state.ts";
@@ -26,11 +26,14 @@ function Retry() {
   );
 }
 
-// While the broker cannot be reached, or does not let this device in: why, and the conversations the phone kept, to read.
+// While the broker cannot be reached, or does not let this device in: why, and the conversations the phone kept, to read
+// for as long as the copy lasts.
 export function OfflineHome({ reason }: { reason: "unreachable" | "denied" }) {
   const [chats, setChats] = useState<SavedChat[]>();
   useEffect(() => {
-    void savedCopies().then(setChats);
+    const read = () => void savedCopies().then(setChats);
+    read();
+    return onCopies(read);
   }, [reason]);
   const end = chats?.length ? copyEnd() : undefined;
   const forget = () =>
@@ -71,10 +74,12 @@ export function OfflineHome({ reason }: { reason: "unreachable" | "denied" }) {
                 </div>
               )}
               {chats?.length === 0 && (
-                <p className="px-1 py-4 text-sm break-keep text-muted" data-copy-empty>
-                  {getPrefs().keepCopies
-                    ? "저장한 대화가 없습니다. 노트북에 연결되어 있을 때 연 대화가 여기에 남습니다."
-                    : "대화를 휴대폰에 저장하지 않게 설정되어 있습니다."}
+                <p className="px-1 py-4 text-sm break-keep text-muted" data-copy-empty data-copy-ended={copyEnded() || undefined}>
+                  {!getPrefs().keepCopies
+                    ? "대화를 휴대폰에 저장하지 않게 설정되어 있습니다."
+                    : copyEnded()
+                      ? "볼 수 있는 기한이 지나 휴대폰에 저장한 대화를 지웠습니다."
+                      : "저장한 대화가 없습니다. 노트북에 연결되어 있을 때 연 대화가 여기에 남습니다."}
                 </p>
               )}
               {chats && chats.length > 0 && (
@@ -119,7 +124,9 @@ export function OfflineChat({ sessionId }: { sessionId: string }) {
   const [reply, setReply] = useState<Reply | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    void savedCopy(sessionId).then((c) => setChat(c ?? null));
+    const read = () => void savedCopy(sessionId).then((c) => setChat((was) => (c && was?.savedAt === c.savedAt ? was : (c ?? null))));
+    read();
+    return onCopies(read);
   }, [sessionId]);
   const items = useMemo(() => shownItems(chat?.items ?? []), [chat]);
   const days = useMemo(() => dayLines(items), [items]);
@@ -155,8 +162,8 @@ export function OfflineChat({ sessionId }: { sessionId: string }) {
                   </div>
                 )}
                 {chat === null && (
-                  <p className="py-10 text-center text-sm break-keep text-muted" data-copy-missing>
-                    이 대화는 휴대폰에 저장하지 않았습니다. 노트북에 연결되면 볼 수 있습니다.
+                  <p className="py-10 text-center text-sm break-keep text-muted" data-copy-missing data-copy-ended={copyEnded() || undefined}>
+                    {copyEnded() ? "볼 수 있는 기한이 지나 휴대폰에서 지웠습니다." : "이 대화는 휴대폰에 저장하지 않았습니다."} 노트북에 연결되면 볼 수 있습니다.
                   </p>
                 )}
                 {chat?.cut && (
@@ -186,7 +193,7 @@ export function OfflineChat({ sessionId }: { sessionId: string }) {
         </p>
         <Retry />
       </div>
-      {reply && <ReplySheet reply={reply} onClose={() => setReply(null)} />}
+      {reply && chat && <ReplySheet reply={reply} onClose={() => setReply(null)} />}
     </div>
   );
 }
