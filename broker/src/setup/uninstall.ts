@@ -70,6 +70,7 @@ const OWN: Record<Kind, { names: string[]; patterns: RegExp[] }> = {
       "context-windows.json",
       "ultracode-models.json",
       "archived.json",
+      "unread.json",
       "models.json",
       "update-check.json",
       "install.log",

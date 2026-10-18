@@ -7,7 +7,7 @@ import { Composer } from "../components/Composer.tsx";
 import { reattach } from "../components/composer/attachments.ts";
 import { commandSheet } from "../components/commandSheets.ts";
 import { PendingCard } from "../components/Pending.tsx";
-import { ArchivedBadge, SessionActions, renameBlocked, setArchived } from "../components/SessionActions.tsx";
+import { ArchivedBadge, SessionActions, renameBlocked, setArchived, setUnread } from "../components/SessionActions.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
 import { TitleText } from "../components/TitleText.tsx";
 import { ChangesSheet } from "../components/sheets/Changes.tsx";
@@ -603,6 +603,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
               <Choice label="출력 스타일" value={st?.outputStyle && outputStyleLabel(st.outputStyle)} onClick={() => (setSheet("outputStyle"), setMenu(false))} />
             </>
           )}
+          <Choice
+            label="읽지 않음으로 표시"
+            onClick={() => {
+              setMenu(false);
+              void setUnread(sessionId, true).then((ok) => ok && navigate({ name: "home" }));
+            }}
+          />
           {(worktree || kind === "owned") && <div className="mx-3 my-1.5 h-px bg-line" />}
           {worktree && <Choice label="worktree 정리" onClick={() => (setCleaning(true), setMenu(false))} />}
           {kind === "owned" && (

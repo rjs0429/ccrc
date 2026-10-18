@@ -23,7 +23,8 @@ export interface Hello {
   sessionId?: string;
   // Session the wrapper waits to start until the broker hands it over.
   claim?: string;
-  // What this wrapper passes on beyond what LINK_VERSION promises: "fast_mode" and "thinking" changes.
+  // What this wrapper passes on beyond what LINK_VERSION promises: "fast_mode" and "thinking" changes, and
+  // "claude_push": it tells Claude what became of a PushNotification call as the broker's claude_push frames say.
   caps?: string[];
 }
 
@@ -51,7 +52,10 @@ export type BrokerFrame =
   | { t: "to_cli"; m: Record<string, unknown> }
   // take: the phone answers the held input request; pass: VS Code gets it after all.
   | { t: "take"; id: string }
-  | { t: "pass"; id: string };
+  | { t: "pass"; id: string }
+  // Whether the notifications Claude sends reach a device, and whether the remote user has this session in front of
+  // them, so none goes for it; sent after hello and on each change.
+  | { t: "claude_push"; on: boolean; watching?: boolean };
 
 // The user's runtime folder when there is one, else the ccrc state folder; never a shared folder such as /tmp.
 export function linkSocketPath(): string {

@@ -8,7 +8,7 @@ import { call, patchSession, toast } from "../state.ts";
 import { ArchiveWorktree } from "./sheets/Worktree.tsx";
 import { Button, Choice, Sheet, Spinner } from "./ui.tsx";
 
-type Target = Pick<SessionSummary, "id" | "title" | "state" | "host" | "archived"> & { cwd?: string };
+type Target = Pick<SessionSummary, "id" | "title" | "state" | "host" | "archived" | "unread"> & { cwd?: string };
 
 const RENAME_HOW: Partial<Record<SessionSummary["state"], string>> = {
   owned: "Claude Code가 이름을 저장합니다.",
@@ -24,6 +24,21 @@ export function setArchived(sessionId: string, on: boolean): void {
       toast(on ? "보관했습니다" : "보관을 풀었습니다");
     },
     (e: Error) => toast(e.message),
+  );
+}
+
+// Marks a session unread until it is opened again, or read; the list follows at once. Resolves to whether it took.
+export function setUnread(sessionId: string, on: boolean): Promise<boolean> {
+  return call(sessionId, "mark_unread", { unread: on }).then(
+    () => {
+      patchSession(sessionId, { unread: on || undefined });
+      toast(on ? "읽지 않음으로 표시했습니다" : "읽음으로 표시했습니다");
+      return true;
+    },
+    (e: Error) => {
+      toast(errorText(e.message));
+      return false;
+    },
   );
 }
 
@@ -95,6 +110,14 @@ export function SessionActions({ session, step: first, onClose }: { session: Tar
           onClick={() => {
             if (!session.archived && session.cwd && worktreeOf(session.cwd)) return setStep("archive");
             setArchived(session.id, !session.archived);
+            onClose();
+          }}
+        />
+        <Choice
+          label={session.unread ? "읽음으로 표시" : "읽지 않음으로 표시"}
+          hint={session.unread ? "목록의 점을 지웁니다" : "다시 열 때까지 목록에 점이 남습니다"}
+          onClick={() => {
+            void setUnread(session.id, !session.unread);
             onClose();
           }}
         />

@@ -202,7 +202,18 @@ export function NotificationsSection() {
             </div>
           </div>
           <TurnEndChoice value={prefs.turnEnd} onChange={(turnEnd) => update({ turnEnd })} />
-          <Toggle label="도구 이름 표시" hint="권한 요청 알림에 도구 이름을, 입력 요청 알림에 MCP 서버 이름을, 파일 알림에 보낸 파일 이름을 함께 보여 줍니다. 잠금 화면에도 보입니다" on={prefs.details} onChange={(on) => update({ details: on })} />
+          <Toggle
+            label="Claude가 보내는 알림"
+            hint="'끝나면 알려줘'처럼 Claude가 알릴 일이라고 판단하면 바로 알립니다. 그 작업의 완료 알림은 생략합니다"
+            on={prefs.claude}
+            onChange={(on) => update({ claude: on })}
+          />
+          <Toggle
+            label="도구 이름 표시"
+            hint="권한 요청 알림에 도구 이름을, 입력 요청 알림에 MCP 서버 이름을, 파일 알림에 보낸 파일 이름을, Claude가 보낸 알림에 그 내용을 함께 보여 줍니다. 잠금 화면에도 보입니다"
+            on={prefs.details}
+            onChange={(on) => update({ details: on })}
+          />
         </div>
         <div className="flex gap-2">
           <Button className="flex-1" disabled={busy} onClick={test}>

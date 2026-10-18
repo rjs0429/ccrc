@@ -8,11 +8,6 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ### Added
 
-- `ccrc setup`'s `ssh-keygen` step also checks that it is from OpenSSH 8.2 or newer, which `ccrc update` needs to
-  check release signatures: it asks ssh-keygen what git asks it, and one without `-Y find-principals` gets a warning
-  that updates will stop at that check, with how to fix it. Setup goes on either way. `ccrc update`, when it stops
-  for that reason, now says how to fix it as well.
-
 ### Changed
 
 - `install.sh` no longer stops when `ssh-keygen` is the only base tool missing. It still offers to install it, asking
@@ -37,6 +32,8 @@ your version and the new one, and the lines under "Breaking" separately.
   for each model Claude Code offers with effort levels and each the file names. A top-level `effortLevel` (what the
   Effort row of 0.7 saved) still reaches the older models, such as Fable 5.1 and Opus 5, that have no effort of their
   own, but not the 5.5 ones: it is shown on those models' rows and on a row of its own, where it can only be removed.
+- The app icon's badge counts the sessions waiting for an answer and the unread sessions, the same sessions the list
+  marks. It no longer depends on which device was told, and a turn that starts by itself no longer clears it.
 
 ### Fixed
 

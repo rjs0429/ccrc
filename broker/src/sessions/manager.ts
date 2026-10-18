@@ -10,6 +10,7 @@ import { claudeSettingsFile } from "../claude-settings.ts";
 import { brokerSessionsOf, paths, writeFileAtomic, type Config } from "../config.ts";
 import type { Hello } from "../link/protocol.ts";
 import type { Link } from "../link/server.ts";
+import type { ClaudeNotice } from "../push/rules.ts";
 import {
   PERMISSION_MODES,
   type CallOp,
@@ -52,6 +53,7 @@ import { SentIndex, sentCall, type SentCall } from "./sent-files.ts";
 import { SessionCwds } from "./session-cwd.ts";
 import { agentItem, agentTranscript, workflowAgents } from "./subagents.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
+import { UnreadStore } from "./unread-store.ts";
 import { gitFolderInfo, removeWorktree, worktreeState, worktreeStatus, worktreeTarget, type WorktreeTarget } from "./worktrees.ts";
 import { WrappedSession } from "./wrapped.ts";
 
@@ -188,6 +190,8 @@ const probeDir = (cwd: string): string => (isFolder(cwd) ? cwd : paths.home);
 // Emits "event" (sessionId, ServerMsg) for one session, "changed" when the session list changed, and
 // "attached" / "detached" (sessionId) when a session gains or loses a process the broker can drive;
 // "turn_end" (sessionId, TurnEnd) when a turn of one ends, and "seen" (sessionId) when the remote user opens one.
+// A wrapper that says it can ("claude_push") hears whether Claude's notifications reach a device, and whether the
+// remote user has its session in front of them.
 export class SessionManager extends EventEmitter {
   models: ModelOption[] = loadModels();
   private modelsAsked?: Promise<void>;
@@ -209,6 +213,11 @@ export class SessionManager extends EventEmitter {
   private windows = new ContextWindows(path.join(paths.stateDir, "context-windows.json"));
   private ultracodeModels = new UltracodeModels(path.join(paths.stateDir, "ultracode-models.json"));
   private archive = new ArchiveStore(path.join(paths.stateDir, "archived.json"));
+  private unread = new UnreadStore(path.join(paths.stateDir, "unread.json"));
+  private claudePush = false;
+  private watched: string | null = null;
+  // Wrappers that can hear of Claude's notifications, with what each was last told.
+  private pushLinks = new Map<Link, string>();
   private probing = new Map<string, Promise<ContextWindow | undefined>>();
   // Forks made here by the id the phone chose for them; sent: a first message went to the fork.
   private forks = new Map<string, { at: number; done: Promise<ForkResult>; sent: boolean }>();
@@ -226,6 +235,8 @@ export class SessionManager extends EventEmitter {
   modelProbe: (cwd: string, claudePath?: string, env?: LaunchEnv) => Promise<ModelInfo[]> = probeModels;
   // Where a model's context window comes from when no session reported it: (cwd, model, Claude Code path, sign-in environment).
   windowProbe: (cwd: string, model: string, claudePath?: string, env?: LaunchEnv) => Promise<ContextWindow | undefined> = probeWindow;
+  // What becomes of a notification Claude asks for with PushNotification: (session, tool use id, message).
+  claudeNotice?: (sessionId: string, toolUseId: string, message: string) => ClaudeNotice;
   // The API key of brokerSessions "apiKey", read at each start.
   apiKey: () => string | undefined = () => readApiKey();
   // The Claude Code each session and probe starts with, picked again for each, and where the pick is told.
@@ -242,14 +253,47 @@ export class SessionManager extends EventEmitter {
     this.sweeper.unref();
   }
 
-  setViewed(sessionId: string | null): void {
+  // The session the remote user has open, and whether it is in front of them now (watching).
+  setViewed(sessionId: string | null, watching = false): void {
     this.viewed = sessionId;
+    this.watched = watching ? sessionId : null;
     const s = sessionId ? this.owned.get(sessionId) : undefined;
     if (s) s.lastActivity = Date.now();
+    for (const link of this.pushLinks.keys()) this.tellPush(link);
   }
 
   markSeen(sessionId: string): void {
+    this.markRead(sessionId);
     this.emit("seen", sessionId);
+  }
+
+  markUnread(sessionId: string): void {
+    if (this.unread.mark(sessionId)) this.emit("changed");
+  }
+
+  // at: when the user saw the session, as VS Code's message to it says.
+  markRead(sessionId: string, at?: number): void {
+    if (this.unread.seen(sessionId, at)) this.emit("changed");
+  }
+
+  unreadSessions(): string[] {
+    return this.unread.ids();
+  }
+
+  setClaudePush(on: boolean): void {
+    this.claudePush = on;
+    for (const link of this.pushLinks.keys()) this.tellPush(link);
+  }
+
+  // Tells a wrapper whether a notification Claude sends from its session reaches a device now, when that changed.
+  private tellPush(link: Link): void {
+    const told = this.pushLinks.get(link);
+    if (told === undefined) return;
+    const watching = this.claudePush && link.sessionId !== undefined && link.sessionId === this.watched;
+    const now = `${this.claudePush} ${watching}`;
+    if (now === told) return;
+    this.pushLinks.set(link, now);
+    link.send({ t: "claude_push", on: this.claudePush, watching });
   }
 
   // Sessions with a request waiting for an answer.
@@ -301,6 +345,7 @@ export class SessionManager extends EventEmitter {
       busy: s.busy,
       pendingCount: s.pending.size || undefined,
       ...this.archived(s.id),
+      ...this.unreadFlag(s.id),
     });
     const folders = new Map<string, boolean>();
     const exists = (dir: string) => {
@@ -329,6 +374,7 @@ export class SessionManager extends EventEmitter {
         busy: l?.status === "busy",
         ...(!l && info.cwd && missing(info.sessionId, info.cwd) ? { folderMissing: true } : {}),
         ...this.archived(info.sessionId),
+        ...this.unreadFlag(info.sessionId),
       };
     });
     const listed = new Set(out.map((o) => o.id));
@@ -843,10 +889,23 @@ export class SessionManager extends EventEmitter {
     return this.archive.has(sessionId) ? { archived: true } : {};
   }
 
-  // Sessions whose transcript is gone, as Claude Code removes old ones, leave the archive.
+  async setUnread(sessionId: string, on: boolean): Promise<{ unread: boolean }> {
+    if (!this.controlled(sessionId) && !(await this.info(sessionId))) throw Error("unknown session");
+    if (on) this.markUnread(sessionId);
+    else this.markRead(sessionId);
+    return { unread: on };
+  }
+
+  private unreadFlag(sessionId: string): { unread?: true } {
+    return this.unread.has(sessionId) ? { unread: true } : {};
+  }
+
+  // Sessions whose transcript is gone, as Claude Code removes old ones, leave the archive and the unread ones.
   pruneArchived(): void {
     const ids = transcriptIds(paths.claudeProjectsDir);
-    if (ids) this.archive.prune((id) => ids.has(id));
+    if (!ids) return;
+    this.archive.prune((id) => ids.has(id));
+    this.unread.prune((id) => ids.has(id));
   }
 
   // The web client's requests about one session (CallMap in protocol.ts).
@@ -904,6 +963,8 @@ export class SessionManager extends EventEmitter {
         return this.rename(sessionId, typeof args.title === "string" ? args.title : "");
       case "archive":
         return this.setArchived(sessionId, args.archived === true);
+      case "mark_unread":
+        return this.setUnread(sessionId, args.unread === true);
       case "worktree_status":
         return this.worktreeStatus(sessionId);
       case "worktree_remove":
@@ -1141,6 +1202,10 @@ export class SessionManager extends EventEmitter {
       if (early.length < EARLY_LINES_MAX) early.push({ from, v, at: new Date().toISOString() });
     };
     link.on("hello", (h: Hello) => {
+      if (Array.isArray(h.caps) && h.caps.includes("claude_push")) {
+        this.pushLinks.set(link, "");
+        this.tellPush(link);
+      }
       if (!h.claim) {
         if (link.sessionId) bind(link.sessionId);
         return;
@@ -1160,6 +1225,7 @@ export class SessionManager extends EventEmitter {
     });
     link.on("session", (id: string) => {
       if (!claiming) bind(id);
+      this.tellPush(link);
     });
     link.on("out", (m: Record<string, unknown>) => (session ? session.onOut(m) : keep("out", m)));
     link.on("in", (m: Record<string, unknown>) => (session ? session.onIn(m) : keep("in", m)));
@@ -1167,7 +1233,10 @@ export class SessionManager extends EventEmitter {
     link.on("held", (id: unknown) => (session ? session.onHeld(id) : keep("held", id)));
     link.on("rejected", (id: unknown, reason: unknown) => session?.onRejected(id, reason));
     link.on("exit", (code: unknown, signal: unknown, hostLeft: unknown, running: unknown) => session?.exited(code, signal, hostLeft, running));
-    link.on("close", () => session?.end("vscode_closed"));
+    link.on("close", () => {
+      this.pushLinks.delete(link);
+      session?.end("vscode_closed");
+    });
   }
 
   // Lets a VS Code launch that resumes `sessionId` start: the broker's own process for it is closed once
@@ -1208,7 +1277,10 @@ export class SessionManager extends EventEmitter {
   }
 
   private adopt(s: SessionCore): void {
-    if (s instanceof BrokerSession) this.owned.set(s.id, s);
+    if (s instanceof BrokerSession) {
+      this.owned.set(s.id, s);
+      s.pushNotice = (toolUseId, message) => this.claudeNotice?.(s.id, toolUseId, message);
+    }
     this.ended.delete(s.id);
     const send = (msg: ServerMsg) => {
       if (this.current(s)) this.emit("event", s.id, msg);
@@ -1229,6 +1301,9 @@ export class SessionManager extends EventEmitter {
     s.on("applied", (model: string, ultracode: boolean) => this.ultracodeModels.learn(model, ultracode));
     s.on("turn_end", (end: TurnEnd) => {
       if (this.current(s)) this.emit("turn_end", s.id, end);
+    });
+    s.on("host_input", (at: number) => {
+      if (this.current(s)) this.markRead(s.id, at);
     });
     s.on("title", () => {
       this.catalog = undefined;

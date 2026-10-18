@@ -105,12 +105,16 @@ export class WrappedSession extends SessionCore {
   }
 
   // VS Code's own control requests, for settings it changes without Claude Code reporting them, and the
-  // messages written to Claude Code that it has not taken in yet ("remote" marks the ones sent from here).
+  // messages written to Claude Code that it has not taken in yet ("remote" marks the ones sent from here). A message
+  // from VS Code means the user saw the session there ("host_input", when).
   onIn(m: Obj): void {
     if (this.hold("in", m)) return;
     if (m.type === "user" && typeof m.uuid === "string") {
       const now = Date.now();
-      if (m.remote !== true) this.hostInputAt = Math.min(Date.parse(str(m.timestamp) ?? "") || now, now);
+      if (m.remote !== true) {
+        this.hostInputAt = Math.min(Date.parse(str(m.timestamp) ?? "") || now, now);
+        this.emit("host_input", this.hostInputAt);
+      }
       this.enqueue(m.uuid, obj(m.message).content, m.remote === true ? "remote" : "host", str(m.timestamp));
       return;
     }

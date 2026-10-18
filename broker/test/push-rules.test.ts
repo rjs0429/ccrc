@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import type { Hub } from "../src/hub.ts";
-import type { DisplayItem, LiveState, PendingKind, PendingRequest, SentFile, ServerMsg, SessionSummary } from "../src/protocol.ts";
-import { Notifier, endText, type Urgency } from "../src/push/rules.ts";
+import type { DisplayItem, LiveState, PendingKind, PendingRequest, SentFile, ServerMsg, SessionSummary, ToolResult } from "../src/protocol.ts";
+import { Notifier, endText, type ClaudeNotice, type Urgency } from "../src/push/rules.ts";
 import type { Subscription } from "../src/push/subscriptions.ts";
 import { DEFAULT_PREFS, type PushPayload, type PushPrefs } from "../src/push/types.ts";
 import type { SessionManager } from "../src/sessions/manager.ts";
 import type { TurnEnd } from "../src/sessions/outcome.ts";
+import { UnreadStore } from "../src/sessions/unread-store.ts";
 
 const A = "11111111-2222-4333-8444-555555555555";
 const B = "22222222-3333-4444-8555-666666666666";
@@ -19,7 +20,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 class FakeManager extends EventEmitter {
   sessions: SessionSummary[] = [];
+  unread = new UnreadStore();
+  claudeNotice?: (sessionId: string, toolUseId: string, message: string) => ClaudeNotice;
   private pending = new Map<string, string>();
+  markUnread(id: string): void {
+    this.unread.mark(id);
+  }
+  markRead(id: string, at?: number): void {
+    this.unread.seen(id, at);
+  }
+  unreadSessions(): string[] {
+    return this.unread.ids();
+  }
   async list(): Promise<SessionSummary[]> {
     return this.sessions;
   }
@@ -43,7 +55,19 @@ class FakeManager extends EventEmitter {
     this.emit("turn_end", id, { outcome: "done", startedAt: Date.now(), attached: false, ...e } satisfies TurnEnd);
   }
   open(id = A): void {
+    this.unread.seen(id);
     this.emit("seen", id);
+  }
+  // Claude's PushNotification call as the conversation shows it: the call, then with its result.
+  pushItem(toolUseId: string, input: Record<string, unknown>, result?: ToolResult, id = A): void {
+    const item: DisplayItem = { kind: "tool", id: toolUseId, name: "PushNotification", summary: String(input.message ?? ""), input, ...(result ? { result } : {}) };
+    this.emit("event", id, { t: "item", sessionId: id, item } satisfies ServerMsg);
+  }
+  // A call Claude Code ran.
+  push(toolUseId: string, message: string, id = A): void {
+    const input = { message, status: "proactive" };
+    this.pushItem(toolUseId, input, undefined, id);
+    this.pushItem(toolUseId, input, { text: "Mobile push requested.", isError: false, truncated: false }, id);
   }
 }
 
@@ -289,7 +313,7 @@ test("an error or a limit is told with high urgency and the kind of stop", async
   assert.equal(endText(end({ outcome: "done" }), now), "작업을 마쳤습니다");
 });
 
-test("the badge counts each session once: waiting requests and turn ends the device was told of and nobody opened", async (t) => {
+test("the badge counts each session once, as the list shows them: waiting requests and unread sessions", async (t) => {
   const other: Subscription = { endpoint: OTHER, keys: { p256dh: "", auth: "" }, device: "ipad", createdAt: 0, prefs: { ...DEFAULT_PREFS, turnEnd: "off" } };
   const { manager, hub, notifier, sent } = setup({}, [other]);
   manager.sessions.push({ id: B, title: "Second", cwd: "/home/u/b", lastModified: 0, state: "owned" }, { id: C, title: "Third", cwd: "/home/u/c", lastModified: 0, state: "owned" });
@@ -298,11 +322,14 @@ test("the badge counts each session once: waiting requests and turn ends the dev
   manager.end({}, B);
   await sleep(30);
   assert.deepEqual(
-    sent.map((s) => s.payload.badge),
-    [1, 2],
+    sent.map((s) => [s.endpoint, s.payload.badge]),
+    [
+      [ENDPOINT, 2],
+      [ENDPOINT, 2],
+    ],
+    "both turns left their sessions unread as they ended",
   );
-  assert.deepEqual(notifier.badgeFor(ENDPOINT), { badge: 2, unseen: [A, B] });
-  assert.deepEqual(notifier.badgeFor(OTHER), { badge: 0, unseen: [] }, "a device that was not told counts nothing");
+  assert.deepEqual(notifier.badge(), { badge: 2, unseen: [A, B] });
   manager.open(A);
   manager.ask("r1", "permission", "Bash", {}, B);
   manager.ask("r2", "permission", "Bash", {}, C);
@@ -322,15 +349,15 @@ test("the badge counts each session once: waiting requests and turn ends the dev
   );
   manager.settle("r1", B);
   manager.state({ busy: true }, B);
-  assert.deepEqual(notifier.badgeFor(ENDPOINT), { badge: 1, unseen: [] }, "a new turn on B makes its end old news");
+  assert.deepEqual(notifier.badge(), { badge: 2, unseen: [B] }, "a turn that starts by itself leaves B unread");
   manager.settle("r2", C);
   manager.settle("r3", C);
   manager.state({ busy: false }, B);
   manager.end({}, B);
   await sleep(30);
-  assert.deepEqual(notifier.badgeFor(ENDPOINT), { badge: 1, unseen: [B] });
-  t.mock.timers.enable({ apis: ["Date"], now: Date.now() + 24 * HOUR + 1 });
-  assert.deepEqual(notifier.badgeFor(ENDPOINT), { badge: 0, unseen: [] }, "a day later");
+  assert.deepEqual(notifier.badge(), { badge: 1, unseen: [B] });
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() + 31 * 24 * HOUR });
+  assert.deepEqual(notifier.badge(), { badge: 0, unseen: [] }, "a month later");
   t.mock.timers.reset();
   notifier.close();
 });
@@ -374,7 +401,7 @@ test("a file Claude sends to reach the user is told almost at once, once per cal
   assert.deepEqual(plain.sent, [
     { endpoint: ENDPOINT, urgency: "normal", payload: { title: "Fix the invoice export", body: "파일을 보냈습니다", tag: `${A}:file`, data: { url: `/#/s/${A}` }, badge: 1 } },
   ]);
-  assert.deepEqual(plain.notifier.badgeFor(ENDPOINT), { badge: 1, unseen: [A] }, "a file nobody looked at counts on the badge");
+  assert.deepEqual(plain.notifier.badge(), { badge: 1, unseen: [A] }, "a file nobody looked at counts on the badge");
 
   const detailed = setup({ details: true });
   sendFiles(detailed.manager, "toolu_f2", "proactive", [{ name: "report.md" }, { name: "chart.png" }, { name: "data.csv" }]);
@@ -441,4 +468,205 @@ test("files a long call's item leaves out still count", async () => {
   await sleep(40);
   assert.deepEqual(counted.bodies(), ["작업을 마쳤습니다 · 파일 5개"]);
   counted.notifier.close();
+});
+
+test("a notification Claude asks for goes out almost at once, once per call, in a minimal text unless details are on", async () => {
+  const plain = setup();
+  plain.manager.state({ busy: true });
+  plain.manager.push("toolu_c1", "테스트가 모두 통과했습니다");
+  plain.manager.push("toolu_c1", "테스트가 모두 통과했습니다");
+  await sleep(40);
+  assert.deepEqual(plain.sent, [
+    { endpoint: ENDPOINT, urgency: "high", payload: { title: "Fix the invoice export", body: "Claude의 알림", tag: `${A}:claude`, data: { url: `/#/s/${A}` }, badge: 1 } },
+  ]);
+  assert.deepEqual(plain.notifier.badge(), { badge: 1, unseen: [A] }, "the session is unread until opened");
+
+  const detailed = setup({ details: true });
+  detailed.manager.push("toolu_c2", `빌드 끝\n${"가".repeat(300)}`);
+  await sleep(40);
+  assert.equal(detailed.bodies()[0], `빌드 끝 ${"가".repeat(194)}…`, "what Claude wrote, on one line and cut to 200 characters");
+
+  const empty = setup({ details: true });
+  empty.manager.push("toolu_c3", "  ");
+  await sleep(40);
+  assert.deepEqual(empty.bodies(), ["Claude의 알림"]);
+  for (const s of [plain, detailed, empty]) s.notifier.close();
+});
+
+test("Claude's notification is left out while the user looks at the session, or for a device that turned it off", async () => {
+  const watching = setup();
+  watching.hub.watching = true;
+  assert.equal(watching.notifier.claudeCall(A, "toolu_w1", "끝"), "watching");
+  await sleep(40);
+  assert.equal(watching.sent.length, 0);
+  assert.deepEqual(watching.notifier.badge(), { badge: 0, unseen: [] });
+
+  const opened = setup();
+  opened.manager.push("toolu_w2", "끝");
+  opened.manager.open();
+  await sleep(40);
+  assert.equal(opened.sent.length, 0, "opened in the moment before it went");
+
+  const other: Subscription = { endpoint: OTHER, keys: { p256dh: "", auth: "" }, device: "ipad", createdAt: 0, prefs: { ...DEFAULT_PREFS } };
+  const some = setup({ claude: false }, [other]);
+  assert.equal(some.notifier.claudeCall(A, "toolu_w3", "끝"), "sent");
+  await sleep(40);
+  assert.deepEqual(
+    some.sent.map((s) => s.endpoint),
+    [OTHER],
+  );
+
+  const none = setup({ claude: false });
+  assert.equal(none.notifier.claudeCall(A, "toolu_w4", "끝"), "off");
+  none.manager.push("toolu_w4", "끝");
+  await sleep(40);
+  assert.equal(none.sent.length, 0);
+  for (const s of [watching, opened, some, none]) s.notifier.close();
+});
+
+test("a PushNotification call Claude Code refused or that failed sends nothing, nor stands in for the turn's end", async () => {
+  const { manager, hub, notifier, bodies } = setup();
+  hub.activity = Date.now();
+  manager.state({ busy: true });
+  manager.pushItem("toolu_x1", { message: "끝났습니다" });
+  await sleep(40);
+  assert.deepEqual(bodies(), [], "nothing goes before Claude Code ran the call");
+  const invalid = "<tool_use_error>InputValidationError: PushNotification failed due to the following issue:\nThe required parameter `status` is missing</tool_use_error>";
+  manager.pushItem("toolu_x1", { message: "끝났습니다" }, { text: invalid, isError: true, truncated: false });
+  manager.pushItem("toolu_x2", { message: "끝났습니다", status: "proactive" });
+  manager.pushItem("toolu_x2", { message: "끝났습니다", status: "proactive" }, { text: "Permission to use PushNotification has been denied.", isError: true, truncated: false });
+  await sleep(40);
+  assert.deepEqual(bodies(), [], "a call it refused");
+  manager.push("toolu_x3", "끝났습니다");
+  await sleep(40);
+  assert.deepEqual(bodies(), ["Claude의 알림"], "the call it ran goes, once");
+  manager.state({ busy: false });
+  manager.end();
+  await sleep(40);
+  assert.deepEqual(bodies(), ["Claude의 알림"]);
+
+  manager.state({ busy: true });
+  manager.pushItem("toolu_x4", { message: "끝" });
+  manager.pushItem("toolu_x4", { message: "끝" }, { text: invalid, isError: true, truncated: false });
+  await sleep(20);
+  manager.state({ busy: false });
+  manager.end();
+  await sleep(40);
+  assert.deepEqual(bodies(), ["Claude의 알림", "작업을 마쳤습니다"], "a turn whose only call failed is told as it ends");
+  notifier.close();
+});
+
+test("the session's hook and the conversation decide a call once; the manager asks the notifier while it runs", async () => {
+  const { manager, notifier, sent } = setup();
+  assert.equal(manager.claudeNotice?.(A, "toolu_h1", "배포 끝"), "sent", "the hook comes first");
+  manager.push("toolu_h1", "배포 끝");
+  await sleep(40);
+  assert.equal(sent.length, 1);
+  manager.push("toolu_h2", "두 번째");
+  assert.equal(manager.claudeNotice?.(A, "toolu_h2", "두 번째"), "sent", "the conversation came first");
+  await sleep(40);
+  assert.equal(sent.length, 2);
+  notifier.close();
+  assert.equal(manager.claudeNotice, undefined);
+});
+
+test("the turn Claude told the user about does not also say it finished; a stop short of it, files, or another device still hear", async () => {
+  const other: Subscription = { endpoint: OTHER, keys: { p256dh: "", auth: "" }, device: "ipad", createdAt: 0, prefs: { ...DEFAULT_PREFS, claude: false } };
+  const { manager, hub, notifier, sent } = setup({}, [other]);
+  hub.activity = Date.now();
+  manager.state({ busy: true });
+  manager.push("toolu_t1", "끝났습니다");
+  await sleep(20);
+  manager.state({ busy: false });
+  manager.end();
+  await sleep(40);
+  assert.deepEqual(
+    sent.map((s) => [s.endpoint, s.payload.body]),
+    [
+      [ENDPOINT, "Claude의 알림"],
+      [OTHER, "작업을 마쳤습니다"],
+    ],
+  );
+
+  manager.state({ busy: true });
+  manager.state({ busy: false });
+  manager.end();
+  await sleep(40);
+  assert.deepEqual(
+    sent.slice(2).map((s) => [s.endpoint, s.payload.body]),
+    [
+      [ENDPOINT, "작업을 마쳤습니다"],
+      [OTHER, "작업을 마쳤습니다"],
+    ],
+    "the next turn is told again",
+  );
+
+  manager.state({ busy: true });
+  manager.push("toolu_t2", "끝났습니다");
+  await sleep(20);
+  manager.state({ busy: false });
+  manager.end({ outcome: "error", reason: "api", status: 529 });
+  await sleep(40);
+  assert.deepEqual(
+    sent.slice(4).map((s) => s.payload.body),
+    ["Claude의 알림", "오류로 끝났습니다 · API 529", "오류로 끝났습니다 · API 529"],
+  );
+
+  manager.state({ busy: true });
+  manager.push("toolu_t3", "끝났습니다");
+  sendFiles(manager, "toolu_t4", "normal", [{}]);
+  await sleep(20);
+  manager.state({ busy: false });
+  manager.end();
+  await sleep(40);
+  assert.deepEqual(
+    sent.slice(7).map((s) => [s.endpoint, s.payload.body]),
+    [
+      [ENDPOINT, "Claude의 알림"],
+      [ENDPOINT, "작업을 마쳤습니다 · 파일 1개"],
+      [OTHER, "작업을 마쳤습니다 · 파일 1개"],
+    ],
+  );
+  notifier.close();
+});
+
+test("a VS Code session's notification from Claude does not wait the device's delay", async () => {
+  const { manager, notifier, bodies } = setup({ vscodeDelaySec: 30 });
+  manager.state({ state: "attached", busy: true });
+  manager.push("toolu_v1", "끝");
+  await sleep(30);
+  assert.deepEqual(bodies(), ["Claude의 알림"]);
+  notifier.close();
+});
+
+test("a turn leaves the session unread when the broker runs it or the remote user waits for it, unless the user watches it end", async () => {
+  const run = async (end: Partial<TurnEnd>, before: (s: ReturnType<typeof setup>) => void = () => {}) => {
+    const s = setup({ turnEnd: "off" });
+    before(s);
+    s.manager.end(end);
+    const unread = s.manager.unreadSessions();
+    s.notifier.close();
+    return unread.length > 0;
+  };
+  assert.equal(await run({}), true, "a broker session's turn, the remote user's or not");
+  assert.equal(await run({ attached: true }), false, "a VS Code turn nobody here asked for");
+  assert.equal(await run({ attached: true }, (s) => (s.hub.activity = Date.now())), true, "a VS Code turn the phone sent");
+  assert.equal(await run({ attached: true, hostInputAt: Date.now() - 60_000 }, (s) => (s.hub.activity = Date.now())), true, "the phone answered in it after VS Code's message");
+  assert.equal(await run({ attached: true, hostInputAt: Date.now() }, (s) => (s.hub.activity = Date.now() - 60_000)), false, "VS Code asked for it after the phone's message");
+  assert.equal(await run({ attached: true }, (s) => (s.hub.activity = Date.now() - 3 * HOUR)), false, "the phone's message is hours old");
+  assert.equal(await run({ attached: true, outcome: "crashed" }, (s) => (s.hub.activity = Date.now())), true);
+  assert.equal(await run({ outcome: "interrupted" }), false);
+  assert.equal(await run({ outcome: "local" }), false);
+  assert.equal(await run({ queued: true }), false, "the next turn's end counts");
+  assert.equal(await run({}, (s) => (s.hub.watching = true)), false, "watched as it ended");
+});
+
+test("a notice told about a VS Code turn nobody here asked for leaves its session unread too", async () => {
+  const { manager, notifier } = setup({ turnEnd: "all", vscodeDelaySec: 0 });
+  manager.state({ state: "attached", busy: false });
+  manager.end({ attached: true, hostInputAt: Date.now() });
+  assert.deepEqual(manager.unreadSessions(), []);
+  await sleep(30);
+  assert.deepEqual(manager.unreadSessions(), [A]);
+  notifier.close();
 });

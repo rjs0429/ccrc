@@ -15,6 +15,8 @@ const SUB_RECENT = 5;
 const SUB_TEXT_LIMIT = 200;
 // The calls whose end notices tell how a subagent or workflow ended; a background shell's notice tells nothing more.
 const NOTICE_OWNERS = new Set(["Agent", "Task", "Workflow"]);
+// A subagent's calls that reach the user, which show as items of their own: a file it sends, a notification.
+const FOR_USER = new Set(["SendUserFile", "PushNotification"]);
 const COMMAND_TEXT_LIMIT = 8000;
 const COMMAND_NAME_LIMIT = 100;
 const MESSAGE_LIMIT = 20000;
@@ -151,6 +153,8 @@ export function summarizeTool(name: string, input: unknown, cwd: string): string
       return firstLine(workflowMeta(s("script"), "name") || s("name") || s("scriptPath"));
     case "SendUserFile":
       return Array.isArray(i.files) ? firstLine(i.files.filter((f) => typeof f === "string").map((f) => f.split("/").pop()).join(", ")) : "";
+    case "PushNotification":
+      return firstLine(s("message"));
     case "AskUserQuestion": {
       const q = Array.isArray(i.questions) ? (i.questions[0] as { question?: unknown } | undefined)?.question : undefined;
       return typeof q === "string" ? firstLine(q) : "";
@@ -517,8 +521,8 @@ export class ItemBuilder {
   }
 
   // Folds a subagent's messages into the call that started it: how many tools it used, the last few,
-  // and its latest text. Calls of subagents it starts in turn count toward the same item. A file a subagent sends is
-  // for the user, so its call also shows as an item of its own, with its result.
+  // and its latest text. Calls of subagents it starts in turn count toward the same item. A file or notification a
+  // subagent sends is for the user, so its call also shows as an item of its own, with its result.
   private subagent(m: RawMessage, parentId: string, ts?: string): DisplayItem[] {
     const owner = this.tool(this.subCalls.get(parentId) ?? parentId);
     if (owner && m.type === "user") return this.subagentResults(m);
@@ -536,7 +540,7 @@ export class ItemBuilder {
         const recent = [...sub.recent, { name, summary }].slice(-SUB_RECENT);
         sub = { ...sub, tools: sub.tools + 1, recent };
         changed = true;
-        if (name === "SendUserFile") sent.push(this.put({ kind: "tool", id, ts, name, summary, input: toolInput(name, b.input), by: owner.id }));
+        if (FOR_USER.has(name)) sent.push(this.put({ kind: "tool", id, ts, name, summary, input: toolInput(name, b.input), by: owner.id }));
       } else if (b.type === "text" && String(b.text ?? "").trim()) {
         sub = { ...sub, text: clipped(String(b.text).trim(), SUB_TEXT_LIMIT) };
         changed = true;

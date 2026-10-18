@@ -13,6 +13,9 @@
 // "/status" the same way with text only; "/help" as a command headless Claude Code cannot open, with no name; get_usage fails while the working folder holds a file named .fake-no-usage.
 // The output style starts from .claude/settings.local.json and update_settings writes it there.
 // FAKE_REQUESTS=<file> gets a line with its arguments, environment and sign-in variables and then one per control request or user message it receives.
+// "PUSH <text>" calls PushNotification as Claude Code 2.1.301 runs it: the PreToolUse and PostToolUse hooks initialize
+// registered are asked over hook_callback, a deny becomes Claude Code's hook error, an updatedToolOutput replaces the
+// output, and without either the result says no Remote Control was there to push. "VSHOOK" asks VS Code's own hook "hook_0".
 // get_settings reports a --model starting with "claude-" as the model; one naming "no-ultracode" does not offer Ultracode, which
 // --settings {"ultracode":true} asks for. get_task_output answers with a coloured line naming the task.
 // --version prints a version and exits.
@@ -58,6 +61,53 @@ record({
 let asks = 0;
 let holding = false;
 const queue = [];
+let hooks = {};
+const hookWaits = new Map();
+
+// Asks each hook registered for the event and tool; a hook unanswered for 5s counts as no answer.
+function hookCall(event, input, toolUseId) {
+  const ids = (hooks[event] ?? []).filter((h) => !h.matcher || new RegExp(`^(?:${h.matcher})$`).test(input.tool_name)).flatMap((h) => h.hookCallbackIds ?? []);
+  return Promise.all(
+    ids.map(
+      (callback_id) =>
+        new Promise((resolve) => {
+          const request_id = `hook-${randomUUID().slice(0, 8)}`;
+          const timer = setTimeout(() => resolve({}), 5000);
+          hookWaits.set(request_id, (r) => (clearTimeout(timer), resolve(r ?? {})));
+          out({ type: "control_request", request_id, request: { subtype: "hook_callback", callback_id, input: { hook_event_name: event, session_id: sid, ...input }, tool_use_id: toolUseId } });
+        }),
+    ),
+  );
+}
+
+function pushText(o) {
+  if (o.disabledReason === "user_present") return "Not sent \u2014 this terminal is active, so your output here already reaches the user; a separate notification would be redundant.";
+  if (o.disabledReason === "no_transport") return o.localSent ? "Terminal notification sent. Mobile push not sent (Remote Control inactive)." : "Mobile push not sent (Remote Control inactive).";
+  return o.localSent ? "Terminal notification sent. Mobile push requested." : "Mobile push requested.";
+}
+
+async function pushNotification(message) {
+  const id = `toolu_push_${randomUUID().slice(0, 8)}`;
+  const tool_input = { message, status: "proactive" };
+  out({ type: "assistant", session_id: sid, uuid: randomUUID(), parent_tool_use_id: null, message: { content: [{ type: "tool_use", id, name: "PushNotification", input: tool_input }] } });
+  const pre = await hookCall("PreToolUse", { tool_name: "PushNotification", tool_input, tool_use_id: id }, id);
+  const deny = pre.map((r) => r.hookSpecificOutput).find((o) => o?.permissionDecision === "deny");
+  let output;
+  let block;
+  if (deny) {
+    const text = `PreToolUse:PushNotification hook error: ${deny.permissionDecisionReason}`;
+    output = `Error: ${text}`;
+    block = { type: "tool_result", tool_use_id: id, content: text, is_error: true };
+  } else {
+    output = { message, pushSent: false, localSent: false, disabledReason: "no_transport", sentAt: new Date().toISOString() };
+    const post = await hookCall("PostToolUse", { tool_name: "PushNotification", tool_input, tool_response: output, tool_use_id: id }, id);
+    output = post.map((r) => r.hookSpecificOutput?.updatedToolOutput).find((v) => v !== undefined) ?? output;
+    block = { type: "tool_result", tool_use_id: id, content: pushText(output) };
+  }
+  out({ type: "user", session_id: sid, uuid: randomUUID(), parent_tool_use_id: null, message: { role: "user", content: [block] }, tool_use_result: output });
+  out({ type: "assistant", session_id: sid, uuid: randomUUID(), message: { content: [{ type: "text", text: `told: ${block.content}` }] } });
+  out({ type: "result", subtype: "success", session_id: sid, is_error: false, total_cost_usd: 0.001 });
+}
 const lifecycle = (id, state) => out({ type: "command_lifecycle", command_uuid: id, state, uuid: randomUUID(), session_id: sid });
 const STYLES = ["default", "Proactive", "Concise", "Explanatory", "Learning"];
 const LOCAL_SETTINGS = ".claude/settings.local.json";
@@ -165,6 +215,14 @@ function handle(m) {
       return;
     }
     out({ ...m, session_id: sid, uuid: m.uuid ?? randomUUID(), isReplay: true });
+    if (text.startsWith("PUSH ")) {
+      void pushNotification(text.slice(5));
+      return;
+    }
+    if (text === "VSHOOK") {
+      out({ type: "control_request", request_id: "hook-vs", request: { subtype: "hook_callback", callback_id: "hook_0", input: { hook_event_name: "PreToolUse", tool_name: "Edit" }, tool_use_id: "toolu_e" } });
+      return;
+    }
     if (text === "HOLD") {
       holding = true;
       return;
@@ -215,6 +273,7 @@ function handle(m) {
   if (m.type === "control_request") {
     record({ request: m.request });
     const init = m.request.subtype === "initialize";
+    if (init && m.request.hooks) hooks = m.request.hooks;
     if (m.request.subtype === "cancel_async_message") {
       const at = queue.findIndex((q) => q.uuid === m.request.message_uuid);
       if (at !== -1) {
@@ -307,6 +366,12 @@ function handle(m) {
     return;
   }
   if (m.type === "control_response") {
+    const wait = hookWaits.get(m.response.request_id);
+    if (wait) {
+      hookWaits.delete(m.response.request_id);
+      record({ hookAnswer: m.response.response ?? null });
+      return wait(m.response.response);
+    }
     const r = m.response.response;
     out({ type: "answered", request_id: m.response.request_id, behavior: r?.behavior, ...(r?.action ? { action: r.action, content: r.content, keys: Object.keys(r) } : {}) });
   }

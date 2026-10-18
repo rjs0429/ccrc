@@ -11,8 +11,8 @@ import { baseName, brokerSessionsBlocked, hostLabel, relTime, sessionTitle, shor
 import { loggedOut, navigate, openAt, refreshSessions, useApp } from "../state.ts";
 import { groupFolder, placeLabel, shownBranch } from "../worktree.ts";
 
-// "all" leaves archived sessions out; what runs or waits for input shows archived or not.
-type Filter = "all" | "running" | "waiting" | "archived";
+// "all" leaves archived sessions out; what runs, waits for input or is unread shows archived or not.
+type Filter = "all" | "running" | "waiting" | "unread" | "archived";
 const PAGE = 80;
 const REFRESH_MS = 10_000;
 const SEARCH_DELAY_MS = 250;
@@ -149,11 +149,13 @@ function SessionRow({ s, view, onActions }: { s: SessionSummary; view: Filter; o
     >
       <span className={`mt-1.5 size-2.5 shrink-0 rounded-full ${st.dot}`} />
       <span className="min-w-0 flex-1">
-        <span className={`block truncate text-[15px] ${s.pendingCount ? "font-semibold" : "font-medium"}`}>
+        <span className={`block truncate text-[15px] ${s.pendingCount || s.unread ? "font-semibold" : "font-medium"}`}>
           <TitleText text={sessionTitle(s)} />
+          {s.unread && <span className="sr-only"> · 읽지 않음</span>}
         </span>
         <Meta text={meta} archived={s.archived && view !== "archived"} />
       </span>
+      {s.unread && <span className="mt-1.5 size-2.5 shrink-0 rounded-full bg-accent" data-unread-dot />}
     </button>
   );
   if (!restore) return row;
@@ -178,6 +180,7 @@ interface FolderGroup {
 function inView(s: SessionSummary, filter: Filter): boolean {
   if (filter === "running") return s.state !== "inactive";
   if (filter === "waiting") return Boolean(s.pendingCount);
+  if (filter === "unread") return Boolean(s.unread);
   return filter === "archived" ? Boolean(s.archived) : !s.archived;
 }
 
@@ -219,6 +222,7 @@ export function Home() {
   }, [sessions]);
 
   const waiting = (sessions ?? []).filter((s) => s.pendingCount).length;
+  const unread = (sessions ?? []).filter((s) => s.unread).length;
   const archived = (sessions ?? []).filter((s) => s.archived).length;
   const target = actions ? sessions?.find((s) => s.id === actions) : undefined;
 
@@ -319,6 +323,7 @@ export function Home() {
                   ["all", "전체"],
                   ["running", "실행 중"],
                   ["waiting", waiting ? `입력 필요 ${waiting}` : "입력 필요"],
+                  ["unread", unread ? `읽지 않음 ${unread}` : "읽지 않음"],
                   ...(archived ? [["archived", `보관됨 ${archived}`]] : []),
                 ] as [Filter, string][]
               ).map(([f, label]) => (
@@ -342,7 +347,9 @@ export function Home() {
                 <SessionRow key={s.id} s={s} view={filter} onActions={(x) => setActions(x.id)} />
               ))}
             </div>
-            {shown.length === 0 && <div className="px-4 py-10 text-center text-sm text-muted">{filter === "archived" ? "보관한 세션이 없습니다" : "세션이 없습니다"}</div>}
+            {shown.length === 0 && (
+              <div className="px-4 py-10 text-center text-sm text-muted">{filter === "archived" ? "보관한 세션이 없습니다" : filter === "unread" ? "읽지 않은 세션이 없습니다" : "세션이 없습니다"}</div>
+            )}
             {shown.length > limit && (
               <button onClick={() => setLimit(limit + PAGE)} className="w-full py-4 text-sm text-muted">
                 더 보기 ({shown.length - limit})

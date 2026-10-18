@@ -153,9 +153,12 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
   const active = background || (!item.result && running);
   // A subagent known by its id alone has done nothing to show yet.
   const sub = item.sub && (item.sub.tools || item.sub.recent.length || item.sub.text) ? item.sub : undefined;
+  const notice = item.name === "PushNotification" && !item.result?.isError;
   const status =
     item.result && !background ? (
-      item.result.isError ? (
+      notice ? (
+        <Icon.bell className="size-4 text-accent" />
+      ) : item.result.isError ? (
         <Icon.x className="size-4 text-danger" />
       ) : (
         <Icon.check className="size-4 text-ok" />

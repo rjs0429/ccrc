@@ -147,7 +147,12 @@ export class Hub {
     this.active = ws;
     this.device = device;
     this.visible = true;
+    this.tellViewed();
     send(ws, { t: "ready" });
+  }
+
+  private tellViewed(): void {
+    this.manager.setViewed(this.viewing, this.viewing !== null && this.isWatching(this.viewing));
   }
 
   private ping(): void {
@@ -252,6 +257,7 @@ export class Hub {
         return;
       case "visibility":
         this.visible = msg.visible === true;
+        this.tellViewed();
         if (this.visible && this.viewing) this.manager.markSeen(this.viewing);
         return;
       case "call":
@@ -382,6 +388,7 @@ export class Hub {
       if (msg.op === "set_output_style") str(args.style);
       if (msg.op === "rename") str(args.title, TITLE_ARG_MAX);
       if (msg.op === "archive" && typeof args.archived !== "boolean") throw Error("invalid request");
+      if (msg.op === "mark_unread" && typeof args.unread !== "boolean") throw Error("invalid request");
       if (msg.op === "fork") {
         reply({ ok: true, data: await this.fork(sessionId, args) });
         return;
@@ -494,7 +501,7 @@ export class Hub {
     this.unwatch?.();
     this.unwatch = undefined;
     this.viewing = sessionId;
-    this.manager.setViewed(sessionId);
+    this.tellViewed();
     if (!sessionId) return;
     if (this.active && this.visible) this.manager.markSeen(sessionId);
     const controlled = this.manager.isControlled(sessionId);

@@ -52,7 +52,9 @@ const REMOTE_REQUESTS = new Set([
   "set_max_thinking_tokens",
 ]);
 // Told to the broker in the hello, so it offers what this wrapper passes on.
-const CAPS = ["fast_mode", "thinking"];
+const CAPS = ["fast_mode", "thinking", "claude_push"];
+// The id of the hook this wrapper adds to VS Code's initialize and answers itself.
+export const PUSH_HOOK = "ccrc_push_notification";
 // Broker requests after which VS Code is told to read the applied settings again.
 const SETTINGS_CHANGES = new Set(["set_model", "apply_flag_settings"]);
 const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
@@ -220,6 +222,30 @@ export function allowedTaskOutput(req: Record<string, unknown>): boolean {
   return Object.keys(req).every((k) => k === "subtype" || k === "task_id") && typeof req.task_id === "string" && TASK_ID.test(req.task_id);
 }
 
+// VS Code's initialize with one more PostToolUse hook, for PushNotification, which the wrapper answers (pushHookAnswer);
+// an initialize of another shape goes on as it is.
+export function withPushHook(msg: Record<string, unknown>): Buffer | undefined {
+  const req = plainObj(msg.request);
+  if (msg.type !== "control_request" || req.subtype !== "initialize") return undefined;
+  if (req.hooks !== undefined && (typeof req.hooks !== "object" || req.hooks === null || Array.isArray(req.hooks))) return undefined;
+  const hooks = plainObj(req.hooks);
+  const post = hooks.PostToolUse ?? [];
+  if (!Array.isArray(post)) return undefined;
+  const added = { matcher: "PushNotification", hookCallbackIds: [PUSH_HOOK] };
+  return Buffer.from(JSON.stringify({ ...msg, request: { ...req, hooks: { ...hooks, PostToolUse: [...post, added] } } }));
+}
+
+// The PostToolUse hook's answer for a PushNotification call Claude Code could not push, as ccrc decided it: "sent"
+// reads as requested, "watching" as not needed with the user at the session (Claude Code's words for its own terminal),
+// anything else as Claude Code made it. Claude Code takes the replacement output only as an object.
+export function pushHookAnswer(input: unknown, notice?: string): Record<string, unknown> {
+  const i = plainObj(input);
+  const out = plainObj(i.tool_response);
+  if ((notice !== "sent" && notice !== "watching") || i.tool_name !== "PushNotification" || typeof out.message !== "string" || out.pushSent === true) return {};
+  const told = notice === "sent" ? { pushSent: true, localSent: false } : { pushSent: false, localSent: false, disabledReason: "user_present" };
+  return { hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: { message: out.message, ...told } } };
+}
+
 // A user message written to Claude Code, reduced to what the conversation shows of it: its text and the kind
 // of each attachment. `remote` marks one the broker sent.
 export function waitingCopy(msg: Record<string, unknown>, remote: boolean): Buffer | undefined {
@@ -369,6 +395,9 @@ export class Relay extends EventEmitter {
   private hostPaused = false;
   private hostReady = false;
   private cliStatus: string | null = null;
+  // The broker sends Claude's notifications to a device, but not while the remote user has the session in front of them.
+  private claudePush = false;
+  private watching = false;
 
   constructor(o: RelayOptions) {
     super();
@@ -510,6 +539,9 @@ export class Relay extends EventEmitter {
       else if (typeof subtype === "string" && HOST_SETTINGS.has(subtype)) {
         this.remember(`in:${subtype}`, "in", line);
         this.copy("in", line);
+      } else if (subtype === "initialize") {
+        this.toChild(withPushHook(msg) ?? line);
+        return;
       }
     }
     this.toChild(line);
@@ -557,7 +589,9 @@ export class Relay extends EventEmitter {
         shared = line.includes(MODELS) && !line.includes(APPLIED);
         if (shared) this.hostReady = true;
       } else if (msg?.type === "control_request") {
-        const subtype = (msg.request as Record<string, unknown> | undefined)?.subtype;
+        const req = plainObj(msg.request);
+        const subtype = req.subtype;
+        if (subtype === "hook_callback" && req.callback_id === PUSH_HOOK && typeof id === "string") return this.answerPushHook(id, req.input);
         shared = typeof id === "string" && typeof subtype === "string" && SHOWN.has(subtype);
         if (shared) this.open.set(id as string, { subtype: subtype as string, line });
         held = shared && subtype === "elicitation" && this.hold(id as string, line);
@@ -574,6 +608,14 @@ export class Relay extends EventEmitter {
     this.noteState(line, msg);
     this.copy("out", line);
     if (held) this.send({ t: "held", id: msg!.request_id as string });
+  }
+
+  private answerPushHook(id: string, input: unknown): void {
+    const notice = !this.claudePush || !this.link || this.link.destroyed ? undefined : this.watching ? "watching" : "sent";
+    const answer = pushHookAnswer(input, notice);
+    const said = notice === "sent" ? "told Claude the broker sends it" : "told Claude the user is looking at the session";
+    this.o.log(`PushNotification: ${answer.hookSpecificOutput ? said : "left as Claude Code answered"}`);
+    this.toChild(Buffer.from(JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: id, response: answer } })));
   }
 
   private hold(id: string, line: Buffer): boolean {
@@ -833,6 +875,8 @@ export class Relay extends EventEmitter {
     sock.on("close", () => {
       if (this.link === sock) {
         this.link = undefined;
+        this.claudePush = false;
+        this.watching = false;
         this.o.log("broker connection closed");
         for (const id of [...this.held.keys()]) this.release(id, "the broker went away");
       }
@@ -865,6 +909,10 @@ export class Relay extends EventEmitter {
       } else if (f.t === "claim_wait") this.gate?.wait(Math.max(0, Number(f.ms) || 0));
       else if (f.t === "to_cli" && f.m && typeof f.m === "object") this.inject(f.m);
       else if (f.t === "take" || f.t === "pass") this.decide(f.t, f.id);
+      else if (f.t === "claude_push") {
+        this.claudePush = f.on === true;
+        this.watching = f.watching === true;
+      }
     } catch (e) {
       this.o.log(`broker frame failed: ${e instanceof Error ? e.message : String(e)}`);
     }
