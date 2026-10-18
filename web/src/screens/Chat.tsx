@@ -650,7 +650,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
       >
         <FileLinks.Provider value={openFile}>
           <FileRoots.Provider value={roots}>
-            <div ref={contentRef} className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:py-3">
+            {/* The bottom keeps 16px on short screens too: the tap target of the last message's or reply's ⋯ reaches that far. */}
+            <div ref={contentRef} className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:pt-3">
               {!chat?.loaded && (
                 <div className="flex justify-center py-10 text-muted">
                   <Spinner className="size-6" />
