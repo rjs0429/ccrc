@@ -23,6 +23,10 @@ export class Leases extends EventEmitter {
     this.idleMs = idleMinutes * 60_000;
   }
 
+  get idleMinutes(): number {
+    return this.idleMs / 60_000;
+  }
+
   current(now = Date.now()): StoredLease | undefined {
     const lease = this.store.state.lease;
     if (lease && now - lease.lastSeen > this.idleMs) {

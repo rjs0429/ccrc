@@ -138,9 +138,18 @@ export async function buildServer(d: ServerDeps) {
   const version = d.version ?? (() => d.doctor.brokerVersion());
   app.get("/api/ping", async () => ({ ok: true, version: version() ?? null }));
 
+  // While logged in it also says how long the login lasts without activity and when its password was set: the phone's
+  // copy of recent conversations shows no longer than the login, and goes once the password changes.
   app.get("/api/me", async (req) => {
     d.store.reload();
-    return { configured: Boolean(d.store.state.user), loggedIn: authed(req), device: req.device };
+    const user = d.store.state.user;
+    const loggedIn = authed(req);
+    return {
+      configured: Boolean(user),
+      loggedIn,
+      device: req.device,
+      ...(loggedIn ? { leaseIdleMinutes: d.leases.idleMinutes, ...(user?.changedAt ? { loginSetAt: user.changedAt } : {}) } : {}),
+    };
   });
 
   app.post<{ Body: { id?: unknown; password?: unknown; takeover?: unknown } }>("/api/login", async (req, reply) => {

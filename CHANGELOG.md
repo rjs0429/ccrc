@@ -101,6 +101,16 @@ your version and the new one, and the lines under "Breaking" separately.
   marked "VS Code 보관". VS Code's state database is only read. Bringing such a session back on the phone, or sending
   it a message, keeps it in the list (`<stateDir>/vscode-unarchived.json`) and leaves it archived in VS Code; the mark
   goes once VS Code shows the session again.
+- Recent conversations to read while the machine is off. The phone keeps the end of the last five conversations it
+  showed (80 items or 160KB each at most) in the browser's IndexedDB: what was said, tool calls by name and summary,
+  file names. Tool input and output, diffs, command output, thinking and pictures stay on the machine. When the broker
+  cannot be reached (the machine off or asleep, Tailscale down, the broker stopped or answering with an error), the
+  app still opens and lists them; a conversation opens read only and says so, and the app goes back to the live ones
+  once the broker answers. The copy belongs to the login: logging out, a new password (on the phone or with
+  `ccrc passwd`), a login ended at the machine (`ccrc logout`, idle time, a login on another device), the device
+  leaving `allowedDevices`, and `leaseIdleMinutes` passing without reaching the broker all delete it. "최근 대화를
+  휴대폰에 저장" under 계정과 보안 (on by default) turns it off and deletes it, and shows how much it holds. `/api/me`
+  also gives a logged-in phone `leaseIdleMinutes` and when the password was set (`loginSetAt`).
 
 ### Changed
 
@@ -178,6 +188,12 @@ your version and the new one, and the lines under "Breaking" separately.
   not, see "Upgrading from 0.7".
 - The ⋯ button in a conversation's header took taps on a 36px square; it now takes them on 44px, as the back button
   does.
+- Opening the app while the broker could not be reached showed "Safari cannot open the page" or, from the browser's
+  cache, a spinner that never ended. The service worker now keeps the app's page and its files (`/assets/`, the
+  current and the previous version) and serves them when the network fails, answers with an error or takes more than
+  3.5 seconds; it never handles `/api/`. The app then asks the broker again every few seconds and on "다시 연결".
+- While the connection is down, requests that fail in the network no longer toast "Failed to fetch" every ten seconds
+  on the session list, and the "연결이 끊겼습니다" banner stays up between reconnection attempts.
 
 ### Security
 

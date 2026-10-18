@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { api, ApiError } from "../api.ts";
 import { Button, Icon, Row } from "../components/ui.tsx";
+import { forgetCopies } from "../offline.ts";
+import { getPrefs } from "../prefs.ts";
 import { loadDevice, turnOff } from "../push.ts";
-import { leaveSettings, loggedOut, navigate, toast, useApp, type SettingsPage, type SettingsPart } from "../state.ts";
+import { leaveSettings, loggedOut, meAgain, navigate, toast, useApp, type SettingsPage, type SettingsPart } from "../state.ts";
 import { AuditSection } from "./settings/Audit.tsx";
 import { ClaudeSettingsSection } from "./settings/ClaudeSettings.tsx";
+import { CopySection } from "./settings/Copy.tsx";
 import { HealthSection } from "./settings/Health.tsx";
 import { NotificationsSection } from "./settings/Notifications.tsx";
 import { ListSection, PrefsSection } from "./settings/Prefs.tsx";
@@ -68,6 +71,7 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
                 <div className="rounded-xl bg-surface p-3.5 text-[15px] font-medium">{device}</div>
               </section>
               <PasswordSection />
+              <CopySection />
               <AuditSection />
             </>
           )}
@@ -92,7 +96,10 @@ function PasswordSection() {
       setCurrent("");
       setNext("");
       setAgain("");
-      toast("비밀번호를 바꿨습니다");
+      const kept = getPrefs().keepCopies;
+      await forgetCopies();
+      void api.me().then(meAgain, () => {});
+      toast(kept ? "비밀번호를 바꿨습니다. 휴대폰에 저장한 대화는 지웠습니다" : "비밀번호를 바꿨습니다");
     } catch (e) {
       const err = e instanceof ApiError ? e.body.error : "";
       toast(err === "invalid" ? "현재 비밀번호가 맞지 않습니다" : err === "weak_password" ? "새 비밀번호는 10자 이상이어야 합니다" : err === "locked" ? "시도가 많아 잠시 잠겼습니다" : String(e));

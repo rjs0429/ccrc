@@ -14,6 +14,7 @@ import type {
 import { api, ApiError, type Me, type Options } from "./api.ts";
 import { isIos, lastTap, recentRequest, syncBadge } from "./push.ts";
 import { joined, placed } from "./chatItems.ts";
+import { copyLoggedOut, copyLogin, copySignedIn, flushContact, keepCopy, noteContact } from "./offline.ts";
 import { bindSent } from "./sentPreviews.ts";
 
 export type SettingsPage = "claude" | "alerts" | "account" | "status";
@@ -53,6 +54,10 @@ export interface Chat {
 
 export interface AppState {
   me?: Me;
+  // Why the page shows the phone's copy of recent conversations, not knowing its login yet: the broker did not answer,
+  // or does not let this device in. reaching: /api/me is being asked.
+  offline?: "unreachable" | "denied";
+  reaching?: boolean;
   route: Route;
   sessions?: SessionSummary[];
   options?: Options;
@@ -81,8 +86,26 @@ export function getState(): AppState {
 }
 
 function setState(patch: Partial<AppState> | ((s: AppState) => Partial<AppState>)): void {
+  const chat = state.chat;
   state = { ...state, ...(typeof patch === "function" ? patch(state) : patch) };
+  if (state.chat !== chat) copySoon();
   for (const l of listeners) l();
+}
+
+// The chat on screen goes into the phone's copy a moment after it changes, and at once when the page leaves it or
+// goes to the background.
+const COPY_MS = 2000;
+let copyTimer: number | undefined;
+
+function copySoon(): void {
+  if (copyTimer === undefined && state.chat?.loaded) copyTimer = window.setTimeout(copyNow, COPY_MS);
+}
+
+function copyNow(): void {
+  clearTimeout(copyTimer);
+  copyTimer = undefined;
+  const c = state.chat;
+  if (c?.loaded) void keepCopy(c, state.sessions?.find((s) => s.id === c.sessionId));
 }
 
 function subscribe(l: Listener): () => void {
@@ -213,6 +236,7 @@ async function toNotifiedRequest(front: number): Promise<void> {
 }
 
 function onRoute(): void {
+  if (copyTimer !== undefined) copyNow();
   const route = parseRoute();
   if (route.name !== "settings") settingsReturn = undefined;
   setState({ route });
@@ -222,7 +246,7 @@ function onRoute(): void {
   }
   if (!viewing) setState({ chat: undefined });
   send(viewMsg());
-  if (route.name === "home" || route.name === "new") void refreshSessions();
+  if (state.me?.loggedIn && (route.name === "home" || route.name === "new")) void refreshSessions();
   badgeSoon();
 }
 window.addEventListener("hashchange", onRoute);
@@ -259,32 +283,121 @@ export async function refreshOptions(): Promise<void> {
   }
 }
 
+// A request the network failed while the connection is down says nothing the banner does not.
 function handleApiError(e: unknown): void {
   if (e instanceof ApiError && e.status === 401) {
     loggedOut("expired");
     return;
   }
+  if (!(e instanceof ApiError) && state.conn !== "ready") return;
   toast(e instanceof Error ? e.message : String(e));
 }
 
+// The broker may be off as the page opens. After ME_SLOW_MS the page shows the phone's copy, and the answer takes over
+// when it comes; an attempt is given up after ME_GIVE_UP_MS and made again after the next of ME_RETRY_MS. A new attempt
+// replaces one under way, which may hang on a connection the network dropped.
+const ME_SLOW_MS = 2500;
+const ME_GIVE_UP_MS = 15_000;
+const ME_RETRY_MS = [2000, 4000, 8000, 15_000];
+let meTries = 0;
+let meTimer: number | undefined;
+let meAsk: AbortController | undefined;
+
 export async function loadMe(): Promise<void> {
-  const me = await api.me();
-  setState({ me });
-  if (me.loggedIn) startSession();
+  meAsk?.abort();
+  const ctl = (meAsk = new AbortController());
+  clearTimeout(meTimer);
+  setState({ reaching: true });
+  const slow = window.setTimeout(() => !state.me && setState({ offline: state.offline ?? "unreachable" }), ME_SLOW_MS);
+  const giveUp = window.setTimeout(() => ctl.abort(), ME_GIVE_UP_MS);
+  try {
+    const me = await api.me(ctl.signal);
+    if (ctl !== meAsk) return;
+    meTries = 0;
+    copyLogin(me);
+    setState({ me, offline: undefined });
+    if (me.loggedIn) startSession();
+  } catch (e) {
+    if (ctl !== meAsk) return;
+    if (e instanceof ApiError && e.status === 403) return denied();
+    if (!state.me) setState({ offline: "unreachable" });
+    meTimer = window.setTimeout(() => void loadMe(), ME_RETRY_MS[Math.min(meTries++, ME_RETRY_MS.length - 1)]);
+  } finally {
+    clearTimeout(slow);
+    clearTimeout(giveUp);
+    if (ctl === meAsk) {
+      meAsk = undefined;
+      setState({ reaching: false });
+    }
+  }
 }
 
+let readyBefore = false;
+
 export function startSession(): void {
+  readyBefore = false;
   setState((s) => ({ me: s.me ? { ...s.me, loggedIn: true } : s.me, loggedOutReason: undefined }));
   connect();
   void refreshSessions();
   void refreshOptions();
   void toNotifiedRequest(started);
+  if (!copySignedIn()) void api.me().then(meAgain, () => {});
+}
+
+// What /api/me says once more, after a login or a new password: the phone's copy goes by it.
+export function meAgain(me: Me): void {
+  copyLogin(me);
+  if (me.loggedIn) setState((s) => ({ me: s.me?.loggedIn ? { ...s.me, ...me } : s.me }));
 }
 
 export function loggedOut(reason: string): void {
   socket?.close();
   socket = undefined;
+  clearTimeout(copyTimer);
+  copyTimer = undefined;
+  copyLoggedOut();
   setState((s) => ({ me: s.me ? { ...s.me, loggedIn: false } : s.me, conn: "idle", loggedOutReason: reason, chat: emptyChat(s.route) }));
+}
+
+// The broker does not let this device in: what the phone kept goes, and the page asks again now and then.
+function denied(): void {
+  clearTimeout(retryTimer);
+  const ws = socket;
+  socket = undefined;
+  ws?.close();
+  settleCalls();
+  endFollows();
+  clearTimeout(copyTimer);
+  copyTimer = undefined;
+  copyLoggedOut();
+  setState((s) => ({ me: undefined, offline: "denied", conn: "idle", chat: emptyChat(s.route) }));
+  clearTimeout(meTimer);
+  meTimer = window.setTimeout(() => void loadMe(), ME_RETRY_MS.at(-1));
+}
+
+// A dropped connection that does not come back may mean the login or the device is no longer let in.
+let probing = false;
+async function probe(): Promise<void> {
+  if (probing || !state.me) return;
+  probing = true;
+  try {
+    if (!(await api.me()).loggedIn && state.me?.loggedIn) loggedOut("expired");
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403 && state.me) denied();
+  } finally {
+    probing = false;
+  }
+}
+
+// Tries the broker again at once: the login while it is unknown, else the connection.
+export function reconnect(): void {
+  if (!state.me) {
+    meTries = 0;
+    void loadMe();
+  } else if (state.conn === "offline") {
+    retry = 0;
+    connect();
+  }
 }
 
 let socket: WebSocket | undefined;
@@ -295,6 +408,7 @@ let retryTimer: number | undefined;
 export function send(msg: ClientMsg): boolean {
   if (socket?.readyState !== WebSocket.OPEN || state.conn !== "ready") return false;
   socket.send(JSON.stringify(msg));
+  noteContact();
   return true;
 }
 
@@ -329,6 +443,7 @@ function ask(msg: (id: number) => ClientMsg, ms: number, progress?: (p: CallProg
     }, ms);
     calls.set(id, { resolve, reject, timer, ...(progress ? { progress } : {}) });
     socket!.send(JSON.stringify(msg(id)));
+    noteContact();
   });
 }
 
@@ -441,7 +556,8 @@ export function connect(): void {
   socket?.close();
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   socket = ws;
-  setState({ conn: "connecting" });
+  // While it tries again after a drop, the page stays offline, so what shows does not flicker with each try.
+  setState({ conn: state.conn === "offline" ? "offline" : "connecting" });
   ws.onmessage = (e) => {
     if (ws === socket) onServer(JSON.parse(String(e.data)) as ServerMsg);
   };
@@ -453,21 +569,27 @@ export function connect(): void {
     if (e.code === 4000) return setState({ conn: "taken" });
     setState({ conn: "offline" });
     retryTimer = window.setTimeout(connect, Math.min(1000 * 2 ** retry++, 15000));
+    void probe();
   };
 }
 
 // iOS suspends pages in the background; reconnect as soon as the page is visible again.
 document.addEventListener("visibilitychange", () => {
   send({ t: "visibility", visible: document.visibilityState === "visible" });
-  if (document.visibilityState === "visible" && state.conn === "offline") {
-    retry = 0;
-    connect();
-  }
   if (document.visibilityState === "visible") {
+    reconnect();
     badgeSoon();
     void toNotifiedRequest(Date.now());
   }
+  if (document.visibilityState === "hidden") leaving();
 });
+window.addEventListener("pagehide", leaving);
+window.addEventListener("online", reconnect);
+
+function leaving(): void {
+  if (copyTimer !== undefined) copyNow();
+  flushContact();
+}
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -508,6 +630,9 @@ function onServer(msg: ServerMsg): void {
       // A new window follows nothing yet.
       endFollows();
       setState({ conn: "ready" });
+      // Back after a drop, the login may have changed meanwhile: a new password drops the phone's copy.
+      if (readyBefore) void api.me().then(meAgain, () => {});
+      readyBefore = true;
       send({ t: "visibility", visible: document.visibilityState === "visible" });
       send(viewMsg());
       if (startingSent) send(startingSent.msg);

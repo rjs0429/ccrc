@@ -12,6 +12,7 @@ import { UserAttachments } from "./UserAttachments.tsx";
 import { OLD_WRAPPER_NOTE, movedOut, useMovable, useMove } from "./agents/background.ts";
 import { AgentLinks } from "./agents/links.ts";
 import { actionable, type UserMessage } from "./messageActions.ts";
+import { NOT_KEPT, OfflineView } from "./offlineView.ts";
 import { useLongPress } from "./useLongPress.ts";
 import { Folded } from "./tools/parts.tsx";
 import { SentFiles } from "./tools/SentFiles.tsx";
@@ -234,6 +235,7 @@ function BackgroundLine({ item, task }: { item: Extract<DisplayItem, { kind: "to
 function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool" }>; running: boolean }) {
   const [open, setOpen] = useState(false);
   const openAgent = useContext(AgentLinks);
+  const offline = useContext(OfflineView);
   // A call that went on in the background is still running after its result arrived.
   const task = useApp((s) => s.chat?.state?.tasks?.find((t) => t.toolUseId === item.id && t.status === "running"));
   const background = Boolean(task);
@@ -270,10 +272,12 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
         <div className="space-y-2 border-t border-line px-3 py-2.5">
           {item.patch ? (
             <DiffView hunks={item.patch} cut={item.patchCut} />
+          ) : item.input != null ? (
+            <ToolInput name={item.name} input={item.input} reply={item.reply} />
           ) : (
-            item.input != null && <ToolInput name={item.name} input={item.input} reply={item.reply} />
+            offline && <p className="text-xs text-muted" data-copy-note>{NOT_KEPT}</p>
           )}
-          {item.result && (!item.patch || item.result.isError) && !item.reply && (
+          {item.result && (!item.patch || item.result.isError) && !item.reply && !offline && (
             <ToolOutput text={item.result.text + (item.result.truncated ? "\n…" : "")} isError={item.result.isError} />
           )}
         </div>
@@ -326,6 +330,7 @@ export function CommandBody({ item, more }: { item: CommandResult; more?: boolea
 
 function CommandCard({ item }: { item: CommandResult }) {
   const [more, setMore] = useState(false);
+  const offline = useContext(OfflineView);
   const head = item.name ? `/${item.name}${item.args ? ` ${item.args}` : ""}` : "명령 출력";
   return (
     <div className="rounded-xl border border-line bg-surface" data-command={item.name ?? ""}>
@@ -338,7 +343,13 @@ function CommandCard({ item }: { item: CommandResult }) {
         )}
       </div>
       <div className="px-3 pb-3 pt-1">
-        <CommandBody item={item} more={more} />
+        {offline ? (
+          <p className="text-xs text-muted" data-copy-note>
+            {NOT_KEPT}
+          </p>
+        ) : (
+          <CommandBody item={item} more={more} />
+        )}
       </div>
     </div>
   );

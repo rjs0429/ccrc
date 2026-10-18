@@ -5,6 +5,7 @@ import { ApiError, request } from "../../api.ts";
 import { shortPath, sizeText } from "../../labels.ts";
 import { toast, useApp } from "../../state.ts";
 import { FileLinks, SentAgent } from "../fileLinks.ts";
+import { LAPTOP_ONLY, OfflineView } from "../offlineView.ts";
 import { Icon, Spinner } from "../ui.tsx";
 import { BIG_IMAGE_BYTES, useNear } from "../UserAttachments.tsx";
 import { PREVIEW_MAX_BYTES, SENT_ERROR_TEXT, sentUrl } from "../viewer/sent.ts";
@@ -105,6 +106,7 @@ function Thumb({ src, size, wait, onRefused }: { src: string; size: number; wait
 function Download({ sessionId, file, name, primary }: { sessionId: string; file: SentRef; name: string; primary: boolean }) {
   const [ticket, setTicket] = useState<{ url: string; until: number }>();
   const [busy, setBusy] = useState(false);
+  const offline = useContext(OfflineView);
   const link = useRef<HTMLAnchorElement>(null);
   const go = useRef(false);
   useEffect(() => {
@@ -113,6 +115,7 @@ function Download({ sessionId, file, name, primary }: { sessionId: string; file:
     link.current?.click();
   }, [ticket]);
   const onClick = (e: React.MouseEvent) => {
+    if (offline) return (e.preventDefault(), toast(LAPTOP_ONLY));
     if (ticket && Date.now() < ticket.until - 3000) return;
     e.preventDefault();
     if (busy) return;
@@ -230,6 +233,7 @@ function AskedRow({ path, pending }: { path: string; pending: boolean }) {
 // runs. The viewer opens over whatever shows the card, the agent map too.
 export function SentFiles({ item, running }: { item: ToolItem; running: boolean }) {
   const agent = useContext(SentAgent);
+  const offline = useContext(OfflineView);
   const sessionId = useApp((s) => s.chat?.sessionId);
   const cwd = useApp((s) => s.chat?.state?.cwd ?? "");
   const byName = useApp((s) => {
@@ -296,7 +300,7 @@ export function SentFiles({ item, running }: { item: ToolItem; running: boolean 
                   attach={attach}
                   failed={failed[n]}
                   opened={opened.has(n)}
-                  onOpen={() => setViewing(n)}
+                  onOpen={() => (offline ? toast(LAPTOP_ONLY) : setViewing(n))}
                   onFailed={(code) => setFailed((s) => ({ ...s, [n]: code }))}
                 />
               ))
