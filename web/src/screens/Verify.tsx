@@ -36,9 +36,13 @@ export function Verify() {
     setError(undefined);
     api.passkeyVerifyOptions().then(
       (r) => seq === fetched.current && setOptions({ at: Date.now(), options: r.options }),
-      (e: unknown) => {
+      async (e: unknown) => {
         if (seq !== fetched.current) return;
         if (e instanceof ApiError && e.status === 401) return loggedOut("expired");
+        // The passkeys may have been removed at the laptop meanwhile, and then nothing waits for one.
+        const me = await api.me().catch(() => undefined);
+        if (seq !== fetched.current) return;
+        if (me?.loggedIn && !me.passkey) return startSession();
         setError(failureText(e));
       },
     );
