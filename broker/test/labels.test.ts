@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ModelOption } from "../src/protocol.ts";
-import { effortLevels, errorText, fastReasonText, findModel, modelLabel, modelOffers, noteText } from "../../web/src/labels.ts";
+import { effortLevels, errorText, fastReasonText, findModel, hostLabel, inboxNotes, modelLabel, modelOffers, noteText } from "../../web/src/labels.ts";
 
 test("the errors a stopped session's chips can meet read in Korean", () => {
   for (const message of ["session is starting", "session started meanwhile", "unknown model"]) assert.match(errorText(message), /[가-힣]/, message);
@@ -96,4 +96,14 @@ test("a rename refused by the broker, Claude Code or an old wrapper reads in Kor
   assert.equal(errorText("cannot rename while open in Terminal"), "터미널에서 열려 있어 여기서는 이름을 바꿀 수 없습니다. 그곳에서 바꾸거나 닫은 뒤 다시 시도하세요");
   assert.match(errorText("session_id is not the current session"), /^VS Code에서 이 세션이 다른 대화로 바뀌었습니다/);
   assert.match(errorText("rejected by the wrapper: request not allowed"), /VS Code에서 세션을 다시 연 뒤/);
+});
+
+test("a session open in the background says so, and where a message to it waits for approval", () => {
+  assert.equal(hostLabel("Background"), "백그라운드");
+  assert.deepEqual(inboxNotes("Background", { gate: "approve" }), [
+    { text: "다른 세션 메시지로 전달됩니다. Claude가 중요한 작업은 백그라운드 세션에서 다시 묻습니다." },
+    { text: "claude agents에서 이 세션을 열어 승인해야 전달됩니다.", warn: true },
+  ]);
+  assert.deepEqual(inboxNotes("Terminal", { gate: "approve" })[1], { text: "터미널에서 승인해야 전달됩니다.", warn: true });
+  assert.equal(errorText("session is open in Background"), "백그라운드에서 열려 있어 원격으로 실행할 수 없습니다");
 });

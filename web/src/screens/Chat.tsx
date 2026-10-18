@@ -33,10 +33,11 @@ import { Choice, Icon, Sheet, Spinner, Tile, Tiles } from "../components/ui.tsx"
 import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import { dayLines, streamLine } from "../components/stamps.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
-import { brokerSessionsBlocked, closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
+import { brokerSessionsBlocked, closedText, errorText, hostLabel, inboxNotes, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
-import { call, composerInsert, focusDone, loadMore, navigate, openAt, openSettingsFrom, refreshChat, send, toast, useApp } from "../state.ts";
+import { call, composerInsert, focusDone, loadMore, navigate, openAt, openSettingsFrom, refreshChat, requestShown, send, toast, useApp } from "../state.ts";
 import { withEarlier } from "../chatItems.ts";
+import { sentCount } from "../peerSent.ts";
 import { takeSent } from "../sentPreviews.ts";
 import { worktreeOf } from "../../../broker/src/worktree-names.ts";
 import { placeLabel, shownBranch } from "../worktree.ts";
@@ -256,6 +257,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const st = chat?.state;
   const kind = st?.state ?? summary?.state ?? "inactive";
   const controllable = kind === "owned" || kind === "attached";
+  // Open in another program that takes text from here as a message from another session.
+  const peer = kind === "live" && Boolean(st ? st.inbox : summary?.inbox);
+  const conn = useApp((s) => s.conn);
   const deferred = kind === "inactive";
   const folderMissing = deferred && Boolean(st ? st.folderMissing : summary?.folderMissing);
   const host = hostLabel(st?.host ?? summary?.host);
@@ -266,7 +270,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const named = summary?.title || st?.title || "";
   const title = sessionTitle({ title: named });
   const archived = Boolean(summary?.archived);
-  const renameTarget = { id: sessionId, title: named, state: kind, host: st?.host ?? summary?.host, archived, cwd };
+  const vscodeArchived = archived && Boolean(summary?.vscodeArchived);
+  const renameTarget = { id: sessionId, title: named, state: kind, host: st?.host ?? summary?.host, archived, vscodeArchived, cwd };
   const worktree = worktreeOf(cwd);
   const renameRefused = renameBlocked(renameTarget);
   // Why the menu's greyed actions cannot be used; they point to this line.
@@ -317,6 +322,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const shown = new Set((chat?.items ?? []).map((i) => i.id));
     return (st?.queued ?? []).filter((q) => !shown.has(q.id));
   }, [chat?.items, st?.queued]);
+  // Text sent to a session open elsewhere waits here until its transcript shows it; before: how many such messages with
+  // the same text it showed then.
+  const [peerSent, setPeerSent] = useState<(QueuedMessage & { before: number })[]>([]);
+  const peerWaiting = useMemo(() => peerSent.filter((q) => sentCount(chat?.items ?? [], q.text) <= q.before), [peerSent, chat?.items]);
   const [taking, setTaking] = useState<string | null>(null);
   // A message taken back returns to the composer with its text and the photos sent from this device.
   const takeBack = (q: QueuedMessage) => {
@@ -333,6 +342,24 @@ export function Chat({ sessionId }: { sessionId: string }) {
   };
 
   const stop = () => send({ t: "interrupt", sessionId });
+
+  const sendPeer = (text: string) => {
+    if (conn !== "ready") return false;
+    const before = sentCount(chat?.items ?? [], text);
+    const id = `peer-${Date.now()}-${peerSent.length}`;
+    setPeerSent((list) => [...list, { id, ts: new Date().toISOString(), text, from: "remote", before }]);
+    follow(true);
+    call(sessionId, "inbox_send", { text }).then(
+      () => toast("다른 세션 메시지로 보냈습니다"),
+      (e: Error) => {
+        setPeerSent((list) => list.filter((q) => q.id !== id));
+        composerInsert(text);
+        toast(errorText(e.message));
+        if (e.message === "session is not open elsewhere") send({ t: "view", sessionId });
+      },
+    );
+    return true;
+  };
 
   const sendText = (text: string, attachments: string[] = []) => {
     const c = attachments.length ? undefined : parseCommand(text);
@@ -471,7 +498,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   useLayoutEffect(() => {
     const el = listRef.current;
     if (!el || !chat?.loaded) return;
-    const now = { snaps: chat.snaps, last: items.at(-1)?.id, said: lastSaid(items), stream: chat.stream ? chat.stream.text.length : -1, pending: chat.pending.length, queued: queued.length };
+    const now = { snaps: chat.snaps, last: items.at(-1)?.id, said: lastSaid(items), stream: chat.stream ? chat.stream.text.length : -1, pending: chat.pending.length, queued: queued.length + (peer ? peerWaiting.length : 0) };
     const was = ends.current;
     ends.current = now;
     if (chat.focus) return;
@@ -534,6 +561,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (top > -el.clientHeight * LOAD_SCREENS && top < el.clientHeight * (1 + LOAD_SCREENS)) void loadMore(sessionId, "gap");
   };
 
+  const focusRequest = chat?.loaded ? chat.focusRequest : undefined;
+  useLayoutEffect(() => {
+    if (!focusRequest) return;
+    requestShown(sessionId);
+    jumpToRequest(focusRequest);
+  }, [focusRequest, sessionId]);
+
   useEffect(() => {
     if (!flash) return;
     const timer = setTimeout(() => setFlash(null), FLASH_MS);
@@ -555,7 +589,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
             ? "폴더 없음"
             : "꺼져 있음";
   const disabledReason =
-    kind === "live" ? `${host}에서 열려 있어 지금은 보기만 할 수 있습니다.` : folderMissing ? "작업 폴더가 없어 보기만 할 수 있습니다." : deferred ? brokerOff : undefined;
+    kind === "live" && !peer ? `${host}에서 열려 있어 지금은 보기만 할 수 있습니다.` : folderMissing ? "작업 폴더가 없어 보기만 할 수 있습니다." : deferred ? brokerOff : undefined;
 
   return (
     <div className="flex h-dvh flex-col">
@@ -576,7 +610,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
                 <TitleText text={title} />
               </span>
               <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted">
-                {archived && <ArchivedBadge />}
+                {archived && <ArchivedBadge vscode={vscodeArchived} />}
                 <span className="truncate">
                   {placeLabel(cwd)}
                   {shownBranch(cwd, summary?.branch) ? ` · ${summary?.branch}` : ""} · {status}
@@ -659,6 +693,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
                   onTakeBack={q.from === "remote" && controllable ? () => takeBack(q) : undefined}
                 />
               ))}
+              {peer && peerWaiting.map((q) => <QueuedItem key={q.id} message={q} host={host} note="다른 세션 메시지로 보냄 · 받으면 대화에 나타납니다" />)}
               {chat?.pending.map((p) => (
                 <div key={p.id} data-pending={p.id} className={`rounded-2xl transition-shadow duration-700 ${flash === p.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}>
                   <PendingCard
@@ -673,10 +708,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
               {chat?.loaded && archived && (
                 <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-archived-note>
                   <p className="min-w-0 flex-1 break-keep text-balance">
-                    <span className="block">보관된 세션입니다.</span>
-                    {kind !== "live" && !folderMissing && <span className="block">메시지를 보내면 보관이 풀립니다.</span>}
+                    <span className="block">{vscodeArchived ? "VS Code에서 보관한 세션입니다." : "보관된 세션입니다."}</span>
+                    {(kind !== "live" || peer) && !folderMissing && <span className="block">메시지를 보내면 보관이 풀립니다.</span>}
                   </p>
-                  <button onClick={() => setArchived(sessionId, false)} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent">
+                  <button onClick={() => setArchived(sessionId, false, vscodeArchived)} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent">
                     보관 해제
                   </button>
                 </div>
@@ -727,7 +762,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         starting={starting || sentStart}
         disabledReason={disabledReason}
         placeholder="Claude에게 메시지"
-        onSend={sendText}
+        onSend={peer ? sendPeer : sendText}
         onCommand={openCommand}
         openSheet={composerSheet}
         onStop={stop}
@@ -741,6 +776,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onContext={() => setSheet("contextUsage")}
         agents={agentChip}
         onAgents={() => setSheet("agents")}
+        peer={peer ? { notes: inboxNotes(st?.host ?? summary?.host, st?.inbox) } : undefined}
       />
 
       {menu && (
@@ -793,7 +829,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
                   <Tile
                     icon={archived ? <Icon.unarchive /> : <Icon.archive />}
                     label={archived ? "보관 해제" : "보관하기"}
-                    onClick={() => (!archived && worktree ? setArchiving(true) : setArchived(sessionId, !archived), setMenu(false))}
+                    onClick={() => (!archived && worktree ? setArchiving(true) : setArchived(sessionId, !archived, vscodeArchived), setMenu(false))}
                   />
                   <Tile
                     icon={<Icon.branch />}

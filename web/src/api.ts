@@ -13,6 +13,8 @@ export interface Options {
   folders: string[];
   // Missing from a broker older than the setting, which always started them.
   brokerSessions?: BrokerSessionsInfo;
+  // Whether sessions VS Code archived count as archived in the list; missing from a broker without the setting.
+  vscodeArchive?: boolean;
 }
 
 export class ApiError extends Error {
@@ -72,5 +74,6 @@ export const api = {
   options: () => request<Options>("GET", "/api/options"),
   search: (q: string) => request<SearchResponse>("POST", "/api/search", { q }),
   thread: (sessionId: string, itemId: string) => request<Thread>("POST", "/api/thread", { sessionId, itemId }),
+  setVscodeArchive: (on: boolean) => request<{ vscodeArchive: boolean }>("POST", "/api/options/vscode-archive", { on }),
   upload,
 };

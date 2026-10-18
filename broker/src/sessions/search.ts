@@ -275,6 +275,7 @@ export class SessionSearch {
       hits: hits.size,
       snippets: e ? picked.map(([i]) => snippetOf(e, i, res)) : [],
       ...(s.archived ? { archived: true } : {}),
+      ...(s.archived && s.vscodeArchived ? { vscodeArchived: true } : {}),
     };
   }
 

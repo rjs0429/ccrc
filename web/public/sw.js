@@ -37,9 +37,16 @@ self.addEventListener("notificationclick", (event) => {
     (async () => {
       const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       const open = windows.find((c) => new URL(c.url).origin === self.location.origin);
-      if (!open) return self.clients.openWindow(url);
+      if (!open) return self.clients.openWindow(tapped(url));
       await open.focus().catch(() => {});
       open.postMessage({ t: "navigate", url });
     })(),
   );
 });
+
+// An app opened from a notification is told so in its address, as an open app is by the navigate message.
+function tapped(url) {
+  const u = new URL(url);
+  u.searchParams.set("tap", "1");
+  return u.href;
+}

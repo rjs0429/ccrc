@@ -25,8 +25,23 @@ export interface SessionSummary {
   folderMissing?: boolean;
   // Archived in ccrc: left out of the full list here, and nowhere else.
   archived?: boolean;
+  // VS Code archived it, which counts as archived here while vscodeArchive is on unless it was brought back here.
+  vscodeArchived?: boolean;
   // A turn the remote user waits for ended, or a notice about the session went out, and nobody opened it since.
   unread?: boolean;
+  // Open in another program that takes messages from here through its inbox socket.
+  inbox?: boolean;
+}
+
+// The sender name of a message sent from here to a session open in another program, as Claude and that session show it.
+export const INBOX_SENDER = "ccrc 휴대폰";
+
+// How a session open in another program would treat a message from here, as far as ccrc can tell: delivered, held
+// until approved in its terminal, held where nobody can approve it (by its permission mode or its settings), or
+// dropped by its settings.
+export interface InboxInfo {
+  gate: "deliver" | "approve" | "held" | "refused";
+  why?: "mode" | "setting";
 }
 
 export interface ToolResult {
@@ -667,6 +682,13 @@ export interface CallMap {
 }
 CALL_OPS.push("export", "usage_causes");
 
+export interface CallMap {
+  // Sends text to a session open in another program through its inbox socket; Claude gets it as a message from
+  // another session. What becomes of it shows in the transcript.
+  inbox_send: { args: { text: string }; data: Record<string, never> };
+}
+CALL_OPS.push("inbox_send");
+
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {
   id: string;
@@ -819,6 +841,8 @@ export interface LiveState {
   cache?: PromptCache;
   // Changes whenever the session's "/" command list does, so the phone asks for it again.
   commands?: string;
+  // A session open in another program that takes messages from here (inbox_send).
+  inbox?: InboxInfo;
 }
 
 export type ClientMsg =

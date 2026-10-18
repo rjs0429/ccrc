@@ -49,6 +49,7 @@ const EVENT_LABEL: Record<string, string> = {
   agent_changes: "에이전트 변경 열람",
   side_question: "곁질문",
   export: "대화 내보내기",
+  config: "ccrc 설정 바꿈",
 };
 
 const CALL_LABEL: Record<string, string> = {
@@ -159,7 +160,9 @@ function detail(e: AuditEntry): string {
     case "device_denied":
       return named(e.ip);
     case "send":
-      return typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : "";
+      return e.via === "inbox" ? "다른 세션 메시지로" : typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : "";
+    case "config":
+      return e.key === "vscodeArchive" ? `VS Code 보관 보기 ${e.value ? "켬" : "끔"}` : named(e.key);
     case "fork":
       return [
         e.before ? "메시지에서" : "지금까지",

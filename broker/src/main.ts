@@ -104,7 +104,8 @@ async function serve(): Promise<void> {
     apply: (c, changed) => {
       gate.update(c.allowedDevices, c.allowLocal);
       leases.setIdleMinutes(c.leaseIdleMinutes);
-      if (changed.includes("brokerSessions") || changed.includes("roots")) manager.emit("options_changed");
+      if (changed.includes("brokerSessions") || changed.includes("roots") || changed.includes("vscodeArchive")) manager.emit("options_changed");
+      if (changed.includes("vscodeArchive")) manager.emit("changed");
       updates.configChanged(changed);
     },
     log: (line) => console.log(line),

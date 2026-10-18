@@ -38,6 +38,9 @@ class FakeManager extends EventEmitter {
   waitingSessions(): string[] {
     return [...new Set(this.pending.values())];
   }
+  pendingRequest(id: string, requestId: string): object | undefined {
+    return this.pending.get(requestId) === id ? {} : undefined;
+  }
   state(s: Partial<LiveState>, id = A): void {
     const state: LiveState = { sessionId: id, cwd: "/home/u/billing-api", state: "owned", busy: false, ...s };
     this.emit("event", id, { t: "state", sessionId: id, state } satisfies ServerMsg);
@@ -81,7 +84,7 @@ function setup(prefs: Partial<PushPrefs> = {}, more: Subscription[] = []) {
   const notifier = new Notifier(manager as unknown as SessionManager, hub as unknown as Hub, {
     subscriptions: () => subs,
     deliver: (sub, payload, urgency) => sent.push({ endpoint: sub.endpoint, payload, urgency }),
-    timing: { ownedMs: 10, secondMs: 2, recheckMs: 20, doneMs: 15, retryMs: 10 },
+    timing: { ownedMs: 10, secondMs: 2, recheckMs: 20, doneMs: 15, retryMs: 10, recentMs: 150 },
     log: () => {},
   });
   return { manager, hub, subs, sent, notifier, bodies: () => sent.map((s) => s.payload.body) };
@@ -95,6 +98,42 @@ test("a request on a broker-run session is notified almost at once, with a minim
   assert.deepEqual(sent, [
     { endpoint: ENDPOINT, urgency: "high", payload: { title: "Fix the invoice export", body: "권한 요청", tag: `${A}:permission`, data: { url: `/#/s/${A}` }, badge: 1 } },
   ]);
+  notifier.close();
+});
+
+test("a device hears which request it was told of last, while that is recent and still waits", async () => {
+  const other: Subscription = { endpoint: OTHER, keys: { p256dh: "", auth: "" }, device: "tablet", createdAt: 0, prefs: { ...DEFAULT_PREFS, vscodeDelaySec: 30 } };
+  const { manager, hub, notifier } = setup({ vscodeDelaySec: 0 }, [other]);
+  manager.state({ state: "attached", busy: true });
+  assert.equal(notifier.recent(ENDPOINT), undefined);
+  manager.ask("r1");
+  await sleep(30);
+  assert.deepEqual(notifier.recent(ENDPOINT), { sessionId: A, requestId: "r1" });
+  assert.equal(notifier.recent(OTHER), undefined, "the tablet waits its delay and was not told yet");
+  manager.ask("r2", "question", "AskUserQuestion", {}, B);
+  await sleep(30);
+  assert.deepEqual(notifier.recent(ENDPOINT), { sessionId: B, requestId: "r2" }, "the latest request");
+  manager.settle("r2", B);
+  assert.equal(notifier.recent(ENDPOINT), undefined, "answered");
+  hub.watching = true;
+  manager.ask("r3");
+  await sleep(30);
+  assert.equal(notifier.recent(ENDPOINT), undefined, "not told while the user looks at the session");
+  manager.settle("r3");
+  hub.watching = false;
+  manager.ask("r4");
+  await sleep(30);
+  assert.deepEqual(notifier.recent(ENDPOINT), { sessionId: A, requestId: "r4" });
+  manager.state({ state: "owned", busy: false }, B);
+  manager.end({}, B);
+  hub.activity = Date.now();
+  await sleep(40);
+  assert.equal(notifier.recent(ENDPOINT), undefined, "a later notice about something else came last");
+  manager.ask("r5");
+  await sleep(30);
+  assert.deepEqual(notifier.recent(ENDPOINT), { sessionId: A, requestId: "r5" });
+  await sleep(170);
+  assert.equal(notifier.recent(ENDPOINT), undefined, "too long ago");
   notifier.close();
 });
 

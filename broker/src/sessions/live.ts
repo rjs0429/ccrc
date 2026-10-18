@@ -1,13 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { paths } from "../paths.ts";
+import { INBOX_PROTOCOL } from "./inbox.ts";
 
+// inbox: the session's inbox socket, when it speaks the line format ccrc knows.
 export interface LiveProcess {
   pid: number;
   sessionId: string;
   cwd: string;
   host: string;
   status?: string;
+  procStart: string;
+  inbox?: string;
 }
 
 const CACHE_MS = 2000;
@@ -15,9 +19,13 @@ const CACHE_MS = 2000;
 const HOSTS: Record<string, string> = {
   "claude-vscode": "VS Code",
   cli: "Terminal",
+  "sdk-cli": "SDK",
   "sdk-ts": "SDK",
   "sdk-py": "SDK",
 };
+
+// A background session (claude --bg) runs Claude Code's terminal screen, which `claude agents` and `claude attach` open.
+const BACKGROUND = "Background";
 
 let cache: { at: number; list: LiveProcess[] } | undefined;
 
@@ -50,8 +58,10 @@ export function liveProcesses(opts: { dir?: string; fresh?: boolean } = {}): Liv
         pid: r.pid,
         sessionId: r.sessionId,
         cwd: r.cwd,
-        host: HOSTS[r.entrypoint] ?? r.entrypoint ?? "Claude Code",
+        host: r.kind === "bg" ? BACKGROUND : (HOSTS[r.entrypoint] ?? r.entrypoint ?? "Claude Code"),
         status: r.status,
+        procStart: String(r.procStart),
+        ...(r.peerProtocol === INBOX_PROTOCOL && typeof r.messagingSocketPath === "string" ? { inbox: r.messagingSocketPath } : {}),
       });
     } catch {}
   }

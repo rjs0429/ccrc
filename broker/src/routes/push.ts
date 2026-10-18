@@ -34,6 +34,14 @@ export async function registerPush(app: FastifyInstance, d: RouteDeps): Promise<
     }
   });
 
+  app.get<{ Querystring: { endpoint?: unknown } }>("/api/push/recent", auth, async (req, reply) => {
+    try {
+      return d.push.recent(req.query.endpoint);
+    } catch (e) {
+      return refuse(reply, e);
+    }
+  });
+
   app.post<{ Body: { subscription?: unknown; prefs?: unknown } }>("/api/push/subscribe", auth, async (req, reply) => {
     try {
       const sub = d.push.subscribe(req.body?.subscription, req.body?.prefs, { device: req.device, origin: req.headers.origin });

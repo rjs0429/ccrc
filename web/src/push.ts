@@ -1,4 +1,4 @@
-import type { PushBadge, PushPrefs, PushStatus } from "../../broker/src/push/types.ts";
+import type { PushBadge, PushPrefs, PushRecent, PushStatus } from "../../broker/src/push/types.ts";
 import { ApiError, request } from "./api.ts";
 
 const SW = "/sw.js";
@@ -20,15 +20,32 @@ export function pushBlock(): PushBlock | undefined {
   return standalone ? "ios_update" : "ios_install";
 }
 
+// Where the last notification tap took the app, and when: the service worker's message to the open app, or the address
+// the worker opened the app at, which it marks with TAP_PARAM.
+const TAP_PARAM = "tap";
+let tap: { at: number; hash: string } | undefined;
+
+export function lastTap(): { at: number; hash: string } | undefined {
+  return tap;
+}
+
 // The service worker shows the notifications; tapping one while the app is open sends the app to its session.
 export function registerServiceWorker(): void {
   if (!window.isSecureContext || !("serviceWorker" in navigator)) return;
+  const opened = new URL(location.href);
+  if (opened.searchParams.has(TAP_PARAM)) {
+    tap = { at: Date.now(), hash: opened.hash };
+    opened.searchParams.delete(TAP_PARAM);
+    history.replaceState(history.state, "", `${opened.pathname}${opened.search}${opened.hash}`);
+  }
   navigator.serviceWorker.register(SW).catch(() => {});
   navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
     const msg = e.data as { t?: unknown; url?: unknown } | null;
     if (msg?.t !== "navigate" || typeof msg.url !== "string") return;
     const url = new URL(msg.url, location.origin);
-    if (url.origin === location.origin && url.hash.startsWith("#/")) location.hash = url.hash;
+    if (url.origin !== location.origin) return;
+    tap = { at: Date.now(), hash: url.hash };
+    if (url.hash.startsWith("#/")) location.hash = url.hash;
   });
 }
 
@@ -122,6 +139,14 @@ export async function syncBadge(): Promise<void> {
   const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
   const n = sub ? (await request<PushBadge>("GET", `/api/push/badge?endpoint=${encodeURIComponent(sub.endpoint)}`)).badge : 0;
   await (n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge());
+}
+
+// The request this browser was notified of lately that still waits for an answer; none without notifications.
+export async function recentRequest(): Promise<PushRecent["request"]> {
+  if (!window.isSecureContext || !("serviceWorker" in navigator)) return undefined;
+  const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
+  if (!sub) return undefined;
+  return (await request<PushRecent>("GET", `/api/push/recent?endpoint=${encodeURIComponent(sub.endpoint)}`)).request;
 }
 
 export async function savePrefs(device: PushDevice, prefs: Partial<PushPrefs>): Promise<PushPrefs> {

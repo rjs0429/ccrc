@@ -12,7 +12,7 @@ import type {
   SnapshotGap,
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, type Me, type Options } from "./api.ts";
-import { syncBadge } from "./push.ts";
+import { isIos, lastTap, recentRequest, syncBadge } from "./push.ts";
 import { joined, placed } from "./chatItems.ts";
 import { bindSent } from "./sentPreviews.ts";
 
@@ -47,6 +47,8 @@ export interface Chat {
   // An item to scroll to once it has arrived, as a search result asks; `earlier` when it was said before a compaction.
   focus?: string;
   focusEarlier?: boolean;
+  // A request card to show once the session has arrived.
+  focusRequest?: string;
 }
 
 export interface AppState {
@@ -167,6 +169,49 @@ export function focusDone(sessionId: string): void {
   updateChat(sessionId, () => ({ focus: undefined, focusEarlier: undefined }));
 }
 
+export function requestShown(sessionId: string): void {
+  updateChat(sessionId, () => ({ focusRequest: undefined }));
+}
+
+// Opens a session at a request waiting for an answer.
+export function openRequest(sessionId: string, requestId: string): void {
+  if (state.chat?.sessionId === sessionId) updateChat(sessionId, () => ({ focusRequest: requestId }));
+  else setState({ chat: { sessionId, loaded: false, items: [], pending: [], hasMore: false, focusRequest: requestId } });
+  navigate({ name: "chat", sessionId });
+}
+
+const SHOWN_REQUEST_KEY = "ccrc.shownRequest";
+// How long a notification's tap may come before or after the app comes to the front and still count for it.
+const TAP_WAIT_MS = 1500;
+const started = Date.now();
+
+function shownRequest(): string | null {
+  try {
+    return localStorage.getItem(SHOWN_REQUEST_KEY);
+  } catch {
+    return null;
+  }
+}
+
+// iOS can bring the app to the front from a notification without going where it points. Coming to the front shortly
+// after a request's notification, the app goes to that request itself, once per request, unless a tap took it
+// somewhere else or the user moved meanwhile; never from a new session's draft.
+async function toNotifiedRequest(front: number): Promise<void> {
+  if (!isIos() || !state.me?.loggedIn) return;
+  const hash = location.hash;
+  const r = await recentRequest().catch(() => undefined);
+  if (!r || shownRequest() === r.requestId) return;
+  await new Promise((done) => setTimeout(done, front + TAP_WAIT_MS - Date.now()));
+  if (shownRequest() === r.requestId || state.route.name === "new") return;
+  const tap = lastTap();
+  const tapped = tap && tap.at >= front - TAP_WAIT_MS ? tap.hash : undefined;
+  if (tapped === undefined && location.hash !== hash) return;
+  try {
+    localStorage.setItem(SHOWN_REQUEST_KEY, r.requestId);
+  } catch {}
+  if (tapped === undefined || tapped === `#/s/${r.sessionId}`) openRequest(r.sessionId, r.requestId);
+}
+
 function onRoute(): void {
   const route = parseRoute();
   if (route.name !== "settings") settingsReturn = undefined;
@@ -233,6 +278,7 @@ export function startSession(): void {
   connect();
   void refreshSessions();
   void refreshOptions();
+  void toNotifiedRequest(started);
 }
 
 export function loggedOut(reason: string): void {
@@ -417,7 +463,10 @@ document.addEventListener("visibilitychange", () => {
     retry = 0;
     connect();
   }
-  if (document.visibilityState === "visible") badgeSoon();
+  if (document.visibilityState === "visible") {
+    badgeSoon();
+    void toNotifiedRequest(Date.now());
+  }
 });
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);

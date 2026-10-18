@@ -83,6 +83,24 @@ your version and the new one, and the lines under "Breaking" separately.
   response, and a stopped session's comes from its transcript.
 - A plan's lines take comments: tap a line of the plan to write one, tap it again to change it. "계속 계획하기" sends
   them after the feedback as `줄 n "<the line>": <comment>`, a code block by its first line of code.
+- Sessions open in a terminal, in the background, under `claude -p` or in a VS Code tab opened before the wrapper
+  take text from the phone through Claude Code's inbox socket for messages from other sessions (Claude Code 2.1.224
+  or later). Claude gets it as a message from another session, "ccrc 휴대폰", and the composer says so before
+  sending: what Claude asks again where the session runs, that "/" commands are not run, and, from the transcript's
+  last permission mode and the `crossSessionInbound` settings ccrc can read, when the message waits for approval in
+  the terminal or in `claude agents` or is not delivered. The message waits under the conversation until its
+  transcript shows it. Such sessions no longer read "보기만" in the list, and a background session reads as open in
+  the background; a session of another inbox format stays view-only.
+- On iOS, when the app comes to the front within two minutes of a notification about a request that still waits, it
+  goes to that request's card, once per request: iOS can open the app from a notification without going where it
+  points. A notification's tap that reaches the app decides instead, and the service worker marks the address it opens
+  the app at (`?tap=1`). Other platforms, a new session's draft and answered requests are left alone. The broker says
+  which request it was (`GET /api/push/recent`).
+- The config key `vscodeArchive` (default `false`, also switched on the phone in 알림과 입력 > 세션 목록): sessions
+  VS Code's Claude Code extension archived, by hand or after its days without use, count as archived in ccrc's list,
+  marked "VS Code 보관". VS Code's state database is only read. Bringing such a session back on the phone, or sending
+  it a message, keeps it in the list (`<stateDir>/vscode-unarchived.json`) and leaves it archived in VS Code; the mark
+  goes once VS Code shows the session again.
 
 ### Changed
 
@@ -92,7 +110,7 @@ your version and the new one, and the lines under "Breaking" separately.
   installed. Installing never used it: `install.sh` does not check tag signatures.
 - The composer's agent chip stays for the whole conversation: dimmed until the conversation uses a subagent or
   workflow, and beside the notice that takes the composer's place in a session the phone can only view (open in VS
-  Code without the wrapper, its folder gone, remote sessions off). Tapping it opens the agent map, which says when no
+  Code or a terminal and taking no messages from here, its folder gone, remote sessions off). Tapping it opens the agent map, which says when no
   agent was used. Its running count has a place two digits wide, empty while no agent runs, so the chip keeps one
   width. The Context ring moved next to the paperclip: one line reads paperclip, Context, model, Effort, agents …
   permission mode, send; when that does not fit, line 1 holds the agent chip and the permission mode, line 2 the rest.
@@ -130,6 +148,7 @@ your version and the new one, and the lines under "Breaking" separately.
   or plugins or skills reload), in sessions the broker runs and in VS Code, and leaves out the commands Claude Code
   binds to its own terminal (such as `/color` and `/focus`). A broker session's list is known from its start instead
   of its first turn. The wrapper hands the latest list again to a broker that connects anew.
+- Sessions run by `claude -p` show as open in "SDK" instead of "sdk-cli".
 
 ### Fixed
 

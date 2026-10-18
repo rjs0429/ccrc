@@ -46,11 +46,11 @@ function openSnippet(sessionId: string, sn: SearchSnippet): void {
   openAt(sessionId, sn.itemId, sn.earlier);
 }
 
-function Meta({ text, archived }: { text: string; archived?: boolean }) {
+function Meta({ text, archived, vscode }: { text: string; archived?: boolean; vscode?: boolean }) {
   if (!archived) return <span className="mt-0.5 block truncate text-xs text-muted">{text}</span>;
   return (
     <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted">
-      <ArchivedBadge />
+      <ArchivedBadge vscode={vscode} />
       <span className="truncate">{text}</span>
     </span>
   );
@@ -62,7 +62,7 @@ function SearchRow({ r }: { r: SearchResult }) {
     <div className="mx-auto max-w-3xl border-b border-line">
       <button onClick={() => openAt(r.id, r.snippets.find((sn) => !sn.earlier)?.itemId)} className="block w-full px-4 pt-3 pb-1 text-left active:bg-surface-2">
         <span className="block truncate text-[15px] font-medium">{r.title.trim() ? <Marked text={r.title} marks={r.titleMarks} /> : sessionTitle(r)}</span>
-        <Meta text={meta} archived={r.archived} />
+        <Meta text={meta} archived={r.archived} vscode={r.vscodeArchived} />
       </button>
       <div className="pb-2">
         {r.snippets.map((sn) => (
@@ -130,7 +130,8 @@ function status(s: SessionSummary): { text: string; dot: string } {
     return { text: s.state === "attached" ? `${host} 연결됨` : "원격 실행 중", dot: "bg-ok" };
   }
   if (s.state === "live") {
-    return s.busy ? { text: `${host}에서 작업 중 · 보기만`, dot: "bg-info animate-pulse" } : { text: `${host}에서 열림 · 보기만`, dot: "bg-info" };
+    const only = s.inbox ? "" : " · 보기만";
+    return s.busy ? { text: `${host}에서 작업 중${only}`, dot: "bg-info animate-pulse" } : { text: `${host}에서 열림${only}`, dot: "bg-info" };
   }
   return { text: s.folderMissing ? "폴더 없음" : "", dot: "border border-line" };
 }
@@ -153,7 +154,7 @@ function SessionRow({ s, view, onActions }: { s: SessionSummary; view: Filter; o
           <TitleText text={sessionTitle(s)} />
           {s.unread && <span className="sr-only"> · 읽지 않음</span>}
         </span>
-        <Meta text={meta} archived={s.archived && view !== "archived"} />
+        <Meta text={meta} archived={s.archived && view !== "archived"} vscode={s.vscodeArchived} />
       </span>
       {s.unread && <span className="mt-1.5 size-2.5 shrink-0 rounded-full bg-accent" data-unread-dot />}
     </button>
@@ -162,7 +163,7 @@ function SessionRow({ s, view, onActions }: { s: SessionSummary; view: Filter; o
   return (
     <div className={`flex items-center ${CARD}`}>
       {row}
-      <button onClick={() => setArchived(s.id, false)} className="mr-2 min-h-11 shrink-0 rounded-lg px-3 text-sm font-medium text-accent active:bg-surface-2">
+      <button onClick={() => setArchived(s.id, false, s.vscodeArchived)} className="mr-2 min-h-11 shrink-0 rounded-lg px-3 text-sm font-medium text-accent active:bg-surface-2">
         보관 해제
       </button>
     </div>

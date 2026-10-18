@@ -188,6 +188,11 @@ taken from `--yes`:
 4. In ccrc's settings, turn on notifications and send a test one (iOS 16.4 or later; iOS allows web push only in
    home screen apps).
 
+iOS sometimes opens the app from a notification without going where it points. When the app comes to the front
+within two minutes of a notification about a request that still waits for an answer and no notification's tap reaches
+it, it goes to that request itself, once per request (not from a new session's draft). A tap that does reach the app
+decides where it goes.
+
 Android with Chrome should work the same way, but has not been tested.
 
 ### VS Code
@@ -217,6 +222,28 @@ broker is down, and the wrapper reconnects when it comes back.
   before. Tabs opened with an older wrapper still get the push, and Claude reads Claude Code's own answer.
 - To turn ccrc off for VS Code, remove the setting, or add `CCRC_WRAPPER=off` to
   `claudeCode.environmentVariables`.
+- With `vscodeArchive` on (on the phone: 설정 > 알림과 입력 > 세션 목록), the sessions the extension archived, by hand
+  or after `claudeCode.archiveInactiveSessions` days without use (14 by default), count as archived in ccrc's list as
+  well, with a "VS Code 보관" badge. ccrc reads the extension's list from VS Code's state database
+  (`~/.config/Code/User/globalStorage/state.vscdb`, default profile only) and never writes it: such a session brought
+  back on the phone stays archived in VS Code.
+
+### Sessions open elsewhere
+
+A session open in a terminal, in the background (`claude --bg`), under `claude -p` or another program, or in a VS
+Code tab opened before the wrapper was set, is shown on the phone as its transcript grows. Claude Code 2.1.224 and
+later give each such session an inbox socket for messages from your other sessions, and the phone sends text there:
+
+- Claude gets it as a message from another session ("ccrc 휴대폰"), not from you. It acts on it within that session's
+  own permissions and asks there before anything that matters; a "/" command in it is not run, and it never answers a
+  pending prompt.
+- A session that skips permission prompts holds the message: a terminal asks there, and so does a background session
+  once opened from `claude agents` (it lists as waiting on a permission prompt); anywhere else drops it unless the mode
+  changes within five minutes. A `crossSessionInbound` setting decides instead when the user's or the project's
+  settings have one. The phone says so before you send, as far as the transcript's last permission mode and those
+  settings tell.
+- Attachments, model and mode changes, stopping a turn and answering its prompts stay with the program that runs it.
+  A session whose registry names another inbox format than ccrc knows (`peerProtocol` 1) stays view-only.
 
 ## Update and roll back
 
@@ -333,6 +360,7 @@ column, and unknown keys are only warned about. A running broker takes in change
 | `updateChannel` | `"stable"` | `"stable"`, or `"rc"` to include release candidates |
 | `updateRepo` | (unset) | Repository to look in when the install does not name its source; else `https://github.com/rjs0429/ccrc.git` |
 | `updateNotify` | `true` | Send one push notification per new release to subscribed phones |
+| `vscodeArchive` | `false` | Sessions VS Code's Claude Code extension archived count as archived in ccrc's list too (see [VS Code](#vs-code)). The phone switches it too |
 
 Other settings (notifications, Enter to send, Claude Code's own settings) are changed in the phone's settings screen.
 
@@ -375,7 +403,7 @@ while setup runs, setup writes it into the service unit too.
 | `~/.local/state/ccrc/update-check.json` | The last new-release check |
 | `~/.local/state/ccrc/install.log`, `wrapper.log` | Logs of `install.sh` and the wrapper (no conversation content) |
 | `~/.local/state/ccrc/uploads/` | Phone attachments, kept 24 hours |
-| `~/.local/state/ccrc/*.json`, `turns/`, `cli/`, `doctor/` | Working state: archived and unread sessions, recent remote activity, start settings, model and context window lists, the last compatibility check, cut-off turns |
+| `~/.local/state/ccrc/*.json`, `turns/`, `cli/`, `doctor/` | Working state: archived and unread sessions, sessions brought back from VS Code's archive, recent remote activity, start settings, model and context window lists, the last compatibility check, cut-off turns |
 | `$XDG_RUNTIME_DIR/ccrc/link.sock` | Wrapper and broker socket |
 
 The config and state folders (`~/.config/ccrc`, `~/.local/state/ccrc`) are private to you (0700) and the files in them
@@ -409,9 +437,14 @@ does the file.
   Code's settings and credentials, ccrc's own folders, `/proc`) are blocked for every session, also for files Claude
   sends to the phone, for `@` suggestions and for the lines of the changes sheet's git view, which also shows the
   lines of files inside the session's folders only.
+- **Sessions open elsewhere.** The phone's text reaches a session open in another program only through that session's
+  own inbox socket, which has to be yours, in a folder only you can open, and is checked before each message. It goes
+  as a message from another session, with the peer token Claude Code publishes for its sessions, so Claude Code's rules
+  for those apply: it approves nothing, runs no command and changes no settings, and a session that skips permission
+  prompts holds it.
 - **Audit log.** Logins, failed logins, denied devices, messages sent, answers, mode and model changes, file reads,
-  git changes read, side questions, conversation exports, new sessions and forks are recorded in `audit.jsonl`,
-  without message contents.
+  git changes read, side questions, conversation exports, new sessions, forks and the phone's changes to
+  `vscodeArchive` are recorded in `audit.jsonl`, without message contents.
 - **Local socket.** The wrapper socket is 0600 in a 0700 folder owned by you; both sides check this, and it never
   falls back to a shared folder such as `/tmp`.
 - **Secrets.** The API key is passed only to broker sessions' Claude Code as `ANTHROPIC_API_KEY`, and never written to
@@ -438,7 +471,8 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 - With a wrapper set, the extension skips its "still open somewhere else" check. ccrc covers it by waiting for the
   other process and opening a fork when it does not let go.
 - Reopening a conversation that ended in plan mode does not bring plan mode back.
-- With `claudeCode.useTerminal` on, VS Code does not use the wrapper, and those sessions are view-only on the phone.
+- With `claudeCode.useTerminal` on, VS Code does not use the wrapper, and those sessions take text from the phone only
+  as messages from another session (see [Sessions open elsewhere](#sessions-open-elsewhere)).
 - A model changed on the phone shows in VS Code's model picker from the next reply; a message queued on the phone shows
   in VS Code once Claude Code takes it.
 - Some VS Code dialogs (usage limit consent, for example) show on the phone but are answered in VS Code.
@@ -456,7 +490,8 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
   and its extensions in `~/.vscode/extensions`, as Microsoft's build keeps them: not Insiders, VSCodium or Code - OSS
   (Arch's `code` package; use `visual-studio-code-bin` there). With another build, setup skips the `vscode` step.
 - One user per machine and one remote login at a time.
-- Sessions run on the machine, so it has to be on and online. Sessions started in a terminal are view-only.
+- Sessions run on the machine, so it has to be on and online. Sessions open in a terminal or another program take
+  text from the phone only as messages from another session; their prompts, model, mode and turns stay there.
 - In `apiKey` mode, commands Claude runs in a broker session (the Bash tool, for example) inherit Claude Code's
   environment and so can read the key.
 - The installer is new. ccrc has run daily on Ubuntu 24.04. On 2026-10-18 `install.sh` from GitHub installed v0.7.0
