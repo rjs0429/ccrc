@@ -246,8 +246,10 @@ ccrc rollback              # back to the version before the last update
    waits up to 30 seconds for `/api/ping` to report the new version.
 6. If it does not, it moves the link back, restores the backup, restarts the old version, and exits with code 3.
 7. Keeps the previous version (open VS Code tabs may still run its wrapper) and removes older ones.
-8. Tells you what else to do: reload VS Code windows when the wrapper protocol changed, and fully close and reopen
-   the phone's home screen app.
+8. Tells you what else to do: reload VS Code windows when the wrapper's protocol changed or the new wrapper has new
+   features (it names them), and fully close and reopen the phone's home screen app. The version you update from gives
+   this advice: from 0.7 it tells of a protocol change only, so see "Upgrading from 0.7" in the
+   [CHANGELOG](CHANGELOG.md#upgrading-from-07).
 
 `ccrc update`, `ccrc rollback`, setup's `service` step and `ccrc uninstall` refuse to run inside a broker session
 (asking Claude to run them from the phone, for example): those sessions run inside `ccrc.service`, so restarting it
@@ -439,9 +441,10 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 - A model changed on the phone shows in VS Code's model picker from the next reply; a message queued on the phone shows
   in VS Code once Claude Code takes it.
 - Some VS Code dialogs (usage limit consent, for example) show on the phone but are answered in VS Code.
-- Side questions from the phone, and the changes sheet's git view as Claude Code sees it, need the wrapper of ccrc 0.8
-  or later: a tab opened before an update keeps its older wrapper until it is opened again. Side questions asked from
-  the phone do not show in VS Code's side panel.
+- Side questions from the phone, "백그라운드로" (move to background) on cards and in the agent map, the changes sheet's
+  git view as Claude Code sees it, and Claude being told that its PushNotification reached the phone need the wrapper
+  of ccrc 0.8 or later: a tab opened before an update keeps its older wrapper until it is opened again. Side questions
+  asked from the phone do not show in VS Code's side panel.
 - When removing ccrc by hand, remove the VS Code setting before the files (`ccrc uninstall` does this).
 
 ## Limitations

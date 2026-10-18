@@ -122,6 +122,10 @@ your version and the new one, and the lines under "Breaking" separately.
   while you are at the bottom, keeps what you are reading in place otherwise (Safari has no scroll anchoring of its
   own), and marks new content only when a message, a request or a reply comes. A running subagent's card no longer
   shrinks and grows with each step, and a message that wraps as you type no longer pulls the conversation up.
+- `ccrc update` said to reload VS Code windows only when the wrapper protocol changed. Claude tabs opened before an
+  update need a reload to get the new wrapper's features too (the names in its hello's `caps`), so it now also says so
+  when there are new ones, and names them. The version you update from gives this advice: updating from 0.7 still does
+  not, see "Upgrading from 0.7".
 
 ### Security
 
@@ -138,6 +142,14 @@ your version and the new one, and the lines under "Breaking" separately.
 - `ccrc update` took a signed tag of an older release, offered under a newer release's name, for the newer release, as
   `git verify-tag` does not look at the name. It now checks that the tag was signed under the name it was fetched as,
   and that the copy is at the commit the tag names.
+
+### Upgrading from 0.7
+
+- After `ccrc update`, reload VS Code windows (Developer: Reload Window): updating from 0.7 does not say so, and a
+  Claude tab opened before the update keeps the wrapper of 0.7 until it is opened again. Until then, in that tab's
+  session, the side question sheet and the cards and agent map that would offer "백그라운드로" say to open Claude Code again
+  instead, the changes sheet's git view is read by the broker, and Claude reads Claude Code's "not sent" after a
+  PushNotification call that reached the phone.
 
 ## [0.7.3] - 2026-10-18
 

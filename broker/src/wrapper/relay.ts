@@ -55,7 +55,8 @@ const REMOTE_REQUESTS = new Set([
   "get_workspace_diff",
   "side_question",
 ]);
-// Told to the broker in the hello, so it offers what this wrapper passes on.
+// Told to the broker in the hello, so it offers what this wrapper passes on. `ccrc update` compares this list between
+// the old and the new version to say when VS Code tabs opened before need the new wrapper.
 const CAPS = ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question"];
 // The id of the hook this wrapper adds to VS Code's initialize and answers itself.
 export const PUSH_HOOK = "ccrc_push_notification";

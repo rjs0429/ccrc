@@ -7,7 +7,7 @@ import { brokerVersion, readInstallInfo, writeInstallInfo } from "../src/install
 import { changelogSections, compareVersions, isNewer, latestTag, parseLsRemote, parseVersion, releaseUrl, updateSource } from "../src/releases.ts";
 import { run, type Runner } from "../src/run.ts";
 import { readUpdateCheck } from "../src/update-check.ts";
-import { EXIT_BROKEN, EXIT_ROLLED_BACK, parseFrom, rollback, runsCurrent, update, type HistoryEntry, type UpdateDeps } from "../src/update.ts";
+import { EXIT_BROKEN, EXIT_ROLLED_BACK, parseFrom, rollback, runsCurrent, update, wrapperChange, type HistoryEntry, type UpdateDeps } from "../src/update.ts";
 import { tempDir } from "./helpers.ts";
 
 // git without the user's own config, hooks or signing.
@@ -362,6 +362,46 @@ test("rollback goes back to the version before the last update and undoes what i
   assert.equal(await update({ yes: true, to: "0.7.1" }, w.deps), 0, output(w));
   assert.equal(current(w), path.join("versions", "v0.7.1"));
   assert.ok(!w.calls.some((c) => c.startsWith("git -c advice.detachedHead=false clone") || c.startsWith("npm")));
+});
+
+test("open Claude tabs are told to reload when the wrapper protocol changes or the new wrapper has new features", () => {
+  const version = (files: Record<string, string>) => {
+    const dir = tempDir();
+    for (const [rel, text] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), text);
+    }
+    return dir;
+  };
+  const link = (v: number) => ({ "broker/src/link/protocol.ts": `export const LINK_VERSION = ${v};\n` });
+  const caps = (list: string) => ({ "broker/src/wrapper/relay.ts": `// Told to the broker in the hello.\nconst CAPS = ${list};\nexport const PUSH_HOOK = "x";\n` });
+  const v07 = version({ ...link(1), ...caps('["fast_mode", "thinking"]') });
+  const v08 = version({ ...link(1), ...caps('["fast_mode", "thinking", "claude_push", "side_question"]') });
+  assert.equal(wrapperChange(v07, v08), "The VS Code wrapper has new features (claude_push, side_question)");
+  assert.equal(wrapperChange(v08, v07), undefined, "going back: open tabs keep the newer wrapper, which the older broker works with");
+  assert.equal(wrapperChange(v08, version({ ...link(1), ...caps('[\n  "side_question",\n  "claude_push",\n  "thinking",\n  "fast_mode",\n]') })), undefined, "the same features, one a line");
+  assert.equal(wrapperChange(v07, version({ ...link(2), ...caps('["fast_mode", "thinking"]') })), "The wrapper protocol changed");
+  assert.equal(wrapperChange(v07, version(link(1))), "The VS Code wrapper changed", "a wrapper whose features cannot be read");
+  assert.equal(wrapperChange(version(link(1)), version(link(1))), undefined);
+});
+
+test("an update whose wrapper has new features says to reload VS Code windows; going back from it does not", async () => {
+  const repo = makeRepo();
+  const w = installed(repo, "v0.7.1");
+  const relay = (dir: string, caps: string[]) => {
+    fs.mkdirSync(path.join(dir, "broker", "src", "wrapper"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "broker", "src", "wrapper", "relay.ts"), `const CAPS = [${caps.map((c) => `"${c}"`).join(", ")}];\n`);
+  };
+  relay(w.root, ["fast_mode", "thinking"]);
+  relay(repo.work, ["fast_mode", "thinking", "side_question"]);
+  git(repo.work, "add", "-A");
+  git(repo.work, "commit", "-q", "-m", "A wrapper feature");
+  assert.equal(await update({ yes: true, from: repo.work }, w.deps), 0, output(w));
+  assert.match(output(w), /^- The VS Code wrapper has new features \(side_question\): reload VS Code windows \(Developer: Reload Window\)/m);
+  w.lines.length = 0;
+  assert.equal(await rollback({ yes: true }, w.deps), 0, output(w));
+  assert.doesNotMatch(output(w), /reload VS Code windows/);
+  assert.match(output(w), /close the home screen app/);
 });
 
 test("nothing switches when the build or the migrate step fails", async () => {

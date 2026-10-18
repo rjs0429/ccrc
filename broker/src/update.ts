@@ -492,7 +492,8 @@ class Updater {
   // fromName and to are folder names under versions/.
   afterwards(fromName: string | undefined, to: string): void {
     this.d.log(`ccrc is now ${readInstallInfo(this.dirOf(to))?.version ?? to}.`);
-    if (fromName && linkVersion(this.dirOf(fromName)) !== linkVersion(this.dirOf(to))) this.d.log("- The wrapper protocol changed: reload VS Code windows (Developer: Reload Window) so Claude tabs use the new wrapper.");
+    const wrapper = fromName && wrapperChange(this.dirOf(fromName), this.dirOf(to));
+    if (wrapper) this.d.log(`- ${wrapper}: reload VS Code windows (Developer: Reload Window) so Claude tabs use the new wrapper.`);
     this.d.log("- On the phone, close the home screen app fully and open it again.");
   }
 }
@@ -592,6 +593,27 @@ export function linkVersion(dir: string): number | undefined {
   } catch {
     return undefined;
   }
+}
+
+// The features a version's wrapper names in its hello (CAPS in its relay.ts).
+export function wrapperCaps(dir: string): string[] | undefined {
+  try {
+    const m = /\bconst CAPS = \[([^\]]*)\]/.exec(fs.readFileSync(path.join(dir, "broker", "src", "wrapper", "relay.ts"), "utf8"));
+    return m ? [...m[1].matchAll(/"([^"]+)"/g)].map((c) => c[1]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Why Claude tabs VS Code opened before a switch between two versions' folders should be opened again, if they should:
+// each keeps the wrapper it started with.
+export function wrapperChange(from: string, to: string): string | undefined {
+  if (linkVersion(from) !== linkVersion(to)) return "The wrapper protocol changed";
+  const before = wrapperCaps(from);
+  const after = wrapperCaps(to);
+  if (!before || !after) return before === after ? undefined : "The VS Code wrapper changed";
+  const added = after.filter((c) => !before.includes(c));
+  return added.length ? `The VS Code wrapper has new features (${added.join(", ")})` : undefined;
 }
 
 // "<path>[@<ref>]": the whole text when it names a folder, else split at the last "@".
