@@ -107,7 +107,7 @@ test("the phone reads the cache as VS Code does: minutes left rounded up, cold o
   assert.equal(ahead?.kind === "warm" ? ahead.minutes : undefined, 5, "a clock ahead of the phone's leaves at most the whole time to live");
   const cold = cacheNow({ at, ttl: "1h", tokens: 120_000 }, at + 3_725_000);
   assert.deepEqual(cold, { kind: "cold", reason: "expired", idleMs: 3_725_000, tokens: 120_000 });
-  assert.deepEqual(cacheText(cold!, (n) => `${n / 1000}k`), { head: "캐시가 만료됐을 수 있습니다 · 쉰 지 1시간 2분", hint: "다음 메시지가 약 120k 토큰을 다시 캐시합니다." });
+  assert.deepEqual(cacheText(cold!, (n) => `${n / 1000}k`), { head: "캐시가 만료되었을 수 있습니다 · 쉰 지 1시간 2분", hint: "다음 메시지가 약 120k 토큰을 다시 캐시합니다." });
   const compacted = cacheNow({ at, ttl: "1h", compactedAt: at + 1000 }, at + 2000);
   assert.deepEqual(compacted, { kind: "cold", reason: "compacted", idleMs: 1000 });
   assert.equal(cacheLabel(compacted!), "프롬프트 캐시 없음 (대화를 요약함)");

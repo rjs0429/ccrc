@@ -36,7 +36,7 @@ export function bareCommandSheet(text: string): string | undefined {
 // Commands the phone answers itself that Claude Code does not list for a session it runs headless.
 export const PHONE_COMMANDS: CommandInfo[] = [
   { name: "btw", description: "진행 중인 작업을 끊지 않고 곁질문합니다", argumentHint: "<질문>" },
-  { name: "copy", description: "Claude의 마지막 답을 마크다운 원문으로 복사합니다" },
+  { name: "copy", description: "Claude의 마지막 답을 Markdown 원문으로 복사합니다" },
   { name: "export", description: "대화를 Markdown 파일로 내보냅니다" },
 ];
 

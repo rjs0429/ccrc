@@ -35,7 +35,7 @@ export function cacheText(s: CacheNow, tokens: (n: number) => string): { head: s
   }
   if (s.reason === "compacted") return { head: "대화를 요약해 캐시가 없습니다", hint: "다음 메시지가 요약한 대화를 다시 캐시합니다." };
   return {
-    head: `캐시가 만료됐을 수 있습니다 · 쉰 지 ${idleText(s.idleMs)}`,
+    head: `캐시가 만료되었을 수 있습니다 · 쉰 지 ${idleText(s.idleMs)}`,
     hint: s.tokens ? `다음 메시지가 약 ${tokens(s.tokens)} 토큰을 다시 캐시합니다.` : "다음 메시지가 대화 전체를 다시 캐시합니다.",
   };
 }

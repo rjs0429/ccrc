@@ -13,7 +13,7 @@ export function ReplySheet({ reply, onExport, onClose }: { reply: Reply; onExpor
         {reply.text}
       </div>
       <Choice
-        label="마크다운 원문 복사"
+        label="Markdown 원문 복사"
         onClick={() => {
           onClose();
           copyText(reply.text, "답을 복사했습니다");
