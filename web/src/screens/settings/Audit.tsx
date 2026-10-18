@@ -31,6 +31,7 @@ const EVENT_LABEL: Record<string, string> = {
   attach: "VS Code 세션 연결",
   handoff: "VS Code로 넘김",
   upload: "파일 첨부",
+  reattach: "첨부 다시 붙임",
   file_read: "파일 열람",
   agent_transcript: "에이전트 기록 열람",
   call: "세션 작업",
@@ -157,7 +158,17 @@ function detail(e: AuditEntry): string {
     case "send":
       return typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : "";
     case "fork":
-      return [e.before ? "메시지에서" : "지금까지", typeof e.chars === "number" ? "바로 시작" : "", typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : ""].filter(Boolean).join(" · ");
+      return [
+        e.before ? "메시지에서" : "지금까지",
+        e.draft === true ? "첫 메시지라 새 세션 화면으로" : "",
+        typeof e.worktree === "string" ? `worktree ${e.worktree}` : "",
+        typeof e.chars === "number" ? "바로 시작" : "",
+        typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    case "reattach":
+      return typeof e.files === "number" ? `파일 ${e.files}개` : "";
     case "rewind_conversation":
       return [e.choice === "both" ? "대화와 코드" : "대화만", e.mode === "in_place" ? "제자리" : "새 세션"].join(" · ");
     case "git_changes":

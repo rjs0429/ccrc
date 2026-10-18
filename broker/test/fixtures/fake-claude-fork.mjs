@@ -5,8 +5,12 @@
 // "echo: <text>". rewind_conversation refuses or rewinds in place as Claude Code does, with its last-prompt row;
 // FAKE_NO_REWIND=1 or a .fake-no-rewind file in the working folder is a Claude Code without it, and a .fake-unseen file
 // there makes it refuse with unseen_later_turn. rewind_files answers from .fake-rewind.json there ({files, insertions,
-// deletions, skippedLinks}); without it no checkpoint is found. FAKE_REQUESTS=<file> gets its arguments, then each
-// request and message.
+// deletions, skippedLinks}); without it no checkpoint is found. --worktree <name> makes <root>/.claude/worktrees/<name> on
+// branch worktree-<name> from HEAD as Claude Code does (outside git it fails the same way), locks it and works there; a
+// fork's copy then goes to that folder's transcript with its rows' cwd and a worktree-state row. A .fake-fail-start file
+// where it starts makes it end before it answers, after any worktree is made. A message's images and documents stay in its
+// row. FAKE_REQUESTS=<file> gets its arguments and folder, then each request and message with its files' names or types.
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,6 +32,31 @@ const source = value("--resume");
 const sid = value("--session-id") || (forking ? undefined : source) || randomUUID();
 const config = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
 const projects = path.join(config, "projects");
+const launched = process.cwd();
+let worktreeRow;
+const wtName = value("--worktree");
+if (wtName) {
+  const git = (...a) => execFileSync("git", ["-C", launched, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  let common;
+  try {
+    common = git("rev-parse", "--path-format=absolute", "--git-common-dir");
+  } catch {
+    process.stderr.write(`Error: Can only use --worktree in a git repository, but ${launched} is not a git repository. Configure a WorktreeCreate hook to use --worktree with other VCS systems.\n`);
+    process.exit(1);
+  }
+  const root = common.endsWith("/.git") ? path.dirname(common) : git("rev-parse", "--show-toplevel");
+  const folder = wtName.replaceAll("/", "+");
+  const at = path.join(root, ".claude", "worktrees", folder);
+  const branch = `worktree-${folder}`;
+  const head = git("rev-parse", "HEAD");
+  if (!fs.existsSync(at)) git("worktree", "add", "-q", "--no-track", "-B", branch, at, "HEAD");
+  const procStart = fs.readFileSync("/proc/self/stat", "utf8").split(") ")[1].split(" ")[19];
+  try {
+    git("worktree", "lock", "--reason", `claude session ${wtName} (pid ${process.pid} start ${procStart})`, at);
+  } catch {}
+  worktreeRow = { type: "worktree-state", sessionId: sid, worktreeSession: { originalCwd: launched, worktreePath: at, worktreeName: wtName, worktreeBranch: branch, originalHeadCommit: head, sessionId: sid } };
+  process.chdir(at);
+}
 const cwd = process.cwd();
 const file = path.join(projects, cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sid}.jsonl`);
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
@@ -38,7 +67,11 @@ const append = (rows) => {
 };
 const now = () => new Date().toISOString();
 const base = () => ({ sessionId: sid, cwd, isSidechain: false, userType: "external", version: "2.1.300", gitBranch: "" });
-record({ args });
+record({ args, launched, cwd });
+if (fs.existsSync(path.join(launched, ".fake-fail-start"))) {
+  process.stderr.write("Error: could not start\n");
+  process.exit(1);
+}
 
 function rowsOf(id) {
   let f;
@@ -110,10 +143,12 @@ const add = (row) => {
   conv.push(full);
   return full;
 };
-// The copy is written with the first input, as Claude Code writes a fork.
+// The copy is written with the first input, as Claude Code writes a fork, in the folder the fork works in.
 const flush = () => {
+  if (worktreeRow) append([worktreeRow]);
+  worktreeRow = undefined;
   if (!pending) return;
-  append(pending.map((r) => ({ ...r, sessionId: sid })));
+  append(pending.map((r) => ({ ...r, sessionId: sid, ...(r.cwd ? { cwd } : {}) })));
   pending = undefined;
 };
 const textOf = (r) => (typeof r.message?.content === "string" ? r.message.content : (r.message?.content ?? []).map((b) => b.text ?? "").join(""));
@@ -140,7 +175,8 @@ const answer = (m, response) => out({ type: "control_response", response: { subt
 function handle(m) {
   if (m.type === "user") {
     const text = textOf(m);
-    record({ user: text });
+    const files = Array.isArray(m.message?.content) ? m.message.content.filter((b) => b.type !== "text") : [];
+    record({ user: text, ...(files.length ? { files: files.map((b) => b.title ?? b.source?.media_type ?? b.type) } : {}) });
     flush();
     const uuid = m.uuid ?? randomUUID();
     out({ type: "command_lifecycle", command_uuid: uuid, state: "started", uuid: randomUUID(), session_id: sid });
@@ -164,7 +200,7 @@ function handle(m) {
       out({ type: "command_lifecycle", command_uuid: uuid, state: "completed", uuid: randomUUID(), session_id: sid });
       return;
     }
-    add({ type: "user", uuid, message: { role: "user", content: text } });
+    add({ type: "user", uuid, message: { role: "user", content: files.length ? m.message.content : text } });
     out({ ...m, session_id: sid, uuid, isReplay: true });
     if (text === "HOLD") {
       holding = uuid;

@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from "react";
-import type { UploadInfo, UserAttachment } from "../../../../broker/src/protocol.ts";
+import type { ReattachResult, UploadInfo, UserAttachment } from "../../../../broker/src/protocol.ts";
 import { ApiError, api } from "../../api.ts";
-import { loggedOut, toast } from "../../state.ts";
+import { call, loggedOut, toast } from "../../state.ts";
+import type { ReattachFailure } from "../messageActions.ts";
 
 type Kind = UploadInfo["kind"];
 
@@ -25,6 +26,8 @@ const MAX_ATTACHMENTS = 10;
 const MAX_EDGE = 1568;
 const KEEP_BYTES = 1.5 * MB;
 const KEEP_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+// The image types the broker serves from a transcript.
+export const SERVED_IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const IMAGE_EXT = new Set(["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"]);
 const TEXT_EXT = (
   "txt md markdown rst csv tsv log json jsonl yaml yml toml ini cfg conf env xml html htm svg css scss less js mjs cjs jsx ts mts cts tsx " +
@@ -75,6 +78,51 @@ export function removeAttachment(sessionId: string, key: number): void {
   const list = lists.get(sessionId) ?? [];
   list.filter((a) => a.key === key).forEach(drop);
   set(sessionId, list.filter((a) => a.key !== key));
+}
+
+export function clearAttachments(sessionId: string): void {
+  (lists.get(sessionId) ?? []).forEach(drop);
+  set(sessionId, []);
+}
+
+// Where the broker serves an image of a user message from the session's transcript; index counts its images and documents.
+export function messageImageUrl(sessionId: string, messageId: string, index: number): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/attachments/${index}`;
+}
+
+// Attaches again to a composer (scope) the images and documents of a message the session holds, which the broker
+// uploads anew from the transcript; they show at once and wait like uploads. replace: they take the place of what the
+// composer had. Answers why each one that could not be was left out.
+export async function reattachMessage(scope: string, sessionId: string, messageId: string, list: UserAttachment[], replace = false): Promise<ReattachFailure[]> {
+  if (replace) clearAttachments(scope);
+  if (!list.length) return [];
+  const room = Math.max(0, MAX_ATTACHMENTS - (lists.get(scope)?.length ?? 0));
+  const placed: Attachment[] = list.slice(0, room).map((a, i) => ({
+    key: ++seq,
+    name: a.name || (a.kind === "image" ? "이미지" : "문서"),
+    kind: a.kind === "image" ? "image" : a.mediaType === "application/pdf" ? "pdf" : "text",
+    ...(a.kind === "image" && SERVED_IMAGES.has(a.mediaType) ? { thumb: messageImageUrl(sessionId, messageId, i) } : {}),
+    progress: 0,
+  }));
+  const skipped: ReattachFailure[] = list.slice(room).map(() => "too_many");
+  set(scope, [...(lists.get(scope) ?? []), ...placed]);
+  let result: ReattachResult;
+  try {
+    result = await call(sessionId, "reattach", { messageId });
+  } catch {
+    placed.forEach((a) => removeAttachment(scope, a.key));
+    return [...placed.map((): ReattachFailure => "failed"), ...skipped];
+  }
+  const failures = placed.flatMap((a, i): ReattachFailure[] => {
+    const f = result.files[i];
+    if (f && "upload" in f) {
+      patch(scope, a.key, { uploaded: f.upload, name: f.upload.name, kind: f.upload.kind, progress: 1 });
+      return [];
+    }
+    removeAttachment(scope, a.key);
+    return [f ? f.failed : "gone"];
+  });
+  return [...failures, ...skipped];
 }
 
 // Hands the files attached in one place, all uploaded, over to another, as a fork's message goes to the fork.

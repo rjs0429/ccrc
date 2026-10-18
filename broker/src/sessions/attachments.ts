@@ -101,6 +101,38 @@ async function findContent(file: string, id: string): Promise<Block[] | undefine
   }
 }
 
+// A user message's blocks as its transcript row holds them, or undefined when the transcript has no such message.
+export function messageBlocks(file: string, id: string): Promise<Block[] | undefined> {
+  return findContent(file, id).catch(() => undefined);
+}
+
+const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+
+// The images and documents of a message as files to upload again, in the order attachmentsOf lists them, the first `max`:
+// an image or PDF in base64 or a plain text document, or "unreadable" for any other source or broken data.
+export function attachedFiles(blocks: readonly Block[], max = Infinity): ({ data: Buffer; name: string; mediaType: string } | { failed: "unreadable" })[] {
+  let images = 0;
+  return blocks
+    .filter((b) => b?.type === "image" || b?.type === "document")
+    .slice(0, max)
+    .map((b) => {
+      const source = record(b.source);
+      const title = typeof b.title === "string" ? b.title.trim().slice(0, NAME_MAX) : "";
+      if (b.type === "image") {
+        const data = source?.type === "base64" && typeof source.data === "string" ? Buffer.from(source.data, "base64") : undefined;
+        const mediaType = data && imageType(data);
+        if (!data || !mediaType) return { failed: "unreadable" as const };
+        images++;
+        return { data, name: title || `image-${images}.${EXT[mediaType]}`, mediaType };
+      }
+      if (source?.type === "base64" && source.media_type === "application/pdf" && typeof source.data === "string") {
+        return { data: Buffer.from(source.data, "base64"), name: title || "document.pdf", mediaType: "application/pdf" };
+      }
+      if (source?.type === "text" && typeof source.data === "string") return { data: Buffer.from(source.data, "utf8"), name: title || "document.txt", mediaType: "text/plain" };
+      return { failed: "unreadable" as const };
+    });
+}
+
 export type ImageLookup = { image: AttachedImage } | { error: "not_found" | "not_image" };
 
 interface Entry {

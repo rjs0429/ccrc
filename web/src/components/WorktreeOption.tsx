@@ -1,7 +1,7 @@
 import { useId } from "react";
 import type { GitFolderInfo, WorktreeChoice } from "../../../broker/src/protocol.ts";
 import { worktreeBranch, worktreeFolder, worktreeNameProblem } from "../../../broker/src/worktree-names.ts";
-import { errorText } from "../labels.ts";
+import { FORK_WORKTREE_EXISTS, FORK_WORKTREE_SUBFOLDER, errorText } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
 import { NAME_PROBLEM } from "../worktree.ts";
 
@@ -18,18 +18,20 @@ export type FolderGit = GitFolderInfo | "loading" | { failed: string };
 export function worktreeBlocked(info: FolderGit): string | undefined {
   if (info === "loading") return "확인하는 중…";
   if ("failed" in info) return `확인하지 못했습니다: ${errorText(info.failed)}`;
+  if (info.subfolder) return FORK_WORKTREE_SUBFOLDER;
   if (info.hook) return undefined;
   if (!info.repo) return "git 저장소가 아니라 worktree를 만들 수 없습니다";
   if (!info.head) return "커밋이 없는 저장소라 worktree를 만들 수 없습니다";
   return undefined;
 }
 
-// The worktree the start asks for, or what is wrong with its name.
-export function worktreeChoice(info: GitFolderInfo, draft: WorktreeDraft): { choice: WorktreeChoice } | { problem: string } {
+// The worktree the start asks for, or what is wrong with its name. fork: a fork's, always a new worktree from HEAD.
+export function worktreeChoice(info: GitFolderInfo, draft: WorktreeDraft, fork?: boolean): { choice: WorktreeChoice } | { problem: string } {
   const name = draft.name ?? info.suggested;
   const problem = worktreeNameProblem(name);
   if (problem) return { problem: NAME_PROBLEM[problem] };
   if (!info.hook && info.blocked.includes(name)) return { problem: `이미 있는 브랜치(${worktreeBranch(name)})라 이 이름은 쓸 수 없습니다` };
+  if (fork && !info.hook && info.existing.includes(name)) return { problem: FORK_WORKTREE_EXISTS };
   return { choice: { name, base: draft.base } };
 }
 
@@ -39,7 +41,8 @@ const BASES: [WorktreeChoice["base"], string][] = [
 ];
 
 function baseNote(info: GitFolderInfo, base: WorktreeChoice["base"]): string {
-  const head = `지금 커밋(${[info.branch, info.head].filter(Boolean).join(" · ")})에서 시작합니다. 커밋하지 않은 변경은 가져가지 않습니다.`;
+  const left = info.changed ? `커밋하지 않은 변경(파일 ${info.changed}개)은` : "커밋하지 않은 변경은";
+  const head = `지금 커밋(${[info.branch, info.head].filter(Boolean).join(" · ")})에서 시작합니다. ${left} 가져가지 않습니다.`;
   if (base === "head") return head;
   if (!info.origin) return `원격이 없어 ${head}`;
   const from = info.origin === "origin" ? "origin의 기본 브랜치에서 시작합니다(받아오지 못하면 지금 커밋)." : `${info.origin}에서 시작합니다.`;
@@ -47,19 +50,36 @@ function baseNote(info: GitFolderInfo, base: WorktreeChoice["base"]): string {
 }
 
 // Sits under the chosen folder in the new-session screen's list: a switch for the session's own worktree, its name and
-// the commit it starts from. error: why the last start in a worktree failed.
-export function WorktreeOption({ info, draft, onChange, error, disabled }: { info: FolderGit; draft: WorktreeDraft; onChange: (d: WorktreeDraft) => void; error?: string; disabled?: boolean }) {
+// the commit it starts from. error: why the last start in a worktree failed. fork: a fork's, a new worktree from the
+// folder's HEAD with no choice; className: the frame, where it stands elsewhere.
+export function WorktreeOption({
+  info,
+  draft,
+  onChange,
+  error,
+  disabled,
+  fork,
+  className = "border-b border-line bg-accent-soft/40 pr-3 pb-1 pl-10 last:border-0",
+}: {
+  info: FolderGit;
+  draft: WorktreeDraft;
+  onChange: (d: WorktreeDraft) => void;
+  error?: string;
+  disabled?: boolean;
+  fork?: boolean;
+  className?: string;
+}) {
   const id = useId();
   const blocked = worktreeBlocked(info);
   const git = blocked ? undefined : (info as GitFolderInfo);
   const on = draft.on && Boolean(git);
   const name = git ? (draft.name ?? git.suggested) : "";
-  const picked = git && worktreeChoice(git, draft);
+  const picked = git && worktreeChoice(git, draft, fork);
   const problem = picked && "problem" in picked ? picked.problem : undefined;
   const reopens = git && !problem && git.existing.includes(name);
   const hint = blocked ?? (!on || problem ? "이 폴더는 그대로 두고 새 브랜치에서 작업합니다" : git!.hook ? "WorktreeCreate 훅이 worktree를 만듭니다" : undefined);
   return (
-    <div className="border-b border-line bg-accent-soft/40 pr-3 pb-1 pl-10 last:border-0" data-worktree-option>
+    <div className={className} data-worktree-option>
       <button
         role="switch"
         aria-checked={on}
@@ -109,7 +129,12 @@ export function WorktreeOption({ info, draft, onChange, error, disabled }: { inf
               </p>
             )}
           </div>
-          {!git.hook && (
+          {!git.hook && fork && (
+            <p className="text-xs text-muted" data-worktree-base-note>
+              {baseNote(git, "head")}
+            </p>
+          )}
+          {!git.hook && !fork && (
             <div>
               <div id={`${id}-base`} className="mb-1 text-xs font-medium text-muted">
                 시작할 커밋

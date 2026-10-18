@@ -19,6 +19,7 @@ import {
   type WorktreeRemoved,
 } from "./protocol.ts";
 import { RemoteActivity } from "./remote-activity.ts";
+import { messageBlocks } from "./sessions/attachments.ts";
 import type { SideProgress } from "./sessions/core.ts";
 import { Follows } from "./sessions/follow.ts";
 import type { SessionManager } from "./sessions/manager.ts";
@@ -491,6 +492,10 @@ export class Hub {
         reply({ ok: true, data: await this.manager.call(sessionId, "side_question_cancel", askId(args.ask, true)) });
         return;
       }
+      if (msg.op === "reattach") {
+        reply({ ok: true, data: await this.reattach(sessionId, sid(args.messageId)) });
+        return;
+      }
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
         const detail = Object.fromEntries(
           Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style", "messageId", "toolUseId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
@@ -527,7 +532,8 @@ export class Hub {
     }
   }
 
-  // A fork given a first message runs it at once, which counts as the remote user's work.
+  // A fork given a first message runs it at once, which counts as the remote user's work. It is logged as what came of it:
+  // one from the conversation's first message is only a new session's draft, nothing copied, made or sent.
   private async fork(sessionId: string, args: Record<string, unknown>): Promise<unknown> {
     const ids = args.attachments === undefined ? [] : args.attachments;
     if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENTS || (args.text !== undefined && typeof args.text !== "string")) throw Error("invalid request");
@@ -535,19 +541,33 @@ export class Hub {
     const forkId = sid(args.id);
     const before = args.before === undefined ? undefined : sid(args.before);
     const name = args.name === undefined ? undefined : str(args.name, TITLE_ARG_MAX);
+    const w = args.worktree as { name?: unknown } | undefined;
+    if (w !== undefined && (!w || typeof w !== "object")) throw Error("invalid request");
+    const worktree = w ? str(w.name, WORKTREE_NAME_MAX) : undefined;
     const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
+    if (text || blocks) this.noteRemoteActivity(forkId);
+    const r = await this.manager.fork(sessionId, { id: forkId, before, text, blocks, name, worktree });
     this.audit.log("fork", {
       device: this.device,
       sessionId,
-      forkId,
       ...(before ? { before } : {}),
-      ...(text ? { chars: text.length } : {}),
-      ...(ids.length ? { attachments: ids.length } : {}),
+      ...("draft" in r
+        ? { draft: true }
+        : { forkId, ...(text ? { chars: text.length } : {}), ...(ids.length ? { attachments: ids.length } : {}), ...(worktree ? { worktree } : {}) }),
     });
-    if (text || blocks) this.noteRemoteActivity(forkId);
-    const r = await this.manager.fork(sessionId, { id: forkId, before, text, blocks, name });
     this.changed();
     return r;
+  }
+
+  // The images and documents a user message carried, read from the session's transcript and kept as uploads again.
+  private async reattach(sessionId: string, messageId: string): Promise<unknown> {
+    const file = await this.manager.transcriptFile(sessionId);
+    const blocks = file ? await messageBlocks(file, messageId.toLowerCase()) : undefined;
+    if (!blocks) return { files: [], gone: true };
+    const files = await this.uploads.again(blocks, MAX_ATTACHMENTS);
+    const made = files.filter((f) => "upload" in f).length;
+    if (made) this.audit.log("reattach", { device: this.device, sessionId, messageId, files: made });
+    return { files };
   }
 
   // A rewind in place gives the window that shows the session the conversation as it now stands.

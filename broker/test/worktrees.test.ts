@@ -13,7 +13,7 @@ fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 
 const names = await import("../src/worktree-names.ts");
-const { gitFolderInfo, lockOf, removeWorktree, worktreeState, worktreeStatus, worktreeTarget } = await import("../src/sessions/worktrees.ts");
+const { belowTop, gitFolderInfo, lockOf, removeWorktree, uncommitted, worktreeState, worktreeStatus, worktreeTarget } = await import("../src/sessions/worktrees.ts");
 const { startTime } = await import("../src/sessions/live.ts");
 
 function git(dir: string, ...args: string[]): string {
@@ -116,6 +116,44 @@ test("a repository's info names its root, branch, head and taken names, also fro
   git(root, "push", "-q", "origin", "main");
   git(root, "remote", "set-head", "origin", "main");
   assert.equal((await gitFolderInfo(root)).origin, "origin/main");
+});
+
+test("what a worktree from HEAD leaves behind counts committed files in .claude too, not what Claude Code keeps there", async () => {
+  const root = repo({ ignore: false });
+  fs.mkdirSync(path.join(root, ".claude", "commands"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".claude", "settings.json"), "{}\n");
+  fs.writeFileSync(path.join(root, ".claude", "commands", "x.md"), "x\n");
+  git(root, "add", ".");
+  git(root, "commit", "-qm", "project settings");
+  worktree(root, "w");
+  fs.writeFileSync(path.join(root, ".claude", "settings.local.json"), "{}\n");
+  assert.equal(await uncommitted(root), 0, "Claude Code's worktrees and local settings are not the user's changes");
+  fs.writeFileSync(path.join(root, ".claude", "settings.json"), '{"model":"opus"}\n');
+  fs.writeFileSync(path.join(root, ".claude", "commands", "x.md"), "y\n");
+  fs.writeFileSync(path.join(root, ".claude", "commands", "new.md"), "n\n");
+  fs.writeFileSync(path.join(root, "a.txt"), "b\n");
+  assert.equal(await uncommitted(root), 4);
+
+  const fresh = repo({ ignore: false });
+  worktree(fresh, "only");
+  assert.equal(await uncommitted(fresh), 0, "a .claude folder nothing of which is committed is Claude Code's");
+  const plain = path.join(home, "plain-count");
+  fs.mkdirSync(plain);
+  assert.equal(await uncommitted(plain), undefined, "outside git there is nothing to count");
+});
+
+test("a folder below the top of its checkout is told apart, in a worktree too", async () => {
+  const root = repo();
+  fs.mkdirSync(path.join(root, "sub", "deep"), { recursive: true });
+  assert.equal(await belowTop(root), false);
+  assert.equal(await belowTop(path.join(root, "sub", "deep")), true);
+  const wt = worktree(root, "top");
+  fs.mkdirSync(path.join(wt, "sub"));
+  assert.equal(await belowTop(wt), false);
+  assert.equal(await belowTop(path.join(wt, "sub")), true);
+  const plain = path.join(home, "not-git");
+  fs.mkdirSync(plain, { recursive: true });
+  assert.equal(await belowTop(plain), undefined);
 });
 
 test("a repository without commits has no head to start a worktree from", async () => {

@@ -3,9 +3,9 @@ import path from "node:path";
 import { isUtf8 } from "node:buffer";
 import { randomBytes } from "node:crypto";
 import { ensureDir } from "./config.ts";
-import { imageType } from "./sessions/attachments.ts";
+import { attachedFiles, imageType } from "./sessions/attachments.ts";
 import type { ContentBlock } from "./sessions/core.ts";
-import type { UploadInfo } from "./protocol.ts";
+import type { ReattachedFile, UploadInfo } from "./protocol.ts";
 
 type Kind = UploadInfo["kind"];
 
@@ -102,6 +102,22 @@ export class Uploads {
     await fs.promises.writeFile(path.join(this.dir, id), data, { mode: 0o600, flag: "wx" });
     await fs.promises.writeFile(path.join(this.dir, `${id}.json`), JSON.stringify(stored), { mode: 0o600, flag: "wx" });
     return { id, name: stored.name, kind: stored.kind, size: stored.size };
+  }
+
+  // The images and documents among a message's blocks uploaded again, in the order the message holds them, the first `max`.
+  async again(blocks: readonly Record<string, unknown>[], max = Infinity): Promise<ReattachedFile[]> {
+    const out: ReattachedFile[] = [];
+    for (const f of attachedFiles(blocks, max)) {
+      if ("failed" in f) out.push(f);
+      else
+        out.push(
+          await this.save(f.data, f.name, f.mediaType).then(
+            (upload) => ({ upload }),
+            (e: unknown) => ({ failed: e instanceof UploadError && e.status === 413 ? ("too_large" as const) : ("unreadable" as const) }),
+          ),
+        );
+    }
+    return out;
   }
 
   // Claude Code content blocks for uploaded files, in the given order.
