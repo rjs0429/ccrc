@@ -64,7 +64,9 @@ function UserItem({ item, onActions }: { item: UserMessage; onActions?: (m: User
 }
 
 // The line under a Claude reply's text that holds its time; while the reply streams, the same line holds the caret.
+// The room under it holds the lower part of the ⋯ button's target, which stays off the reply's text.
 const REPLY_LINE = "mt-1 h-4 leading-4";
+const REPLY_ROOM = "pb-2";
 
 type AssistantMessage = Extract<DisplayItem, { kind: "assistant" }>;
 
@@ -75,7 +77,7 @@ function AssistantItem({ item, onActions }: { item: AssistantMessage; onActions?
   const open = onActions ? () => onActions(item) : undefined;
   const press = useLongPress(() => open?.());
   return (
-    <div>
+    <div className={open ? REPLY_ROOM : undefined}>
       <div {...(open ? press : {})} className={open ? "pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none]" : ""}>
         <Markdown text={item.text} className="text-[15px]" />
       </div>
@@ -86,7 +88,7 @@ function AssistantItem({ item, onActions }: { item: AssistantMessage; onActions?
               onClick={open}
               aria-label="답 동작"
               aria-haspopup="dialog"
-              className="relative -ml-1 flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-inset-y-3.5 active:text-fg"
+              className="relative -ml-1 flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-top-1 after:-bottom-6 active:text-fg"
               data-reply-actions
             >
               <Icon.dots className="size-4" />
@@ -442,7 +444,7 @@ export function StreamPreview({ text, thinking }: { text: string; thinking: bool
     );
   }
   return (
-    <div>
+    <div className={REPLY_ROOM}>
       <Markdown text={text} className="text-[15px]" />
       <div className={`${REPLY_LINE} caret text-[15px]`} />
     </div>

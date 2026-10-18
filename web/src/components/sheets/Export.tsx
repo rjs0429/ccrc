@@ -32,11 +32,15 @@ export function ExportSheet({ sessionId, onClose }: { sessionId: string; onClose
   const [asking, setAsking] = useState(false);
   const link = useRef<HTMLAnchorElement>(null);
   const go = useRef(false);
+  // The file the sheet shows, counted up whenever it is made again: a ticket asked for an earlier file is dropped.
+  const made = useRef(0);
   const tz = zone();
   const args = { tools, ...(tz ? { tz } : {}) };
 
   useEffect(() => {
     let live = true;
+    made.current++;
+    go.current = false;
     setInfo(undefined);
     setError(undefined);
     setTicket(undefined);
@@ -49,11 +53,12 @@ export function ExportSheet({ sessionId, onClose }: { sessionId: string; onClose
     };
   }, [sessionId, tools, round]);
 
-  const issue = () =>
-    request<{ url: string; expiresInMs: number }>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/file/ticket`, { export: args }).then((t) => {
-      setTicket({ url: t.url, until: Date.now() + t.expiresInMs });
-      return t;
+  const issue = () => {
+    const file = made.current;
+    return request<{ url: string; expiresInMs: number }>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/file/ticket`, { export: args }).then((t) => {
+      if (file === made.current) setTicket({ url: t.url, until: Date.now() + t.expiresInMs });
     });
+  };
 
   // The link is live once the file is made, so a tap downloads at once.
   useEffect(() => {

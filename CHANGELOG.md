@@ -26,7 +26,7 @@ your version and the new one, and the lines under "Breaking" separately.
   caches again. It follows the time to live Claude Code asked for (`cache_creation`) from the request of the last
   response, and a stopped session's comes from its transcript.
 - A plan's lines take comments: tap a line of the plan to write one, tap it again to change it. "계속 계획하기" sends
-  them after the feedback as `줄 n "<the line>": <comment>`.
+  them after the feedback as `줄 n "<the line>": <comment>`, a code block by its first line of code.
 
 ### Changed
 

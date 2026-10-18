@@ -4,7 +4,7 @@ import type { Answer, ElicitField, ElicitInfo, ElicitValue, PendingRequest } fro
 import { allowAlwaysLabel, dialogLabel } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
 import { LineMarks, Markdown } from "./Markdown.tsx";
-import { QUOTE_MAX, lineSpan, planComments, planFeedback, type PlanComment } from "./planComments.ts";
+import { lineSpan, planComments, planFeedback, planQuote, type PlanComment } from "./planComments.ts";
 import { ToolInput } from "./ToolInput.tsx";
 import { Button, Icon } from "./ui.tsx";
 
@@ -132,10 +132,6 @@ function PlanCard({ request, reply }: { request: PendingRequest; reply: Reply })
     planComments.set(request.id, comments);
   }, [request.id, comments]);
   const marks = useMemo(() => ({ picked: picked?.line, marked: new Set(comments.map((c) => c.line)) }), [picked, comments]);
-  const quoteOf = (line: number) => {
-    const q = (lines[line - 1] ?? "").trim();
-    return q.length > QUOTE_MAX ? `${q.slice(0, QUOTE_MAX)}…` : q;
-  };
   const open = (at: { line: number; end: number }) => {
     setPicked(at);
     setDraft(comments.find((c) => c.line === at.line)?.text ?? "");
@@ -153,11 +149,12 @@ function PlanCard({ request, reply }: { request: PendingRequest; reply: Reply })
   const save = () => {
     if (!picked) return;
     const text = draft.trim();
-    setComments((cs) => [...cs.filter((c) => c.line !== picked.line), ...(text ? [{ ...picked, quote: quoteOf(picked.line), text }] : [])].sort((a, b) => a.line - b.line));
+    setComments((cs) => [...cs.filter((c) => c.line !== picked.line), ...(text ? [{ ...picked, quote: planQuote(lines, picked.line, picked.end), text }] : [])].sort((a, b) => a.line - b.line));
     setPicked(undefined);
     setDraft("");
   };
   const had = picked && comments.some((c) => c.line === picked.line);
+  const pickedQuote = picked && planQuote(lines, picked.line, picked.end);
   const answer = (a: Answer) => {
     planComments.delete(request.id);
     reply(a);
@@ -174,7 +171,7 @@ function PlanCard({ request, reply }: { request: PendingRequest; reply: Reply })
         <div className="space-y-2 rounded-xl border border-accent/40 bg-bg p-3" data-plan-editor={picked.line}>
           <div className="truncate text-xs text-muted">
             {lineSpan(picked)}
-            {quoteOf(picked.line) && ` · ${quoteOf(picked.line)}`}
+            {pickedQuote && ` · ${pickedQuote}`}
           </div>
           <textarea
             value={draft}

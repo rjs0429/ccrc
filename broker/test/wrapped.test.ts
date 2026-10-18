@@ -1395,7 +1395,7 @@ test("a rename goes to Claude Code as the user's own, and only this session's an
   assert.deepEqual(s.builder.items, [], "the announcements add nothing to the conversation");
 });
 
-test("the command list follows Claude Code: its initialize answer, every list it pushes, and each turn's names without the terminal's", async () => {
+test("the command list follows Claude Code's initialize answer and every list it pushes; each turn's init only takes out the terminal's", async () => {
   const { s, wrapper } = await session();
   const settled = (pred: () => boolean) =>
     new Promise<void>((resolve) => {
@@ -1403,29 +1403,40 @@ test("the command list follows Claude Code: its initialize answer, every list it
       s.on("state", check);
       check();
     });
+  const states: (string | undefined)[] = [];
+  s.on("state", () => states.at(-1) !== s.state().commands && states.push(s.state().commands));
   const init = { name: "compact", description: "Compact the conversation", argumentHint: "" };
-  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "init-1", response: { models: [], commands: [init, { name: "color", description: "Set the color", argumentHint: "" }] } } });
-  await settled(() => s.commands?.length === 2);
+  const color = { name: "color", description: "Set the color", argumentHint: "" };
+  // A skill synced from claude.ai: the list shows its short name and keeps the full one, which init uses, as an alias.
+  const docx = { name: "docx", description: "Use this skill for Word documents (claude.ai)", argumentHint: "", aliases: ["anthropic-skills:docx"] };
+  wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "init-1", response: { models: [], commands: [init, color, docx] } } });
+  await settled(() => s.commands?.length === 3);
   const first = s.state().commands;
   assert.ok(first, "the state names the list");
-  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m", slash_commands: ["compact", "color", "review"], terminal_slash_commands: ["color"] });
-  await settled(() => s.commands?.some((c) => c.name === "review") === true);
+  const names = ["compact", "color", "anthropic-skills:docx", "skill-turned-off"];
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m", slash_commands: names, terminal_slash_commands: ["color"] });
+  await settled(() => s.commands?.length === 2);
   const compact = { name: "compact", description: "Compact the conversation" };
-  assert.deepEqual(s.commands, [compact, { name: "review", description: "" }], "a name the list lacked joins it, the terminal's leave the phone's menu");
+  const shortDocx = { name: "docx", description: "Use this skill for Word documents (claude.ai)" };
+  assert.deepEqual(s.commands, [compact, shortDocx], "the terminal's leave the phone's menu; init's other names change nothing");
   const second = s.state().commands;
   assert.notEqual(second, first);
-  const pushed = [init, { name: "gamma", description: "Gamma skill (project)", argumentHint: "" }];
+  const pushed = [init, color, docx, { name: "gamma", description: "Gamma skill (project)", argumentHint: "" }];
   wrapper.out({ type: "system", subtype: "commands_changed", commands: pushed, session_id: SID, uuid: "u1" });
   await settled(() => s.commands?.some((c) => c.name === "gamma") === true);
-  assert.deepEqual(s.commands, [compact, { name: "gamma", description: "Gamma skill (project)" }]);
+  assert.deepEqual(s.commands, [compact, shortDocx, { name: "gamma", description: "Gamma skill (project)" }]);
   assert.ok(!s.builder.items.length, "the push is not a conversation item");
   const third = s.state().commands;
   assert.notEqual(third, second);
   wrapper.out({ type: "control_response", response: { subtype: "success", request_id: "init-2", response: { models: [], commands: [init] } } });
-  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m", slash_commands: ["compact", "gamma"] });
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m", slash_commands: [...names, "gamma"], terminal_slash_commands: ["color"] });
   await new Promise((r) => setTimeout(r, 50));
-  assert.deepEqual(s.commands?.map((c) => c.name), ["compact", "gamma"], "an initialize answer after a push leaves the pushed list");
+  assert.deepEqual(s.commands?.map((c) => c.name), ["compact", "docx", "gamma"], "an initialize answer after a push leaves the pushed list, and the next turn's init changes it no more");
   assert.equal(s.state().commands, third, "the same list keeps its name");
+  assert.deepEqual(states, [first, second, third], "the phone is told of each list once");
+  wrapper.out({ type: "system", subtype: "init", session_id: SID, model: "m", slash_commands: names });
+  await settled(() => s.commands?.some((c) => c.name === "color") === true);
+  assert.deepEqual(s.commands?.map((c) => c.name), ["compact", "color", "docx", "gamma"], "an init that names no terminal commands has none");
 });
 
 test("the prompt cache follows the main conversation's requests and responses, and a compaction", async () => {

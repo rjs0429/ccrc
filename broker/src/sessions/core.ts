@@ -633,7 +633,7 @@ export abstract class SessionCore extends EventEmitter {
         this.adoptStyles(m.output_style);
         this.adoptFast(m.fast_mode_state, m.fast_mode_disabled_reason, true);
         if (typeof m.cwd === "string") this.initCwd(m.cwd, typeof m.original_cwd === "string" ? m.original_cwd : undefined);
-        this.adoptNames(m.slash_commands, m.terminal_slash_commands);
+        this.adoptTerminal(m.terminal_slash_commands);
         this.emit("state");
         this.onInit();
         this.refreshApplied();
@@ -716,16 +716,10 @@ export abstract class SessionCore extends EventEmitter {
     this.offerCommands();
   }
 
-  // A turn's init line names every command and the ones bound to Claude Code's own terminal; names the list lacks or no
-  // longer has change it by name.
-  private adoptNames(names: unknown, terminal: unknown): void {
-    if (Array.isArray(terminal)) this.terminalCommands = new Set(terminal.filter((n): n is string => typeof n === "string"));
-    const all = this.allCommands;
-    const want = new Set(Array.isArray(names) ? names.filter((n): n is string => typeof n === "string" && n !== "") : []);
-    const have = new Set(all?.map((c) => c.name));
-    if (all && want.size && (want.size !== have.size || [...want].some((n) => !have.has(n)))) {
-      this.allCommands = [...all.filter((c) => want.has(c.name)), ...[...want].filter((n) => !have.has(n)).map((name) => ({ name, description: "" }))];
-    }
+  // A turn's init line names the commands bound to Claude Code's own terminal, all of them or none. Its other names are
+  // not the list's: there a synced skill goes by its full name and a skill turned off stays in.
+  private adoptTerminal(terminal: unknown): void {
+    this.terminalCommands = new Set(Array.isArray(terminal) ? terminal.filter((n): n is string => typeof n === "string") : []);
     this.offerCommands();
   }
 
