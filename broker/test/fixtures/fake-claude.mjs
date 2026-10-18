@@ -15,6 +15,8 @@
 // FAKE_REQUESTS=<file> gets a line with its arguments, environment and sign-in variables and then one per control request or user message it receives.
 // get_settings reports a --model starting with "claude-" as the model; one naming "no-ultracode" does not offer Ultracode, which
 // --settings {"ultracode":true} asks for. get_task_output answers with a coloured line naming the task.
+// "FGBASH" starts a Bash call (toolu_fg) that runs in the foreground until background_tasks names it, which moves it to the
+// background as Claude Code does.
 // --version prints a version and exits.
 // rename_session is checked and saved as Claude Code saves a name (custom-title and agent-name rows when the transcript
 // under CLAUDE_CONFIG_DIR exists, the title file beside it) and announced with session_title_changed, which a resume
@@ -57,6 +59,7 @@ record({
 });
 let asks = 0;
 let holding = false;
+const foreground = new Set();
 const queue = [];
 const lifecycle = (id, state) => out({ type: "command_lifecycle", command_uuid: id, state, uuid: randomUUID(), session_id: sid });
 const STYLES = ["default", "Proactive", "Concise", "Explanatory", "Learning"];
@@ -185,6 +188,13 @@ function handle(m) {
       out({ type: "system", subtype: "status", status: "compacting", session_id: sid });
       return;
     }
+    if (text === "FGBASH") {
+      foreground.add("toolu_fg");
+      out({ type: "assistant", session_id: sid, uuid: randomUUID(), message: { content: [{ type: "tool_use", id: "toolu_fg", name: "Bash", input: { command: "npm test" } }] } });
+      out({ type: "system", subtype: "task_started", task_id: "bfg", task_type: "local_bash", tool_use_id: "toolu_fg", description: "npm test", is_backgrounded: false, session_id: sid });
+      holding = true;
+      return;
+    }
     if (text === "BGTASKS") {
       out({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "a1", run_id: "r1", task_type: "local_agent", description: "Find the tests" }], session_id: sid });
       out({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "a1", run_id: "r1", task_type: "local_agent", description: "Find the tests" }, { task_id: "b2", task_type: "local_bash", description: "npm test" }], session_id: sid });
@@ -257,6 +267,15 @@ function handle(m) {
         subtype: "success",
         response: { contents: part.toString(base64 ? "base64" : "utf8"), absPath: abs, truncated: data.length > max, ...(base64 ? { encoding: "base64" } : {}) },
       });
+    }
+    if (m.request.subtype === "background_tasks") {
+      const id = m.request.tool_use_id;
+      const moved = typeof id === "string" && foreground.delete(id);
+      out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: id === undefined ? {} : { backgrounded: moved } } });
+      if (!moved) return;
+      out({ type: "system", subtype: "task_updated", task_id: "bfg", patch: { is_backgrounded: true }, session_id: sid });
+      out({ type: "user", session_id: sid, uuid: randomUUID(), parent_tool_use_id: null, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "Command was manually backgrounded by user with ID: bfg." }] } });
+      return;
     }
     if (m.request.subtype === "get_task_output") {
       const output = `\u001b[32m${m.request.task_id}\u001b[0m "applied": {"rate_limits": 1}\n`;

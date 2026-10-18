@@ -3,6 +3,7 @@ import type { Audit } from "./audit.ts";
 import type { Leases } from "./lease.ts";
 import { CALL_OPS, FOLDER_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg, type WorktreeChoice, type WorktreeRemoved } from "./protocol.ts";
 import { RemoteActivity } from "./remote-activity.ts";
+import { Follows } from "./sessions/follow.ts";
 import type { SessionManager } from "./sessions/manager.ts";
 import { cleanTitle } from "./titles.ts";
 import type { Uploads } from "./uploads.ts";
@@ -16,6 +17,7 @@ const MAX_ATTACHMENTS = 10;
 const ELICIT_ACTIONS = new Set<unknown>(["accept", "decline", "cancel"]);
 // Calls that change something are recorded in the audit log.
 const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "resume", "set_output_style", "unqueue", "rename", "archive"]);
+CHANGING_CALLS.add("background");
 // The longest session name taken as typed; it is then cut to the length Claude Code keeps.
 const TITLE_ARG_MAX = 2000;
 // A folder call refused for a folder is recorded once in this long.
@@ -76,6 +78,8 @@ export class Hub {
   private alive = new WeakSet<WebSocket>();
   private deniedLogged = new Map<string, number>();
   private drafts = new Map<string, { at: number; started: Promise<string> }>();
+  // What the window follows of the session it shows, sent to it as it changes.
+  private follows: Follows;
 
   constructor(manager: SessionManager, leases: Leases, audit: Audit, uploads: Uploads, activity = new RemoteActivity()) {
     this.manager = manager;
@@ -83,6 +87,13 @@ export class Hub {
     this.audit = audit;
     this.uploads = uploads;
     this.activity = activity;
+    this.follows = new Follows({
+      cwdOf: (id) => manager.sessionCwd(id),
+      session: (id) => manager.controlledSession(id),
+      push: (sessionId, msg) => {
+        if (this.active && sessionId === this.viewing) send(this.active, msg);
+      },
+    });
     manager.on("event", (sessionId: string, msg: ServerMsg) => {
       if (this.active && sessionId === this.viewing) send(this.active, msg);
     });
@@ -139,11 +150,13 @@ export class Hub {
   }
 
   close(): void {
+    this.follows.stopAll();
     clearInterval(this.pinger);
     for (const ws of [this.active, ...this.standby.keys()]) ws?.close(1001, "shutdown");
   }
 
   private activate(ws: WebSocket, device: string): void {
+    this.follows.stopAll();
     this.active = ws;
     this.device = device;
     this.visible = true;
@@ -256,6 +269,9 @@ export class Hub {
         return;
       case "call":
         await this.call(msg, ws);
+        return;
+      case "unfollow":
+        this.follows.stop(str(msg.id, 64));
         return;
       case "send": {
         const id = sid(msg.sessionId);
@@ -390,9 +406,15 @@ export class Hub {
         reply({ ok: true, data: await this.rewindConversation(sessionId, args) });
         return;
       }
+      // What the window follows goes to it only while it shows that session.
+      if (msg.op === "follow") {
+        if (sessionId !== this.viewing) throw Error("session is not shown");
+        reply({ ok: true, data: await this.follows.start(sessionId, args) });
+        return;
+      }
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
         const detail = Object.fromEntries(
-          Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style", "messageId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
+          Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style", "messageId", "toolUseId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
         );
         // Of a new name only its length is recorded.
         const own = msg.op === "rename" ? { chars: [...cleanTitle(String(args.title))].length } : msg.op === "archive" ? { archived: args.archived } : {};
@@ -491,6 +513,8 @@ export class Hub {
   private async setView(sessionId: string | null, focus?: string): Promise<void> {
     const seq = ++this.viewSeq;
     if (focus || sessionId !== this.viewing) this.focus = focus;
+    // What the phone followed belongs to the session it showed.
+    if (sessionId !== this.viewing || !sessionId) this.follows.stopAll();
     this.unwatch?.();
     this.unwatch = undefined;
     this.viewing = sessionId;

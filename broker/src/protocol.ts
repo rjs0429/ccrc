@@ -458,6 +458,31 @@ CALL_OPS.push("agent_transcript", "task_output", "workflow_agents");
 CALL_OPS.push("worktree_status", "worktree_remove");
 CALL_OPS.push("fork", "rewind_conversation");
 
+// Keeps what the phone shows of a subagent's transcript or a shell's output current; id names it in "follow" messages.
+// after: what the phone holds of the transcript, as for agent_transcript.
+export type FollowArgs = { id: string } & ({ kind: "transcript"; agentId?: string; toolUseId?: string; after: TranscriptAfter } | { kind: "output"; taskId: string });
+
+// live: the broker sends changes as they happen; false when it cannot watch, so the phone reads again itself.
+// transcript: what changed since `after`; output: the output as it stands.
+export interface FollowStart {
+  live: boolean;
+  transcript?: AgentTranscript;
+  output?: TaskOutput;
+}
+
+export interface CallMap {
+  // Moves a call the turn waits on, a Bash command or a subagent in the foreground, to the background, and the turn goes
+  // on. backgrounded: false when it no longer ran in the foreground.
+  background: { args: { toolUseId: string }; data: { backgrounded: boolean } };
+  follow: { args: FollowArgs; data: FollowStart };
+}
+CALL_OPS.push("background", "follow");
+
+export interface LiveState {
+  // The VS Code wrapper is too old to move calls to the background.
+  backgroundUnknown?: boolean;
+}
+
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {
   id: string;
@@ -642,6 +667,8 @@ export type ClientMsg =
   | { t: "call"; id: number; cwd: string; op: FolderOp; args?: Record<string, unknown> }
   // Whether the page is in front, so the broker knows when to notify instead.
   | { t: "visibility"; visible: boolean }
+  // The phone no longer shows what it followed.
+  | { t: "unfollow"; id: string }
   | { t: "ping" };
 
 // Items a snapshot leaves out between a far-back focused part and the latest items, which start at `before`.
@@ -667,4 +694,8 @@ export type ServerMsg =
   | { t: "options_changed" }
   | { t: "error"; message: string; sessionId?: string; draftId?: string }
   | { t: "call_result"; id: number; ok: boolean; data?: unknown; error?: string }
+  // A change in what the phone follows: the transcript since `base`, where the broker's last word left it, or the output
+  // as it stands. follow_end: the broker no longer watches it.
+  | { t: "follow"; sessionId: string; id: string; base?: { count: number; lastId: string }; transcript?: AgentTranscript; output?: TaskOutput }
+  | { t: "follow_end"; sessionId: string; id: string }
   | { t: "pong" };

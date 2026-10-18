@@ -229,6 +229,11 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^push_failed (\d+)$/, (m) => (m[1] === "0" ? "푸시 서비스에 연결하지 못했습니다" : `푸시 서비스가 알림을 받지 않았습니다 (${m[1]})`)],
 ];
 
+ERRORS.push(
+  [/^not running in the foreground$/, "이미 끝났거나 백그라운드에서 실행 중입니다"],
+  [/^(?:Error: )?Background tasks are disabled in this session\.?$/, "이 세션은 백그라운드 작업이 꺼져 있습니다"],
+);
+
 export function errorText(message: string): string {
   for (const [re, out] of ERRORS) {
     const m = message.match(re);

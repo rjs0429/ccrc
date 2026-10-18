@@ -75,7 +75,7 @@ after(async () => {
   for (const s of servers) await s.close();
 });
 
-async function connect(): Promise<{ link: Link; wrapper: FakeWrapper }> {
+async function connect(caps?: string[]): Promise<{ link: Link; wrapper: FakeWrapper }> {
   const server = new LinkServer(path.join(tempDir(), "link.sock"));
   servers.push(server);
   await server.listen();
@@ -85,13 +85,13 @@ async function connect(): Promise<{ link: Link; wrapper: FakeWrapper }> {
   const wrapper = new FakeWrapper(sock);
   const link = await linked;
   const hello = new Promise((r) => link.once("hello", r));
-  wrapper.send({ t: "hello", v: 1, wpid: 4242, cwd: "/tmp/project", args: ["--resume", SID], sessionId: SID });
+  wrapper.send({ t: "hello", v: 1, wpid: 4242, cwd: "/tmp/project", args: ["--resume", SID], sessionId: SID, ...(caps ? { caps } : {}) });
   await hello;
   return { link, wrapper };
 }
 
-async function session(opts: { seed?: boolean } = {}) {
-  const { link, wrapper } = await connect();
+async function session(opts: { seed?: boolean; caps?: string[] } = {}) {
+  const { link, wrapper } = await connect(opts.caps);
   const s = new WrappedSession(link, SID, "/tmp/project");
   link.on("out", (m: Msg) => s.onOut(m));
   link.on("in", (m: Msg) => s.onIn(m));
@@ -984,6 +984,61 @@ test("a VS Code session reads a listed shell's output through the wrapper; an ol
     { subtype: "get_task_output", task_id: "b7" },
   ]);
   assert.equal(s.closed, false, "the session goes on");
+});
+
+test("a call running in the foreground moves to the background through a wrapper that passes it on, named by its call", async () => {
+  const { s, wrapper, next } = await session({ caps: ["fast_mode", "thinking", "background_tasks"] });
+  const seen: Msg[] = [];
+  let refuse: string | undefined;
+  wrapper.sock.on("data", () => {
+    for (const f of wrapper.frames) {
+      const m = f.m as Msg | undefined;
+      if (f.t !== "to_cli" || m?.type !== "control_request" || f.handled) continue;
+      f.handled = true;
+      seen.push(m.request as Msg);
+      if (refuse) wrapper.send({ t: "rejected", id: m.request_id, reason: refuse });
+      else wrapper.send({ m: { type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { backgrounded: true } } }, t: "reply" });
+    }
+  });
+  assert.equal(s.state().backgroundUnknown, undefined);
+  let st = next("state");
+  wrapper.out({ type: "system", subtype: "task_started", task_id: "b7", task_type: "local_bash", tool_use_id: "toolu_7", description: "npm test", is_backgrounded: false, session_id: SID });
+  await st;
+  await assert.rejects(s.background("toolu_8"), /not running in the foreground/);
+  assert.equal(await s.background("toolu_7"), true);
+  refuse = "not running";
+  assert.equal(await s.background("toolu_7"), false, "a call the wrapper no longer sees running is not moved");
+  assert.deepEqual(seen, [
+    { subtype: "background_tasks", tool_use_id: "toolu_7" },
+    { subtype: "background_tasks", tool_use_id: "toolu_7" },
+  ]);
+  st = next("state");
+  wrapper.out({ type: "system", subtype: "task_updated", task_id: "b7", patch: { is_backgrounded: true }, session_id: SID });
+  await st;
+  await assert.rejects(s.background("toolu_7"), /not running in the foreground/);
+  assert.equal(seen.length, 2);
+  st = next("state");
+  wrapper.out({ type: "system", subtype: "task_started", task_id: "a2", task_type: "local_agent", tool_use_id: "toolu_9", description: "look", is_backgrounded: false, session_id: SID });
+  await st;
+  refuse = "request not allowed";
+  await assert.rejects(s.background("toolu_9"), /^Error: rejected by the wrapper: request not allowed$/);
+  assert.equal(s.state().backgroundUnknown, true, "a wrapper that refuses it after all is not asked again");
+  await assert.rejects(s.background("toolu_9"), /request not allowed/);
+  assert.equal(seen.length, 3);
+});
+
+test("a wrapper that does not name background_tasks in its hello is asked nothing, and the state says so", async () => {
+  const { s, wrapper, next } = await session();
+  const seen: Msg[] = [];
+  wrapper.autoReply((r) => (seen.push(r), {}));
+  assert.equal(s.state().backgroundUnknown, true);
+  const st = next("state");
+  wrapper.out({ type: "system", subtype: "task_started", task_id: "b7", task_type: "local_bash", tool_use_id: "toolu_7", description: "npm test", is_backgrounded: false, session_id: SID });
+  await st;
+  await assert.rejects(s.background("toolu_7"), /request not allowed/);
+  assert.equal(seen.length, 0);
+  s.end("vscode_closed");
+  assert.equal(s.state().backgroundUnknown, undefined, "a closed session offers nothing to move");
 });
 
 test("the output style follows VS Code's answers and is set only to a listed style", async () => {

@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { DisplayItem } from "../../../../broker/src/protocol.ts";
+import type { AgentTranscript, DisplayItem } from "../../../../broker/src/protocol.ts";
 import { errorText } from "../../labels.ts";
-import { call, toast } from "../../state.ts";
+import { call, following, toast } from "../../state.ts";
 import { ItemView, shownItems } from "../Items.tsx";
 import { FileLinks, FileRoots, SentAgent } from "../fileLinks.ts";
 import { Failed, Waiting } from "../sheets/parts.tsx";
 import { Icon, Spinner } from "../ui.tsx";
 import { AgentLinks, type TranscriptRef } from "./links.ts";
-import { usePolling } from "./poll.ts";
+import { usePolling, type Follow } from "./poll.ts";
 import { afterOf, followed, held, prepended, type Held } from "./transcript.ts";
 
 const PAGE = 150;
@@ -93,18 +93,42 @@ export function Transcript({ sessionId, target, active, startAt, running, roots,
     return agentId ? { agentId } : { toolUseId: target.toolUseId };
   };
 
-  const read = async () => {
+  const read = async (): Promise<boolean> => {
     const cur = current.current;
     try {
       const r = await call(sessionId, "agent_transcript", { ...ref(), ...(cur ? { after: afterOf(cur) } : {}) });
       apply((c) => (c ? followed(c, r) : held(r)));
       setError(undefined);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
     }
   };
+  // The broker sends what changed since where its last word left the transcript; when that is not where it stands here,
+  // the broker is told where it does and sends from there.
+  const resync = async (id: string): Promise<boolean> => {
+    const cur = current.current;
+    const after = cur ? afterOf(cur) : { count: 0, lastId: "" };
+    const r = await call(sessionId, "follow", { id, kind: "transcript", ...ref(), after });
+    if (r.transcript) take(id, after, r.transcript);
+    return r.live;
+  };
+  const take = (id: string, base: { count: number; lastId: string }, r: AgentTranscript) => {
+    const cur = current.current;
+    if ((cur ? cur.from + cur.items.length : 0) === base.count && (cur?.items.at(-1)?.id ?? "") === base.lastId) {
+      apply((c) => (c ? followed(c, r) : held(r)));
+      setError(undefined);
+    } else if (following(id)) void resync(id).catch(() => {});
+  };
+  const watch: Follow = {
+    start: resync,
+    change: (m) => {
+      if (m.transcript && m.base) take(m.id, m.base, m.transcript);
+    },
+  };
   const key = `${sessionId}|${target.agentId ?? ""}|${target.toolUseId ?? ""}`;
-  usePolling(read, running, key, active);
+  usePolling(read, running, key, active, watch);
 
   const loadEarlier = async () => {
     const cur = current.current;

@@ -6,6 +6,21 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Added
+
+- Agent map: a subagent's transcript open on the phone now updates as Claude Code writes it. While it is open the
+  broker watches the file (the kernel's file watch, or a look at its size twice a second where no watch is left, as an
+  editor watching a large tree can use them all), reads only what was added, and sends the new items over the
+  WebSocket; the phone reads it every 2 seconds again only when the broker cannot follow the file. A shell's output is
+  read by the broker every second while it changes, every 2 seconds while it does not, and once more when the shell
+  ends, and sent only when it changed.
+- "백그라운드로" (move to background) on a Bash or Agent card the turn waits on, once Claude Code lists it as running in
+  the foreground (a subagent after 2 seconds), and on the agent map's card of a subagent or shell running in the
+  foreground: Claude Code moves it to the background, the card says it runs there, and the turn goes on. Broker
+  sessions use the Agent SDK's `backgroundTasks`; VS Code sessions need this release's wrapper (reload the VS Code
+  window), which says so in its hello and passes `background_tasks` on only for a call Claude Code runs in the
+  foreground. With an older wrapper the card shows how to get it instead of the button.
+
 ## [0.7.3] - 2026-10-18
 
 ### Fixed

@@ -25,6 +25,7 @@ const RATE_LIMITS = Buffer.from('"rate_limits"');
 const STYLES = Buffer.from('"available_output_styles"');
 const LIFECYCLE = Buffer.from('"command_lifecycle"');
 const REPLAY = Buffer.from('"isReplay":true');
+const TASK_EVENT = Buffer.from('"subtype":"task_');
 // The broker sees the conversation, these requests from Claude Code (can_use_tool, and an elicitation the
 // broker took, may be answered remotely), the answer to VS Code's initialize, the applied part of its get_settings answers, and these
 // settings changes from VS Code; other control traffic between VS Code and Claude Code stays between them.
@@ -53,6 +54,8 @@ const REMOTE_REQUESTS = new Set([
 ]);
 // Told to the broker in the hello, so it offers what this wrapper passes on.
 const CAPS = ["fast_mode", "thinking"];
+REMOTE_REQUESTS.add("background_tasks");
+CAPS.push("background_tasks");
 // Broker requests after which VS Code is told to read the applied settings again.
 const SETTINGS_CHANGES = new Set(["set_model", "apply_flag_settings"]);
 const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
@@ -214,6 +217,32 @@ export function elicitAnswer(r: unknown): { action: string; content?: Record<str
 }
 
 const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const TOOL_USE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const BACKGROUND_KEYS = new Set(["subtype", "tool_use_id"]);
+// The calls that start in the foreground and may be moved to the background: Bash commands and subagents.
+const FOREGROUND_KINDS = new Set<unknown>(["local_bash", "local_agent"]);
+const ENDED = new Set<unknown>(["completed", "failed", "killed", "stopped"]);
+const FOREGROUND_KEEP = 100;
+
+// background_tasks names one call by its tool_use id and nothing else; without an id Claude Code moves every call.
+export function allowedBackground(req: Record<string, unknown>): boolean {
+  return Object.keys(req).every((k) => BACKGROUND_KEYS.has(k)) && typeof req.tool_use_id === "string" && TOOL_USE_ID.test(req.tool_use_id);
+}
+
+// The calls Claude Code runs in the foreground now, task id to tool_use id, as its task events tell VS Code.
+export function noteForeground(calls: Map<string, string>, m: Record<string, unknown>): void {
+  const id = m.task_id;
+  if (m.type !== "system" || typeof id !== "string") return;
+  if (m.subtype === "task_started") {
+    calls.delete(id);
+    if (m.is_backgrounded !== false || m.skip_transcript === true || typeof m.tool_use_id !== "string" || !FOREGROUND_KINDS.has(m.task_type)) return;
+    calls.set(id, m.tool_use_id);
+    if (calls.size > FOREGROUND_KEEP) calls.delete(calls.keys().next().value!);
+  } else if (m.subtype === "task_updated") {
+    const patch = plainObj(m.patch);
+    if (patch.is_backgrounded === true || ENDED.has(patch.status)) calls.delete(id);
+  } else if (m.subtype === "task_notification") calls.delete(id);
+}
 
 // get_task_output names one task by its id, nothing else; Claude Code answers only for this session's shells and monitors.
 export function allowedTaskOutput(req: Record<string, unknown>): boolean {
@@ -352,6 +381,8 @@ export class Relay extends EventEmitter {
   private state = new Map<string, { seq: number; t: "out" | "in"; line: Buffer }>();
   // User messages written to Claude Code that it has not taken in yet, as copies for the broker.
   private waiting = new Map<string, { line: Buffer; remote: boolean }>();
+  // The calls running in the foreground, which the broker may move to the background.
+  private foreground = new Map<string, string>();
   private seq = 0;
   private sessionId?: string;
   private claim?: string;
@@ -568,6 +599,10 @@ export class Relay extends EventEmitter {
     }
     if (!held && !withdrawn) this.toHost(line);
     this.noteTurn(line, msg);
+    if (line.includes(TASK_EVENT)) {
+      const m = msg ?? parseLine(line);
+      if (m) noteForeground(this.foreground, m);
+    }
     if (line.includes(STATUS)) this.noteStatus(line, msg);
     if (this.waiting.size && (line.includes(LIFECYCLE) || line.includes(REPLAY))) this.noteTakenIn(line, msg);
     if (!shared) return;
@@ -687,6 +722,8 @@ export class Relay extends EventEmitter {
       if (typeof m.request_id !== "string" || !m.request_id.startsWith(REMOTE_PREFIX) || !req) return reject("invalid request", m.request_id);
       if (typeof req.subtype !== "string" || !REMOTE_REQUESTS.has(req.subtype)) return reject("request not allowed", m.request_id);
       if (req.subtype === "get_task_output" && !allowedTaskOutput(req)) return reject("invalid request", m.request_id);
+      if (req.subtype === "background_tasks" && !allowedBackground(req)) return reject("invalid request", m.request_id);
+      if (req.subtype === "background_tasks" && ![...this.foreground.values()].includes(req.tool_use_id as string)) return reject("not running", m.request_id);
       if (req.subtype === "set_permission_mode" && req.mode === "bypassPermissions") return reject("mode not allowed", m.request_id);
       if (req.subtype === "apply_flag_settings" && !allowedFlagSettings(req.settings)) return reject("setting not allowed", m.request_id);
       if (req.subtype === "read_file" && !allowedReadFile(req)) return reject("invalid request", m.request_id);

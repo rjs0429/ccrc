@@ -99,6 +99,30 @@ test("an owned session reads the output of a shell or monitor it lists, running 
   s.tasks.clear();
 });
 
+test("an owned session moves a call to the background only while Claude Code lists it running in the foreground", async () => {
+  const { s } = owned();
+  const asked: unknown[] = [];
+  let answer = true;
+  Object.assign((s as unknown as { q: object }).q, { backgroundTasks: async (id: unknown) => (asked.push(id), answer) });
+  const started = (task_id: string, task_type: string, tool_use_id: string, is_backgrounded: boolean) =>
+    s.tasks.on({ type: "system", subtype: "task_started", task_id, description: task_id, task_type, tool_use_id, is_backgrounded });
+  started("b1", "local_bash", "toolu_1", false);
+  started("a1", "local_agent", "toolu_2", false);
+  started("b2", "local_bash", "toolu_3", true);
+  assert.equal(await s.background("toolu_1"), true);
+  assert.equal(await s.background("toolu_2"), true);
+  await assert.rejects(s.background("toolu_3"), /not running in the foreground/);
+  await assert.rejects(s.background("toolu_4"), /not running in the foreground/);
+  answer = false;
+  assert.equal(await s.background("toolu_1"), false);
+  s.tasks.on({ type: "system", subtype: "task_updated", task_id: "b1", patch: { is_backgrounded: true } });
+  await assert.rejects(s.background("toolu_1"), /not running in the foreground/);
+  s.tasks.on({ type: "system", subtype: "task_notification", task_id: "a1", status: "completed", summary: "done" });
+  await assert.rejects(s.background("toolu_2"), /not running in the foreground/);
+  assert.deepEqual(asked, ["toolu_1", "toolu_2", "toolu_1"]);
+  s.tasks.clear();
+});
+
 test("Claude Code's output answer keeps its end and says when it began earlier", () => {
   assert.deepEqual(shellOutput(undefined), { text: "", totalBytes: 0, truncated: false });
   assert.deepEqual(shellOutput({ output: 7, total_bytes: -1, truncated: "yes" }), { text: "", totalBytes: 0, truncated: false });

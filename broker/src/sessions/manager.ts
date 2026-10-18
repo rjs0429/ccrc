@@ -282,6 +282,15 @@ export class SessionManager extends EventEmitter {
     return Boolean(this.controlled(sessionId));
   }
 
+  // The session's process this broker drives, if any.
+  controlledSession(sessionId: string): SessionCore | undefined {
+    return this.controlled(sessionId);
+  }
+
+  sessionCwd(sessionId: string): Promise<string> {
+    return this.cwdOf(sessionId);
+  }
+
   // A running session's title is the transcript's, which a name given anywhere reaches first; the one its process
   // announced serves until the transcript has one.
   async list(): Promise<SessionSummary[]> {
@@ -889,6 +898,8 @@ export class SessionManager extends EventEmitter {
         return agentTranscript(sessionId, await this.cwdOf(sessionId), args);
       case "task_output":
         return this.get(sessionId).taskOutput(String(args.taskId));
+      case "background":
+        return { backgrounded: await this.get(sessionId).background(String(args.toolUseId)) };
       case "workflow_agents":
         return workflowAgents(sessionId, await this.cwdOf(sessionId), args.runId);
       case "output_style":

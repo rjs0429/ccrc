@@ -8,6 +8,7 @@ import { after, test } from "node:test";
 import { LineSplitter, parseLine } from "../src/link/lines.ts";
 import {
   Relay,
+  allowedBackground,
   allowedFlagSettings,
   allowedRename,
   allowedThinking,
@@ -16,6 +17,7 @@ import {
   appliedAnswer,
   elicitAnswer,
   launchSession,
+  noteForeground,
   styleNames,
   usageAnswer,
   type RelayOptions,
@@ -462,7 +464,7 @@ test("the broker may also turn fast mode on or off for the session, and set Thin
 test("Thinking changes from either side reach Claude Code, and a reconnecting broker gets the latest; the hello names what passes", async () => {
   const t = await setup();
   const hello = await t.broker.frames.wait((f) => f.t === "hello", "hello");
-  assert.deepEqual(hello.caps, ["fast_mode", "thinking"]);
+  assert.deepEqual(hello.caps, ["fast_mode", "thinking", "background_tasks"]);
   const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
   const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
   const thinking = (f: Msg) => f.t === "in" && ((f.m as Msg).request as Msg)?.subtype === "set_max_thinking_tokens";
@@ -659,7 +661,6 @@ test("the session controls reach Claude Code; MCP setup, settings and conversati
     "mcp_read_resource",
     "set_mcp_permission_mode_override",
     "rewind_conversation",
-    "background_tasks",
     "initialize",
   ];
   for (const subtype of refused) request(`ccrc-no-${subtype}`, { subtype });
@@ -716,6 +717,62 @@ test("get_task_output reaches Claude Code only with a task id, and its answer co
   assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code sees none of the answers");
   assert.ok(allowedTaskOutput({ subtype: "get_task_output", task_id: "a_B-9" }));
   assert.ok(!allowedTaskOutput({ subtype: "get_task_output", task_id: "b 7" }));
+});
+
+test("background_tasks reaches Claude Code only for a call it runs in the foreground now, named by its id", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
+  const refused = (id: string, reason: string) => t.broker.frames.wait((f) => f.t === "rejected" && f.id === id && f.reason === reason, `${id} refused: ${reason}`);
+  request("ccrc-bg-early", { subtype: "background_tasks", tool_use_id: "toolu_fg" });
+  await refused("ccrc-bg-early", "not running");
+  t.user("FGBASH");
+  await t.broker.frames.wait(frameOut((m) => m.subtype === "task_started"), "the foreground call listed");
+  const bad: Msg[] = [
+    { subtype: "background_tasks" },
+    { subtype: "background_tasks", tool_use_id: "" },
+    { subtype: "background_tasks", tool_use_id: 7 },
+    { subtype: "background_tasks", tool_use_id: "toolu/fg" },
+    { subtype: "background_tasks", tool_use_id: "toolu_fg", task_id: "bfg" },
+  ];
+  bad.forEach((r, i) => request(`ccrc-bg-bad-${i}`, r));
+  for (const i of bad.keys()) await refused(`ccrc-bg-bad-${i}`, "invalid request");
+  request("ccrc-bg-other", { subtype: "background_tasks", tool_use_id: "toolu_other" });
+  await refused("ccrc-bg-other", "not running");
+  request("ccrc-bg", { subtype: "background_tasks", tool_use_id: "toolu_fg" });
+  const reply = await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-bg", "moved");
+  assert.deepEqual(((reply.m as Msg).response as Msg).response, { backgrounded: true });
+  await t.broker.frames.wait(frameOut((m) => m.subtype === "task_updated"), "moved to the background");
+  request("ccrc-bg-again", { subtype: "background_tasks", tool_use_id: "toolu_fg" });
+  await refused("ccrc-bg-again", "not running");
+  assert.ok(!t.broker.frames.has((f) => f.t === "reply" && String(((f.m as Msg).response as Msg).request_id).startsWith("ccrc-bg-")), "refused requests never reach Claude Code");
+  assert.ok(!t.host.has((m) => m.type === "control_response"), "VS Code sees none of the answers");
+  assert.ok(t.host.has((m) => m.type === "system" && m.subtype === "task_updated"), "VS Code sees the move");
+});
+
+test("the calls running in the foreground follow Claude Code's task events", () => {
+  const calls = new Map<string, string>();
+  const started = (id: string, extra: Msg) => noteForeground(calls, { type: "system", subtype: "task_started", task_id: id, ...extra });
+  started("b1", { task_type: "local_bash", tool_use_id: "toolu_1", is_backgrounded: false });
+  started("a1", { task_type: "local_agent", tool_use_id: "toolu_2", is_backgrounded: false });
+  started("b2", { task_type: "local_bash", tool_use_id: "toolu_3", is_backgrounded: true });
+  started("w1", { task_type: "local_workflow", tool_use_id: "toolu_4", is_backgrounded: false });
+  started("m1", { task_type: "monitor_mcp", tool_use_id: "toolu_5", is_backgrounded: false });
+  started("b3", { task_type: "local_bash", tool_use_id: "toolu_6", is_backgrounded: false, skip_transcript: true });
+  started("b4", { task_type: "local_bash", is_backgrounded: false });
+  assert.deepEqual([...calls], [["b1", "toolu_1"], ["a1", "toolu_2"]]);
+  noteForeground(calls, { type: "system", subtype: "task_updated", task_id: "b1", patch: { is_backgrounded: true } });
+  noteForeground(calls, { type: "system", subtype: "task_updated", task_id: "a1", patch: { tokens: 3 } });
+  assert.deepEqual([...calls], [["a1", "toolu_2"]]);
+  noteForeground(calls, { type: "system", subtype: "task_updated", task_id: "a1", patch: { status: "killed" } });
+  assert.equal(calls.size, 0);
+  started("b5", { task_type: "local_bash", tool_use_id: "toolu_7", is_backgrounded: false });
+  noteForeground(calls, { type: "system", subtype: "task_notification", task_id: "b5", status: "completed" });
+  assert.equal(calls.size, 0);
+  for (let n = 0; n < 150; n++) started(`b${n}x`, { task_type: "local_bash", tool_use_id: `toolu_${n}x`, is_backgrounded: false });
+  assert.equal(calls.size, 100);
+  assert.ok(allowedBackground({ subtype: "background_tasks", tool_use_id: "toolu_01AbC-9_z" }));
+  assert.ok(!allowedBackground({ subtype: "background_tasks" }));
 });
 
 test("a broker request after VS Code closed its input is refused by id", async () => {

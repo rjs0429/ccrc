@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ModelOption, TaskInfo, WorkflowAgent, WorkflowAgentState, WorkflowInfo } from "../../../../broker/src/protocol.ts";
 import { duration, errorText, modelLabel, taskKindLabel } from "../../labels.ts";
 import { call, useApp } from "../../state.ts";
+import { OLD_WRAPPER_NOTE, useMovable, useMove } from "../agents/background.ts";
 import type { TranscriptRef } from "../agents/links.ts";
 import { SHELL_KINDS } from "../agents/output.ts";
 import { ShellOutput } from "../agents/ShellOutput.tsx";
@@ -254,12 +255,36 @@ interface DetailProps {
 // The transcript of a subagent on the map: by its id, and by its Agent call for one whose id is not known.
 const transcriptOf = (n: AgentNode): TranscriptRef => ({ ...(n.agentId ? { agentId: n.agentId } : {}), ...(n.itemId ? { toolUseId: n.itemId } : {}), title: n.title });
 
-function Actions({ node, canStop, stopping, onStop, onJump, onRead, stopLabel }: Pick<DetailProps, "canStop" | "stopping" | "onStop" | "onJump" | "onRead"> & { node: AgentNode; stopLabel: string }) {
+// The button that moves a task the turn waits on to the background once it has run a while, or the note a wrapper too old
+// to pass that on gets instead.
+function useMoveButton(sessionId: string, task: TaskInfo | undefined): { button?: React.ReactNode; note?: React.ReactNode } {
+  const { movable, old } = useMovable(task);
+  const { moving, move } = useMove(sessionId);
+  if (old) {
+    return {
+      note: (
+        <div className="mt-3 text-xs break-keep text-muted" data-move-old>
+          {OLD_WRAPPER_NOTE}
+        </div>
+      ),
+    };
+  }
+  if ((!movable && !moving) || !task?.toolUseId) return {};
+  return {
+    button: (
+      <SmallButton tall disabled={moving} onClick={() => move(task.toolUseId!)}>
+        {moving ? "보내는 중…" : "백그라운드로"}
+      </SmallButton>
+    ),
+  };
+}
+
+function Actions({ node, canStop, stopping, onStop, onJump, onRead, stopLabel, move }: Pick<DetailProps, "canStop" | "stopping" | "onStop" | "onJump" | "onRead"> & { node: AgentNode; stopLabel: string; move?: React.ReactNode }) {
   const stoppable = canStop && node.task?.status === "running";
   const readable = !node.workflow && Boolean(node.agentId || node.itemId);
-  if (!node.itemId && !stoppable && !readable) return null;
+  if (!node.itemId && !stoppable && !readable && !move) return null;
   return (
-    <div className="mt-4 flex items-center gap-2">
+    <div className="mt-4 flex flex-wrap items-center gap-2">
       {readable && (
         <SmallButton tall onClick={() => onRead(transcriptOf(node))}>
           기록 보기
@@ -270,11 +295,14 @@ function Actions({ node, canStop, stopping, onStop, onJump, onRead, stopLabel }:
           대화에서 보기
         </SmallButton>
       )}
-      {stoppable && (
-        <span className="ml-auto">
-          <SmallButton tall tone="text-danger" disabled={stopping} onClick={() => onStop(node.task!.id)}>
-            {stopping ? "중지 중…" : stopLabel}
-          </SmallButton>
+      {(stoppable || move) && (
+        <span className="ml-auto flex gap-2">
+          {move}
+          {stoppable && (
+            <SmallButton tall tone="text-danger" disabled={stopping} onClick={() => onStop(node.task!.id)}>
+              {stopping ? "중지 중…" : stopLabel}
+            </SmallButton>
+          )}
         </span>
       )}
     </div>
@@ -375,6 +403,7 @@ function PastWorkflowAgents({ sessionId, runId, ended, onRead }: { sessionId: st
 
 function AgentDetail({ sessionId, node, gone, parent, clock, canStop, stopping, error, onBack, onStop, onJump, onPending, onRead }: DetailProps & { sessionId: string; node: AgentNode }) {
   const running = live(node);
+  const toBackground = useMoveButton(sessionId, gone || node.workflow ? undefined : node.task);
   const p = node.progress;
   const head = [STATUS_LABEL[node.status], kindText(node), node.model, node.background === undefined ? "" : node.background ? "백그라운드" : "포그라운드"].filter(Boolean);
   const numbers = [
@@ -437,7 +466,17 @@ function AgentDetail({ sessionId, node, gone, parent, clock, canStop, stopping, 
           <div className="mt-1 max-h-60 overflow-y-auto rounded-lg bg-surface-2 px-3 py-2 text-[13px] whitespace-pre-wrap">{node.prompt}</div>
         </details>
       )}
-      <Actions node={node} canStop={canStop && !gone} stopping={stopping} onStop={onStop} onJump={onJump} onRead={onRead} stopLabel={node.workflow ? "워크플로 중지" : "중지"} />
+      <Actions
+        node={node}
+        canStop={canStop && !gone}
+        stopping={stopping}
+        onStop={onStop}
+        onJump={onJump}
+        onRead={onRead}
+        stopLabel={node.workflow ? "워크플로 중지" : "중지"}
+        move={toBackground.button}
+      />
+      {toBackground.note}
       {error && <div className="mt-2 text-sm text-danger">{error}</div>}
     </div>
   );
@@ -457,6 +496,7 @@ function TaskDetail({
   onRead,
 }: Omit<DetailProps, "node" | "onJump" | "onPending" | "gone"> & { sessionId: string; task: TaskInfo; canRead: boolean }) {
   const running = task.status === "running";
+  const toBackground = useMoveButton(sessionId, canStop ? task : undefined);
   return (
     <div data-detail={`t:${task.id}`}>
       <Back onBack={onBack} />
@@ -475,12 +515,14 @@ function TaskDetail({
         <ShellOutput key={task.id} sessionId={sessionId} task={task} onAgent={task.parentId ? () => onRead({ agentId: task.parentId, title: parent || "서브에이전트" }) : undefined} />
       )}
       {canStop && running && (
-        <div className="mt-4 flex justify-end">
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+          {toBackground.button}
           <SmallButton tall tone="text-danger" disabled={stopping} onClick={() => onStop(task.id)}>
             {stopping ? "중지 중…" : "중지"}
           </SmallButton>
         </div>
       )}
+      {toBackground.note}
       {error && <div className="mt-2 text-sm text-danger">{error}</div>}
     </div>
   );

@@ -1,9 +1,9 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import type { TaskInfo } from "../../../../broker/src/protocol.ts";
+import type { TaskInfo, TaskOutput } from "../../../../broker/src/protocol.ts";
 import { errorText, sizeText } from "../../labels.ts";
 import { call } from "../../state.ts";
 import { cleanOutput } from "./output.ts";
-import { usePolling } from "./poll.ts";
+import { usePolling, type Follow } from "./poll.ts";
 
 const NEAR_BOTTOM_PX = 24;
 
@@ -20,18 +20,32 @@ function Output({ sessionId, task }: { sessionId: string; task: TaskInfo }) {
   const [error, setError] = useState<string>();
   const pre = useRef<HTMLPreElement>(null);
   const follow = useRef(true);
-  const read = async () => {
+  const show = (r: TaskOutput) => {
+    setShown({ text: cleanOutput(r.text, r.truncated), bytes: new TextEncoder().encode(r.text).length, totalBytes: r.totalBytes, truncated: r.truncated });
+    setError(undefined);
+  };
+  const read = async (): Promise<boolean> => {
     try {
-      const r = await call(sessionId, "task_output", { taskId: task.id });
-      setShown({ text: cleanOutput(r.text, r.truncated), bytes: new TextEncoder().encode(r.text).length, totalBytes: r.totalBytes, truncated: r.truncated });
-      setError(undefined);
+      show(await call(sessionId, "task_output", { taskId: task.id }));
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
     }
+  };
+  const watch: Follow = {
+    start: async (id) => {
+      const r = await call(sessionId, "follow", { id, kind: "output", taskId: task.id });
+      if (r.output) show(r.output);
+      return r.live;
+    },
+    change: (m) => {
+      if (m.output) show(m.output);
+    },
   };
   // A wrapper that refuses the request refuses it for as long as it runs.
   const refused = error !== undefined && /request not allowed/.test(error);
-  usePolling(read, running, `${sessionId}|${task.id}`, !refused);
+  usePolling(read, running, `${sessionId}|${task.id}`, !refused, watch);
   useLayoutEffect(() => {
     if (pre.current && follow.current) pre.current.scrollTop = pre.current.scrollHeight;
   }, [shown?.text]);
