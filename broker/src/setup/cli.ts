@@ -13,7 +13,8 @@ import { runUninstall } from "./uninstall.ts";
 
 export const SETUP_USAGE = `usage: ccrc setup [--yes] [--allow-sudo] [--dry-run] [--only ids] [--skip ids] [--no-system] [--no-vscode] [--no-serve] [--https-port N]
   Checks each step and does the ones not yet in place; run it again to finish or repair.
-  --yes         take the default answer to every question but sudo (steps that need you still wait)
+  --yes         take the default answer to every question but sudo. Steps that need you still wait, but devices
+                does not: it adds your phone only when you have exactly one
   --allow-sudo  without a terminal, let the steps that need sudo run; with one, each is still asked.
                 Without either, those steps are left as needing sudo consent
   --dry-run     show what is in place and what setup would do, changing nothing

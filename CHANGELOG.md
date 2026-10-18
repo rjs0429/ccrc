@@ -6,6 +6,44 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Added
+
+- `ccrc setup`'s `ssh-keygen` step also checks that it is from OpenSSH 8.2 or newer, which `ccrc update` needs to
+  check release signatures: it asks ssh-keygen what git asks it, and one without `-Y find-principals` gets a warning
+  that updates will stop at that check, with how to fix it. Setup goes on either way. `ccrc update`, when it stops
+  for that reason, now says how to fix it as well.
+
+### Changed
+
+- `install.sh` no longer stops when `ssh-keygen` is the only base tool missing. It still offers to install it, asking
+  for sudo as before; when it stays missing (sudo not given, `--no-system`, no package manager, or its install
+  failing), the install goes on with a warning that `ccrc update` will stop at the signature check until it is
+  installed. Installing never used it: `install.sh` does not check tag signatures.
+
+### Fixed
+
+- `ccrc update` checked release signatures with the `gpg.ssh.program` of your git config, if one was set, and under its
+  `gpg.minTrustLevel`. A program that only signs, or the trust level `ultimate`, stopped the update at a good
+  signature, reported as one that does not check out or as needing OpenSSH 8.2 while `ccrc setup` found `ssh-keygen`
+  fine. It now always checks with the `ssh-keygen` on `PATH`, the one setup checks, against `.ccrc-allowed-signers`
+  alone.
+
+### Security
+
+- `ccrc setup` offered every iOS and Android machine in the tailnet for `allowedDevices`, and `--yes` allowed all
+  the online ones, phones of other people in a shared tailnet included. It now offers only the machines of the
+  Tailscale user this machine belongs to, and `--yes` adds one only when there is exactly one; otherwise it adds none
+  and says how to add yours (`ccrc setup` in a terminal, or `ccrc config set allowedDevices`). A tagged machine, or a
+  Tailscale that does not report users, gets none offered. A list already in config.json is left as it is: to see
+  whether an earlier `--yes` let in phones that are not yours, look at `devices` in `ccrc status`.
+- `ccrc update` used a copy of the version it updates to that was already in `versions/` without checking its tag: one
+  left by `install.sh`, which does not check signatures, or by an update checked against an older
+  `.ccrc-allowed-signers`. It now checks such a copy as it checks a download, and fetches the tag again when the copy
+  does not pass.
+- `ccrc update` took a signed tag of an older release, offered under a newer release's name, for the newer release, as
+  `git verify-tag` does not look at the name. It now checks that the tag was signed under the name it was fetched as,
+  and that the copy is at the commit the tag names.
+
 ## [0.7.3] - 2026-10-18
 
 ### Fixed

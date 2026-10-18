@@ -7,7 +7,7 @@ import { changelogSections, isNewer, latestTag, listTags, quietGitEnv, releaseUr
 import { run, type Runner } from "./run.ts";
 import { inBrokerService, inServiceRefusal } from "./service-cgroup.ts";
 import { whichOn } from "./setup/io.ts";
-import { sshKeygenInstall } from "./ssh-keygen.ts";
+import { NEEDED_SSH_KEYGEN, gitSshKeygenProblem, sshKeygenFix } from "./ssh-keygen.ts";
 import { readUpdateCheck, updateCheckFile, writeUpdateCheck } from "./update-check.ts";
 
 // `ccrc update` and `ccrc rollback` on an install: <dataDir>/versions/<version>/ folders and the <dataDir>/current link.
@@ -16,7 +16,17 @@ import { readUpdateCheck, updateCheckFile, writeUpdateCheck } from "./update-che
 // version within PING_WAIT_MS, the link and the backup go back.
 
 export const SIGNERS_FILE = ".ccrc-allowed-signers";
-const SSH_ONLY_VERIFY = ["-c", "gpg.format=ssh", "-c", "gpg.program=false", "-c", "gpg.openpgp.program=false", "-c", "gpg.x509.program=false"];
+// git picks the verifier from the kind of signature, not from gpg.format: with the OpenPGP and X.509 programs `false`,
+// only an SSH signature passes, and the ssh-keygen on PATH (the one setup checks) and the signers file alone decide it,
+// whatever gpg.ssh.program or gpg.minTrustLevel the user's git config sets.
+const SSH_ONLY_VERIFY = [
+  "gpg.format=ssh",
+  "gpg.program=false",
+  "gpg.openpgp.program=false",
+  "gpg.x509.program=false",
+  "gpg.ssh.program=ssh-keygen",
+  "gpg.minTrustLevel=undefined",
+].flatMap((setting) => ["-c", setting]);
 export const HISTORY_FILE = "history.json";
 const SERVICE = "ccrc.service";
 const PING_WAIT_MS = 30_000;
@@ -102,6 +112,8 @@ export function defaultDeps(): UpdateDeps {
 }
 
 class UpdateError extends Error {}
+// A copy that is not the signed release it is named for, unlike a machine that cannot check it.
+class BadTag extends UpdateError {}
 
 function stamp(d: Date): string {
   return d.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
@@ -317,26 +329,35 @@ class Updater {
     return dir;
   }
 
-  // git picks the verifier from the kind of signature, not from gpg.format; with the OpenPGP and X.509 programs set to
-  // `false`, only an SSH signature from a key in the signers file passes.
+  // dir holds the release `tag` when the tag carries an SSH signature from a key in the signers file, was made under
+  // that name, and names the commit checked out.
   async verifyTag(dir: string, tag: string, signers: string): Promise<void> {
-    const r = await this.d.runner("git", ["-C", dir, ...SSH_ONLY_VERIFY, "-c", `gpg.ssh.allowedSignersFile=${signers}`, "verify-tag", tag], {
+    const r = await this.d.runner("git", ["-C", dir, ...SSH_ONLY_VERIFY, "-c", `gpg.ssh.allowedSignersFile=${signers}`, "verify-tag", `refs/tags/${tag}`], {
       env: quietGitEnv(this.d.env),
       timeoutMs: 60_000,
     });
-    if (r.code === 0) return;
+    if (r.code === 0) return this.taggedCheckout(dir, tag);
     const why = lastLine(r.stderr) || `exit code ${r.code}`;
     // git runs ssh-keygen only for an SSH signature: a tag with none, or not a tag, fails the same without it.
-    if (/cannot run ssh-keygen\b/.test(r.stderr)) {
+    const problem = gitSshKeygenProblem(r.stderr);
+    if (problem) {
       const dirs = this.d.env.PATH ?? "";
-      const install = sshKeygenInstall((cmd) => whichOn(cmd, dirs));
-      throw new UpdateError(`could not check the signature of ${tag}: git checks it with ssh-keygen, which it could not run (${why}). Run ccrc update again once it is installed; ${install}`);
+      const fix = sshKeygenFix(problem, (cmd) => whichOn(cmd, dirs));
+      throw new UpdateError(
+        problem === "missing"
+          ? `could not check the signature of ${tag}: git checks it with ssh-keygen, which it could not run (${why}). Run ccrc update again once it is installed; ${fix}`
+          : `could not check the signature of ${tag}: git needs ${NEEDED_SSH_KEYGEN} to check it (${why}). Run ccrc update again on a newer one; ${fix}`,
+      );
     }
-    // OpenSSH before 8.2 has no ssh-keygen -Y find-principals, which git needs (RHEL 8 ships 8.0).
-    if (/find-principals\/verify is needed/.test(r.stderr)) {
-      throw new UpdateError(`could not check the signature of ${tag}: git needs ssh-keygen from OpenSSH 8.2 or newer to check it (${why}). Run ccrc update again on a newer OpenSSH`);
-    }
-    throw new UpdateError(`the signature of ${tag} does not check out against ${signers}: ${why}`);
+    throw new BadTag(`the signature of ${tag} does not check out against ${signers}: ${why}`);
+  }
+
+  // verify-tag passes a signed tag of another release under any name, and does not look at what is checked out.
+  async taggedCheckout(dir: string, tag: string): Promise<void> {
+    const [named, commit] = (await this.git(["-C", dir, "for-each-ref", "--format=%(tag) %(*objectname)", `refs/tags/${tag}`])).split(" ");
+    if (named !== tag) throw new BadTag(`the tag ${tag} is the signed tag of ${named || "no release"}, not of ${tag}`);
+    const head = await this.git(["-C", dir, "rev-parse", "HEAD"]);
+    if (head !== commit) throw new BadTag(`${path.relative(this.d.dataDir, dir)} is at ${head.slice(0, 12)}, not at ${commit.slice(0, 12)}, the commit ${tag} names`);
   }
 
   // Backs up, migrates with the new version's code, moves the link and restarts. Returns the exit code.
@@ -705,9 +726,21 @@ export async function update(o: UpdateOptions, deps: Partial<UpdateDeps> = {}): 
     const unlock = u.lock();
     try {
       const dir = u.dirOf(target);
-      // A copy of that tag left by an earlier update; one made with --from is local work and is fetched over.
-      const reuse = readInstallInfo(dir)?.source === source;
       const tmp = `${dir}.tmp`;
+      const signers = path.join(current?.dir ?? d.codeRoot, SIGNERS_FILE);
+      const check = fs.existsSync(signers);
+      // A copy of that tag left by install.sh or an earlier update is used when it passes the check a download gets, and
+      // fetched over otherwise; one made with --from is local work and is fetched over.
+      let reuse = readInstallInfo(dir)?.source === source;
+      if (reuse && check) {
+        try {
+          await u.verifyTag(dir, target, signers);
+        } catch (e) {
+          if (!(e instanceof BadTag)) throw e;
+          d.log(`Not using the copy already in versions/${target}: ${e.message}.`);
+          reuse = false;
+        }
+      }
       const fetched = reuse ? dir : tmp;
       if (reuse) d.log(`Using the copy already in versions/${target}.`);
       else {
@@ -717,9 +750,8 @@ export async function update(o: UpdateOptions, deps: Partial<UpdateDeps> = {}): 
         await u.git(["-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1", "--branch", target, source, tmp]);
       }
       try {
-        const signers = path.join(current?.dir ?? d.codeRoot, SIGNERS_FILE);
-        if (fs.existsSync(signers) && !reuse) {
-          await u.verifyTag(tmp, target, signers);
+        if (check) {
+          if (!reuse) await u.verifyTag(tmp, target, signers);
           d.log(`The tag ${target} is signed by a key in ${SIGNERS_FILE}.`);
         }
         showChangelog(d.log, fetched, version, target);

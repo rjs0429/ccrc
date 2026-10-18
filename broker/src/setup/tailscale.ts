@@ -1,3 +1,4 @@
+import { inThisTailnet } from "../devices.ts";
 import type { Runner } from "./io.ts";
 
 // What setup reads from `tailscale status --json` and `tailscale serve status --json`.
@@ -7,12 +8,16 @@ export interface TsNode {
   DNSName?: string;
   OS?: string;
   Online?: boolean;
+  UserID?: number;
+  Tags?: string[];
+  ShareeNode?: boolean;
 }
 
 export interface TsStatus {
   BackendState?: string;
   Self?: TsNode;
   Peer?: Record<string, TsNode>;
+  User?: Record<string, { LoginName?: string }>;
   CurrentTailnet?: { MagicDNSEnabled?: boolean; MagicDNSSuffix?: string };
   CertDomains?: string[] | null;
 }
@@ -55,13 +60,35 @@ export interface Phone {
   online: boolean;
 }
 
-// iOS and Android machines of the tailnet, online ones first.
-export function phones(st: TsStatus | undefined): Phone[] {
+export interface Phones {
+  // Those of the Tailscale user this machine belongs to.
+  mine: Phone[];
+  others: Phone[];
+  // That user's login name, when the status gives it.
+  user?: string;
+  // Why no machine can count as that user's, when the status does not tell.
+  unknown?: string;
+}
+
+// A tagged machine belongs to its tags, whatever user the status gives it.
+function owner(n: TsNode | undefined): number | undefined {
+  return n && !n.Tags?.length && typeof n.UserID === "number" && n.UserID !== 0 ? n.UserID : undefined;
+}
+
+// iOS and Android machines of the tailnet that the broker can let in, online ones first, by whose they are.
+export function phones(st: TsStatus | undefined): Phones {
+  const self = st?.Self;
+  const me = owner(self);
+  const out: Phones = { mine: [], others: [] };
   const found = Object.values(st?.Peer ?? {})
-    .filter((p) => /^(ios|android)$/i.test(p.OS ?? ""))
-    .map((p) => ({ name: machineName(p), os: p.OS!, online: Boolean(p.Online) }))
-    .filter((p) => p.name);
-  return found.sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
+    .filter((p) => /^(ios|android)$/i.test(p.OS ?? "") && inThisTailnet(p, self) && machineName(p))
+    .sort((a, b) => Number(Boolean(b.Online)) - Number(Boolean(a.Online)) || machineName(a).localeCompare(machineName(b)));
+  for (const p of found) (me !== undefined && owner(p) === me ? out.mine : out.others).push({ name: machineName(p), os: p.OS!, online: Boolean(p.Online) });
+  const user = me === undefined ? undefined : st?.User?.[String(me)]?.LoginName;
+  if (user) out.user = user;
+  if (st && self?.Tags?.length) out.unknown = `this machine is tagged (${self.Tags.join(", ")}), so it belongs to no Tailscale user`;
+  else if (st && me === undefined) out.unknown = "Tailscale here does not say which user each machine belongs to";
+  return out;
 }
 
 export function httpsReady(st: TsStatus | undefined): boolean {

@@ -37,6 +37,16 @@ function normalizeIp(ip: string): string {
   return v.startsWith("::ffff:") && v.includes(".") ? v.slice(7) : v;
 }
 
+const tailnetOf = (n: { DNSName?: string }) => (n.DNSName ?? "").toLowerCase().replace(/\.$/, "").split(".").slice(1).join(".");
+
+// Whether DeviceGate can let a machine of `tailscale status` in. Machines shared in from another tailnet carry that
+// tailnet's name, and sharee machines are listed only so they can reach this one.
+export function inThisTailnet(node: { DNSName?: string; ShareeNode?: boolean }, self: { DNSName?: string } | undefined): boolean {
+  if (node.ShareeNode) return false;
+  const tailnet = self ? tailnetOf(self) : "";
+  return !tailnet || tailnetOf(node) === tailnet;
+}
+
 // Requests through `tailscale serve` arrive from loopback with the tailnet client address as the
 // last X-Forwarded-For entry. Only allowed machines get through, named by the first label of their
 // MagicDNS name in this tailnet: unlike the host name a machine reports itself, the tailnet keeps
@@ -71,12 +81,8 @@ export class DeviceGate {
   async refresh(): Promise<void> {
     const st = await this.status();
     const map = new Map<string, string>();
-    const suffix = (n: TailscaleNode) => (n.DNSName ?? "").toLowerCase().replace(/\.$/, "").split(".").slice(1).join(".");
-    const tailnet = st.Self ? suffix(st.Self) : "";
     for (const node of [st.Self, ...Object.values(st.Peer ?? {})]) {
-      if (!node || node.ShareeNode) continue;
-      // Machines shared in from another tailnet carry that tailnet's name.
-      if (tailnet && suffix(node) !== tailnet) continue;
+      if (!node || !inThisTailnet(node, st.Self)) continue;
       const label = (node.DNSName ?? "").split(".")[0].toLowerCase();
       const name = this.names.has(label) ? label : undefined;
       if (!name) continue;
