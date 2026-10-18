@@ -122,7 +122,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const othersWaiting = useApp((s) => (s.sessions ?? []).some((x) => x.id !== sessionId && x.pendingCount));
   // The ⋯ menu decides as it opens whether it offers 이번 턴 중지 and keeps that row while open, enabled while a turn
   // runs, so a turn starting or ending moves none of its rows.
-  const [menu, setMenu] = useState<false | { stop: boolean }>(false);
+  // more: it shows the rows used less often instead, with a way back.
+  const [menu, setMenu] = useState<false | { stop: boolean; more?: boolean }>(false);
   const [sheet, setSheet] = useState<SheetName | null>(null);
   const [usageCommand, setUsageCommand] = useState("usage");
   const [stopped, setStopped] = useState<string | null>(null);
@@ -715,7 +716,32 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onAgents={() => setSheet("agents")}
       />
 
-      {menu && (
+      {menu && menu.more && (
+        <Sheet title={title} onClose={() => setMenu(false)}>
+          <button onClick={() => setMenu({ ...menu, more: false })} className="mb-1 flex min-h-11 items-center gap-1 px-2 text-sm font-medium text-accent" data-menu-back>
+            <Icon.back className="size-4" /> 메뉴
+          </button>
+          {controllable && (
+            <>
+              <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
+              <Choice label="출력 스타일" value={st?.outputStyle && outputStyleLabel(st.outputStyle)} onClick={() => (setSheet("outputStyle"), setMenu(false))} />
+            </>
+          )}
+          <Choice
+            label="읽지 않음으로 표시"
+            onClick={() => {
+              setMenu(false);
+              void setUnread(sessionId, true).then((ok) => ok && navigate({ name: "home" }));
+            }}
+          />
+          {(worktree || kind === "owned") && <div className="mx-3 my-1.5 h-px bg-line" />}
+          {worktree && <Choice label="worktree 정리" onClick={() => (setCleaning(true), setMenu(false))} />}
+          {kind === "owned" && (
+            <Choice label="원격 실행 끝내기" hint="Claude Code 프로세스를 닫습니다. 대화 기록은 남습니다." onClick={() => (send({ t: "release", sessionId }), setMenu(false))} />
+          )}
+        </Sheet>
+      )}
+      {menu && !menu.more && (
         <Sheet title={title} onClose={() => setMenu(false)}>
           <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
           {menu.stop && (
@@ -764,24 +790,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           <Choice label="변경 사항" onClick={() => (setSheet("changes"), setMenu(false))} />
           <Choice label="Context와 사용량" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
           <Choice label="에이전트 지도" onClick={() => (setSheet("agents"), setMenu(false))} />
-          {controllable && (
-            <>
-              <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
-              <Choice label="출력 스타일" value={st?.outputStyle && outputStyleLabel(st.outputStyle)} onClick={() => (setSheet("outputStyle"), setMenu(false))} />
-            </>
-          )}
-          <Choice
-            label="읽지 않음으로 표시"
-            onClick={() => {
-              setMenu(false);
-              void setUnread(sessionId, true).then((ok) => ok && navigate({ name: "home" }));
-            }}
-          />
-          {(worktree || kind === "owned") && <div className="mx-3 my-1.5 h-px bg-line" />}
-          {worktree && <Choice label="worktree 정리" onClick={() => (setCleaning(true), setMenu(false))} />}
-          {kind === "owned" && (
-            <Choice label="원격 실행 끝내기" hint="Claude Code 프로세스를 닫습니다. 대화 기록은 남습니다." onClick={() => (send({ t: "release", sessionId }), setMenu(false))} />
-          )}
+          <Choice label="더 보기" next onClick={() => setMenu({ ...menu, more: true })} />
         </Sheet>
       )}
       {file && (

@@ -25,8 +25,8 @@ your version and the new one, and the lines under "Breaking" separately.
 - Unread sessions. A session is unread when a turn ended while the phone was not showing it (any turn of a broker
   session; a VS Code session's turn when the phone sent to, started or answered in it after VS Code's last message,
   within two hours before the turn started) or when a notification about it went out, until the phone opens it or
-  VS Code writes to it. The list shows a dot and has a "읽지 않음" filter; the session's ⋯ menu and a long press in the
-  list offer "읽지 않음으로 표시" (and "읽음으로 표시"). Kept in `~/.local/state/ccrc/unread.json` (0600; session ids
+  VS Code writes to it. The list shows a dot and has a "읽지 않음" filter; the session's ⋯ menu (under 더 보기) and a
+  long press in the list offer "읽지 않음으로 표시" (and "읽음으로 표시"). Kept in `~/.local/state/ccrc/unread.json` (0600; session ids
   and times, for a month and 500 sessions at most), so it outlasts a broker restart; `ccrc uninstall --purge` removes
   it.
 - Agent map: a subagent's transcript open on the phone now updates as Claude Code writes it. While it is open the
@@ -95,6 +95,10 @@ your version and the new one, and the lines under "Breaking" separately.
   broker so in its hello (`workspace_diff`, `side_question`). VS Code tabs opened before the update keep the older
   wrapper until they are opened again: side questions are off there, and git changes are read by the broker.
 - A NotebookEdit call shows the cell's change when Claude Code reports the cell's source from before it.
+- The session's ⋯ menu keeps its four tiles and the rows used most: 곁질문, 되돌리기, 변경 사항, Context와 사용량 and
+  에이전트 지도. MCP 서버, 출력 스타일, 읽지 않음으로 표시, worktree 정리 and 원격 실행 끝내기 moved under its last row,
+  더 보기, which leads back to the menu. The menu has the same rows in every session and, with 이번 턴 중지 on top while
+  a turn runs, still fits a 390×844 screen.
 
 ### Fixed
 

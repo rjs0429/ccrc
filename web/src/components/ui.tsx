@@ -137,12 +137,13 @@ export function Sheet({ title, onClose, children, wide, tall }: { title?: string
   );
 }
 
-// value: the current setting, at the end of the line; the label alone names the button.
+// value: the current setting, at the end of the line; the label alone names the button. next: it opens more choices.
 export function Choice({
   label,
   hint,
   value,
   selected,
+  next,
   disabled,
   describedBy,
   onClick,
@@ -151,6 +152,7 @@ export function Choice({
   hint?: ReactNode;
   value?: string;
   selected?: boolean;
+  next?: boolean;
   disabled?: boolean;
   describedBy?: string;
   onClick: () => void;
@@ -175,6 +177,7 @@ export function Choice({
         </span>
       )}
       {selected && <Icon.check className="size-4 text-accent" />}
+      {next && <Icon.chevronRight className="size-4 shrink-0 text-muted" />}
     </button>
   );
 }
