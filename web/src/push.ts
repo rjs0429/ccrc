@@ -65,6 +65,18 @@ function keyBytes(key: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(key.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 }
 
+// The choices of the subscription turned off last, which the next one on this browser starts with.
+const LAST_PREFS = "ccrc.pushPrefs";
+
+function lastPrefs(): Partial<PushPrefs> | undefined {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(LAST_PREFS) ?? "null");
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Partial<PushPrefs>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Call this straight from a tap: iOS asks for permission only in answer to one. A subscription the
 // broker does not know may be expired or bound to an older key, so a fresh one replaces it.
 export async function turnOn(device: PushDevice, prefs?: Partial<PushPrefs>): Promise<PushDevice> {
@@ -72,11 +84,21 @@ export async function turnOn(device: PushDevice, prefs?: Partial<PushPrefs>): Pr
   if (permission !== "granted") throw Error(permission === "denied" ? "알림 권한이 거부되었습니다" : "알림을 허용하지 않았습니다");
   await (await device.reg.pushManager.getSubscription())?.unsubscribe();
   const sub = await device.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(device.key) });
-  const status = await request<PushStatus>("POST", "/api/push/subscribe", { subscription: sub.toJSON(), prefs });
+  const subscribe = (p?: Partial<PushPrefs>) => request<PushStatus>("POST", "/api/push/subscribe", { subscription: sub.toJSON(), prefs: p });
+  const kept = prefs ? undefined : lastPrefs();
+  const status = await subscribe(prefs ?? kept).catch((e: unknown) => {
+    if (kept && e instanceof ApiError && e.body.error === "invalid_prefs") return subscribe();
+    throw e;
+  });
   return { ...device, sub, status };
 }
 
 export async function turnOff(device: PushDevice): Promise<PushDevice> {
+  if (device.status.prefs) {
+    try {
+      localStorage.setItem(LAST_PREFS, JSON.stringify(device.status.prefs));
+    } catch {}
+  }
   if (device.sub) {
     await request("POST", "/api/push/unsubscribe", { endpoint: device.sub.endpoint });
     await device.sub.unsubscribe().catch(() => false);
