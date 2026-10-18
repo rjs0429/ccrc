@@ -431,7 +431,8 @@ export class Hub {
     }
   }
 
-  // A fork given a first message runs it at once, which counts as the remote user's work.
+  // A fork given a first message runs it at once, which counts as the remote user's work. It is logged as what came of it:
+  // one from the conversation's first message is only a new session's draft, nothing copied, made or sent.
   private async fork(sessionId: string, args: Record<string, unknown>): Promise<unknown> {
     const ids = args.attachments === undefined ? [] : args.attachments;
     if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENTS || (args.text !== undefined && typeof args.text !== "string")) throw Error("invalid request");
@@ -443,17 +444,16 @@ export class Hub {
     if (w !== undefined && (!w || typeof w !== "object")) throw Error("invalid request");
     const worktree = w ? str(w.name, WORKTREE_NAME_MAX) : undefined;
     const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
+    if (text || blocks) this.noteRemoteActivity(forkId);
+    const r = await this.manager.fork(sessionId, { id: forkId, before, text, blocks, name, worktree });
     this.audit.log("fork", {
       device: this.device,
       sessionId,
-      forkId,
       ...(before ? { before } : {}),
-      ...(text ? { chars: text.length } : {}),
-      ...(ids.length ? { attachments: ids.length } : {}),
-      ...(worktree ? { worktree } : {}),
+      ...("draft" in r
+        ? { draft: true }
+        : { forkId, ...(text ? { chars: text.length } : {}), ...(ids.length ? { attachments: ids.length } : {}), ...(worktree ? { worktree } : {}) }),
     });
-    if (text || blocks) this.noteRemoteActivity(forkId);
-    const r = await this.manager.fork(sessionId, { id: forkId, before, text, blocks, name, worktree });
     this.changed();
     return r;
   }
@@ -463,7 +463,7 @@ export class Hub {
     const file = await this.manager.transcriptFile(sessionId);
     const blocks = file ? await messageBlocks(file, messageId.toLowerCase()) : undefined;
     if (!blocks) return { files: [], gone: true };
-    const files = await this.uploads.again(blocks);
+    const files = await this.uploads.again(blocks, MAX_ATTACHMENTS);
     const made = files.filter((f) => "upload" in f).length;
     if (made) this.audit.log("reattach", { device: this.device, sessionId, messageId, files: made });
     return { files };

@@ -105,11 +105,21 @@ export async function gitFolderInfo(dir: string, now = new Date()): Promise<GitF
   };
 }
 
-// How many files git status lists in the folder's checkout, a new folder counted once and Claude Code's own .claude
-// folder (its worktrees, local settings) left out; undefined when git cannot say soon.
+// What Claude Code keeps untracked in a checkout's .claude folder: its worktrees and local settings, or the folder as a
+// whole while nothing in it is committed.
+const CLAUDE_OWN = /^"?\.claude\/(?:worktrees\/.*|settings\.local\.json)?"?$/;
+
+// How many files git status lists in the folder's checkout, a new folder counted once; what Claude Code keeps untracked
+// in .claude is left out, a committed file there that changed is not. Undefined when git cannot say soon.
 export async function uncommitted(dir: string): Promise<number | undefined> {
   const r = await git(dir, ["status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=dirty"]);
-  return r.code === 0 ? r.out.split("\n").filter((l) => l && !/^.. "?\.claude\//.test(l)).length : undefined;
+  return r.code === 0 ? r.out.split("\n").filter((l) => l && !(l.startsWith("?? ") && CLAUDE_OWN.test(l.slice(3)))).length : undefined;
+}
+
+// Whether the folder lies below the top of its checkout; undefined when git cannot say.
+export async function belowTop(dir: string): Promise<boolean | undefined> {
+  const r = await git(dir, ["rev-parse", "--show-prefix"]);
+  return r.code === 0 ? r.out.trim() !== "" : undefined;
 }
 
 // The worktree a session works in as Claude Code recorded it.

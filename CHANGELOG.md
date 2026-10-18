@@ -9,12 +9,13 @@ your version and the new one, and the lines under "Breaking" separately.
 ### Added
 
 - A fork can run in a worktree of its own: the fork sheet has the new-session screen's worktree switch and name, with
-  the same checks. Claude Code makes the worktree from the HEAD of the original session's folder, and the sheet says how
-  many uncommitted files stay behind; a session already in a worktree forks into a new one beside it, from that
-  worktree's HEAD. Outside git the switch says why it is off.
+  the same checks. Claude Code makes a new worktree from the HEAD of the original session's folder, and the sheet says
+  how many uncommitted files stay behind; a session already in a worktree forks into a new one beside it, from that
+  worktree's HEAD. A worktree that is already there is not reused. The switch says why it is off outside git and for a
+  session in a subfolder of its repository, whose fork would work at the worktree's top.
 - A fork from a message, and a rewind to one, put the message's photos and documents back in the composer with its
   text, uploaded again from the transcript. The ones that cannot be (gone from the transcript, of a kind the phone does
-  not attach, too large) are named.
+  not attach, too large, past the composer's ten) are named.
 
 ### Changed
 

@@ -104,10 +104,10 @@ export class Uploads {
     return { id, name: stored.name, kind: stored.kind, size: stored.size };
   }
 
-  // The images and documents among a message's blocks uploaded again, in the order the message holds them.
-  async again(blocks: readonly Record<string, unknown>[]): Promise<ReattachedFile[]> {
+  // The images and documents among a message's blocks uploaded again, in the order the message holds them, the first `max`.
+  async again(blocks: readonly Record<string, unknown>[], max = Infinity): Promise<ReattachedFile[]> {
     const out: ReattachedFile[] = [];
-    for (const f of attachedFiles(blocks)) {
+    for (const f of attachedFiles(blocks, max)) {
       if ("failed" in f) out.push(f);
       else
         out.push(

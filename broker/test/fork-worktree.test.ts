@@ -147,9 +147,13 @@ function setup(t: { after: (fn: () => unknown) => void }) {
 test("a fork asked for a worktree runs in one Claude Code makes from the HEAD of the original's folder", async (t) => {
   const { manager, call, logged } = setup(t);
   const root = repo();
+  fs.mkdirSync(path.join(root, ".claude"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".claude", "settings.json"), "{}\n");
+  git(root, "add", ".");
+  git(root, "commit", "-qm", "project settings");
   fs.writeFileSync(path.join(root, "a.txt"), "changed\n");
   fs.writeFileSync(path.join(root, "new.txt"), "new\n");
-  fs.mkdirSync(path.join(root, ".claude"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".claude", "settings.json"), '{"model":"opus"}\n');
   fs.writeFileSync(path.join(root, ".claude", "settings.local.json"), "{}\n");
   const src = randomUUID();
   transcript(src, root);
@@ -160,7 +164,8 @@ test("a fork asked for a worktree runs in one Claude Code makes from the HEAD of
   assert.equal(info.repo, true);
   assert.equal(info.root, root);
   assert.equal(info.branch, "main");
-  assert.equal(info.changed, 2, "the changed and the new file count, Claude Code's own .claude folder does not");
+  assert.equal(info.changed, 3, "the changed, the new and the committed project settings count, Claude Code's local settings do not");
+  assert.equal(info.subfolder, undefined);
 
   const id = randomUUID();
   const r = await call(src, "fork", { id, worktree: { name: "try/one" } });
@@ -232,18 +237,53 @@ test("a fork in a worktree is refused before Claude Code starts outside git, for
   assert.equal(recorded().filter((x) => x.args).length, 0, "Claude Code never started");
 });
 
-test("a fork from the first message gives the draft whether or not it asked for a worktree", async (t) => {
+test("a session below the top of its checkout forks only without a worktree, which would work at its top", async (t) => {
+  const { call, logged } = setup(t);
+  const root = repo();
+  const sub = path.join(root, "sub");
+  fs.mkdirSync(sub);
+  const src = randomUUID();
+  transcript(src, sub);
+  const info = (await call(src, "fork_git", {})).data as GitFolderInfo;
+  assert.equal(info.subfolder, true);
+  assert.equal(info.root, root);
+  assert.equal((await call(src, "fork", { id: randomUUID(), worktree: { name: "below" } })).error, "session works in a subfolder of its repository");
+  assert.equal(recorded().filter((x) => x.args).length, 0, "Claude Code never started");
+  assert.ok(!fs.existsSync(path.join(root, ".claude", "worktrees", "below")));
+  assert.ok(!logged.some(([e]) => e === "fork"), "a refused fork is not logged");
+  const r = await call(src, "fork", { id: randomUUID() });
+  assert.equal(r.ok, true, r.error);
+  assert.equal((r.data as { cwd: string }).cwd, sub, "without one the fork works where the session did");
+});
+
+test("a fork is refused the name of a worktree already there, which holds other work than HEAD and stays as it was", async (t) => {
   const { call } = setup(t);
+  const root = repo();
+  const wt = path.join(root, ".claude", "worktrees", "kept");
+  git(root, "worktree", "add", "-q", "-b", "worktree-kept", wt, "HEAD");
+  fs.writeFileSync(path.join(wt, "other.txt"), "other\n");
+  const src = randomUUID();
+  transcript(src, root);
+  assert.deepEqual(((await call(src, "fork_git", {})).data as GitFolderInfo).existing, ["kept"]);
+  assert.equal((await call(src, "fork", { id: randomUUID(), worktree: { name: "kept" } })).error, "worktree kept already exists");
+  assert.equal(recorded().filter((x) => x.args).length, 0, "Claude Code never started");
+  assert.ok(fs.existsSync(path.join(wt, "other.txt")));
+  assert.equal(git(root, "branch", "--list", "worktree-kept").replace(/^[*+ ]+/, ""), "worktree-kept");
+});
+
+test("a fork from the first message gives the draft whether or not it asked for a worktree, and is logged as one", async (t) => {
+  const { call, logged } = setup(t);
   const root = repo();
   const src = randomUUID();
   const ids = transcript(src, root);
-  const r = await call(src, "fork", { id: randomUUID(), before: ids.u1, worktree: { name: "first" } });
+  const r = await call(src, "fork", { id: randomUUID(), before: ids.u1, text: "다시", worktree: { name: "first" } });
   assert.deepEqual(r.data, { draft: { cwd: root } });
   assert.ok(!fs.existsSync(path.join(root, ".claude", "worktrees", "first")));
+  assert.deepEqual(logged.find(([e]) => e === "fork")?.[1], { device: "phone", sessionId: src, before: ids.u1, draft: true }, "nothing was copied, made or sent");
 });
 
 test("a worktree made for a fork that then failed to start goes again, and its branch with it", async (t) => {
-  const { manager, call } = setup(t);
+  const { manager, call, logged } = setup(t);
   const root = repo();
   fs.writeFileSync(path.join(root, ".fake-fail-start"), "");
   const src = randomUUID();
@@ -257,20 +297,7 @@ test("a worktree made for a fork that then failed to start goes again, and its b
   assert.equal(git(root, "branch", "--list", "worktree-gone"), "");
   assert.ok(!(await manager.list()).some((x) => x.id === id));
   assert.ok(!fs.existsSync(path.join(home, ".claude", "file-history", id)));
-});
-
-test("an existing worktree a fork failed in is left as it was", async (t) => {
-  const { call } = setup(t);
-  const root = repo();
-  const wt = path.join(root, ".claude", "worktrees", "kept");
-  git(root, "worktree", "add", "-q", "-b", "worktree-kept", wt, "HEAD");
-  fs.writeFileSync(path.join(root, ".fake-fail-start"), "");
-  const src = randomUUID();
-  transcript(src, root);
-  const r = await call(src, "fork", { id: randomUUID(), worktree: { name: "kept" } });
-  assert.match(r.error ?? "", /^fork failed: /);
-  assert.ok(fs.existsSync(wt));
-  assert.equal(git(root, "branch", "--list", "worktree-kept").replace(/^[*+ ]+/, ""), "worktree-kept");
+  assert.ok(!logged.some(([e]) => e === "fork"), "a fork that failed is not logged");
 });
 
 test("a message's images and documents come back as uploads in its order, and what cannot is said", async (t) => {
@@ -299,6 +326,20 @@ test("a message's images and documents come back as uploads in its order, and wh
 
   assert.deepEqual((await call(src, "reattach", { messageId: randomUUID() })).data, { files: [], gone: true });
   assert.equal((await call(src, "reattach", { messageId: "../x" })).error, "invalid request");
+});
+
+test("no more files come back than one message from the phone carries", async (t) => {
+  const { call, uploads } = setup(t);
+  const root = repo();
+  const src = randomUUID();
+  const docs: Block[] = Array.from({ length: 12 }, (_, i) => ({ type: "document", source: { type: "text", media_type: "text/plain", data: `${i}\n` }, title: `n${i}.txt` }));
+  const ids = transcript(src, root, docs);
+  const files = ((await call(src, "reattach", { messageId: ids.u1 })).data as ReattachResult).files;
+  assert.deepEqual(
+    files.map((f) => ("upload" in f ? f.upload.name : f.failed)),
+    docs.slice(0, 10).map((d) => d.title),
+  );
+  assert.equal(fs.readdirSync(uploads.dir).filter((n) => !n.endsWith(".json")).length, 10, "only those are kept as uploads");
 });
 
 test("a message sent while Claude worked gives its files back from the queued row that holds it", async (t) => {

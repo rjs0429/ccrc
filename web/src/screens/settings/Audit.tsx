@@ -157,6 +157,7 @@ function detail(e: AuditEntry): string {
     case "fork":
       return [
         e.before ? "메시지에서" : "지금까지",
+        e.draft === true ? "첫 메시지라 새 세션 화면으로" : "",
         typeof e.worktree === "string" ? `worktree ${e.worktree}` : "",
         typeof e.chars === "number" ? "바로 시작" : "",
         typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : "",

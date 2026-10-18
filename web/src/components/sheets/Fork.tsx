@@ -84,7 +84,7 @@ export function ForkSheet({
   const uploading = attachments.some((a) => !a.uploaded);
   const filled = text.trim() !== "" || attachments.length > 0;
   const worktreeOn = worktree.on && !worktreeBlocked(git);
-  const picked = worktreeOn ? worktreeChoice(git as GitFolderInfo, worktree) : undefined;
+  const picked = worktreeOn ? worktreeChoice(git as GitFolderInfo, worktree, true) : undefined;
   const worktreeHold = worktree.on && git === "loading" ? "worktree를 쓸 수 있는지 확인하는 중입니다" : picked && "problem" in picked ? picked.problem : undefined;
   const blocked = folderMissing || uploading || Boolean(going) || Boolean(worktreeHold);
 
@@ -234,7 +234,7 @@ export function ForkSheet({
           draft={worktree}
           onChange={setWorktree}
           disabled={Boolean(going)}
-          head
+          fork
           className="mt-3 rounded-2xl border border-line px-3 pb-0.5"
         />
       )}

@@ -55,7 +55,7 @@ import { SessionCwds } from "./session-cwd.ts";
 import { agentItem, agentTranscript, workflowAgents } from "./subagents.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
 import { UnreadStore } from "./unread-store.ts";
-import { gitFolderInfo, removeWorktree, uncommitted, worktreeState, worktreeStatus, worktreeTarget, type WorktreeTarget } from "./worktrees.ts";
+import { belowTop, gitFolderInfo, removeWorktree, uncommitted, worktreeState, worktreeStatus, worktreeTarget, type WorktreeTarget } from "./worktrees.ts";
 import { WrappedSession } from "./wrapped.ts";
 
 const CATALOG_MS = 3000;
@@ -673,8 +673,17 @@ export class SessionManager extends EventEmitter {
   // Whether a fork of the session can run in a worktree of its own, and what of the folder it would leave behind.
   private async forkGit(sourceId: string): Promise<GitFolderInfo> {
     const { cwd } = await this.forkFolder(sourceId);
-    const [info, changed] = await Promise.all([gitFolderInfo(cwd), uncommitted(cwd)]);
-    return info.repo && changed !== undefined ? { ...info, changed } : info;
+    const [info, changed, below] = await Promise.all([gitFolderInfo(cwd), uncommitted(cwd), belowTop(cwd)]);
+    return { ...info, ...(info.repo && changed !== undefined ? { changed } : {}), ...(below ? { subfolder: true } : {}) };
+  }
+
+  // Where the worktree a fork asks for will be: always a new one, from the HEAD of the original's folder, and none for a
+  // session below the top of its checkout, whose fork would work at the worktree's top.
+  private async forkWorktree(cwd: string, w: WorktreeChoice): Promise<string | undefined> {
+    const at = await this.worktreeFor(cwd, w);
+    if (await belowTop(cwd)) throw Error("session works in a subfolder of its repository");
+    if (at && isFolder(at)) throw Error(`worktree ${w.name} already exists`);
+    return at;
   }
 
   // A copy of the session's conversation that runs here. Claude Code copies the transcript up to the fork point with its
@@ -709,7 +718,7 @@ export class SessionManager extends EventEmitter {
     return sent;
   }
 
-  // Without a message to cut at, a fork leaves out the turn running now. One asked for in a worktree runs in the worktree
+  // Without a message to cut at, a fork leaves out the turn running now. One asked for in a worktree runs in a new worktree
   // Claude Code makes from the HEAD of the original's folder, under the repository's main checkout, and keeps its
   // transcript in that worktree's project folder; a worktree made for a fork that then failed goes again if it holds nothing.
   private async makeFork(sourceId: string, req: ForkRequest): Promise<ForkResult> {
@@ -724,8 +733,7 @@ export class SessionManager extends EventEmitter {
     if (!point && req.before) throw Error("unknown message");
     if (point && point.at === undefined) return { draft: { cwd } };
     const worktree = req.worktree === undefined ? undefined : { name: req.worktree, base: "head" as const };
-    const made = worktree ? await this.worktreeFor(cwd, worktree) : undefined;
-    const fresh = made !== undefined && !isFolder(made);
+    const made = worktree ? await this.forkWorktree(cwd, worktree) : undefined;
     const title = forkTitle((info ? titleOf(info) : "") || source?.title || "", req.name);
     const cli = await this.claude();
     const s = new BrokerSession(req.id, cwd, [], title);
@@ -740,7 +748,7 @@ export class SessionManager extends EventEmitter {
       await s.close("fork_failed");
       if (!transcriptPath(req.id, s.cwd)) {
         for (const d of ["file-history", "session-env"]) fs.rmSync(path.join(paths.claudeConfigDir, d, req.id), { recursive: true, force: true });
-        const t = fresh && isFolder(made!) ? worktreeTarget(made!) : undefined;
+        const t = made && isFolder(made) ? worktreeTarget(made) : undefined;
         if (t) await removeWorktree(t, false).catch(() => undefined);
       }
       throw Error(`fork failed: ${e instanceof Error ? e.message : String(e)}`);

@@ -108,12 +108,13 @@ export function messageBlocks(file: string, id: string): Promise<Block[] | undef
 
 const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
 
-// The images and documents of a message as files to upload again, in the order attachmentsOf lists them: an image or
-// PDF in base64 or a plain text document, or "unreadable" for any other source or broken data.
-export function attachedFiles(blocks: readonly Block[]): ({ data: Buffer; name: string; mediaType: string } | { failed: "unreadable" })[] {
+// The images and documents of a message as files to upload again, in the order attachmentsOf lists them, the first `max`:
+// an image or PDF in base64 or a plain text document, or "unreadable" for any other source or broken data.
+export function attachedFiles(blocks: readonly Block[], max = Infinity): ({ data: Buffer; name: string; mediaType: string } | { failed: "unreadable" })[] {
   let images = 0;
   return blocks
     .filter((b) => b?.type === "image" || b?.type === "document")
+    .slice(0, max)
     .map((b) => {
       const source = record(b.source);
       const title = typeof b.title === "string" ? b.title.trim().slice(0, NAME_MAX) : "";
