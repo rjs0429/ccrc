@@ -108,6 +108,7 @@ export const Icon = {
       <path d="M6 3v12M18 9a9 9 0 01-9 9" />
     </>,
   ),
+  bell: svg(<path d="M6 8a6 6 0 0112 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 003.4 0" />),
 };
 
 export function Spinner({ className = "size-4" }: IconProps) {

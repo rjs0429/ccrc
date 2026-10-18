@@ -9,12 +9,14 @@ export interface PushPrefs {
   // VS Code sessions: seconds a request waits first, so an answer at the laptop does not buzz the phone.
   vscodeDelaySec: number;
   turnEnd: TurnEndMode;
-  // Name the tool in the notification text.
+  // Name the tool in the notification text, and give what Claude wrote in a notification it sends.
   details: boolean;
+  // The notifications Claude decides to send (its PushNotification tool).
+  claude: boolean;
 }
 
 export const VSCODE_DELAYS = [0, 30, 120];
-export const DEFAULT_PREFS: PushPrefs = { vscodeDelaySec: 30, turnEnd: "remote", details: false };
+export const DEFAULT_PREFS: PushPrefs = { vscodeDelaySec: 30, turnEnd: "remote", details: false, claude: true };
 
 // GET /api/push/status: what the broker knows about one device's subscription.
 export interface PushStatus {
@@ -27,8 +29,7 @@ export interface PushStatus {
   lastError?: { status: number; at: number };
 }
 
-// GET /api/push/badge: the number for the app icon of one device, and the sessions whose turn end it was told of and
-// that have not been opened since.
+// GET /api/push/badge: the number for the app icon of one device, and the sessions left unread.
 export interface PushBadge {
   subscribed: boolean;
   badge: number;

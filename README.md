@@ -203,6 +203,11 @@ broker is down, and the wrapper reconnects when it comes back.
 - The wrapper does two things the extension turns off when a wrapper is set: it resumes a turn cut off by a window
   reload (up to twice, within an hour; `claudeCode.continueAfterReload: false` turns this off), and it starts new tabs
   in the permission mode VS Code remembered.
+- When Claude sends a notification (its PushNotification tool), ccrc sends it to the phone. The wrapper adds one
+  PostToolUse hook to the extension's `initialize` and answers it itself: while a phone takes those notifications,
+  Claude reads "Mobile push requested." rather than Claude Code's "not sent"; nothing else about the call changes, and
+  VS Code's own hooks reach VS Code as before. Tabs opened with an older wrapper still get the push, and Claude reads
+  Claude Code's own answer.
 - To turn ccrc off for VS Code, remove the setting, or add `CCRC_WRAPPER=off` to
   `claudeCode.environmentVariables`.
 
@@ -360,7 +365,7 @@ while setup runs, setup writes it into the service unit too.
 | `~/.local/state/ccrc/update-check.json` | The last new-release check |
 | `~/.local/state/ccrc/install.log`, `wrapper.log` | Logs of `install.sh` and the wrapper (no conversation content) |
 | `~/.local/state/ccrc/uploads/` | Phone attachments, kept 24 hours |
-| `~/.local/state/ccrc/*.json`, `turns/`, `cli/`, `doctor/` | Working state: archived sessions, recent remote activity, start settings, model and context window lists, the last compatibility check, cut-off turns |
+| `~/.local/state/ccrc/*.json`, `turns/`, `cli/`, `doctor/` | Working state: archived and unread sessions, recent remote activity, start settings, model and context window lists, the last compatibility check, cut-off turns |
 | `$XDG_RUNTIME_DIR/ccrc/link.sock` | Wrapper and broker socket |
 
 The config and state folders (`~/.config/ccrc`, `~/.local/state/ccrc`) are private to you (0700) and the files in them
@@ -396,7 +401,9 @@ file.
 - **Local socket.** The wrapper socket is 0600 in a 0700 folder owned by you; both sides check this, and it never
   falls back to a shared folder such as `/tmp`.
 - **Secrets.** The API key is passed only to broker sessions' Claude Code as `ANTHROPIC_API_KEY`, and never written to
-  logs, the audit log, the screen or API answers. Notifications carry the session title and the kind of request only.
+  logs, the audit log, the screen or API answers. Notifications carry the session title and the kind of request only,
+  unless "도구 이름 표시" (show tool names) is on for the device: then also the tool or file name, or the text of a
+  notification Claude sends.
 
 ### What leaves your machine
 
@@ -405,7 +412,7 @@ file.
   come from (GitHub by default). GitHub sees the machine's address and the time; ccrc sends no version or identifier.
   `updateCheck: false` turns it off, `updateNotify: false` only the notification.
 - **Notifications** go through the phone's push service (Apple's or Google's), encrypted end to end; they carry the
-  session title and the kind of request.
+  session title and the kind of request (with "도구 이름 표시" on, also the names and Claude's text described above).
 - **Tailscale** keeps its own connection to its coordination server; the phone's traffic to the broker stays on the
   tailnet.
 - **Installing and updating** fetch from GitHub, nodejs.org and the npm registry.

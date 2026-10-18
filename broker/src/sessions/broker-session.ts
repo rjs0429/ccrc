@@ -3,6 +3,7 @@ import fs from "node:fs";
 import {
   query,
   type CanUseTool,
+  type HookCallback,
   type ModelInfo,
   type OnElicitation,
   type PermissionResult,
@@ -13,6 +14,8 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeSettingsFile } from "../claude-settings.ts";
 import { elicitInfo } from "../elicit.ts";
+import type { ClaudeNotice } from "../push/rules.ts";
+import { pushHookAnswer } from "../wrapper/relay.ts";
 import type { ContextDetail, DisplayItem, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput, WorktreeChoice } from "../protocol.ts";
 import { worktreeOf } from "../worktree-names.ts";
 import { rememberCommands } from "./commands.ts";
@@ -150,6 +153,8 @@ export class BrokerSession extends SessionCore {
   private worktreeStart = false;
   private hooked?: string;
   private before?: string;
+  // Decides a PushNotification call (tool use id, message); without it Claude's call reads as Claude Code answered it.
+  pushNotice?: (toolUseId: string, message: string) => ClaudeNotice | undefined;
 
   constructor(id: string, cwd: string, history: DisplayItem[] = [], title?: string) {
     super(id, cwd, history, title);
@@ -197,6 +202,7 @@ export class BrokerSession extends SessionCore {
         env: setOnly({ ...sessionEnv(), ...opts.env }),
         canUseTool: this.canUseTool,
         onElicitation: this.onElicitation,
+        hooks: { PostToolUse: [{ matcher: "PushNotification", hooks: [this.pushHook] }] },
         stderr: (data) => this.noteStderr(data),
       },
     });
@@ -574,6 +580,15 @@ export class BrokerSession extends SessionCore {
         { once: true },
       );
     });
+
+  // ccrc sends Claude's notifications itself; once it has, Claude reads that the push was requested.
+  private pushHook: HookCallback = async (input, toolUseId) => {
+    const i = input as { tool_input?: unknown; tool_use_id?: unknown };
+    const id = typeof i.tool_use_id === "string" ? i.tool_use_id : toolUseId;
+    const message = i.tool_input !== null && typeof i.tool_input === "object" ? (i.tool_input as Record<string, unknown>).message : undefined;
+    const notice = id ? this.pushNotice?.(id, typeof message === "string" ? message : "") : undefined;
+    return pushHookAnswer(input, notice === "sent");
+  };
 
   private onElicitation: OnElicitation = (request, opts) =>
     new Promise((resolve) => {

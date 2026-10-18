@@ -16,8 +16,11 @@ import {
   appliedAnswer,
   elicitAnswer,
   launchSession,
+  pushHookAnswer,
   styleNames,
   usageAnswer,
+  withPushHook,
+  PUSH_HOOK,
   type RelayOptions,
 } from "../src/wrapper/relay.ts";
 import { TurnStore } from "../src/wrapper/turns.ts";
@@ -462,7 +465,7 @@ test("the broker may also turn fast mode on or off for the session, and set Thin
 test("Thinking changes from either side reach Claude Code, and a reconnecting broker gets the latest; the hello names what passes", async () => {
   const t = await setup();
   const hello = await t.broker.frames.wait((f) => f.t === "hello", "hello");
-  assert.deepEqual(hello.caps, ["fast_mode", "thinking"]);
+  assert.deepEqual(hello.caps, ["fast_mode", "thinking", "claude_push"]);
   const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
   const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
   const thinking = (f: Msg) => f.t === "in" && ((f.m as Msg).request as Msg)?.subtype === "set_max_thinking_tokens";
@@ -1151,4 +1154,110 @@ test("Claude Code may send the user files by path unless VS Code's environment t
   assert.deepEqual(await seen({}), ["1", "files sent to the user go by path: 1"]);
   assert.deepEqual(await seen({ CCRC_SEND_FILES: "0" }), [null, "files sent to the user go by path: off"]);
   assert.deepEqual(await seen({ CLAUDE_CODE_ATTACHMENTS_BY_PATH: "0" }), ["0", "files sent to the user go by path: 0"]);
+});
+
+// VS Code's initialize, with the hooks the extension registers for itself.
+const VSCODE_INIT = {
+  type: "control_request",
+  request_id: "init-1",
+  request: {
+    subtype: "initialize",
+    hooks: {
+      PreToolUse: [
+        { matcher: "Edit|Write|MultiEdit", hookCallbackIds: ["hook_0"] },
+        { matcher: "Edit|Write|Read", hookCallbackIds: ["hook_1"] },
+      ],
+      PostToolUse: [{ matcher: "Edit|Write|MultiEdit", hookCallbackIds: ["hook_2"] }],
+    },
+    systemPrompt: ["keep"],
+  },
+};
+const OURS = { matcher: "PushNotification", hookCallbackIds: [PUSH_HOOK] };
+const pushResult = (m: Msg) => m.type === "user" && JSON.stringify(m).includes('"tool_result"') && JSON.stringify(m).includes("toolu_push_");
+const resultText = (m: Msg) => ((m.message as Msg).content as Msg[])[0].content;
+const requests = (file: string) =>
+  fs
+    .readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Msg);
+
+test("VS Code's initialize gets one more hook, for PushNotification; any other shape goes on as it is", () => {
+  const added = JSON.parse(String(withPushHook(VSCODE_INIT)));
+  assert.deepEqual(added.request.hooks.PreToolUse, VSCODE_INIT.request.hooks.PreToolUse);
+  assert.deepEqual(added.request.hooks.PostToolUse, [...VSCODE_INIT.request.hooks.PostToolUse, OURS]);
+  assert.deepEqual(added.request.systemPrompt, ["keep"]);
+  assert.equal(added.request_id, "init-1");
+  const bare = JSON.parse(String(withPushHook({ type: "control_request", request_id: "i", request: { subtype: "initialize" } })));
+  assert.deepEqual(bare.request.hooks, { PostToolUse: [OURS] });
+  assert.equal(withPushHook({ type: "control_request", request_id: "i", request: { subtype: "initialize", hooks: [] } }), undefined);
+  assert.equal(withPushHook({ type: "control_request", request_id: "i", request: { subtype: "initialize", hooks: { PostToolUse: {} } } }), undefined);
+  assert.equal(withPushHook({ type: "control_request", request_id: "i", request: { subtype: "interrupt" } }), undefined);
+});
+
+test("the hook's answer says the push was requested only while the broker sends them and Claude Code could not", () => {
+  const input = { tool_name: "PushNotification", tool_response: { message: "끝", pushSent: false, localSent: true, disabledReason: "no_transport", sentAt: "t" } };
+  assert.deepEqual(pushHookAnswer(input, true), {
+    hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: { message: "끝", pushSent: true, localSent: false } },
+  });
+  assert.deepEqual(pushHookAnswer(input, false), {}, "no device takes them");
+  assert.deepEqual(pushHookAnswer({ ...input, tool_response: { message: "끝", pushSent: true } }, true), {}, "Claude Code pushed it itself");
+  assert.deepEqual(pushHookAnswer({ ...input, tool_name: "Bash" }, true), {});
+  assert.deepEqual(pushHookAnswer({ tool_name: "PushNotification", tool_response: "Error: x" }, true), {});
+});
+
+test("the wrapper answers its PushNotification hook itself: requested while the broker sends Claude's notifications, as Claude Code made it otherwise", async () => {
+  const dir = tempDir();
+  const log = path.join(dir, "requests.jsonl");
+  const t = await setup({ env: { FAKE_REQUESTS: log } });
+  const hello = await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  assert.ok((hello.caps as string[]).includes("claude_push"));
+  t.write(VSCODE_INIT);
+  await t.host.wait((m) => m.type === "control_response" && (m.response as Msg).request_id === "init-1", "initialize answered to VS Code");
+  const init = requests(log).find((r) => (r.request as Msg | undefined)?.subtype === "initialize");
+  assert.deepEqual(((init!.request as Msg).hooks as Msg).PostToolUse, [...VSCODE_INIT.request.hooks.PostToolUse, OURS], "Claude Code got VS Code's hooks and the wrapper's");
+
+  // The n-th result of a PushNotification call that reached VS Code.
+  const nth = async (n: number) => {
+    await t.host.wait(() => t.host.items.filter(pushResult).length >= n, `result ${n}`);
+    return resultText(t.host.items.filter(pushResult)[n - 1]);
+  };
+  t.user("PUSH 아직 연결 전");
+  assert.equal(await nth(1), "Mobile push not sent (Remote Control inactive).", "the broker has not said a device takes them");
+
+  t.broker.send({ t: "claude_push", on: true });
+  await new Promise((r) => setTimeout(r, 50));
+  t.user("PUSH 테스트 끝");
+  assert.equal(await nth(2), "Mobile push requested.");
+  const copied = await t.broker.frames.wait(frameOut((m) => pushResult(m) && resultText(m) === "Mobile push requested."), "result copied to the broker");
+  assert.equal(((copied.m as Msg).tool_use_result as Msg).pushSent, true);
+  await t.broker.frames.wait(frameOut((m) => m.type === "assistant" && JSON.stringify(m).includes('"PushNotification"')), "the call copied to the broker");
+  assert.ok(!t.host.has((m) => (m.request as Msg | undefined)?.subtype === "hook_callback"), "VS Code never sees the wrapper's hook");
+  assert.ok(!t.broker.frames.has((f) => JSON.stringify(f).includes('"hook_callback"')), "nor does the broker");
+
+  t.broker.send({ t: "claude_push", on: false });
+  await new Promise((r) => setTimeout(r, 50));
+  t.user("PUSH 끈 뒤");
+  assert.equal(await nth(3), "Mobile push not sent (Remote Control inactive).", "no device takes them now");
+
+  t.broker.send({ t: "claude_push", on: true });
+  await new Promise((r) => setTimeout(r, 50));
+  t.broker.dropConnections();
+  await new Promise((r) => setTimeout(r, 20));
+  t.user("PUSH 브로커 없이");
+  assert.equal(await nth(4), "Mobile push not sent (Remote Control inactive).", "a broker that went away sends nothing");
+  const answers = requests(log).filter((r) => "hookAnswer" in r).map((r) => Boolean((r.hookAnswer as Msg).hookSpecificOutput));
+  assert.deepEqual(answers, [false, true, false, false]);
+});
+
+test("VS Code's own hooks still reach VS Code, and its answers Claude Code", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.write(VSCODE_INIT);
+  t.broker.send({ t: "claude_push", on: true });
+  t.user("VSHOOK");
+  const asked = await t.host.wait((m) => m.type === "control_request" && (m.request as Msg).subtype === "hook_callback", "VS Code's hook");
+  assert.equal((asked.request as Msg).callback_id, "hook_0");
+  t.write({ type: "control_response", response: { subtype: "success", request_id: asked.request_id, response: { continue: true } } });
+  await t.host.wait((m) => m.type === "answered" && m.request_id === asked.request_id, "Claude Code got VS Code's answer");
 });

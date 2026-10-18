@@ -25,6 +25,8 @@ export interface SessionSummary {
   folderMissing?: boolean;
   // Archived in ccrc: left out of the full list here, and nowhere else.
   archived?: boolean;
+  // A turn the remote user waits for ended, or a notice about the session went out, and nobody opened it since.
+  unread?: boolean;
 }
 
 export interface ToolResult {
@@ -457,6 +459,12 @@ export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage", "git"];
 CALL_OPS.push("agent_transcript", "task_output", "workflow_agents");
 CALL_OPS.push("worktree_status", "worktree_remove");
 CALL_OPS.push("fork", "rewind_conversation");
+
+export interface CallMap {
+  // Marks the session unread until it is opened again, or read.
+  mark_unread: { args: { unread: boolean }; data: { unread: boolean } };
+}
+CALL_OPS.push("mark_unread");
 
 // A file uploaded for the next message (POST /api/upload).
 export interface UploadInfo {

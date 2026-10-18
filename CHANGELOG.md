@@ -6,6 +6,29 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Added
+
+- Notifications Claude decides to send: when Claude calls its PushNotification tool (after "tell me when the tests
+  finish", say), ccrc sends it to the phone at once, unless the phone is showing that session, and leaves out that
+  turn's "작업을 마쳤습니다". The device setting "Claude가 보내는 알림" (on by default) turns them off; with
+  "도구 이름 표시" on, the notification carries Claude's text. Claude Code still runs the call, which pushes nothing
+  without Remote Control; a PostToolUse hook then makes it read "Mobile push requested." when ccrc sent it, and leaves
+  Claude Code's own answer otherwise. Broker sessions register the hook through the Agent SDK. In VS Code sessions a
+  wrapper from this version adds it to the extension's `initialize` and answers it itself from what the broker last
+  said (`claude_push` in the hello's `caps`); tabs opened with an older wrapper still get the notification, but Claude
+  reads Claude Code's "not sent".
+- Unread sessions. A session is unread when a turn ended while the phone was not showing it (any turn of a broker
+  session; a VS Code session's turn when the phone sent to, started or answered in it within two hours before the
+  turn started) or when a notification about it went out, until the phone opens it or VS Code writes to it. The list
+  shows a dot and has a "읽지 않음" filter; the session's ⋯ menu and a long press in the list offer
+  "읽지 않음으로 표시" (and "읽음으로 표시"). Kept in `~/.local/state/ccrc/unread.json` (0600; session ids and times,
+  for a month and 500 sessions at most), so it outlasts a broker restart; `ccrc uninstall --purge` removes it.
+
+### Changed
+
+- The app icon's badge counts the sessions waiting for an answer and the unread sessions, the same sessions the list
+  marks. It no longer depends on which device was told, and a turn that starts by itself no longer clears it.
+
 ## [0.7.3] - 2026-10-18
 
 ### Fixed

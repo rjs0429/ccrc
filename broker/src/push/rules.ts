@@ -25,13 +25,15 @@ export const TIMING: PushTiming = { ownedMs: 1000, secondMs: 1000, recheckMs: 15
 
 // What the remote user did this long before a turn started still makes the turn theirs.
 const REMOTE_WINDOW_MS = 2 * 3600_000;
-const UNSEEN_KEEP_MS = 24 * 3600_000;
-const UNSEEN_MAX = 200;
 const TITLE_MAX = 80;
 const TOOL_MAX = 60;
 const SENT_CALLS_KEEP = 200;
 const SENT_SESSIONS_KEEP = 200;
 const SENT = "파일을 보냈습니다";
+const CLAUDE = "Claude의 알림";
+// PushNotification asks Claude to keep a message under this length.
+const CLAUDE_MAX = 200;
+const CLAUDE_CALLS_KEEP = 200;
 
 const BODY: Record<PendingKind, string> = {
   permission: "권한 요청",
@@ -73,6 +75,12 @@ export function endText(end: TurnEnd, now = Date.now()): string {
   return end.outcome === "limit" && end.resetsAt ? `${text} · ${resetText(end.resetsAt, now)} 초기화` : text;
 }
 
+// What became of a notification Claude asked for: on its way to the devices that want it, not needed as the user is
+// looking at the session, or wanted by no device.
+export type ClaudeNotice = "sent" | "watching" | "off";
+
+const record = (v: unknown): Record<string, unknown> => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+
 export interface NotifierDeps {
   subscriptions: () => Subscription[];
   deliver: (sub: Subscription, payload: PushPayload, urgency: Urgency) => void;
@@ -83,20 +91,24 @@ export interface NotifierDeps {
 // Turns session events into notifications for the subscribed devices: a request that needs an answer on a session the
 // user is not looking at, and the end of a model turn as each device asks for it. A turn the user stopped or a local
 // command such as /compact is not notified. Files Claude sends are told at once when Claude marks them proactive, the
-// user being away; others are counted on the next turn end's notice.
+// user being away; others are counted on the next turn end's notice. A notification Claude asks for goes out at once
+// and stands in for the notice that its turn finished. A turn the remote user waits for, and any notice told, leaves
+// the session unread until it is opened.
 export class Notifier {
   private manager: SessionManager;
   private hub: Hub;
   private d: NotifierDeps;
-  // Timers by `<session> <request id>` for a request, `<session> end` for a turn that ended, `<session> crash` and
-  // `<session> file`.
+  // Timers by `<session> <request id>` for a request, `<session> end` for a turn that ended, `<session> crash`,
+  // `<session> file` and `<session> claude`.
   private timers = new Map<string, Set<NodeJS.Timeout>>();
   private states = new Map<string, LiveState>();
-  // Sessions whose turn end or file went to a device and that were not opened since, with those devices' endpoints.
-  private unseen = new Map<string, { at: number; endpoints: Set<string> }>();
   // SendUserFile calls already counted or told, and the files sent since the last turn end, by session.
   private sentCalls = new Map<string, Set<string>>();
   private sentFiles = new Map<string, number>();
+  // PushNotification calls by their tool use id, and the devices a notification from Claude goes to in the session's
+  // current turn, until the session is opened.
+  private claudeCalls = new Map<string, ClaudeNotice>();
+  private told = new Map<string, Set<string>>();
   private listener = (sessionId: string, msg: ServerMsg) => {
     try {
       this.onEvent(sessionId, msg);
@@ -104,13 +116,17 @@ export class Notifier {
       this.fail(e);
     }
   };
-  private ended = (sessionId: string, end: TurnEnd) => void this.onEnd(sessionId, end).catch((e) => this.fail(e));
-  private seen = (sessionId: string) => {
-    this.unseen.delete(sessionId);
-    this.cancel(`${sessionId} end`);
-    this.cancel(`${sessionId} crash`);
-    this.cancel(`${sessionId} file`);
+  private ended = (sessionId: string, end: TurnEnd) => {
+    const told = this.told.get(sessionId);
+    this.told.delete(sessionId);
+    this.noteEnd(sessionId, end);
+    void this.onEnd(sessionId, end, told).catch((e) => this.fail(e));
   };
+  private seen = (sessionId: string) => {
+    this.told.delete(sessionId);
+    for (const what of ["end", "crash", "file", "claude"]) this.cancel(`${sessionId} ${what}`);
+  };
+  private notice = (sessionId: string, toolUseId: string, message: string) => this.claudeCall(sessionId, toolUseId, message);
 
   constructor(manager: SessionManager, hub: Hub, deps: NotifierDeps) {
     this.manager = manager;
@@ -119,22 +135,35 @@ export class Notifier {
     manager.on("event", this.listener);
     manager.on("turn_end", this.ended);
     manager.on("seen", this.seen);
+    manager.claudeNotice = this.notice;
   }
 
   close(): void {
     this.manager.off("event", this.listener);
     this.manager.off("turn_end", this.ended);
     this.manager.off("seen", this.seen);
+    if (this.manager.claudeNotice === this.notice) this.manager.claudeNotice = undefined;
     for (const key of [...this.timers.keys()]) this.cancel(key);
   }
 
-  // The number for a device's app icon: sessions with a request waiting for an answer and sessions whose turn end the
-  // device was told of and that nobody opened since, each counted once.
-  badgeFor(endpoint: string): { badge: number; unseen: string[] } {
-    const now = Date.now();
-    for (const [id, u] of this.unseen) if (now - u.at > UNSEEN_KEEP_MS) this.unseen.delete(id);
-    const unseen = [...this.unseen].filter(([, u]) => u.endpoints.has(endpoint)).map(([id]) => id);
+  // The number for the app icon: sessions with a request waiting for an answer and sessions left unread, each counted
+  // once, as the session list shows them.
+  badge(): { badge: number; unseen: string[] } {
+    const unseen = this.manager.unreadSessions();
     return { badge: new Set([...this.manager.waitingSessions(), ...unseen]).size, unseen };
+  }
+
+  // A PushNotification call, from the conversation or from the session's hook, whichever comes first; each call is
+  // decided once. Without a device that wants it, or with the user looking at the session, nothing goes.
+  claudeCall(sessionId: string, toolUseId: string, message: string): ClaudeNotice {
+    const known = this.claudeCalls.get(toolUseId);
+    if (known) return known;
+    const endpoints = this.d.subscriptions().filter((s) => s.prefs.claude).map((s) => s.endpoint);
+    const notice: ClaudeNotice = !endpoints.length ? "off" : this.hub.isWatching(sessionId) ? "watching" : "sent";
+    this.claudeCalls.set(toolUseId, notice);
+    for (const old of [...this.claudeCalls.keys()].slice(0, -CLAUDE_CALLS_KEEP)) this.claudeCalls.delete(old);
+    if (notice === "sent") void this.onClaude(sessionId, message, endpoints).catch((e) => this.fail(e));
+    return notice;
   }
 
   private onEvent(sessionId: string, msg: ServerMsg): void {
@@ -146,7 +175,13 @@ export class Notifier {
 
   // A SendUserFile call counts once, when its result names a file that opens.
   private onItem(sessionId: string, item: DisplayItem): void {
-    if (item.kind !== "tool" || item.name !== "SendUserFile") return;
+    if (item.kind !== "tool") return;
+    if (item.name === "PushNotification") {
+      const message = record(item.input).message;
+      this.claudeCall(sessionId, item.id, typeof message === "string" ? message : "");
+      return;
+    }
+    if (item.name !== "SendUserFile") return;
     const files = item.sent?.filter((f) => f.error === undefined) ?? [];
     const calls = this.sentCalls.get(sessionId) ?? new Set<string>();
     if (!files.length || calls.has(item.id)) return;
@@ -176,9 +211,33 @@ export class Notifier {
         const now = this.d.subscriptions().find((s) => s.endpoint === sub.endpoint);
         if (!now) return;
         const named = now.prefs.details ? ` · ${clip(name, TOOL_MAX)}${count > 1 ? ` 외 ${count - 1}개` : ""}` : "";
-        this.markUnseen(sessionId, now.endpoint);
+        this.manager.markUnread(sessionId);
         const payload: PushPayload = { title, body: `${SENT}${named}`, tag: `${sessionId}:file`, data: { url: `/#/s/${sessionId}` } };
-        this.d.deliver(now, { ...payload, badge: this.badgeFor(now.endpoint).badge }, "normal");
+        this.d.deliver(now, { ...payload, badge: this.badge().badge }, "normal");
+      });
+    }
+  }
+
+  // Goes out almost at once, VS Code session or not, as the user asked Claude to tell them; a newer one replaces it.
+  // With details on it gives what Claude wrote. The devices count as told for the rest of the turn.
+  private async onClaude(sessionId: string, message: string, endpoints: string[]): Promise<void> {
+    const key = `${sessionId} claude`;
+    const timers = new Set<NodeJS.Timeout>();
+    this.cancel(key);
+    this.timers.set(key, timers);
+    const told = this.told.get(sessionId) ?? new Set<string>();
+    this.told.set(sessionId, told);
+    for (const endpoint of endpoints) told.add(endpoint);
+    const { title } = await this.describe(sessionId);
+    if (this.timers.get(key) !== timers) return;
+    for (const endpoint of endpoints) {
+      this.arm(key, this.d.timing.ownedMs, () => {
+        const sub = this.d.subscriptions().find((s) => s.endpoint === endpoint);
+        if (!sub?.prefs.claude || this.hub.isWatching(sessionId)) return void told.delete(endpoint);
+        const body = sub.prefs.details && message.trim() ? clip(message, CLAUDE_MAX) : CLAUDE;
+        this.manager.markUnread(sessionId);
+        const payload: PushPayload = { title, body, tag: `${sessionId}:claude`, data: { url: `/#/s/${sessionId}` } };
+        this.d.deliver(sub, { ...payload, badge: this.badge().badge }, "high");
       });
     }
   }
@@ -199,7 +258,7 @@ export class Notifier {
       const sub = this.d.subscriptions().find((s) => s.endpoint === endpoint);
       if (!sub) return;
       const tool = (request.kind === "permission" || request.kind === "elicitation") && sub.prefs.details ? request.toolName : undefined;
-      this.d.deliver(sub, { ...this.requestPayload(sessionId, request, title, tool), badge: this.badgeFor(endpoint).badge }, "high");
+      this.d.deliver(sub, { ...this.requestPayload(sessionId, request, title, tool), badge: this.badge().badge }, "high");
     };
     for (const sub of this.d.subscriptions()) {
       const wait = attached && request.kind !== "elicitation" ? sub.prefs.vscodeDelaySec * this.d.timing.secondMs : this.d.timing.ownedMs;
@@ -210,7 +269,6 @@ export class Notifier {
   // A new turn makes the last one's end old news. A process that ends takes the notice of its finished turn with it,
   // not the notice of a crash.
   private onState(sessionId: string, state: LiveState): void {
-    const wasBusy = this.states.get(sessionId)?.busy;
     if (state.state === "inactive") {
       this.states.delete(sessionId);
       return this.cancel(`${sessionId} end`);
@@ -219,13 +277,26 @@ export class Notifier {
     if (!state.busy) return;
     this.cancel(`${sessionId} end`);
     this.cancel(`${sessionId} crash`);
-    if (!wasBusy) this.unseen.delete(sessionId);
+  }
+
+  // The remote user sent to the session, started or answered in it since REMOTE_WINDOW_MS before the turn started.
+  private remoteTurn(sessionId: string, end: TurnEnd): boolean {
+    const at = this.hub.remoteActivity(sessionId);
+    return at !== undefined && at >= end.startedAt - REMOTE_WINDOW_MS;
+  }
+
+  // A turn of a session the broker runs, or one the remote user waits for, leaves the session unread unless the user is
+  // looking at it as it ends.
+  private noteEnd(sessionId: string, end: TurnEnd): void {
+    if (end.outcome === "interrupted" || end.outcome === "local" || end.queued || this.hub.isWatching(sessionId)) return;
+    if (!end.attached || this.remoteTurn(sessionId, end)) this.manager.markUnread(sessionId);
   }
 
   // "remote" devices hear of a turn the remote user sent, started or answered in since REMOTE_WINDOW_MS before it
   // started; "all" devices of every turn. A VS Code turn waits the device's delay unless the remote user gave the last
-  // word, and no notice goes once a new turn starts or the user looks at the session.
-  private async onEnd(sessionId: string, end: TurnEnd): Promise<void> {
+  // word, and no notice goes once a new turn starts or the user looks at the session. told: devices Claude's own
+  // notification reached in the turn, which hear of it finishing only with files sent or when it stopped short.
+  private async onEnd(sessionId: string, end: TurnEnd, told?: Set<string>): Promise<void> {
     const files = end.queued ? 0 : (this.sentFiles.get(sessionId) ?? 0);
     if (!end.queued) this.sentFiles.delete(sessionId);
     if (end.outcome === "interrupted" || end.outcome === "local" || end.queued || !this.d.subscriptions().length) return;
@@ -236,7 +307,7 @@ export class Notifier {
     const { title } = await this.describe(sessionId, this.states.get(sessionId));
     if (this.timers.get(key) !== timers) return;
     const at = this.hub.remoteActivity(sessionId);
-    const recent = at !== undefined && at >= end.startedAt - REMOTE_WINDOW_MS;
+    const recent = this.remoteTurn(sessionId, end);
     const remoteLast = at !== undefined && at >= (end.hostInputAt ?? 0);
     const wants = (s: Subscription) => s.prefs.turnEnd === "all" || (s.prefs.turnEnd === "remote" && recent);
     for (const sub of this.d.subscriptions()) {
@@ -247,17 +318,11 @@ export class Notifier {
         if (this.hub.isWatching(sessionId)) return;
         const now = this.d.subscriptions().find((s) => s.endpoint === sub.endpoint);
         if (!now || !wants(now)) return;
-        this.markUnseen(sessionId, now.endpoint);
-        this.d.deliver(now, { ...this.endPayload(sessionId, end, title, files), badge: this.badgeFor(now.endpoint).badge }, end.outcome === "done" ? "normal" : "high");
+        if (end.outcome === "done" && !files && told?.has(now.endpoint)) return;
+        this.manager.markUnread(sessionId);
+        this.d.deliver(now, { ...this.endPayload(sessionId, end, title, files), badge: this.badge().badge }, end.outcome === "done" ? "normal" : "high");
       });
     }
-  }
-
-  private markUnseen(sessionId: string, endpoint: string): void {
-    const endpoints = this.unseen.get(sessionId)?.endpoints ?? new Set<string>();
-    this.unseen.delete(sessionId);
-    this.unseen.set(sessionId, { at: Date.now(), endpoints: endpoints.add(endpoint) });
-    for (const old of [...this.unseen.keys()].slice(0, -UNSEEN_MAX)) this.unseen.delete(old);
   }
 
   // The session's title, or its folder's name, and whether it runs in VS Code. The live state is read once

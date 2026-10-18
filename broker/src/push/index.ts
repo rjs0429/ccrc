@@ -40,6 +40,7 @@ export class Push {
   private timing: PushTiming;
   private log: (line: string) => void;
   private notifier?: Notifier;
+  private manager?: SessionManager;
   private health = new Map<string, Health>();
   private retries = new Set<NodeJS.Timeout>();
   private tokens = new VapidTokens();
@@ -75,12 +76,14 @@ export class Push {
       prefs: parsePrefs(prefs, known?.prefs ?? DEFAULT_PREFS),
     };
     this.store.put(sub);
+    this.changed();
     return sub;
   }
 
   unsubscribe(endpoint: unknown): Subscription | undefined {
     const sub = this.store.remove(parseEndpoint(endpoint));
     if (sub) this.health.delete(sub.endpoint);
+    this.changed();
     return sub;
   }
 
@@ -89,7 +92,13 @@ export class Push {
     if (!sub) throw new PushError("not_subscribed");
     const next = { ...sub, prefs: parsePrefs(prefs, sub.prefs) };
     this.store.put(next);
+    this.changed();
     return next;
+  }
+
+  // Whether any device takes the notifications Claude sends.
+  claudeWanted(): boolean {
+    return this.store.list().some((s) => s.prefs.claude);
   }
 
   status(endpoint: unknown): PushStatus {
@@ -101,7 +110,7 @@ export class Push {
   badge(endpoint: unknown): PushBadge {
     const sub = this.store.get(parseEndpoint(endpoint));
     if (!sub) return { subscribed: false, badge: 0, unseen: [] };
-    return { subscribed: true, ...(this.notifier?.badgeFor(sub.endpoint) ?? { badge: 0, unseen: [] }) };
+    return { subscribed: true, ...(this.notifier?.badge() ?? { badge: 0, unseen: [] }) };
   }
 
   async test(endpoint: unknown): Promise<void> {
@@ -120,12 +129,19 @@ export class Push {
 
   watch(manager: SessionManager, hub: Hub): void {
     this.notifier?.close();
+    this.manager = manager;
     this.notifier = new Notifier(manager, hub, {
       subscriptions: () => this.store.list(),
       deliver: (sub, payload, urgency) => this.send(sub, payload, urgency, true),
       timing: this.timing,
       log: this.log,
     });
+    this.changed();
+  }
+
+  // VS Code sessions tell Claude its notification went out only while a device takes them.
+  private changed(): void {
+    this.manager?.setClaudePush(this.claudeWanted());
   }
 
   close(): void {
@@ -162,6 +178,7 @@ export class Push {
     if (status === 404 || status === 410) {
       this.store.remove(sub.endpoint);
       this.health.delete(sub.endpoint);
+      this.changed();
     } else if (retry && (status === 0 || status === 429 || status >= 500)) {
       const wait = Math.min(Math.max(this.timing.retryMs, (retryAfterSec ?? 0) * 1000), MAX_RETRY_MS);
       const timer = setTimeout(() => {

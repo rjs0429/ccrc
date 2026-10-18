@@ -106,7 +106,7 @@ test("settings, status and unsubscribing work on this device's endpoint", async 
   const endpoint = APPLE;
   await post("/api/push/subscribe", { subscription: { endpoint, keys: newBrowser().keys } });
   const prefs = await post("/api/push/prefs", { endpoint, prefs: { vscodeDelaySec: 120, turnEnd: "all", extra: 1 } });
-  assert.deepEqual(prefs.json(), { prefs: { vscodeDelaySec: 120, turnEnd: "all", details: false } });
+  assert.deepEqual(prefs.json(), { prefs: { vscodeDelaySec: 120, turnEnd: "all", details: false, claude: true } });
   assert.equal(audited.at(-1)?.event, "push_subscribe");
   const status = await app.inject({ method: "GET", url: `/api/push/status?endpoint=${encodeURIComponent(endpoint)}`, headers: AUTHED });
   assert.deepEqual(status.json().prefs, prefs.json().prefs);
@@ -121,6 +121,15 @@ test("settings, status and unsubscribing work on this device's endpoint", async 
   assert.equal((await post("/api/push/unsubscribe", { endpoint })).statusCode, 200);
   assert.equal((await post("/api/push/unsubscribe", { endpoint: ["x"] })).json().error, "invalid_endpoint");
   assert.equal(audited.length, 3, "nothing is logged for what did not change");
+});
+
+test("the notifications Claude sends are on by default and switch off and on", async () => {
+  const { post } = await setup();
+  const endpoint = APPLE;
+  await post("/api/push/subscribe", { subscription: { endpoint, keys: newBrowser().keys } });
+  assert.deepEqual((await post("/api/push/prefs", { endpoint, prefs: { claude: false } })).json().prefs, { ...DEFAULT_PREFS, claude: false });
+  assert.equal((await post("/api/push/prefs", { endpoint, prefs: { claude: "no" } })).statusCode, 400);
+  assert.deepEqual((await post("/api/push/prefs", { endpoint, prefs: { claude: true } })).json().prefs, DEFAULT_PREFS);
 });
 
 test("a screen from before the turn-end choice still switches it with turnDone", async () => {
@@ -140,16 +149,16 @@ test("settings saved before the turn-end choice load as its values and are saved
     JSON.stringify({ subscriptions: [sub(1, { vscodeDelaySec: 0, turnDone: true, details: true }), sub(2, { vscodeDelaySec: 120, turnDone: false, details: false }), sub(3, {})] }),
   );
   const push = new Push(dir, { log: () => {} });
-  assert.deepEqual(push.status(`${APPLE}1`).prefs, { vscodeDelaySec: 0, turnEnd: "remote", details: true });
-  assert.deepEqual(push.status(`${APPLE}2`).prefs, { vscodeDelaySec: 120, turnEnd: "off", details: false });
+  assert.deepEqual(push.status(`${APPLE}1`).prefs, { vscodeDelaySec: 0, turnEnd: "remote", details: true, claude: true });
+  assert.deepEqual(push.status(`${APPLE}2`).prefs, { vscodeDelaySec: 120, turnEnd: "off", details: false, claude: true });
   assert.deepEqual(push.status(`${APPLE}3`).prefs, DEFAULT_PREFS);
   push.setPrefs(`${APPLE}3`, { details: true });
   const saved = JSON.parse(fs.readFileSync(path.join(dir, "push.json"), "utf8")).subscriptions;
   assert.deepEqual(
     saved.map((s: { prefs: unknown }) => s.prefs),
     [
-      { vscodeDelaySec: 0, turnEnd: "remote", details: true },
-      { vscodeDelaySec: 120, turnEnd: "off", details: false },
+      { vscodeDelaySec: 0, turnEnd: "remote", details: true, claude: true },
+      { vscodeDelaySec: 120, turnEnd: "off", details: false, claude: true },
       { ...DEFAULT_PREFS, details: true },
     ],
   );

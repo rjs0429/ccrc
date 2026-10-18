@@ -94,9 +94,11 @@ export function parsePrefs(v: unknown, base: PushPrefs): PushPrefs {
     if (typeof o.turnDone !== "boolean") throw new PushError("invalid_prefs");
     out.turnEnd = o.turnDone ? "remote" : "off";
   }
-  if (o.details !== undefined) {
-    if (typeof o.details !== "boolean") throw new PushError("invalid_prefs");
-    out.details = o.details;
+  for (const key of ["details", "claude"] as const) {
+    const v = o[key];
+    if (v === undefined) continue;
+    if (typeof v !== "boolean") throw new PushError("invalid_prefs");
+    out[key] = v;
   }
   return out;
 }

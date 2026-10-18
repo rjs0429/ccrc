@@ -382,6 +382,7 @@ export class Hub {
       if (msg.op === "set_output_style") str(args.style);
       if (msg.op === "rename") str(args.title, TITLE_ARG_MAX);
       if (msg.op === "archive" && typeof args.archived !== "boolean") throw Error("invalid request");
+      if (msg.op === "mark_unread" && typeof args.unread !== "boolean") throw Error("invalid request");
       if (msg.op === "fork") {
         reply({ ok: true, data: await this.fork(sessionId, args) });
         return;

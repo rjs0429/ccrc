@@ -96,6 +96,8 @@ test("a request on a session nobody watches goes out with high urgency", async (
   const manager = Object.assign(new EventEmitter(), {
     list: async () => [{ id: A, title: "Ship the release", cwd: "/home/u/app", lastModified: 0, state: "owned" }],
     waitingSessions: () => [A],
+    unreadSessions: () => [],
+    setClaudePush: () => {},
   });
   push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteActivity: () => undefined } as unknown as Hub);
   manager.emit("event", A, {
@@ -133,7 +135,7 @@ test("a busy push service gets one more try a little later, and only one", async
   const { push, logs } = setup(tempDir(), 120);
   const endpoint = `${service.origin}/push/busy`;
   push.subscribe({ endpoint, keys: newBrowser().keys }, undefined, { device: "phone" });
-  const manager = Object.assign(new EventEmitter(), { list: async () => [], waitingSessions: () => [A] });
+  const manager = Object.assign(new EventEmitter(), { list: async () => [], waitingSessions: () => [A], unreadSessions: () => [], setClaudePush: () => {} });
   push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteActivity: () => undefined } as unknown as Hub);
   const ask = (id: string) =>
     manager.emit("event", A, { t: "pending_add", sessionId: A, request: { id, kind: "question", toolName: "AskUserQuestion", input: {}, allowAlways: false } } satisfies ServerMsg);

@@ -263,3 +263,23 @@ test("the archive forgets sessions whose transcript is gone", async (t) => {
   const saved = JSON.parse(fs.readFileSync(path.join(home, "state", "archived.json"), "utf8"));
   assert.ok(kept in saved && !(gone in saved));
 });
+
+test("the phone marks a session unread or read, unrecorded; opening it reads it", async (t) => {
+  const { manager, call, say, ws, logged, changed } = setup(t);
+  const sid = nextId();
+  transcript(sid);
+  const before = changed();
+  assert.deepEqual((await call(sid, "mark_unread", { unread: true })).data, { unread: true });
+  assert.equal((await manager.list()).find((s) => s.id === sid)?.unread, true);
+  assert.ok(changed() > before, "the list is told");
+  assert.equal((await call(sid, "mark_unread", { unread: "yes" })).error, "invalid request");
+  assert.equal((await call(nextId(), "mark_unread", { unread: true })).error, "unknown session");
+  say({ t: "view", sessionId: sid });
+  await until(() => ws.sent.some((m) => m.t === "snapshot" && m.sessionId === sid), "opened");
+  assert.equal((await manager.list()).find((s) => s.id === sid)?.unread, undefined, "opened, so read");
+  say({ t: "view", sessionId: null });
+  await call(sid, "mark_unread", { unread: true });
+  assert.deepEqual((await call(sid, "mark_unread", { unread: false })).data, { unread: false });
+  assert.equal((await manager.list()).find((s) => s.id === sid)?.unread, undefined);
+  assert.deepEqual(logged, [], "nothing goes to the audit log");
+});

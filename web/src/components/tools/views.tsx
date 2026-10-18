@@ -202,6 +202,13 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
         </Fields>
       );
     }
+    case "PushNotification":
+      return (
+        <Fields>
+          <div className="text-[14px] whitespace-pre-wrap">{str(i.message)}</div>
+          <Rest input={i} skip={["message", "status"]} />
+        </Fields>
+      );
     case "SendUserFile": {
       const files = (Array.isArray(i.files) ? i.files : [i.file_path ?? i.path]).filter((f): f is string => typeof f === "string" && f !== "");
       return (
