@@ -227,6 +227,15 @@ export interface AgentTranscript {
   missing?: boolean;
 }
 
+// Items of the conversation next to the ones the phone holds; more: items remain on that side.
+export interface HistoryPage {
+  items: DisplayItem[];
+  more: boolean;
+}
+
+// What the conversation's sheets list from all of it: the user's messages or the file changes.
+export type HistoryFind = "users" | "changes";
+
 // The end of a shell or monitor task's output as Claude Code hands it out; truncated: the output began earlier.
 export interface TaskOutput {
   text: string;
@@ -433,6 +442,9 @@ export interface CallMap {
   // A subagent's transcript, by its id or else by the Agent call that started it: the latest page, the page before
   // item `before`, or what follows the items the phone holds.
   agent_transcript: { args: { agentId?: string; toolUseId?: string; before?: number; after?: TranscriptAfter }; data: AgentTranscript };
+  // The page of the conversation before item `before`, or the items after item `after` up to item `until` (a gap).
+  history: { args: { before: string } | { after: string; until?: string }; data: HistoryPage };
+  history_find: { args: { find: HistoryFind }; data: { items: DisplayItem[] } };
   task_output: { args: { taskId: string }; data: TaskOutput };
   // The agents of a workflow run, from the journal Claude Code keeps of it.
   workflow_agents: { args: { runId: string }; data: WorkflowInfo };
@@ -459,6 +471,7 @@ export const FOLDER_OPS: FolderOp[] = ["files", "commands", "usage", "git"];
 CALL_OPS.push("agent_transcript", "task_output", "workflow_agents");
 CALL_OPS.push("worktree_status", "worktree_remove");
 CALL_OPS.push("fork", "rewind_conversation");
+CALL_OPS.push("history", "history_find");
 
 export interface CallMap {
   // Marks the session unread until it is opened again, or read.
@@ -618,8 +631,9 @@ export interface LiveState {
 
 export type ClientMsg =
   | { t: "take_window" }
-  // focus: an item to include, when it lies before the latest items a snapshot holds.
-  | { t: "view"; sessionId: string | null; focus?: string }
+  // focus: an item to include, when it lies before the latest items a snapshot holds. from: the first item the phone
+  // holds, for a snapshot that keeps holding from there.
+  | { t: "view"; sessionId: string | null; focus?: string; from?: string }
   // attachments: ids from POST /api/upload, sent before the text as Claude Code content blocks.
   | { t: "send"; sessionId: string; text: string; attachments?: string[] }
   // draftId: the phone's name for the start, returned with session_started or an error about it.
@@ -658,13 +672,24 @@ export interface SnapshotGap {
   skipped: number;
 }
 
+// The latest part of the conversation, or a focused part and the latest one with a gap between. earlier: the agent and
+// to-do calls among the items left out, in order, the last `earlierInGap` of them from the gap.
+export interface SnapshotPart {
+  items: DisplayItem[];
+  hasMore: boolean;
+  gap?: SnapshotGap;
+  earlier?: DisplayItem[];
+  earlierInGap?: number;
+}
+
 export type ServerMsg =
   | { t: "ready" }
   | { t: "window_conflict" }
   | { t: "window_taken" }
   | { t: "lease_revoked"; reason: string }
-  | { t: "snapshot"; sessionId: string; items: DisplayItem[]; pending: PendingRequest[]; state: LiveState; hasMore: boolean; gap?: SnapshotGap }
-  | { t: "item"; sessionId: string; item: DisplayItem }
+  | ({ t: "snapshot"; sessionId: string; pending: PendingRequest[]; state: LiveState } & SnapshotPart)
+  // prev: the item before it in the conversation, null for the first; absent from a broker that does not say.
+  | { t: "item"; sessionId: string; item: DisplayItem; prev?: string | null }
   | { t: "stream"; sessionId: string; text: string; thinking: boolean }
   | { t: "pending_add"; sessionId: string; request: PendingRequest }
   | { t: "pending_remove"; sessionId: string; requestId: string }

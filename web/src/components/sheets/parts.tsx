@@ -1,5 +1,33 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import type { DisplayItem, HistoryFind } from "../../../../broker/src/protocol.ts";
+import { call } from "../../state.ts";
 import { Spinner } from "../ui.tsx";
+
+// What a sheet lists from the whole conversation while the chat holds only part of it: undefined until it comes or
+// when the chat holds it all, null when it could not be read.
+export function useFound(sessionId: string, find: HistoryFind, partial: boolean): DisplayItem[] | null | undefined {
+  const [found, setFound] = useState<DisplayItem[] | null>();
+  useEffect(() => {
+    if (!partial) return;
+    let live = true;
+    call(sessionId, "history_find", { find }).then(
+      (r) => live && setFound(r.items),
+      () => live && setFound(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [sessionId, find, partial]);
+  return found;
+}
+
+// The loaded items in the order of the whole conversation, then the ones that came since it was read.
+export function inOrder<T extends { id: string }>(loaded: T[], found: T[] | null | undefined): T[] {
+  if (!found) return loaded;
+  const fresh = new Map(loaded.map((i) => [i.id, i]));
+  const ids = new Set(found.map((i) => i.id));
+  return [...found.map((i) => fresh.get(i.id) ?? i), ...loaded.filter((i) => !ids.has(i.id))];
+}
 
 export function Waiting({ text }: { text: string }) {
   return (

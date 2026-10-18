@@ -28,7 +28,7 @@ import {
   type RewindResult,
   type ServerMsg,
   type SessionSummary,
-  type SnapshotGap,
+  type SnapshotPart,
   type StartSettings,
   type UsageInfo,
   type WorktreeChoice,
@@ -48,6 +48,7 @@ import { forkPoint, lastCwd, loadHistory, projectDirName, transcriptPath, turnPo
 import { liveProcesses } from "./live.ts";
 import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
+import { historyFind, historyPage, snapshotPart } from "./pages.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { SentIndex, sentCall, type SentCall } from "./sent-files.ts";
 import { SessionCwds } from "./session-cwd.ts";
@@ -63,10 +64,6 @@ export const BROKER_SESSIONS_OFF = "broker_sessions_off";
 
 type LaunchEnv = Record<string, string | undefined>;
 const EXACT_KEEP = 500;
-const SNAPSHOT_ITEMS = 400;
-const FOCUS_BEFORE = 20;
-const FOCUS_AFTER = 200;
-const FOCUS_ITEMS_MAX = 1500;
 const SWEEP_MS = 60_000;
 const WATCH_INTERVAL_MS = 2000;
 // Handing a session to VS Code: how long the broker's running turn may go on before it is interrupted,
@@ -111,13 +108,7 @@ export interface ForkRequest {
   name?: string;
 }
 
-export interface Snapshot {
-  items: DisplayItem[];
-  pending: PendingRequest[];
-  state: LiveState;
-  hasMore: boolean;
-  gap?: SnapshotGap;
-}
+export type Snapshot = SnapshotPart & { pending: PendingRequest[]; state: LiveState };
 
 function titleOf(info: SDKSessionInfo): string {
   return info.customTitle || info.summary || info.firstPrompt || "";
@@ -130,19 +121,6 @@ function forkTitle(title: string, name = ""): string {
 }
 
 const failed = (e: unknown): RewindResult => ({ canRewind: false, error: e instanceof Error ? e.message : String(e) });
-
-// The latest items, reaching back to the focused item when that stays within a bound; a focused item further
-// back comes with the items around it, and the ones between that part and the latest are left out.
-export function tail(items: DisplayItem[], focus?: string): { items: DisplayItem[]; hasMore: boolean; gap?: SnapshotGap } {
-  const latest = Math.max(0, items.length - SNAPSHOT_ITEMS);
-  const at = focus ? items.findIndex((i) => i.id === focus) : -1;
-  if (at < 0 || at >= latest) return { items: items.slice(latest), hasMore: latest > 0 };
-  const from = Math.max(0, at - FOCUS_BEFORE);
-  if (items.length - at <= FOCUS_ITEMS_MAX) return { items: items.slice(from), hasMore: from > 0 };
-  const to = Math.min(at + FOCUS_AFTER, latest);
-  const gap = latest > to ? { gap: { before: items[latest].id, skipped: latest - to } } : {};
-  return { items: [...items.slice(from, to), ...items.slice(latest)], hasMore: from > 0, ...gap };
-}
 
 function within(dir: string, root: string): boolean {
   const rel = path.relative(root, dir);
@@ -456,14 +434,37 @@ export class SessionManager extends EventEmitter {
     return [...new Set([...this.cfg.roots, ...known])].sort();
   }
 
-  async snapshot(sessionId: string, focus?: string): Promise<Snapshot> {
+  // The part of the conversation a phone opening it gets (see snapshotPart), its open requests and its state.
+  async snapshot(sessionId: string, opts: { focus?: string; from?: string } = {}): Promise<Snapshot> {
     const s = this.controlled(sessionId);
-    if (s) return { ...tail(s.builder.items, focus), pending: [...s.pending.values()].map((e) => e.request), state: s.state() };
-    const info = await this.info(sessionId);
+    if (s) return { ...snapshotPart(s.builder.items, opts), pending: [...s.pending.values()].map((e) => e.request), state: s.state() };
+    const { items, state } = await this.idle(sessionId);
+    return { ...snapshotPart(items, opts), pending: [], state };
+  }
+
+  // The whole conversation as the phone shows it, and the state of a session without a process this broker drives.
+  async conversation(sessionId: string): Promise<{ items: DisplayItem[]; state?: LiveState }> {
+    const s = this.controlled(sessionId);
+    return s ? { items: s.builder.items } : this.idle(sessionId);
+  }
+
+  // The listing a session's conversation is read by: the one last listed, the list read again in the background once it
+  // is old. One listed without its folder is looked up as one not listed is. Whatever changes a session's name or folder
+  // here lets go of the list.
+  private async listed(sessionId: string): Promise<SDKSessionInfo | undefined> {
+    const known = this.catalog?.list.find((i) => i.sessionId === sessionId);
+    if (!known?.cwd) return this.info(sessionId);
+    if (Date.now() - this.catalog!.at >= CATALOG_MS) void this.infos().catch(() => {});
+    return known;
+  }
+
+  private async idle(sessionId: string): Promise<{ items: DisplayItem[]; state: LiveState }> {
+    const info = await this.listed(sessionId);
     if (!info?.cwd) throw Error("unknown session");
     const [items, state] = await Promise.all([loadHistory(sessionId, info.cwd), this.idleState(sessionId, info.cwd, titleOf(info))]);
     this.sent.add(sessionId, items);
-    return { ...tail([...items, ...(this.ended.get(sessionId)?.unsent ?? [])], focus), pending: [], state };
+    const unsent = this.ended.get(sessionId)?.unsent ?? [];
+    return { items: unsent.length ? [...items, ...unsent] : items, state };
   }
 
   // A session without a process this broker drives: whether one runs elsewhere, the transcript's last context
@@ -948,6 +949,10 @@ export class SessionManager extends EventEmitter {
         return {};
       case "agent_transcript":
         return agentTranscript(sessionId, await this.cwdOf(sessionId), args);
+      case "history":
+        return historyPage((await this.conversation(sessionId)).items, args);
+      case "history_find":
+        return { items: historyFind((await this.conversation(sessionId)).items, args.find) };
       case "task_output":
         return this.get(sessionId).taskOutput(String(args.taskId));
       case "workflow_agents":
@@ -1285,7 +1290,7 @@ export class SessionManager extends EventEmitter {
     const send = (msg: ServerMsg) => {
       if (this.current(s)) this.emit("event", s.id, msg);
     };
-    s.on("item", (item: DisplayItem) => send({ t: "item", sessionId: s.id, item }));
+    s.on("item", (item: DisplayItem) => send({ t: "item", sessionId: s.id, item, prev: s.builder.prevId(item.id) }));
     s.on("stream", (text: string, thinking: boolean) => send({ t: "stream", sessionId: s.id, text, thinking }));
     s.on("pending_add", (request: PendingRequest) => {
       send({ t: "pending_add", sessionId: s.id, request });

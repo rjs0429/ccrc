@@ -369,6 +369,12 @@ export class ItemBuilder {
     return this.pos.has(id);
   }
 
+  // The id of the item before this one, null for the first, undefined when no item has the id.
+  prevId(id: string): string | null | undefined {
+    const at = this.pos.get(id);
+    return at === undefined ? undefined : at > 0 ? this.items[at - 1].id : null;
+  }
+
   // Paths in tool summaries are shown relative to this folder from now on.
   setCwd(cwd: string): void {
     this.cwd = cwd;

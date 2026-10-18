@@ -233,7 +233,7 @@ export function SentFiles({ item, running }: { item: ToolItem; running: boolean 
   const sessionId = useApp((s) => s.chat?.sessionId);
   const cwd = useApp((s) => s.chat?.state?.cwd ?? "");
   const byName = useApp((s) => {
-    const owner = item.by ? s.chat?.items.find((i) => i.id === item.by) : undefined;
+    const owner = item.by ? (s.chat?.items.find((i) => i.id === item.by) ?? s.chat?.earlier?.find((i) => i.id === item.by)) : undefined;
     return owner?.kind === "tool" ? owner.summary : undefined;
   });
   const byRunning = useApp((s) => Boolean(item.by && s.chat?.state?.tasks?.some((t) => t.toolUseId === item.by && t.status === "running")));

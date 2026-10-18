@@ -120,29 +120,68 @@ interface Rows {
 
 const noRows = (): Rows => ({ map: new Map(), after: new Map(), parents: new Map(), aliases: new Map(), rewound: undefined });
 
-// The SDK's session reader resolves the conversation chain but drops timestamps, structured tool
-// output and local command results; take them from the file. Only the outputs items are built from are kept.
-async function rows(file: string): Promise<Rows> {
-  const out = noRows();
-  const text = await fs.promises.readFile(file, "utf8");
-  for (const line of text.split("\n")) {
-    if (!line.includes('"timestamp"') && !line.includes('"last-prompt"')) continue;
+const CHUNK_BYTES = 1024 * 1024;
+
+// The rows of the file from the earliest one that names a message in `wanted` to its end, read from the end back.
+async function lastRows(file: string, wanted: Set<string>): Promise<FileRow[]> {
+  const missing = new Set(wanted);
+  const found: FileRow[] = [];
+  const take = (line: Buffer) => {
+    const text = line.toString("utf8");
+    if (!text.includes('"timestamp"') && !text.includes('"last-prompt"')) return;
     try {
-      const e = JSON.parse(line) as FileRow;
-      if (e.type === "last-prompt") {
-        out.rewound = rewoundAt(out.rewound, e);
-        continue;
-      }
-      const output = e.toolUseResult;
-      const used = usedOutput(output);
-      const command = commandRow(e);
-      if (!e.uuid) continue;
-      if (counts(e)) out.rewound = undefined;
-      out.parents.set(e.uuid, e.parentUuid ?? null);
-      if (e.attachment?.type === "queued_command" && typeof e.attachment.source_uuid === "string") out.aliases.set(e.uuid, e.attachment.source_uuid);
-      out.map.set(e.uuid, { timestamp: e.timestamp, ...(used ? { toolUseResult: output } : {}), ...(command ? { command } : {}) });
-      if (command && e.parentUuid) out.after.set(e.parentUuid, e.uuid);
+      const e = JSON.parse(text) as FileRow;
+      found.push(e);
+      if (e.uuid) missing.delete(e.uuid);
+      if (typeof e.attachment?.source_uuid === "string") missing.delete(e.attachment.source_uuid);
     } catch {}
+  };
+  const fh = await fs.promises.open(file, "r");
+  try {
+    let pos = (await fh.stat()).size;
+    let rest = Buffer.alloc(0);
+    while (pos > 0 && missing.size) {
+      const start = Math.max(0, pos - CHUNK_BYTES);
+      const buf = Buffer.alloc(pos - start);
+      await fh.read(buf, 0, buf.length, start);
+      pos = start;
+      const data = rest.length ? Buffer.concat([buf, rest]) : buf;
+      let end = data.length;
+      while (missing.size && end > 0) {
+        const nl = data.lastIndexOf(10, end - 1);
+        if (nl < 0) break;
+        take(data.subarray(nl + 1, end));
+        end = nl;
+      }
+      rest = data.subarray(0, end);
+      if (pos === 0 && missing.size) take(rest);
+    }
+  } finally {
+    await fh.close();
+  }
+  return found.reverse();
+}
+
+// The SDK's session reader resolves the conversation chain but drops timestamps, structured tool
+// output and local command results; take them from the file, from the first message it returned on (what came before
+// does not bear on its messages, their trailing commands or a rewind after them). Only the outputs items are built
+// from are kept.
+async function rows(file: string, wanted: Set<string>): Promise<Rows> {
+  const out = noRows();
+  for (const e of await lastRows(file, wanted)) {
+    if (e.type === "last-prompt") {
+      out.rewound = rewoundAt(out.rewound, e);
+      continue;
+    }
+    const output = e.toolUseResult;
+    const used = usedOutput(output);
+    const command = commandRow(e);
+    if (!e.uuid) continue;
+    if (counts(e)) out.rewound = undefined;
+    out.parents.set(e.uuid, e.parentUuid ?? null);
+    if (e.attachment?.type === "queued_command" && typeof e.attachment.source_uuid === "string") out.aliases.set(e.uuid, e.attachment.source_uuid);
+    out.map.set(e.uuid, { timestamp: e.timestamp, ...(used ? { toolUseResult: output } : {}), ...(command ? { command } : {}) });
+    if (command && e.parentUuid) out.after.set(e.parentUuid, e.uuid);
   }
   return out;
 }
@@ -166,7 +205,8 @@ function untilRewind(messages: Message[], r: Rows): Message[] {
 
 async function read(sessionId: string, cwd: string): Promise<{ messages: Message[]; rows: Rows }> {
   const file = transcriptPath(sessionId, cwd);
-  const [messages, r] = await Promise.all([getSessionMessages(sessionId, { includeSystemMessages: true }), file ? rows(file) : Promise.resolve(noRows())]);
+  const messages = await getSessionMessages(sessionId, { includeSystemMessages: true });
+  const r = file ? await rows(file, new Set(messages.map((m) => m.uuid))) : noRows();
   return { messages: untilRewind(messages, r), rows: r };
 }
 
@@ -255,7 +295,40 @@ export async function turnPoint(sessionId: string, cwd: string): Promise<{ at?: 
   return undefined;
 }
 
+const KEPT_MAX = 6;
+// Built conversations by transcript and folder, latest used last, with the size and time of the file they were read
+// from; a file that changed since is read again. Callers share the arrays and must not change them.
+const kept = new Map<string, { size: number; mtimeMs: number; items: DisplayItem[] }>();
+const building = new Map<string, Promise<DisplayItem[]>>();
+
 export async function loadHistory(sessionId: string, cwd: string): Promise<DisplayItem[]> {
+  const file = transcriptPath(sessionId, cwd);
+  const stat = file ? await fs.promises.stat(file).catch(() => undefined) : undefined;
+  if (!file || !stat) return build(sessionId, cwd);
+  const key = `${file}\0${cwd}`;
+  const hit = kept.get(key);
+  if (hit && hit.size === stat.size && hit.mtimeMs === stat.mtimeMs) {
+    kept.delete(key);
+    kept.set(key, hit);
+    return hit.items;
+  }
+  const at = `${key}\0${stat.size}\0${stat.mtimeMs}`;
+  let p = building.get(at);
+  if (!p) {
+    p = build(sessionId, cwd).finally(() => building.delete(at));
+    building.set(at, p);
+  }
+  const items = await p;
+  const now = await fs.promises.stat(file).catch(() => undefined);
+  if (now && now.size === stat.size && now.mtimeMs === stat.mtimeMs) {
+    kept.delete(key);
+    kept.set(key, { size: stat.size, mtimeMs: stat.mtimeMs, items });
+    for (const old of [...kept.keys()].slice(0, -KEPT_MAX)) kept.delete(old);
+  }
+  return items;
+}
+
+async function build(sessionId: string, cwd: string): Promise<DisplayItem[]> {
   const {
     messages,
     rows: { map: extra, after },

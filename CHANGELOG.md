@@ -34,6 +34,13 @@ your version and the new one, and the lines under "Breaking" separately.
   own, but not the 5.5 ones: it is shown on those models' rows and on a row of its own, where it can only be removed.
 - The app icon's badge counts the sessions waiting for an answer and the unread sessions, the same sessions the list
   marks. It no longer depends on which device was told, and a turn that starts by itself no longer clears it.
+- Long sessions open faster on the phone. A conversation opens with its latest 40 items or so, and earlier ones load as
+  you scroll up, keeping your place; a search hit or a subagent far back opens with the part around it, and the part
+  after it loads as it comes into view. The broker keeps a conversation it has built until its transcript changes, reads
+  a compacted transcript from its last compaction only, and compresses what it sends over the WebSocket
+  (permessage-deflate).
+- The rewind list, the changes sheet, the to-do panel, the agent chip and the agent map cover the whole conversation,
+  whatever part of it the phone has loaded.
 
 ### Fixed
 
@@ -53,6 +60,10 @@ your version and the new one, and the lines under "Breaking" separately.
   removes the key, and "default" is not saved as a model; one already in the file is shown as it is, with a hint.
 - Turning notifications off and on again on a phone keeps the choices made before (VS Code delay, turn end, tool
   names) instead of going back to the defaults.
+- The conversation no longer moves while subagents or background tasks report progress. It stays at the bottom only
+  while you are at the bottom, keeps what you are reading in place otherwise (Safari has no scroll anchoring of its
+  own), and marks new content only when a message, a request or a reply comes. A running subagent's card no longer
+  shrinks and grows with each step, and a message that wraps as you type no longer pulls the conversation up.
 
 ### Security
 
