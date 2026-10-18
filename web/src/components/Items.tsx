@@ -1,6 +1,6 @@
 import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { hideDialogCommands } from "../../../broker/src/dialog-commands.ts";
-import type { DisplayItem, QueuedMessage, SubagentActivity } from "../../../broker/src/protocol.ts";
+import type { DisplayItem, QueuedMessage, SubagentActivity, TaskInfo } from "../../../broker/src/protocol.ts";
 import { clock, noteText } from "../labels.ts";
 import { useApp } from "../state.ts";
 import { DiffView, PatchStats } from "./diff/DiffView.tsx";
@@ -9,6 +9,7 @@ import { ContextView } from "./sheets/Context.tsx";
 import { UsageView } from "./sheets/Usage.tsx";
 import { ToolInput, ToolOutput } from "./ToolInput.tsx";
 import { UserAttachments } from "./UserAttachments.tsx";
+import { OLD_WRAPPER_NOTE, movedOut, useMovable, useMove } from "./agents/background.ts";
 import { AgentLinks } from "./agents/links.ts";
 import { actionable, type UserMessage } from "./messageActions.ts";
 import { useLongPress } from "./useLongPress.ts";
@@ -177,11 +178,43 @@ function SubActivity({ sub, running }: { sub: SubagentActivity; running: boolean
   );
 }
 
+// The calls Claude Code can move to the background while the turn waits on them.
+const MOVABLE_CALLS = new Set(["Bash", "PowerShell", "Agent", "Task"]);
+
+// Under a call the turn waits on, once it has run a while: a way to move it to the background; once moved, that it runs
+// there.
+function BackgroundLine({ item, task }: { item: Extract<DisplayItem, { kind: "tool" }>; task: TaskInfo }) {
+  const sessionId = useApp((s) => s.chat?.sessionId);
+  const { movable, old } = useMovable(task);
+  const { moving, move } = useMove(sessionId);
+  if (movedOut(sessionId, item.id, task, item.result?.text)) {
+    return (
+      <div className="flex min-h-11 items-center border-t border-line px-3 text-sm text-muted" data-background-running={item.id}>
+        백그라운드에서 실행 중
+      </div>
+    );
+  }
+  if (old) {
+    return (
+      <div className="border-t border-line px-3 py-2.5 text-xs break-keep text-muted" data-background-old={item.id}>
+        {OLD_WRAPPER_NOTE}
+      </div>
+    );
+  }
+  if (!movable && !moving) return null;
+  return (
+    <button onClick={() => move(item.id)} disabled={moving} className="flex min-h-11 w-full items-center border-t border-line px-3 text-left text-sm font-medium text-accent disabled:opacity-50" data-background={item.id}>
+      {moving ? "보내는 중…" : "백그라운드로"}
+    </button>
+  );
+}
+
 function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool" }>; running: boolean }) {
   const [open, setOpen] = useState(false);
   const openAgent = useContext(AgentLinks);
   // A call that went on in the background is still running after its result arrived.
-  const background = useApp((s) => Boolean(s.chat?.state?.tasks?.some((t) => t.toolUseId === item.id && t.status === "running")));
+  const task = useApp((s) => s.chat?.state?.tasks?.find((t) => t.toolUseId === item.id && t.status === "running"));
+  const background = Boolean(task);
   const active = background || (!item.result && running);
   // A subagent known by its id alone has done nothing to show yet.
   const sub = item.sub && (item.sub.tools || item.sub.recent.length || item.sub.text) ? item.sub : undefined;
@@ -233,6 +266,7 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
           <Icon.chevronRight className="size-4" />
         </button>
       )}
+      {task && MOVABLE_CALLS.has(item.name) && <BackgroundLine item={item} task={task} />}
     </div>
   );
 }

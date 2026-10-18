@@ -300,6 +300,11 @@ export abstract class SessionCore extends EventEmitter {
     return Promise.reject(Error("not available for this session"));
   }
 
+  // Moves a call the turn waits on to the background; false when Claude Code no longer ran it in the foreground.
+  background(_toolUseId: string): Promise<boolean> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
   get outputStyle(): string | undefined {
     return this.settingsStyle ?? this.initStyle;
   }
@@ -354,6 +359,14 @@ export abstract class SessionCore extends EventEmitter {
     this.ensureOpen();
     if (this.tasks.get(taskId)?.status !== "running") throw Error("task is not running");
     return taskId;
+  }
+
+  // A call Claude Code lists as a running task the turn waits on: a Bash command past its first seconds, or a subagent
+  // started in the foreground.
+  protected foregroundCall(toolUseId: string): string {
+    this.ensureOpen();
+    if (!this.tasks.values().some((t) => t.toolUseId === toolUseId && t.status === "running" && t.background === false)) throw Error("not running in the foreground");
+    return toolUseId;
   }
 
   // A listed shell or monitor task, running or ended a while ago.

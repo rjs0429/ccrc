@@ -277,6 +277,56 @@ test("a transcript is read again only when its size or time changed", async () =
   assert.equal(fresh.kind === "assistant" && fresh.text, "omega");
 });
 
+test("a transcript that grew is read on from where the last read stopped", async () => {
+  const file = path.join(subagents, "agent-aon.jsonl");
+  const all = rows("aon", [prompt("o1", "Go on"), say("o2", "alpha one"), call("o3", "toolu_on", "Bash", { command: "ls" }), result("o4", "toolu_on", "a.txt"), say("o5", "done")]);
+  write(file, all.slice(0, 3));
+  const first = await agentTranscript(SID, cwd, { agentId: "aon" });
+  assert.deepEqual(kinds(first.items), [
+    ["user", "o1"],
+    ["assistant", "o2:0"],
+    ["tool", "toolu_on"],
+  ]);
+  // A change well before where reading stopped is seen only by a read from the start.
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("alpha one", "omega one"));
+  fs.appendFileSync(file, all.slice(3).map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const later = await agentTranscript(SID, cwd, { agentId: "aon", after: { count: 3, lastId: "toolu_on", open: ["toolu_on"] } });
+  assert.deepEqual(kinds(later.items), [["assistant", "o5:0"]]);
+  assert.deepEqual(later.changed?.map((i) => i.kind === "tool" && i.result?.text), ["a.txt"]);
+  const whole = await agentTranscript(SID, cwd, { agentId: "aon" });
+  assert.equal(whole.items[1].kind === "assistant" && whole.items[1].text, "alpha one", "the lines read before are not read again");
+  assert.equal(whole.total, 4);
+});
+
+test("a line still being written waits for its end, and a change just before where reading stopped, a shorter file or a line off the conversation is read whole", async () => {
+  const file = path.join(subagents, "agent-aend.jsonl");
+  const all = rows("aend", [prompt("e1", "Write"), say("e2", "last words"), say("e3", "more"), say("e4", "and more")]);
+  const line = (n: number) => JSON.stringify(all[n]);
+  write(file, all.slice(0, 2));
+  assert.equal((await agentTranscript(SID, cwd, { agentId: "aend" })).total, 2);
+  fs.appendFileSync(file, line(2).slice(0, 40));
+  assert.equal((await agentTranscript(SID, cwd, { agentId: "aend" })).total, 2, "half a line is not read");
+  fs.appendFileSync(file, line(2).slice(40) + "\n");
+  assert.deepEqual(kinds((await agentTranscript(SID, cwd, { agentId: "aend" })).items).at(-1), ["assistant", "e3:0"]);
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace('"more"', '"MORE"') + line(3) + "\n");
+  const changed = await agentTranscript(SID, cwd, { agentId: "aend" });
+  assert.deepEqual(
+    changed.items.slice(-2).map((i) => i.kind === "assistant" && i.text),
+    ["MORE", "and more"],
+    "the bytes just before where reading stopped changed, so it is read whole",
+  );
+  write(file, all.slice(0, 2));
+  assert.equal((await agentTranscript(SID, cwd, { agentId: "aend" })).total, 2, "a shorter file is read whole");
+  const compacted = [
+    { ...rows("aend", [{ type: "user", uuid: "r1", isCompactSummary: true, message: { role: "user", content: "Summary of the work" } }])[0], parentUuid: null },
+    { ...rows("aend", [say("r2", "Going on from the summary.")])[0], parentUuid: "r1" },
+  ];
+  fs.appendFileSync(file, compacted.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const after = await agentTranscript(SID, cwd, { agentId: "aend", after: { count: 2, lastId: "e2:0" } });
+  assert.equal(after.reset, true, "a line off the conversation read so far starts it over");
+  assert.deepEqual(kinds(after.items), [["assistant", "r2:0"]]);
+});
+
 test("a transcript over 64MB is refused, and an answer stays within its budget", async () => {
   const huge = path.join(subagents, "agent-ahuge.jsonl");
   fs.writeFileSync(huge, "");

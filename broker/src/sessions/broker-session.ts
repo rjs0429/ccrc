@@ -430,6 +430,10 @@ export class BrokerSession extends SessionCore {
     return shellOutput((await this.request({ subtype: "get_task_output", task_id: this.shellTask(taskId) })).response);
   }
 
+  async background(toolUseId: string): Promise<boolean> {
+    return timed(this.query().backgroundTasks(this.foregroundCall(toolUseId)), REQUEST_MS);
+  }
+
   protected async cancelQueued(messageId: string): Promise<boolean> {
     if (this.input.remove(messageId)) {
       if (this.input.untouched) this.busy = false;

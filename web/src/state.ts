@@ -338,6 +338,37 @@ function settleCalls(): void {
   calls.clear();
 }
 
+// What the page follows of the session it shows, by the ids it gave the broker: changes as they come, and the end of
+// the broker's watch, which a lost connection also is.
+type FollowMsg = Extract<ServerMsg, { t: "follow" }>;
+export interface Follower {
+  change: (m: FollowMsg) => void;
+  end: () => void;
+}
+const followers = new Map<string, Follower>();
+let followSeq = 0;
+
+export function follower(f: Follower): { id: string; off: () => void } {
+  const id = `f${++followSeq}`;
+  followers.set(id, f);
+  return { id, off: () => followers.delete(id) };
+}
+
+export function unfollow(id: string): void {
+  followers.delete(id);
+  send({ t: "unfollow", id });
+}
+
+export function following(id: string): boolean {
+  return followers.has(id);
+}
+
+function endFollows(): void {
+  const all = [...followers.values()];
+  followers.clear();
+  for (const f of all) f.end();
+}
+
 export function takeWindow(): void {
   if (state.conn === "conflict") socket?.send(JSON.stringify({ t: "take_window" } satisfies ClientMsg));
   else if (state.conn === "taken" || state.conn === "offline") connect();
@@ -356,6 +387,7 @@ export function connect(): void {
   ws.onclose = (e) => {
     if (ws !== socket) return;
     settleCalls();
+    endFollows();
     if (e.code === 4001) return loggedOut(state.loggedOutReason ?? "expired");
     if (e.code === 4000) return setState({ conn: "taken" });
     setState({ conn: "offline" });
@@ -409,6 +441,8 @@ function onServer(msg: ServerMsg): void {
   switch (msg.t) {
     case "ready":
       retry = 0;
+      // A new window follows nothing yet.
+      endFollows();
       setState({ conn: "ready" });
       send({ t: "visibility", visible: document.visibilityState === "visible" });
       send(viewMsg());
@@ -494,6 +528,15 @@ function onServer(msg: ServerMsg): void {
       clearTimeout(c.timer);
       if (msg.ok) c.resolve(msg.data);
       else c.reject(Error(msg.error ?? "failed"));
+      return;
+    }
+    case "follow":
+      followers.get(msg.id)?.change(msg);
+      return;
+    case "follow_end": {
+      const f = followers.get(msg.id);
+      followers.delete(msg.id);
+      f?.end();
       return;
     }
     case "pong":

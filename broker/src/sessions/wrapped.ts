@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { elicitInfo } from "../elicit.ts";
 import type { Link } from "../link/server.ts";
-import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, McpServerInfo, PermissionModeName, RewindResult, TaskOutput } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, LiveState, McpServerInfo, PermissionModeName, RewindResult, TaskOutput } from "../protocol.ts";
 import { argValue } from "../wrapper/relay.ts";
 import { rememberCommands } from "./commands.ts";
 import {
@@ -63,6 +63,8 @@ export class WrappedSession extends SessionCore {
   elicitMs = ELICIT_MS;
   unwatchedMs = ELICIT_UNWATCHED_MS;
   private startThinking: boolean;
+  // The wrapper does not pass on moves to the background.
+  private backgroundUnknown: boolean;
 
   // Thinking starts as VS Code launched Claude Code; an older wrapper does not pass on VS Code's later changes.
   constructor(link: Link, id: string, cwd: string, title?: string) {
@@ -71,6 +73,7 @@ export class WrappedSession extends SessionCore {
     this.lastActivity = 0;
     const caps: unknown[] = Array.isArray(link.hello?.caps) ? link.hello.caps : [];
     this.optionsUnknown = !caps.includes("fast_mode") || !caps.includes("thinking");
+    this.backgroundUnknown = !caps.includes("background_tasks");
     this.startThinking = thinkingArg(link.hello?.args ?? []);
     this.thinking = this.startThinking;
   }
@@ -294,6 +297,28 @@ export class WrappedSession extends SessionCore {
 
   async taskOutput(taskId: string): Promise<TaskOutput> {
     return shellOutput(await this.link.request({ subtype: "get_task_output", task_id: this.shellTask(taskId) }, READ_MS));
+  }
+
+  // The wrapper takes the move only for a call Claude Code told VS Code it runs in the foreground; one it no longer does
+  // is not moved.
+  async background(toolUseId: string): Promise<boolean> {
+    const id = this.foregroundCall(toolUseId);
+    if (this.backgroundUnknown) throw Error(OLD_WRAPPER);
+    try {
+      return (await this.link.request({ subtype: "background_tasks", tool_use_id: id })).backgrounded === true;
+    } catch (e) {
+      const why = e instanceof Error ? e.message : "";
+      if (why === "rejected by the wrapper: not running") return false;
+      if (why !== "rejected by the wrapper: request not allowed") throw e;
+      this.backgroundUnknown = true;
+      this.emit("state");
+      throw Error(OLD_WRAPPER);
+    }
+  }
+
+  state(): LiveState {
+    const s = super.state();
+    return this.backgroundUnknown && !this.closed ? { ...s, backgroundUnknown: true } : s;
   }
 
   protected async cancelQueued(messageId: string): Promise<boolean> {
