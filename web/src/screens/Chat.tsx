@@ -48,6 +48,9 @@ const LOAD_SCREENS = 1.5;
 // A change of size this soon after a touch on the list comes from the touch: the touched item keeps its place.
 const TOUCH_MS = 600;
 const gapBelow = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight;
+// An ended session's conversation ends with the notes of messages Claude Code never took in; what its transcript gains
+// later comes in before them.
+const lastSaid = (items: DisplayItem[]) => items.findLast((i) => i.kind !== "note" || i.code !== "unsent")?.id;
 const FLASH_MS = 2500;
 const NO_MODELS: ModelOption[] = [];
 // How long a command sent from here may take before its sheet says it gave no result, once the session is idle.
@@ -149,7 +152,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   // Where the list was last scrolled to; only a scroll up from there leaves the bottom.
   const lastTop = useRef(0);
   // How the list ended at the last render, to tell what came at its end from changes to what was there.
-  const ends = useRef<{ snaps?: number; last?: string; stream: number; pending: number; queued: number } | null>(null);
+  const ends = useRef<{ snaps?: number; last?: string; said?: string; stream: number; pending: number; queued: number } | null>(null);
   const [away, setAway] = useState(false);
   const [unseen, setUnseen] = useState(false);
 
@@ -425,7 +428,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   useLayoutEffect(() => {
     const el = listRef.current;
     if (!el || !chat?.loaded) return;
-    const now = { snaps: chat.snaps, last: items.at(-1)?.id, stream: chat.stream ? chat.stream.text.length : -1, pending: chat.pending.length, queued: queued.length };
+    const now = { snaps: chat.snaps, last: items.at(-1)?.id, said: lastSaid(items), stream: chat.stream ? chat.stream.text.length : -1, pending: chat.pending.length, queued: queued.length };
     const was = ends.current;
     ends.current = now;
     if (chat.focus) return;
@@ -435,8 +438,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
         follow(true);
       }
     } else {
+      const came = (id?: string, before?: string) => id !== before && (before === undefined || items.some((i) => i.id === before));
       const added =
-        (now.last !== was.last && (was.last === undefined || items.some((i) => i.id === was.last))) ||
+        came(now.last, was.last) ||
+        came(now.said, was.said) ||
         now.stream > was.stream ||
         now.pending > was.pending ||
         now.queued > was.queued;

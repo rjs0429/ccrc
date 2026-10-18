@@ -69,6 +69,20 @@ test("a far-back focused item comes with the items around it, the latest page an
   assert.deepEqual(span(snapshotPart(items, { focus: "missing" }).items), ["i960", "i999", 40]);
 });
 
+test("after a focused open the part the phone holds wins over the focused item", () => {
+  const short = list(300);
+  const loaded = snapshotPart(short, { focus: "i100", from: "i50" });
+  assert.deepEqual([span(loaded.items), loaded.gap, loaded.hasMore], [["i50", "i299", 250], undefined, true]);
+  assert.deepEqual(span(snapshotPart(short, { focus: "i100", from: "i90" }).items), ["i90", "i299", 210]);
+  const items = list(1000);
+  const back = snapshotPart(items, { focus: "i100", from: "i50" });
+  assert.deepEqual([back.items[0].id, back.items[79].id, back.items[80].id, back.items.length], ["i50", "i129", "i960", 120]);
+  assert.deepEqual(back.gap, { before: "i960", skipped: 960 - 130 });
+  assert.deepEqual(snapshotPart(items, { focus: "i100", from: "i90" }), snapshotPart(items, { focus: "i100" }));
+  assert.deepEqual(snapshotPart(items, { focus: "i700", from: "i0" }), snapshotPart(items, { focus: "i700" }));
+  assert.deepEqual(span(snapshotPart(items, { focus: "i100", from: "i200" }).items), ["i960", "i999", 40]);
+});
+
 test("a page before an item, or after one up to another, comes with whether more lies that way", () => {
   const items = list(100);
   assert.deepEqual(historyPage(items, { before: "i60" }), { items: items.slice(20, 60), more: true });

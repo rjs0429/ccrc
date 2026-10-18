@@ -9,6 +9,7 @@ import type { Leases } from "../src/lease.ts";
 import type { DisplayItem, ServerMsg } from "../src/protocol.ts";
 import { RemoteActivity } from "../src/remote-activity.ts";
 import type { SessionManager, Snapshot } from "../src/sessions/manager.ts";
+import { snapshotPart } from "../src/sessions/pages.ts";
 import { Uploads } from "../src/uploads.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -289,6 +290,34 @@ test("a view asked for again keeps the part the phone holds, the pages it loaded
   hub.close();
 });
 
+test("a snapshot sent again after a focused open keeps the pages the phone loaded before the focused item", async () => {
+  const { manager, hub, ws, snapshots } = setup();
+  manager.items = Array.from({ length: 300 }, (_, n) => item(`i${n}`));
+  manager.snapshot = async function (sessionId: string, opts: { focus?: string; from?: string } = {}) {
+    this.focuses.push(opts.focus);
+    this.froms.push(opts.from);
+    return { ...snapshotPart(this.items, opts), pending: [], state: { sessionId, cwd: "/", state: "inactive", busy: false } };
+  };
+  ws.emit("message", JSON.stringify({ t: "view", sessionId: A, focus: "i100" }));
+  await sleep(20);
+  assert.deepEqual([snapshots()[0].items[0].id, snapshots()[0].gap?.before], ["i90", "i260"]);
+  ws.emit("message", JSON.stringify({ t: "call", id: 1, sessionId: A, op: "history", args: { before: "i90" } }));
+  await sleep(20);
+  manager.emit("detached", A);
+  await sleep(20);
+  ws.emit("message", JSON.stringify({ t: "view", sessionId: A, from: "i88" }));
+  await sleep(20);
+  assert.deepEqual(manager.focuses, ["i100", "i100", "i100"]);
+  assert.deepEqual(
+    snapshots().slice(1).map((s) => [s.items[0].id, s.items.length, s.gap]),
+    [
+      ["i88", 212, undefined],
+      ["i88", 212, undefined],
+    ],
+  );
+  hub.close();
+});
+
 test("a session followed through its transcript gets the items that changed or came after the phone's last, each with the one before it", async () => {
   const { manager, hub, ws, view } = setup();
   manager.items = ["i0", "i1", "i2", "i3", "i4", "i5", "i6"].map((id) => item(id));
@@ -317,5 +346,34 @@ test("a session followed through its transcript gets the items that changed or c
   manager.changed!();
   await sleep(20);
   assert.deepEqual(ws.sent.slice(again + 1).map((m) => m.t), ["snapshot"]);
+  hub.close();
+});
+
+test("new transcript items reach the phone wherever they come in the part it holds to the end, and none from a part it does not hold", async () => {
+  const { manager, hub, ws, view } = setup();
+  const unsent: DisplayItem = { kind: "note", id: "unsent-q1", code: "unsent", text: "queued" };
+  manager.items = [item("t0"), item("t1"), unsent];
+  manager.part = { items: manager.items, hasMore: false };
+  view(A);
+  await sleep(20);
+  let sent = ws.sent.length;
+  manager.items = [item("t0"), item("t1"), item("t2", "answered elsewhere"), item("t3"), unsent];
+  manager.changed!();
+  await sleep(20);
+  const items = () => ws.sent.slice(sent).filter((m): m is Extract<ServerMsg, { t: "item" }> => m.t === "item").map((m) => [m.item.id, m.prev]);
+  assert.deepEqual(items(), [
+    ["t2", "t1"],
+    ["t3", "t2"],
+  ]);
+  view(null);
+  manager.items = ["i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7", "i8", "i9"].map((id) => item(id));
+  manager.part = { items: [manager.items[0], manager.items[1], manager.items[8], manager.items[9]], hasMore: false, gap: { before: "i8", skipped: 6 } };
+  view(A);
+  await sleep(20);
+  sent = ws.sent.length;
+  manager.items = [...manager.items.slice(0, 2), item("i2", "changed in the gap"), ...manager.items.slice(3), item("i10")];
+  manager.changed!();
+  await sleep(20);
+  assert.deepEqual(items(), [["i10", "i9"]]);
   hub.close();
 });

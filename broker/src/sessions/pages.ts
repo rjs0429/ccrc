@@ -47,15 +47,20 @@ function withEarlier(before: DisplayItem[], gap: DisplayItem[]): Pick<SnapshotPa
   return a.length || b.length ? { earlier: [...a, ...b], ...(b.length ? { earlierInGap: b.length } : {}) } : {};
 }
 
-// What a snapshot sends: the latest page, or everything from the phone's first item while it holds that part, or the
-// part around a focused item further back with the latest page and the gap between them.
+// What a snapshot sends: everything from the phone's first item while that part is not too long; else the part around a
+// focused item further back, from the phone's first item when that lies before it, with the latest page and the gap
+// between them; else the latest page.
 export function snapshotPart(items: DisplayItem[], opts: { focus?: string; from?: string } = {}): SnapshotPart {
   const latest = pageStart(items, items.length);
-  const at = opts.focus ? items.findIndex((i) => i.id === opts.focus) : -1;
+  const index = (id?: string) => (id ? items.findIndex((i) => i.id === id) : -1);
+  const at = index(opts.focus);
+  const held = index(opts.from);
   const whole = (from: number): SnapshotPart => ({ items: items.slice(from), hasMore: from > 0, ...withEarlier(items.slice(0, from), []) });
-  if (at >= 0 && at < latest) {
-    const from = Math.max(0, at - FOCUS_BEFORE);
-    const to = Math.max(at + 1, pageEnd(items, from, latest));
+  if (held >= 0 && held < latest && items.length - held <= HELD_MAX) return whole(held);
+  if (at >= 0 && at < latest && held <= at) {
+    const near = Math.max(0, at - FOCUS_BEFORE);
+    const to = Math.max(at + 1, pageEnd(items, near, latest));
+    const from = held >= 0 && held < near && to - held <= HELD_MAX ? held : near;
     if (latest - to < GAP_MIN) return whole(from);
     return {
       items: [...items.slice(from, to), ...items.slice(latest)],
@@ -64,8 +69,7 @@ export function snapshotPart(items: DisplayItem[], opts: { focus?: string; from?
       ...withEarlier(items.slice(0, from), items.slice(to, latest)),
     };
   }
-  const held = opts.from && at < 0 ? items.findIndex((i) => i.id === opts.from) : -1;
-  return whole(held >= 0 && held < latest && items.length - held <= HELD_MAX ? held : latest);
+  return whole(latest);
 }
 
 // The page before item `before`, or the items after item `after` up to item `until` or the end.

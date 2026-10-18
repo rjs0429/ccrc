@@ -1,4 +1,4 @@
-import { memo, useContext, useLayoutEffect, useRef, useState } from "react";
+import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { hideDialogCommands } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, QueuedMessage, SubagentActivity } from "../../../broker/src/protocol.ts";
 import { clock, noteText } from "../labels.ts";
@@ -131,27 +131,42 @@ function Thinking({ text }: { text: string }) {
   );
 }
 
-// While its agent runs the activity never gets shorter, so each step it reports does not move what is below it.
+// While its agent runs the activity never gets shorter at the width it has, so each step it reports does not move what
+// is below it; at another width (the phone turned) it is measured afresh.
 function SubActivity({ sub, running }: { sub: SubagentActivity; running: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
-  const tallest = useRef(0);
-  useLayoutEffect(() => {
+  const head = useRef<HTMLDivElement>(null);
+  const tallest = useRef({ width: 0, height: 0 });
+  const hold = () => {
     const el = ref.current;
     if (!el) return;
     if (!running) {
-      tallest.current = 0;
+      tallest.current = { width: 0, height: 0 };
       el.style.minHeight = "";
       return;
     }
+    const width = el.getBoundingClientRect().width;
+    if (width !== tallest.current.width) {
+      el.style.minHeight = "";
+      tallest.current = { width, height: 0 };
+    }
     const height = el.getBoundingClientRect().height;
-    if (height > tallest.current) {
-      tallest.current = height;
+    if (height > tallest.current.height) {
+      tallest.current.height = height;
       el.style.minHeight = `${height}px`;
     }
-  });
+  };
+  useLayoutEffect(hold);
+  // The first row spans the activity's width and not its held height, so watching it sees a change of width alone.
+  useEffect(() => {
+    if (!running || !head.current) return;
+    const resized = new ResizeObserver(hold);
+    resized.observe(head.current);
+    return () => resized.disconnect();
+  }, [running]);
   return (
     <div ref={ref} className="space-y-1 border-t border-line px-3 py-2">
-      <div className="text-xs text-muted">도구 {sub.tools}회</div>
+      <div ref={head} className="text-xs text-muted">도구 {sub.tools}회</div>
       {sub.recent.map((r, n) => (
         <div key={n} className="truncate font-mono text-[12px] text-muted">
           <span className="text-fg">{r.name}</span> {r.summary}

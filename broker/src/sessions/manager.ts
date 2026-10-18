@@ -401,10 +401,11 @@ export class SessionManager extends EventEmitter {
   }
 
   // The listing a session's conversation is read by: the one last listed, the list read again in the background once it
-  // is old. Whatever changes a session's name or folder here lets go of the list.
+  // is old. One listed without its folder is looked up as one not listed is. Whatever changes a session's name or folder
+  // here lets go of the list.
   private async listed(sessionId: string): Promise<SDKSessionInfo | undefined> {
     const known = this.catalog?.list.find((i) => i.sessionId === sessionId);
-    if (!known) return this.info(sessionId);
+    if (!known?.cwd) return this.info(sessionId);
     if (Date.now() - this.catalog!.at >= CATALOG_MS) void this.infos().catch(() => {});
     return known;
   }

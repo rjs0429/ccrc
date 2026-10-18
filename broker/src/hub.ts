@@ -84,10 +84,10 @@ export class Hub {
   // The first item the phone holds of the viewed session, which a snapshot sent again keeps holding from.
   private from?: string;
   private unwatch?: () => void;
-  // For a session followed through its transcript: the items sent for it by id, as JSON, and the last item the phone
-  // holds, after which items are new.
+  // For a session followed through its transcript: the items sent for it by id, as JSON, and the first item of the part
+  // the phone holds to the end, in which an item it was not sent is new.
   private shown = new Map<string, string>();
-  private last?: string;
+  private tail?: string;
   private changedTimer?: NodeJS.Timeout;
   private pinger: NodeJS.Timeout;
   private alive = new WeakSet<WebSocket>();
@@ -545,17 +545,17 @@ export class Hub {
   private sent(snap: SnapshotPart): void {
     this.from = snap.items[0]?.id;
     this.shown = new Map([...snap.items, ...(snap.earlier ?? [])].map((i) => [i.id, JSON.stringify(i)]));
-    this.last = snap.items.at(-1)?.id;
+    this.tail = snap.gap?.before ?? this.from;
   }
 
-  // Sends the items that changed since they were sent and the ones added after the last item the phone holds, each
-  // with the item before it; a conversation that no longer has an item the phone holds gets a new snapshot.
+  // Sends the items that changed since they were sent and the new ones in the part the phone holds to the end, each with
+  // the item before it; a conversation that no longer has an item the phone holds gets a new snapshot.
   private async pushChanges(sessionId: string, seq: number): Promise<void> {
     const { items, state } = await this.manager.conversation(sessionId);
     if (seq !== this.viewSeq || !this.active || this.manager.isControlled(sessionId)) return;
     const at = new Map(items.map((i, n) => [i.id, n]));
-    const last = this.last === undefined ? -1 : at.get(this.last);
-    if (last === undefined || [...this.shown.keys()].some((id) => !at.has(id))) {
+    const tail = this.tail === undefined ? 0 : at.get(this.tail);
+    if (tail === undefined || [...this.shown.keys()].some((id) => !at.has(id))) {
       const snap = await this.manager.snapshot(sessionId, { focus: this.focus, from: this.from });
       if (seq !== this.viewSeq || !this.active || this.manager.isControlled(sessionId)) return;
       this.sent(snap);
@@ -563,13 +563,12 @@ export class Hub {
       return;
     }
     items.forEach((item, n) => {
-      if (n <= last && !this.shown.has(item.id)) return;
+      if (n < tail && !this.shown.has(item.id)) return;
       const json = JSON.stringify(item);
       if (this.shown.get(item.id) === json) return;
       this.shown.set(item.id, json);
       send(this.active!, { t: "item", sessionId, item, prev: n > 0 ? items[n - 1].id : null });
     });
-    this.last = items.at(-1)?.id;
     if (state) send(this.active, { t: "state", sessionId, state });
   }
 }
