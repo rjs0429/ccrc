@@ -1,11 +1,11 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import {
   CLAUDE_SETTING_FIELDS,
-  MODEL_EFFORTS,
+  LEGACY_EFFORT,
+  MODEL_DEFAULT,
   canonicalModel,
   effortKeyModel,
   isAbsoluteDir,
-  isModelName,
   isPermissionRule,
   modelEffortKey,
   type ClaudeSettingsView,
@@ -14,10 +14,11 @@ import {
 import type { ModelOption } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
 import { Button, Choice, Icon, Sheet, Spinner } from "../../components/ui.tsx";
-import { EFFORT_LABEL, MODE_HINT, MODE_LABEL, shortPath } from "../../labels.ts";
+import { EFFORT_LABEL, MODE_HINT, shortPath } from "../../labels.ts";
 import { loggedOut, toast, useApp, type SettingsPart } from "../../state.ts";
+import { CHOICE_LABEL, ERRORS, PROBLEM, effortModels, failureText, inheritedEffort, isDefaultModel, modelName, valueText } from "./claudeLabels.ts";
 import { SettingsSaver, same, type SaveResult } from "./claudeSaver.ts";
-import { SectionTitle, Segmented, showError } from "./common.tsx";
+import { SectionTitle, Segmented } from "./common.tsx";
 
 type TextField = Extract<SettingField, { kind: "text" }>;
 
@@ -32,6 +33,7 @@ const LABEL: Record<string, string> = {
   "permissions.ask": "묻기 규칙",
   "permissions.deny": "거부 규칙",
   "permissions.additionalDirectories": "추가 폴더",
+  [LEGACY_EFFORT]: "Effort · 이전 모델 공통",
   alwaysThinkingEnabled: "Thinking",
   showThinkingSummaries: "Thinking 요약 보기",
   language: "응답 언어",
@@ -53,79 +55,28 @@ const HINT: Record<string, string> = {
   respectGitignore: "파일 찾기에서 무시할 파일을 뺍니다",
 };
 
-const THEME_LABEL: Record<string, string> = {
-  auto: "시스템 따라가기",
-  dark: "어둡게",
-  light: "밝게",
-  "dark-daltonized": "어둡게 (색각 보정)",
-  "light-daltonized": "밝게 (색각 보정)",
-  "dark-ansi": "어둡게 (ANSI)",
-  "light-ansi": "밝게 (ANSI)",
-};
-
-const CHOICE_LABEL: Record<string, Record<string, string>> = {
-  "permissions.defaultMode": MODE_LABEL,
-  theme: THEME_LABEL,
-};
-
-const PROBLEM: Record<string, string> = {
-  not_json: "설정 파일에 주석이 있거나 엄격한 JSON이 아니어서 여기서는 바꾸지 않습니다. 노트북에서 고쳐 주세요.",
-  not_object: "설정 파일의 형식이 맞지 않아 여기서는 바꾸지 않습니다.",
-};
-
-const ERRORS: Record<string, string> = {
-  ...PROBLEM,
-  invalid: "값이 올바르지 않습니다",
-  not_allowed: "여기서 바꿀 수 없는 설정입니다",
-};
-
 const NOTE: Record<string, string> = {
   command: "명령을 실행하는 설정",
   security: "권한·보안 설정",
-  legacy: "모델별 Effort 전의 키로, Opus 5.5 같은 새 모델에는 쓰이지 않습니다",
 };
 
-// "claude-opus-5-5" as "Opus 5.5"; other names stay as they are.
-function modelName(name: string): string {
-  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?$/.exec(name);
-  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ""}` : name;
-}
+const DEFAULT_HINT = "이 설정을 지우고 Claude Code 기본값을 씁니다";
+const DEFAULT_MODEL_HINT = "Claude Code가 모델 이름으로 읽어 모델별 Effort가 적용되지 않습니다. 기본값을 고르면 지웁니다";
 
 function labelOf(key: string): string {
   const model = effortKeyModel(key);
   return model ? `Effort · ${modelName(model)}` : (LABEL[key] ?? key);
 }
 
-// The models whose effort Claude Code keeps: those it offers with effort levels, then others the file names, each
-// with the levels that can be saved for it.
-function effortModels(models: ModelOption[], values: Record<string, unknown>): { model: string; levels: string[] }[] {
-  const out = new Map<string, string[]>();
-  for (const m of models) {
-    const name = canonicalModel(m.resolved ?? m.value);
-    const levels = MODEL_EFFORTS.filter((l) => m.efforts?.includes(l as never));
-    if (name.startsWith("claude-") && isModelName(name) && !out.has(name) && levels.length) out.set(name, levels);
-  }
-  for (const key of Object.keys(values)) {
-    const name = effortKeyModel(key);
-    if (name && !out.has(name)) out.set(name, MODEL_EFFORTS);
-  }
-  return [...out].map(([model, levels]) => ({ model, levels }));
+function errorText(e: unknown): string {
+  if (e instanceof ApiError) return failureText(typeof e.body.error === "string" ? e.body.error : "", e.status);
+  if (e instanceof TypeError) return failureText("", 0);
+  return failureText(typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 }
 
-function valueText(key: string, v: unknown, models: ModelOption[]): string {
-  if (v === undefined || v === null) return "기본값";
-  if (typeof v === "boolean") return v ? "켬" : "끔";
-  if (key === "model") return models.find((m) => m.value === v)?.label ?? String(v);
-  const labels = effortKeyModel(key) ? EFFORT_LABEL : CHOICE_LABEL[key];
-  return labels && typeof v === "string" && Object.hasOwn(labels, v) ? labels[v] : String(v);
-}
-
-function errorOf(e: unknown): string {
-  const code = typeof e === "string" ? e : e instanceof ApiError && typeof e.body.error === "string" ? e.body.error : "";
-  if (Object.hasOwn(ERRORS, code)) return ERRORS[code];
-  if (e instanceof ApiError && e.status >= 500) return "노트북에서 설정 파일을 쓰지 못했습니다";
-  if (e instanceof TypeError) return "노트북에 연결하지 못했습니다";
-  return e instanceof Error ? e.message : String(e);
+function failed(e: unknown): void {
+  if (e instanceof ApiError && e.status === 401) return loggedOut("expired");
+  toast(`설정을 읽지 못했습니다: ${errorText(e)}`);
 }
 
 function report(saver: SettingsSaver, r: SaveResult): void {
@@ -136,7 +87,7 @@ function report(saver: SettingsSaver, r: SaveResult): void {
   }
   if (r.t === "changed") return toast(`그사이 설정 파일에서 바뀐 값을 보입니다 · ${label}`);
   if (r.error instanceof ApiError && r.error.status === 401) return loggedOut("expired");
-  toast(`저장하지 못했습니다 · ${label}: ${errorOf(r.error)}`);
+  toast(`저장하지 못했습니다 · ${label}: ${errorText(r.error)}`);
 }
 
 const io = {
@@ -250,9 +201,9 @@ function ListEditor({ field, items, busy, onChange }: { field: string; items: st
       {items.length > 0 && (
         <ul className="mt-2 divide-y divide-line border-y border-line">
           {items.map((item, i) => (
-            <li key={i} className="flex items-center gap-2 py-1.5">
+            <li key={i} className="flex items-center gap-2 py-2">
               <span className="min-w-0 flex-1 font-mono text-[13px] break-all">{item}</span>
-              <button onClick={() => onChange(items.filter((_, j) => j !== i))} aria-label={`${item} 빼기`} className="rounded-lg p-1.5 text-muted">
+              <button onClick={() => onChange(items.filter((_, j) => j !== i))} aria-label={`${item} 빼기`} className="-my-2 -mr-2 flex size-11 shrink-0 items-center justify-center rounded-lg text-muted">
                 <Icon.x className="size-4" />
               </button>
             </li>
@@ -285,10 +236,19 @@ function ListEditor({ field, items, busy, onChange }: { field: string; items: st
   );
 }
 
-function ChoiceSheet(p: { title: string; values: string[]; labels: Record<string, string>; hints?: Record<string, string>; value: unknown; onPick: (v?: string) => void; onClose: () => void }) {
+function ChoiceSheet(p: {
+  title: string;
+  values: string[];
+  labels: Record<string, string>;
+  hints?: Record<string, string>;
+  defaultHint?: string;
+  value: unknown;
+  onPick: (v?: string) => void;
+  onClose: () => void;
+}) {
   return (
     <Sheet title={p.title} onClose={p.onClose}>
-      <Choice label="기본값" hint="이 설정을 지우고 Claude Code 기본값을 씁니다" selected={p.value === undefined} onClick={() => p.onPick(undefined)} />
+      <Choice label="기본값" hint={p.defaultHint ?? DEFAULT_HINT} selected={p.value === undefined} onClick={() => p.onPick(undefined)} />
       {p.values.map((v) => (
         <Choice key={v} label={p.labels[v] ?? v} hint={p.hints?.[v]} selected={p.value === v} onClick={() => p.onPick(v)} />
       ))}
@@ -296,14 +256,22 @@ function ChoiceSheet(p: { title: string; values: string[]; labels: Record<string
   );
 }
 
+// Claude Code's own "default" entry is the 기본값 choice, which removes the key.
 function ModelSheet({ value, models, onPick, onClose }: { value: unknown; models: ModelOption[]; onPick: (v?: string) => void; onClose: () => void }) {
   const [text, setText] = useState("");
   const t = text.trim();
+  const fallback = models.find((m) => m.value === MODEL_DEFAULT)?.resolved;
+  const listed = models.filter((m) => m.value !== MODEL_DEFAULT);
   return (
     <Sheet title="모델" onClose={onClose}>
-      <Choice label="기본값" hint="이 설정을 지우고 Claude Code 기본값을 씁니다" selected={value === undefined} onClick={() => onPick(undefined)} />
-      {typeof value === "string" && !models.some((m) => m.value === value) && <Choice label={value} selected onClick={onClose} />}
-      {models.map((m) => (
+      <Choice
+        label="기본값"
+        hint={fallback ? `이 설정을 지우고 Claude Code 기본값(${modelName(canonicalModel(fallback))})을 씁니다` : DEFAULT_HINT}
+        selected={value === undefined}
+        onClick={() => onPick(undefined)}
+      />
+      {typeof value === "string" && !listed.some((m) => m.value === value) && <Choice label={value} selected onClick={onClose} />}
+      {listed.map((m) => (
         <Choice key={m.value} label={m.label} hint={m.value} selected={m.value === value} onClick={() => onPick(m.value)} />
       ))}
       <div className="mt-2 flex gap-2">
@@ -363,7 +331,7 @@ export function ClaudeSettingsSection({ part }: { part?: SettingsPart }) {
 
   useEffect(() => {
     let live = true;
-    if (shared) void shared.reload().catch((e: unknown) => live && showError(e, ERRORS));
+    if (shared) void shared.reload().catch((e: unknown) => live && failed(e));
     else
       io.read().then(
         (v) => {
@@ -373,7 +341,7 @@ export function ClaudeSettingsSection({ part }: { part?: SettingsPart }) {
           }
           if (live) setSaver(shared);
         },
-        (e: unknown) => live && showError(e, ERRORS),
+        (e: unknown) => live && failed(e),
       );
     return () => {
       live = false;
@@ -404,8 +372,12 @@ export function ClaudeSettingsSection({ part }: { part?: SettingsPart }) {
   const odd = new Set(view.notes.filter((n) => n.reason === "value").map((n) => n.key));
   const hintOf = (key: string, base?: string) => (odd.has(key) && same(value(key), view.values[key]) ? "여기서 고를 수 없는 값입니다" : base);
   const efforts = effortModels(models, view.values);
+  const legacy = value(LEGACY_EFFORT);
+  const inheriting = efforts.filter(({ model }) => inheritedEffort(model, value(modelEffortKey(model)), legacy)).map(({ model }) => modelName(model));
+  const legacyHint = `모델별 값이 없는 ${inheriting.length ? inheriting.join("·") : "이전 모델"}에 쓰입니다. 여기서는 지울 수만 있습니다`;
   const open = sheet ? CLAUDE_SETTING_FIELDS.find((f) => f.key === sheet) : undefined;
   const openEffort = sheet ? efforts.find((e) => modelEffortKey(e.model) === sheet) : undefined;
+  const afterClear = openEffort && inheritedEffort(openEffort.model, undefined, legacy);
   const pick = (key: string) => (v?: string) => {
     set(key, v);
     setSheet(null);
@@ -423,10 +395,10 @@ export function ClaudeSettingsSection({ part }: { part?: SettingsPart }) {
       ) : (
         <>
           <div className="divide-y divide-line rounded-xl bg-surface">
-            {CLAUDE_SETTING_FIELDS.filter((f) => !LISTS.includes(f.key)).map((f) => {
+            {CLAUDE_SETTING_FIELDS.filter((f) => !LISTS.includes(f.key) && f.key !== LEGACY_EFFORT).map((f) => {
               const v = value(f.key);
               const busy = saver.busy(f.key);
-              const hint = hintOf(f.key, f.key === "alwaysThinkingEnabled" ? thinkingHint(models) : HINT[f.key]);
+              const hint = f.key === "model" && isDefaultModel(v) ? DEFAULT_MODEL_HINT : hintOf(f.key, f.key === "alwaysThinkingEnabled" ? thinkingHint(models) : HINT[f.key]);
               if (f.kind === "bool") {
                 return (
                   <Row key={f.key} setting={f.key} label={LABEL[f.key]} hint={hint} busy={busy}>
@@ -459,21 +431,30 @@ export function ClaudeSettingsSection({ part }: { part?: SettingsPart }) {
               );
             })}
           </div>
-          {efforts.length > 0 && (
+          {(efforts.length > 0 || legacy !== undefined) && (
             <div id="claude-effort" className="space-y-1">
               <div className="px-1 text-xs text-muted">Effort는 모델마다 따로 저장합니다. /effort로 고른 값과 같습니다</div>
               <div className="divide-y divide-line rounded-xl bg-surface">
                 {efforts.map(({ model }) => {
                   const key = modelEffortKey(model);
+                  const inherited = inheritedEffort(model, value(key), legacy);
                   return (
                     <Row key={key} setting={key} label={`Effort · ${modelName(model)}`} hint={hintOf(key)} busy={saver.busy(key)} onClick={() => setSheet(key)}>
                       <span className="flex min-w-0 items-center gap-1 text-sm text-muted">
-                        <span className="truncate">{valueText(key, value(key), models)}</span>
+                        <span className="truncate">{inherited ? `${EFFORT_LABEL[inherited]} (이전 모델 공통)` : valueText(key, value(key), models)}</span>
                         <Icon.chevronRight className="size-4 shrink-0" />
                       </span>
                     </Row>
                   );
                 })}
+                {legacy !== undefined && (
+                  <Row setting={LEGACY_EFFORT} label={LABEL[LEGACY_EFFORT]} hint={hintOf(LEGACY_EFFORT, legacyHint)} busy={saver.busy(LEGACY_EFFORT)} onClick={() => setSheet(LEGACY_EFFORT)}>
+                    <span className="flex min-w-0 items-center gap-1 text-sm text-muted">
+                      <span className="truncate">{valueText(LEGACY_EFFORT, legacy, models)}</span>
+                      <Icon.chevronRight className="size-4 shrink-0" />
+                    </span>
+                  </Row>
+                )}
               </div>
             </div>
           )}
@@ -490,7 +471,7 @@ export function ClaudeSettingsSection({ part }: { part?: SettingsPart }) {
         </>
       )}
       {open?.key === "model" && <ModelSheet value={value("model")} models={models} onPick={pick("model")} onClose={() => setSheet(null)} />}
-      {open?.kind === "choice" && (
+      {open?.kind === "choice" && open.key !== LEGACY_EFFORT && (
         <ChoiceSheet
           title={LABEL[open.key]}
           values={open.values}
@@ -506,8 +487,20 @@ export function ClaudeSettingsSection({ part }: { part?: SettingsPart }) {
           title={`Effort · ${modelName(openEffort.model)}`}
           values={openEffort.levels}
           labels={EFFORT_LABEL}
+          defaultHint={afterClear ? `이 설정을 지우고 이전 모델 공통 값(${EFFORT_LABEL[afterClear]})을 씁니다` : undefined}
           value={value(sheet!)}
           onPick={pick(sheet!)}
+          onClose={() => setSheet(null)}
+        />
+      )}
+      {sheet === LEGACY_EFFORT && (
+        <ChoiceSheet
+          title={LABEL[LEGACY_EFFORT]}
+          values={typeof legacy === "string" ? [legacy] : []}
+          labels={EFFORT_LABEL}
+          defaultHint="이 설정을 지웁니다. 이전 모델도 모델별 값이나 Claude Code 기본값을 씁니다"
+          value={legacy}
+          onPick={pick(LEGACY_EFFORT)}
           onClose={() => setSheet(null)}
         />
       )}

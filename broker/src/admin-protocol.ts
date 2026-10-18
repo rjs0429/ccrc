@@ -7,15 +7,47 @@ export type SettingField =
   | { key: string; kind: "text"; pattern: RegExp }
   | { key: string; kind: "bool" | "rules" | "dirs" };
 
+// Claude Code keeps the effort each model starts with as modelSettings.<model>.effortLevel, keyed by the canonical
+// model name, as /effort saves it. The top-level effortLevel of the user settings reaches only the models older than
+// per-model effort, and of those only the ones without their own.
+export const MODEL_EFFORTS = ["low", "medium", "high", "xhigh"];
+export const LEGACY_EFFORT = "effortLevel";
+const LEGACY_EFFORT_MODELS = new Set([
+  "claude-3-5-haiku",
+  "claude-3-5-sonnet",
+  "claude-3-7-sonnet",
+  "claude-haiku-4-5",
+  "claude-sonnet-4-0",
+  "claude-sonnet-4-5",
+  "claude-sonnet-4-6",
+  "claude-sonnet-5",
+  "claude-opus-4-0",
+  "claude-opus-4-1",
+  "claude-opus-4-5",
+  "claude-opus-4-6",
+  "claude-opus-4-7",
+  "claude-opus-4-8",
+  "claude-opus-5",
+  "claude-fable-5",
+  "claude-fable-5-1",
+  "claude-mythos-5",
+  "claude-mythos-5-1",
+]);
+
+// "default" is how Claude Code's pickers name having no model setting; as a value of the setting it is taken for a
+// model name.
+export const MODEL_DEFAULT = "default";
+
 // Keys of Claude Code's user settings the web client may change; "a.b" is key b inside object a.
 // Keys that run commands or widen what Claude Code may do unasked are left out on purpose.
 export const CLAUDE_SETTING_FIELDS: SettingField[] = [
-  { key: "model", kind: "text", pattern: /^[A-Za-z0-9][\w.:/@[\]-]{0,199}$/ },
+  { key: "model", kind: "text", pattern: /^(?!default$)[A-Za-z0-9][\w.:/@[\]-]{0,199}$/i },
   { key: "permissions.defaultMode", kind: "choice", values: ["default", "acceptEdits", "plan", "auto"] },
   { key: "permissions.allow", kind: "rules" },
   { key: "permissions.ask", kind: "rules" },
   { key: "permissions.deny", kind: "rules" },
   { key: "permissions.additionalDirectories", kind: "dirs" },
+  { key: LEGACY_EFFORT, kind: "choice", values: MODEL_EFFORTS },
   { key: "alwaysThinkingEnabled", kind: "bool" },
   { key: "showThinkingSummaries", kind: "bool" },
   { key: "language", kind: "text", pattern: /^[\p{L}\p{M}][\p{L}\p{M} ()-]{0,39}$/u },
@@ -25,14 +57,15 @@ export const CLAUDE_SETTING_FIELDS: SettingField[] = [
   { key: "respectGitignore", kind: "bool" },
 ];
 
-// Claude Code keeps the effort each model starts with as modelSettings.<model>.effortLevel, keyed by the canonical
-// model name, as /effort saves it; a top-level effortLevel reaches only models older than the 5.5 ones.
-export const MODEL_EFFORTS = ["low", "medium", "high", "xhigh"];
 const MODEL_NAME = /^[a-z0-9][a-z0-9_-]{0,99}$/;
 const EFFORT_KEY = /^modelSettings\.([^.]+)\.effortLevel$/;
 
 export function isModelName(name: string): boolean {
   return MODEL_NAME.test(name) && !Object.hasOwn(Object.prototype, name);
+}
+
+export function takesLegacyEffort(model: string): boolean {
+  return LEGACY_EFFORT_MODELS.has(model);
 }
 
 export function modelEffortKey(model: string): string {
@@ -81,9 +114,9 @@ export function isAbsoluteDir(dir: string): boolean {
     .every((part) => part !== "" && part !== "." && part !== "..");
 }
 
-// Why a key of the file is not offered here: it runs commands, it concerns security, it is the effort kept before
-// efforts were kept per model, or its current value is not one that can be picked here.
-export type SettingNoteReason = "command" | "security" | "legacy" | "value";
+// Why a key of the file is not offered here: it runs commands, it concerns security, or its
+// current value is not one that can be picked here.
+export type SettingNoteReason = "command" | "security" | "value";
 
 export interface ClaudeSettingsView {
   path: string;

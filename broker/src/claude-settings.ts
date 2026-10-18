@@ -242,7 +242,6 @@ export class ClaudeSettings {
     for (const key of Object.keys(rest)) {
       if (COMMAND_KEYS.has(key)) notes.push({ key, reason: "command" });
       else if (SECURITY_KEYS.has(key)) notes.push({ key, reason: "security" });
-      else if (key === "effortLevel") notes.push({ key, reason: "legacy" });
     }
     if (isObject(rest.permissions)) for (const key of Object.keys(rest.permissions)) notes.push({ key: `permissions.${key}`, reason: "security" });
     if (isObject(rest.env)) rest.env = Object.fromEntries(Object.keys(rest.env).map((k) => [k, HIDDEN]));

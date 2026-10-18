@@ -35,7 +35,7 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
           key={v}
           onClick={() => onChange(v)}
           aria-pressed={value === v}
-          className={`rounded-md px-2.5 py-1 text-[13px] ${value === v ? "bg-surface font-medium shadow-sm" : "text-muted"}`}
+          className={`relative min-w-11 rounded-md px-2.5 py-1 text-[13px] after:absolute after:inset-x-0 after:-inset-y-2.5 ${value === v ? "bg-surface font-medium shadow-sm" : "text-muted"}`}
         >
           {label}
         </button>

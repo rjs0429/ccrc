@@ -139,6 +139,7 @@ test("other values must fit their key", () => {
   const { hash } = settings.read();
   const bad: Record<string, unknown> = {
     model: "opus model",
+    effortLevel: "max",
     language: "korean; rm",
     theme: "custom:mine",
     "modelSettings.claude-opus-5-5.effortLevel": "max",
@@ -146,6 +147,7 @@ test("other values must fit their key", () => {
     respectGitignore: 1,
   };
   for (const [key, value] of Object.entries(bad)) refused(() => settings.update({ [key]: value }, hash), 400, "invalid");
+  for (const model of ["default", "Default"]) refused(() => settings.update({ model }, hash), 400, "invalid");
   refused(() => settings.update({}, hash), 400, "invalid");
   refused(() => settings.update([], hash), 400, "invalid");
   refused(() => settings.update({ model: "sonnet" }, undefined), 400, "invalid");
@@ -204,6 +206,14 @@ test("a backup that would take an existing name gets the next millisecond", () =
   assert.ok(backups(dir).includes("settings.json.ccrc-20261014T020000001Z.bak"));
 });
 
+test("\"default\" as the model is shown as a value that cannot be picked here, and can be removed", () => {
+  const { file, settings } = setup({ model: "default" });
+  const view = settings.read();
+  assert.deepEqual(view.notes, [{ key: "model", reason: "value" }]);
+  assert.deepEqual(settings.update({ model: null }, view.hash).changed, ["model"]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), {});
+});
+
 test("each model's effort is its own key under modelSettings; the rest of modelSettings stays read-only", () => {
   const { file, settings } = setup({
     effortLevel: "high",
@@ -214,12 +224,9 @@ test("each model's effort is its own key under modelSettings; the rest of modelS
     },
   });
   const view = settings.read();
-  assert.deepEqual(view.values, { "modelSettings.claude-opus-5-5.effortLevel": "xhigh", "modelSettings.claude-opus-4-8.effortLevel": "max" });
-  assert.deepEqual(view.notes, [
-    { key: "modelSettings.claude-opus-4-8.effortLevel", reason: "value" },
-    { key: "effortLevel", reason: "legacy" },
-  ]);
-  assert.deepEqual(view.rest, { effortLevel: "high", modelSettings: { "claude-opus-5-5": { maxEffortLevel: "high" }, "Claude Opus": { effortLevel: "low" } } });
+  assert.deepEqual(view.values, { effortLevel: "high", "modelSettings.claude-opus-5-5.effortLevel": "xhigh", "modelSettings.claude-opus-4-8.effortLevel": "max" });
+  assert.deepEqual(view.notes, [{ key: "modelSettings.claude-opus-4-8.effortLevel", reason: "value" }]);
+  assert.deepEqual(view.rest, { modelSettings: { "claude-opus-5-5": { maxEffortLevel: "high" }, "Claude Opus": { effortLevel: "low" } } });
 
   let { changed } = settings.update({ "modelSettings.claude-opus-5-5.effortLevel": null, "modelSettings.claude-opus-4-8.effortLevel": null, "modelSettings.claude-sonnet-5-5.effortLevel": "low" }, view.hash);
   assert.equal(changed.length, 3);
@@ -236,6 +243,11 @@ test("each model's effort is its own key under modelSettings; the rest of modelS
   fresh.settings.update({ "modelSettings.claude-haiku-5-5.effortLevel": "high" }, fresh.settings.read().hash);
   fresh.settings.update({ "modelSettings.claude-haiku-5-5.effortLevel": null }, fresh.settings.read().hash);
   assert.deepEqual(JSON.parse(fs.readFileSync(fresh.file, "utf8")), { theme: "dark" }, "an emptied modelSettings goes");
+
+  ({ changed } = settings.update({ effortLevel: null }, settings.read().hash));
+  assert.deepEqual(changed, ["effortLevel"], "the top-level effortLevel can be removed");
+  ({ changed } = settings.update({ effortLevel: "high" }, settings.read().hash));
+  assert.deepEqual(changed, ["effortLevel"], "and put back, as undo does");
 
   const odd = setup({ modelSettings: "high" });
   assert.deepEqual(odd.settings.read().values, {});
