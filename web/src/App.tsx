@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Notice, Spinner } from "./components/ui.tsx";
 import { t } from "./i18n/index.ts";
-import { useLang } from "./i18n/react.ts";
+import { useLangKey } from "./i18n/react.ts";
 import { errorText } from "./labels.ts";
 import { Chat } from "./screens/Chat.tsx";
 import { Home } from "./screens/Home.tsx";
@@ -51,9 +51,9 @@ function Toast() {
   );
 }
 
-// A new language draws every screen again from the start.
+// A new language or locale draws every screen again from the start.
 export function App() {
-  return <Screens key={useLang()} />;
+  return <Screens key={useLangKey()} />;
 }
 
 function Screens() {

@@ -21,6 +21,9 @@ export const lang = (): Lang => current;
 // The locale dates and numbers are written in.
 export const locale = (): string => currentLocale;
 
+// What the screens are drawn for: the language and its locale, since en-US and en-GB write times differently.
+export const langKey = (): string => `${current} ${currentLocale}`;
+
 export function onLang(listener: () => void): () => void {
   listeners.add(listener);
   return () => void listeners.delete(listener);

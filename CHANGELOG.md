@@ -207,6 +207,8 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ### Upgrading from 0.7
 
+- A phone whose first preferred language is not Korean shows the app in English after the update. To keep Korean,
+  choose 한국어 under Settings > Language.
 - Phones that turned notifications on under 0.7 are written to in Korean until the app is opened once after the
   update, when it tells the broker its language.
 - After `ccrc update`, reload VS Code windows (Developer: Reload Window): updating from 0.7 does not say so, and a

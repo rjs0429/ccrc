@@ -1,8 +1,8 @@
 import { createElement, Fragment, useSyncExternalStore, type ReactNode } from "react";
-import { lang, onLang, translate, type Lang } from "./index.ts";
+import { langKey, onLang, translate } from "./index.ts";
 
-export function useLang(): Lang {
-  return useSyncExternalStore(onLang, lang);
+export function useLangKey(): string {
+  return useSyncExternalStore(onLang, langKey);
 }
 
 // t() for a sentence with elements in it: `{name}` takes vars.name, which may be an element.

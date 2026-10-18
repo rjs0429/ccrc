@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { clock, dateTime, dayLabel, fullTime, monthDay, num, shortDateTime } from "../../web/src/i18n/format.ts";
-import { deviceLang, fill, k, lang, locale, localeOf, onLang, resolveLang, setLang, t } from "../../web/src/i18n/index.ts";
+import { deviceLang, fill, k, lang, langKey, locale, localeOf, onLang, resolveLang, setLang, t } from "../../web/src/i18n/index.ts";
 import { allowAlwaysLabel, duration, errorText, fastReasonText, hostLabel, idleText, noteText, relTime, sessionTitle, usageResetText } from "../../web/src/labels.ts";
 
 // Some ICU versions put a narrow no-break space before AM/PM.
@@ -85,6 +85,24 @@ test("a change of language is told once, and not when nothing changes", () => {
   setLang("en");
   setLang("ko");
   assert.equal(calls, 2);
+});
+
+test("a change of the English locale alone is told and changes what the screens are drawn for", () => {
+  let calls = 0;
+  const off = onLang(() => calls++);
+  try {
+    setLang("en", ["en-US"]);
+    const us = langKey();
+    setLang("en", ["en-GB"]);
+    assert.equal(calls, 2);
+    assert.equal(lang(), "en");
+    assert.notEqual(langKey(), us);
+    setLang("en", ["en-GB", "ko-KR"]);
+    assert.equal(calls, 2);
+  } finally {
+    off();
+    setLang("ko");
+  }
 });
 
 test("dates, times and numbers in each language", () => {
