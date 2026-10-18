@@ -374,9 +374,10 @@ while setup runs, setup writes it into the service unit too.
 The config and state folders (`~/.config/ccrc`, `~/.local/state/ccrc`) are private to you (0700) and the files in them
 0600; the install folder (`~/.local/share/ccrc`) holds code and Node.js and has the usual permissions. After changing
 or revoking the API key, also delete the update and rollback backups that still hold the old one
-(`~/.local/state/ccrc/backup/update-*`, `rollback-*`). Editing Claude Code's settings from the phone keeps the last ten
-versions next to the file as `settings.json.ccrc-<time>.bak`; ccrc's file viewer treats them as secret, as it does the
-file.
+(`~/.local/state/ccrc/backup/update-*`, `rollback-*`). Editing Claude Code's settings from the phone saves each change
+at once and backs the file up next to it as `settings.json.ccrc-<time>.bak`, once per ten minutes of editing: the copy
+from before ccrc first changed the file stays, and so do the last ten. ccrc's file viewer treats them as secret, as it
+does the file.
 
 ## Security model
 

@@ -49,6 +49,7 @@ import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { SentIndex, sentCall, type SentCall } from "./sent-files.ts";
+import { SessionCwds } from "./session-cwd.ts";
 import { agentItem, agentTranscript, workflowAgents } from "./subagents.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
 import { gitFolderInfo, removeWorktree, worktreeState, worktreeStatus, worktreeTarget, type WorktreeTarget } from "./worktrees.ts";
@@ -213,6 +214,7 @@ export class SessionManager extends EventEmitter {
   private forks = new Map<string, { at: number; done: Promise<ForkResult>; sent: boolean }>();
   private exact = new Map<string, { size: number; model: string }>();
   private sent = new SentIndex();
+  private cwds = new SessionCwds();
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string, env?: LaunchEnv) => Promise<UsageInfo> = probeUsage;
   // Whether a phone can be reached now (connected, or the signed-in device gets notifications), so a VS Code
@@ -257,7 +259,7 @@ export class SessionManager extends EventEmitter {
 
   private async infos(): Promise<SDKSessionInfo[]> {
     if (this.catalog && Date.now() - this.catalog.at < CATALOG_MS) return this.catalog.list;
-    const list = await listSessions();
+    const list = await this.cwds.fill(await listSessions());
     this.catalog = { at: Date.now(), list };
     return list;
   }

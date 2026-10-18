@@ -6,7 +6,10 @@ import {
   MAX_DIRS,
   MAX_RULES,
   isAbsoluteDir,
+  isModelName,
   isPermissionRule,
+  modelEffortKey,
+  settingField,
   type ClaudeSettingsView,
   type SettingField,
   type SettingNoteReason,
@@ -14,9 +17,10 @@ import {
 import { paths } from "./paths.ts";
 
 const KEEP_BACKUPS = 10;
+// Changes made this soon after the newest backup belong to the same sitting, which that backup already covers.
+const SITTING_MS = 10 * 60_000;
 const HIDDEN = "••••";
-const FIELDS = new Map(CLAUDE_SETTING_FIELDS.map((f) => [f.key, f]));
-const BACKUP_STAMP = /\.ccrc-\d{8}T\d{9}Z\.bak$/;
+const BACKUP_STAMP = /\.ccrc-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(\d{3})Z\.bak$/;
 
 // Keys whose values are commands Claude Code runs, and keys that decide what it may do or load unasked.
 const COMMAND_KEYS = new Set([
@@ -79,28 +83,34 @@ export function claudeSettingsFile(): string {
 }
 
 function getKey(data: Obj, key: string): unknown {
-  const [outer, inner] = key.split(".");
-  if (inner === undefined) return data[outer];
-  const obj = data[outer];
-  return isObject(obj) ? obj[inner] : undefined;
+  let cur: unknown = data;
+  for (const part of key.split(".")) {
+    if (!isObject(cur) || !Object.hasOwn(cur, part)) return undefined;
+    cur = cur[part];
+  }
+  return cur;
 }
 
-// Sets or, for undefined, removes a key; an object this empties goes too.
+// Sets or, for undefined, removes a key; objects this empties go too.
 function setKey(data: Obj, key: string, value: unknown): void {
-  const [outer, inner] = key.split(".");
-  if (inner === undefined) {
-    if (value === undefined) delete data[outer];
-    else data[outer] = value;
+  const parts = key.split(".");
+  const last = parts.pop()!;
+  const chain: Obj[] = [data];
+  for (const [i, part] of parts.entries()) {
+    const obj = Object.hasOwn(chain[i], part) ? chain[i][part] : undefined;
+    if (obj !== undefined && !isObject(obj)) throw new SettingsError(422, "not_object", parts.slice(0, i + 1).join("."));
+    if (obj === undefined) {
+      if (value === undefined) return;
+      chain[i][part] = {};
+    }
+    chain.push(chain[i][part] as Obj);
+  }
+  if (value !== undefined) {
+    chain[parts.length][last] = value;
     return;
   }
-  const obj = data[outer];
-  if (obj !== undefined && !isObject(obj)) throw new SettingsError(422, "not_object", outer);
-  if (value === undefined) {
-    if (!obj) return;
-    delete obj[inner];
-    if (!Object.keys(obj).length) delete data[outer];
-  } else if (obj) obj[inner] = value;
-  else data[outer] = { [inner]: value };
+  delete chain[parts.length][last];
+  for (let i = parts.length; i > 0 && !Object.keys(chain[i]).length; i--) delete chain[i - 1][parts[i - 1]];
 }
 
 function fits(f: SettingField, v: unknown): boolean {
@@ -146,9 +156,14 @@ function stamp(ms: number): string {
   return new Date(ms).toISOString().replace(/[-:.]/g, "");
 }
 
-// Claude Code's user settings file, edited key by key from the web client. Only the keys in
-// CLAUDE_SETTING_FIELDS change; the rest of the file, its layout and its mode stay. A file that is not
-// strict JSON is never rewritten, so comments in it survive.
+function stampTime(name: string): number | undefined {
+  const m = BACKUP_STAMP.exec(name);
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]) : undefined;
+}
+
+// Claude Code's user settings file, edited key by key from the web client. Only the keys settingField
+// allows change; the rest of the file, its layout and its mode stay. A file that is not strict JSON is
+// never rewritten, so comments in it survive.
 export class ClaudeSettings {
   readonly file: string;
 
@@ -166,7 +181,7 @@ export class ClaudeSettings {
     if (!isObject(changes) || typeof baseHash !== "string") throw new SettingsError(400, "invalid");
     const keys = Object.keys(changes);
     if (!keys.length) throw new SettingsError(400, "invalid");
-    for (const key of keys) if (!FIELDS.has(key)) throw new SettingsError(403, "not_allowed", key);
+    for (const key of keys) if (!settingField(key)) throw new SettingsError(403, "not_allowed", key);
     const cur = this.load();
     if (cur.hash !== baseHash) throw new SettingsError(409, "changed");
     if (!cur.data) throw new SettingsError(422, cur.problem ?? "not_json");
@@ -174,7 +189,7 @@ export class ClaudeSettings {
     const changed: string[] = [];
     for (const key of keys) {
       const before = getKey(cur.data, key);
-      const value = checkValue(FIELDS.get(key)!, changes[key], before);
+      const value = checkValue(settingField(key)!, changes[key], before);
       if (JSON.stringify(value) === JSON.stringify(before)) continue;
       setKey(next, key, value);
       changed.push(key);
@@ -216,7 +231,8 @@ export class ClaudeSettings {
     const values: Obj = {};
     const notes: { key: string; reason: SettingNoteReason }[] = [];
     const rest = structuredClone(l.data);
-    for (const f of CLAUDE_SETTING_FIELDS) {
+    const models = isObject(l.data.modelSettings) ? Object.keys(l.data.modelSettings).filter(isModelName) : [];
+    for (const f of [...CLAUDE_SETTING_FIELDS, ...models.map((m) => settingField(modelEffortKey(m))!)]) {
       const v = getKey(l.data, f.key);
       if (v === undefined) continue;
       values[f.key] = v;
@@ -257,17 +273,21 @@ export class ClaudeSettings {
     }
   }
 
-  // settings.json.ccrc-<UTC time>.bak; names sort by time, and only the newest KEEP_BACKUPS stay.
+  // settings.json.ccrc-<UTC time>.bak; names sort by time. The oldest, the file as it was before ccrc first changed
+  // it, stays, and so do the newest KEEP_BACKUPS; one backup serves each sitting.
   private backup(raw: string, now: number): void {
     const dir = path.dirname(this.file);
     const prefix = `${path.basename(this.file)}.ccrc-`;
+    const backups = () =>
+      fs
+        .readdirSync(dir)
+        .filter((n) => n.startsWith(prefix) && BACKUP_STAMP.test(n))
+        .sort();
+    const newest = stampTime(backups().at(-1) ?? "");
+    if (newest !== undefined && now >= newest && now - newest < SITTING_MS) return;
     let t = now;
     while (fs.existsSync(path.join(dir, `${prefix}${stamp(t)}.bak`))) t++;
     fs.writeFileSync(path.join(dir, `${prefix}${stamp(t)}.bak`), raw, { mode: 0o600, flag: "wx" });
-    const backups = fs
-      .readdirSync(dir)
-      .filter((n) => n.startsWith(prefix) && BACKUP_STAMP.test(n))
-      .sort();
-    for (const name of backups.slice(0, -KEEP_BACKUPS)) fs.rmSync(path.join(dir, name), { force: true });
+    for (const name of backups().slice(1, -KEEP_BACKUPS)) fs.rmSync(path.join(dir, name), { force: true });
   }
 }

@@ -26,6 +26,17 @@ your version and the new one, and the lines under "Breaking" separately.
   width. The Context ring moved next to the paperclip: one line reads paperclip, Context, model, Effort, agents …
   permission mode, send; when that does not fit, line 1 holds the agent chip and the permission mode, line 2 the rest.
   The new-session screen has neither the ring nor the agent chip.
+- Claude Code settings on the phone are saved as soon as they are changed: a switch or choice when it is picked, text
+  on Enter or on leaving the field, a rule or folder when it is added or removed. A toast says what was saved and can
+  undo it; the save bar, "변경 취소" and the confirmation sheet are gone. Saves go one at a time in the order made,
+  each against the file the last one left, and a key changed again before its turn is saved once. When the file
+  changed meanwhile, the change still goes through if its own key was left alone; otherwise the file's value is shown.
+- Backups of Claude Code's settings (`settings.json.ccrc-<time>.bak`) are made once per ten minutes of editing instead
+  of once per save, and the one from before ccrc first changed the file is kept besides the last ten.
+- Effort in the Claude Code settings is set per model (`modelSettings.<model>.effortLevel`, where `/effort` saves it),
+  for each model Claude Code offers with effort levels and each the file names. A top-level `effortLevel` (what the
+  Effort row of 0.7 saved) still reaches the older models, such as Fable 5.1 and Opus 5, that have no effort of their
+  own, but not the 5.5 ones: it is shown on those models' rows and on a row of its own, where it can only be removed.
 
 ### Fixed
 
@@ -37,6 +48,14 @@ your version and the new one, and the lines under "Breaking" separately.
 - The composer no longer moves while typing in a session whose agents start and end: the agent chip coming and going
   changed the number of chip lines, and its running count its width. The input also fits its text again when the
   window's size changes, so the first key after turning the phone no longer grows it by a few pixels.
+- Sessions whose transcript starts with a long first message (one typed while Claude worked, with pasted text or
+  images) were listed under a folder with no name and could not be opened: their working folder now comes from the
+  transcript, or, when it names none, from the other sessions of the same project folder.
+- Picking "Default (recommended)" in the phone's model sheet saved `"model": "default"`, which Claude Code takes for a
+  model name, so the effort set for the default model did not apply. That entry is now the sheet's "기본값", which
+  removes the key, and "default" is not saved as a model; one already in the file is shown as it is, with a hint.
+- Turning notifications off and on again on a phone keeps the choices made before (VS Code delay, turn end, tool
+  names) instead of going back to the defaults.
 
 ### Security
 
