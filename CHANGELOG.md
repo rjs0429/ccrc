@@ -6,6 +6,23 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Changed
+
+- Long sessions open faster on the phone. A conversation opens with its latest 40 items or so, and earlier ones load as
+  you scroll up, keeping your place; a search hit or a subagent far back opens with the part around it, and the part
+  after it loads as it comes into view. The broker keeps a conversation it has built until its transcript changes, reads
+  a compacted transcript from its last compaction only, and compresses what it sends over the WebSocket
+  (permessage-deflate).
+- The rewind list, the changes sheet, the to-do panel, the agent chip and the agent map cover the whole conversation,
+  whatever part of it the phone has loaded.
+
+### Fixed
+
+- The conversation no longer moves while subagents or background tasks report progress. It stays at the bottom only
+  while you are at the bottom, keeps what you are reading in place otherwise (Safari has no scroll anchoring of its
+  own), and marks new content only when a message, a request or a reply comes. A running subagent's card no longer
+  shrinks and grows with each step, and a message that wraps as you type no longer pulls the conversation up.
+
 ## [0.7.3] - 2026-10-18
 
 ### Fixed

@@ -1,4 +1,4 @@
-import { memo, useContext, useState } from "react";
+import { memo, useContext, useLayoutEffect, useRef, useState } from "react";
 import { hideDialogCommands } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, QueuedMessage, SubagentActivity } from "../../../broker/src/protocol.ts";
 import { clock, noteText } from "../labels.ts";
@@ -131,9 +131,26 @@ function Thinking({ text }: { text: string }) {
   );
 }
 
-function SubActivity({ sub }: { sub: SubagentActivity }) {
+// While its agent runs the activity never gets shorter, so each step it reports does not move what is below it.
+function SubActivity({ sub, running }: { sub: SubagentActivity; running: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const tallest = useRef(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (!running) {
+      tallest.current = 0;
+      el.style.minHeight = "";
+      return;
+    }
+    const height = el.getBoundingClientRect().height;
+    if (height > tallest.current) {
+      tallest.current = height;
+      el.style.minHeight = `${height}px`;
+    }
+  });
   return (
-    <div className="space-y-1 border-t border-line px-3 py-2">
+    <div ref={ref} className="space-y-1 border-t border-line px-3 py-2">
       <div className="text-xs text-muted">도구 {sub.tools}회</div>
       {sub.recent.map((r, n) => (
         <div key={n} className="truncate font-mono text-[12px] text-muted">
@@ -175,7 +192,7 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
         {sub && !active && !open && <span className="shrink-0 text-xs text-muted">도구 {sub.tools}회</span>}
         <Icon.chevronDown className={`size-4 shrink-0 text-muted transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
-      {sub && (active || open) && <SubActivity sub={sub} />}
+      {sub && (active || open) && <SubActivity sub={sub} running={active} />}
       {open && (
         <div className="space-y-2 border-t border-line px-3 py-2.5">
           {item.patch ? (

@@ -1,7 +1,20 @@
 import type { WebSocket } from "ws";
 import type { Audit } from "./audit.ts";
 import type { Leases } from "./lease.ts";
-import { CALL_OPS, FOLDER_OPS, PERMISSION_MODES, type Answer, type CallOp, type ClientMsg, type EffortName, type ServerMsg, type WorktreeChoice, type WorktreeRemoved } from "./protocol.ts";
+import {
+  CALL_OPS,
+  FOLDER_OPS,
+  PERMISSION_MODES,
+  type Answer,
+  type CallOp,
+  type ClientMsg,
+  type EffortName,
+  type HistoryPage,
+  type ServerMsg,
+  type SnapshotPart,
+  type WorktreeChoice,
+  type WorktreeRemoved,
+} from "./protocol.ts";
 import { RemoteActivity } from "./remote-activity.ts";
 import type { SessionManager } from "./sessions/manager.ts";
 import { cleanTitle } from "./titles.ts";
@@ -68,9 +81,13 @@ export class Hub {
   private viewing: string | null = null;
   private viewSeq = 0;
   private focus?: string;
+  // The first item the phone holds of the viewed session, which a snapshot sent again keeps holding from.
+  private from?: string;
   private unwatch?: () => void;
-  // Items last sent for the viewed session, by id, as JSON.
+  // For a session followed through its transcript: the items sent for it by id, as JSON, and the last item the phone
+  // holds, after which items are new.
   private shown = new Map<string, string>();
+  private last?: string;
   private changedTimer?: NodeJS.Timeout;
   private pinger: NodeJS.Timeout;
   private alive = new WeakSet<WebSocket>();
@@ -248,7 +265,8 @@ export class Hub {
         return;
       case "view":
         if (msg.focus !== undefined) str(msg.focus, 128);
-        await this.setView(msg.sessionId === null ? null : sid(msg.sessionId), msg.focus);
+        if (msg.from !== undefined) str(msg.from, 128);
+        await this.setView(msg.sessionId === null ? null : sid(msg.sessionId), msg.focus, msg.from ?? null);
         return;
       case "visibility":
         this.visible = msg.visible === true;
@@ -390,6 +408,10 @@ export class Hub {
         reply({ ok: true, data: await this.rewindConversation(sessionId, args) });
         return;
       }
+      if (msg.op === "history") {
+        reply({ ok: true, data: await this.history(sessionId, args) });
+        return;
+      }
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
         const detail = Object.fromEntries(
           Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style", "messageId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),
@@ -486,11 +508,25 @@ export class Hub {
     this.audit.log("folder_denied", { device: this.device, cwd });
   }
 
+  // A page of the conversation the phone asked for, which it holds from then on.
+  private async history(sessionId: string, args: Record<string, unknown>): Promise<HistoryPage> {
+    for (const k of ["before", "after", "until"]) if (args[k] !== undefined) str(args[k], 128);
+    const page = (await this.manager.call(sessionId, "history", args)) as HistoryPage;
+    if (sessionId === this.viewing) {
+      if (args.before !== undefined && page.items.length) this.from = page.items[0].id;
+      if (!this.manager.isControlled(sessionId)) for (const i of page.items) this.shown.set(i.id, JSON.stringify(i));
+    }
+    return page;
+  }
+
   // Each view change gets a number; work for an older view is dropped when it finishes. A session
-  // without a process the broker drives is followed through its transcript.
-  private async setView(sessionId: string | null, focus?: string): Promise<void> {
+  // without a process the broker drives is followed through its transcript. A view of the same session asked for again
+  // keeps the part the phone holds; `from` null asks for the latest part.
+  private async setView(sessionId: string | null, focus?: string, from?: string | null): Promise<void> {
     const seq = ++this.viewSeq;
-    if (focus || sessionId !== this.viewing) this.focus = focus;
+    const same = sessionId === this.viewing;
+    if (focus || !same) this.focus = focus;
+    if (from !== undefined || !same) this.from = from ?? undefined;
     this.unwatch?.();
     this.unwatch = undefined;
     this.viewing = sessionId;
@@ -498,32 +534,42 @@ export class Hub {
     if (!sessionId) return;
     if (this.active && this.visible) this.manager.markSeen(sessionId);
     const controlled = this.manager.isControlled(sessionId);
-    const snap = await this.manager.snapshot(sessionId, this.focus);
+    const snap = await this.manager.snapshot(sessionId, { focus: this.focus, from: this.from });
     if (seq !== this.viewSeq || !this.active) return;
     if (!controlled && this.manager.isControlled(sessionId)) return;
-    this.shown = new Map(snap.items.map((i) => [i.id, JSON.stringify(i)]));
+    this.sent(snap);
     send(this.active, { t: "snapshot", sessionId, ...snap });
     if (!controlled) this.unwatch = this.manager.watch(sessionId, () => void this.pushChanges(sessionId, seq).catch(() => {}));
   }
 
-  // Sends only the items that changed since the last snapshot; a rewritten history gets a new snapshot.
+  private sent(snap: SnapshotPart): void {
+    this.from = snap.items[0]?.id;
+    this.shown = new Map([...snap.items, ...(snap.earlier ?? [])].map((i) => [i.id, JSON.stringify(i)]));
+    this.last = snap.items.at(-1)?.id;
+  }
+
+  // Sends the items that changed since they were sent and the ones added after the last item the phone holds, each
+  // with the item before it; a conversation that no longer has an item the phone holds gets a new snapshot.
   private async pushChanges(sessionId: string, seq: number): Promise<void> {
-    const snap = await this.manager.snapshot(sessionId, this.focus);
+    const { items, state } = await this.manager.conversation(sessionId);
     if (seq !== this.viewSeq || !this.active || this.manager.isControlled(sessionId)) return;
-    const before = [...this.shown.keys()];
-    const start = before.indexOf(snap.items[0]?.id ?? "");
-    const ids = new Set(snap.items.map((i) => i.id));
-    if ((before.length && start === -1) || before.slice(Math.max(start, 0)).some((id) => !ids.has(id))) {
-      this.shown = new Map(snap.items.map((i) => [i.id, JSON.stringify(i)]));
+    const at = new Map(items.map((i, n) => [i.id, n]));
+    const last = this.last === undefined ? -1 : at.get(this.last);
+    if (last === undefined || [...this.shown.keys()].some((id) => !at.has(id))) {
+      const snap = await this.manager.snapshot(sessionId, { focus: this.focus, from: this.from });
+      if (seq !== this.viewSeq || !this.active || this.manager.isControlled(sessionId)) return;
+      this.sent(snap);
       send(this.active, { t: "snapshot", sessionId, ...snap });
       return;
     }
-    for (const item of snap.items) {
+    items.forEach((item, n) => {
+      if (n <= last && !this.shown.has(item.id)) return;
       const json = JSON.stringify(item);
-      if (this.shown.get(item.id) === json) continue;
+      if (this.shown.get(item.id) === json) return;
       this.shown.set(item.id, json);
-      send(this.active, { t: "item", sessionId, item });
-    }
-    send(this.active, { t: "state", sessionId, state: snap.state });
+      send(this.active!, { t: "item", sessionId, item, prev: n > 0 ? items[n - 1].id : null });
+    });
+    this.last = items.at(-1)?.id;
+    if (state) send(this.active, { t: "state", sessionId, state });
   }
 }

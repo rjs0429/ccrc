@@ -13,6 +13,7 @@ import type {
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, type Me, type Options } from "./api.ts";
 import { syncBadge } from "./push.ts";
+import { joined, placed } from "./chatItems.ts";
 import { bindSent } from "./sentPreviews.ts";
 
 export type SettingsPage = "claude" | "alerts" | "account" | "status";
@@ -35,6 +36,14 @@ export interface Chat {
   stream?: { text: string; thinking: boolean };
   hasMore: boolean;
   gap?: SnapshotGap;
+  // The agent and to-do calls of the parts not loaded, in order, the last `earlierInGap` of them from the gap.
+  earlier?: DisplayItem[];
+  earlierInGap?: number;
+  // The number of the snapshot that set the items, counted over all chats.
+  snaps?: number;
+  // A part being loaded, or the one that could not be.
+  loading?: "earlier" | "gap";
+  failed?: "earlier" | "gap";
   // An item to scroll to once it has arrived, as a search result asks; `earlier` when it was said before a compaction.
   focus?: string;
   focusEarlier?: boolean;
@@ -136,10 +145,16 @@ export function leaveSettings(page?: SettingsPage): void {
   else navigate(page ? { name: "settings" } : { name: "home" });
 }
 
+// Asking again for the chat it shows, the phone keeps the part it holds.
 function viewMsg(): ClientMsg {
   const sessionId = state.route.name === "chat" ? state.route.sessionId : null;
-  const focus = sessionId && state.chat?.sessionId === sessionId ? state.chat.focus : undefined;
-  return { t: "view", sessionId, ...(focus ? { focus } : {}) };
+  const chat = sessionId && state.chat?.sessionId === sessionId ? state.chat : undefined;
+  const from = chat?.loaded && !chat.focus ? chat.items[0]?.id : undefined;
+  return { t: "view", sessionId, ...(chat?.focus ? { focus: chat.focus } : {}), ...(from ? { from } : {}) };
+}
+
+export function refreshChat(): void {
+  send(viewMsg());
 }
 
 // Opens a session at one of its items.
@@ -358,16 +373,36 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") badgeSoon();
 });
 
-function upsert(items: DisplayItem[], item: DisplayItem): DisplayItem[] {
-  const at = items.findIndex((i) => i.id === item.id);
-  if (at === -1) return [...items, item];
-  const next = items.slice();
-  next[at] = item;
-  return next;
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+function updateChat(sessionId: string, fn: (c: Chat) => Partial<Chat> | undefined): void {
+  setState((s) => {
+    if (!s.chat || s.chat.sessionId !== sessionId) return {};
+    const patch = fn(s.chat);
+    return patch ? { chat: { ...s.chat, ...patch } } : {};
+  });
 }
 
-function updateChat(sessionId: string, fn: (c: Chat) => Partial<Chat>): void {
-  setState((s) => (s.chat && s.chat.sessionId === sessionId ? { chat: { ...s.chat, ...fn(s.chat) } } : {}));
+const HISTORY_CHANGED = "history_changed";
+let snapshots = 0;
+
+// Loads the page before the first item the chat holds, or the next part of its gap.
+export async function loadMore(sessionId: string, part: "earlier" | "gap"): Promise<void> {
+  const c = state.chat;
+  if (!c || c.sessionId !== sessionId || !c.loaded || c.loading) return;
+  const gapAt = c.gap ? c.items.findIndex((i) => i.id === c.gap!.before) : -1;
+  const first = c.items[0]?.id;
+  if (part === "earlier" ? !c.hasMore || !first : gapAt < 1) return;
+  const snaps = c.snaps;
+  const args = part === "earlier" ? { before: first! } : { after: c.items[gapAt - 1].id, until: c.gap!.before };
+  updateChat(sessionId, () => ({ loading: part, failed: undefined }));
+  try {
+    const page = await call(sessionId, "history", args);
+    updateChat(sessionId, (c) => (c.snaps !== snaps ? { loading: undefined } : { loading: undefined, ...joined(c, part, page) }));
+  } catch (e) {
+    updateChat(sessionId, () => ({ loading: undefined, failed: part }));
+    if (e instanceof Error && e.message === HISTORY_CHANGED && state.chat?.sessionId === sessionId) send({ t: "view", sessionId });
+  }
 }
 
 function onServer(msg: ServerMsg): void {
@@ -391,11 +426,25 @@ function onServer(msg: ServerMsg): void {
       return;
     case "snapshot":
       for (const item of [...msg.items, ...(msg.state.queued ?? [])]) bindSent(msg.sessionId, item);
-      updateChat(msg.sessionId, () => ({ loaded: true, items: msg.items, pending: msg.pending, state: msg.state, stateAt: Date.now(), hasMore: msg.hasMore, gap: msg.gap, stream: undefined }));
+      updateChat(msg.sessionId, () => ({
+        loaded: true,
+        items: msg.items,
+        pending: msg.pending,
+        state: msg.state,
+        stateAt: Date.now(),
+        hasMore: msg.hasMore,
+        gap: msg.gap,
+        earlier: msg.earlier,
+        earlierInGap: msg.earlierInGap,
+        snaps: ++snapshots,
+        loading: undefined,
+        failed: undefined,
+        stream: undefined,
+      }));
       return;
     case "item":
       bindSent(msg.sessionId, msg.item);
-      updateChat(msg.sessionId, (c) => ({ items: upsert(c.items, msg.item) }));
+      updateChat(msg.sessionId, (c) => placed(c, msg.item, msg.prev));
       return;
     case "stream":
       updateChat(msg.sessionId, () => ({ stream: msg.text || msg.thinking ? { text: msg.text, thinking: msg.thinking } : undefined }));
@@ -408,7 +457,7 @@ function onServer(msg: ServerMsg): void {
       return;
     case "state":
       for (const q of msg.state.queued ?? []) bindSent(msg.sessionId, q);
-      updateChat(msg.sessionId, () => ({ state: msg.state, stateAt: Date.now() }));
+      updateChat(msg.sessionId, (c) => (same(c.state, msg.state) ? undefined : { state: msg.state, stateAt: Date.now() }));
       if (!state.options?.models.length) void refreshOptions();
       return;
     case "session_started": {

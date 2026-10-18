@@ -103,7 +103,7 @@ export async function buildServer(d: ServerDeps) {
     bodyLimit: 256 * 1024,
   });
   await app.register(cookie);
-  await app.register(websocket, { options: { maxPayload: 512 * 1024 } });
+  await app.register(websocket, { options: { maxPayload: 512 * 1024, perMessageDeflate: { threshold: 1024 } } });
   app.decorateRequest("device", "");
 
   app.addHook("onRequest", async (req, reply) => {

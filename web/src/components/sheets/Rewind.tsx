@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { RewindConversationResult, RewindResult } from "../../../../broker/src/protocol.ts";
+import type { DisplayItem, RewindConversationResult, RewindResult } from "../../../../broker/src/protocol.ts";
 import { clock, errorText, hostLabel, shortPath } from "../../labels.ts";
 import { call, composerInsert, navigate, toast, useApp } from "../../state.ts";
 import { openNewSession } from "../../screens/NewSession.tsx";
@@ -7,7 +7,7 @@ import { loadDraft, saveDraft } from "../Composer.tsx";
 import { actionable, excerpt, filesBack, filesDone, filesError, lastSeen, type UserMessage } from "../messageActions.ts";
 import { Button, Sheet } from "../ui.tsx";
 import { newId, startOf } from "./Fork.tsx";
-import { Failed, Waiting } from "./parts.tsx";
+import { Failed, Waiting, inOrder, useFound } from "./parts.tsx";
 import type { SheetProps } from "./types.ts";
 
 type Outcome = { result?: RewindResult; error?: string };
@@ -97,7 +97,12 @@ export function RewindSheet({ sessionId, initial, onClose }: SheetProps & { init
   const chosen = useRef<HTMLDivElement>(null);
 
   const items = chat?.items;
-  const messages = useMemo(() => (items ?? []).filter((i): i is UserMessage => i.kind === "user" && actionable(i)).reverse(), [items]);
+  const partial = Boolean(chat?.hasMore || chat?.gap);
+  const found = useFound(sessionId, "users", partial);
+  const messages = useMemo(() => {
+    const users = (list: DisplayItem[]) => list.filter((i): i is UserMessage => i.kind === "user" && actionable(i));
+    return inOrder(users(items ?? []), found && users(found)).reverse();
+  }, [items, found]);
   const st = chat?.state;
   const kind = st?.state ?? "inactive";
   const controllable = kind === "owned" || kind === "attached";

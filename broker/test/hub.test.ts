@@ -6,7 +6,7 @@ import { test } from "node:test";
 import type { Audit } from "../src/audit.ts";
 import { Hub } from "../src/hub.ts";
 import type { Leases } from "../src/lease.ts";
-import type { ServerMsg } from "../src/protocol.ts";
+import type { DisplayItem, ServerMsg } from "../src/protocol.ts";
 import { RemoteActivity } from "../src/remote-activity.ts";
 import type { SessionManager, Snapshot } from "../src/sessions/manager.ts";
 import { Uploads } from "../src/uploads.ts";
@@ -34,7 +34,12 @@ class FakeManager extends EventEmitter {
   delay = 0;
   watchers = 0;
   focuses: (string | undefined)[] = [];
+  froms: (string | undefined)[] = [];
   seen: string[] = [];
+  // What snapshots hold, the whole conversation, and the transcript watch's callback.
+  part: Partial<Snapshot> = {};
+  items: DisplayItem[] = [];
+  changed?: () => void;
   setViewed(): void {}
   markSeen(sessionId: string): void {
     this.seen.push(sessionId);
@@ -42,18 +47,27 @@ class FakeManager extends EventEmitter {
   isControlled(): boolean {
     return this.controlled;
   }
-  async snapshot(sessionId: string, focus?: string): Promise<Snapshot> {
-    this.focuses.push(focus);
+  async snapshot(sessionId: string, opts: { focus?: string; from?: string } = {}): Promise<Snapshot> {
+    this.focuses.push(opts.focus);
+    this.froms.push(opts.from);
     const state = this.controlled ? "attached" : "inactive";
     await new Promise((r) => setTimeout(r, this.delay));
-    return { items: [], pending: [], hasMore: false, state: { sessionId, cwd: "/", state, busy: false } };
+    return { items: [], pending: [], hasMore: false, state: { sessionId, cwd: "/", state, busy: false }, ...this.part };
   }
-  watch(): () => void {
+  async conversation(sessionId: string) {
+    return { items: this.items, state: { sessionId, cwd: "/", state: "inactive" as const, busy: false } };
+  }
+  watch(_sessionId: string, onChange: () => void): () => void {
     this.watchers++;
+    this.changed = onChange;
     return () => this.watchers--;
   }
-  async call(_sessionId: string, op: string): Promise<unknown> {
+  async call(_sessionId: string, op: string, args: Record<string, unknown>): Promise<unknown> {
     await new Promise((r) => setTimeout(r, this.delay));
+    if (op === "history") {
+      const end = this.items.findIndex((i) => i.id === args.before);
+      return { items: this.items.slice(Math.max(0, end - 2), end), more: end > 2 };
+    }
     return op;
   }
 }
@@ -247,5 +261,61 @@ test("opening a subagent's transcript is written to the audit log; following it,
   ]);
   const results = ws.sent.filter((m) => m.t === "call_result");
   assert.ok(results.length === calls.length && results.every((r) => r.ok), JSON.stringify(results));
+  hub.close();
+});
+
+const item = (id: string, text = ""): DisplayItem => ({ kind: "user", id, text });
+
+test("a view asked for again keeps the part the phone holds, the pages it loaded since included; a new one asks for the latest", async () => {
+  const { manager, hub, ws, view } = setup();
+  manager.items = ["i0", "i1", "i2", "i3", "i4", "i5"].map((id) => item(id));
+  manager.part = { items: manager.items.slice(4), hasMore: true };
+  view(A);
+  await sleep(20);
+  ws.emit("message", JSON.stringify({ t: "call", id: 1, sessionId: A, op: "history", args: { before: "i4" } }));
+  await sleep(20);
+  const page = ws.sent.find((m): m is Extract<ServerMsg, { t: "call_result" }> => m.t === "call_result" && m.id === 1);
+  assert.deepEqual((page?.data as { items: DisplayItem[] }).items.map((i) => i.id), ["i2", "i3"]);
+  manager.emit("attached", A);
+  await sleep(20);
+  ws.emit("message", JSON.stringify({ t: "view", sessionId: A, from: "i3" }));
+  await sleep(20);
+  view(A);
+  await sleep(20);
+  ws.emit("message", JSON.stringify({ t: "call", id: 2, sessionId: A, op: "history", args: { before: 7 } }));
+  await sleep(20);
+  assert.deepEqual(manager.froms, [undefined, "i2", "i3", undefined]);
+  assert.ok(ws.sent.some((m) => m.t === "call_result" && m.id === 2 && !m.ok));
+  hub.close();
+});
+
+test("a session followed through its transcript gets the items that changed or came after the phone's last, each with the one before it", async () => {
+  const { manager, hub, ws, view } = setup();
+  manager.items = ["i0", "i1", "i2", "i3", "i4", "i5", "i6"].map((id) => item(id));
+  manager.part = { items: manager.items.slice(4), hasMore: true, earlier: [manager.items[1]] };
+  view(A);
+  await sleep(20);
+  const sent = ws.sent.length;
+  manager.items = [item("i0"), item("i1", "changed aside"), item("i2"), item("i3", "changed, not held"), item("i4"), item("i5", "changed"), item("i6"), item("i7")];
+  manager.changed!();
+  await sleep(20);
+  const out = ws.sent.slice(sent).filter((m): m is Extract<ServerMsg, { t: "item" }> => m.t === "item");
+  assert.deepEqual(
+    out.map((m) => [m.item.id, m.prev]),
+    [
+      ["i1", "i0"],
+      ["i5", "i4"],
+      ["i7", "i6"],
+    ],
+  );
+  assert.ok(ws.sent.slice(sent).some((m) => m.t === "state"));
+  const again = ws.sent.length;
+  manager.changed!();
+  await sleep(20);
+  assert.deepEqual(ws.sent.slice(again).map((m) => m.t), ["state"]);
+  manager.items = manager.items.filter((i) => i.id !== "i5");
+  manager.changed!();
+  await sleep(20);
+  assert.deepEqual(ws.sent.slice(again + 1).map((m) => m.t), ["snapshot"]);
   hub.close();
 });

@@ -5,6 +5,7 @@ import { composerInsert, useApp } from "../../state.ts";
 import { DiffView, PatchStats } from "../diff/DiffView.tsx";
 import type { DiffLine } from "../diff/hunks.ts";
 import { Button, Icon, Sheet } from "../ui.tsx";
+import { Waiting, inOrder, useFound } from "./parts.tsx";
 import type { SheetProps } from "./types.ts";
 
 interface Change {
@@ -55,8 +56,10 @@ function quote(path: string, line: DiffLine, comment: string): string {
 
 export function ChangesSheet({ sessionId, onClose }: SheetProps) {
   const items = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat.items : NO_ITEMS));
+  const partial = useApp((s) => s.chat?.sessionId === sessionId && Boolean(s.chat.hasMore || s.chat.gap));
+  const found = useFound(sessionId, "changes", partial);
   const cwd = useApp((s) => (s.chat?.sessionId === sessionId ? s.chat.state?.cwd : undefined) ?? s.sessions?.find((x) => x.id === sessionId)?.cwd ?? "");
-  const files = useMemo(() => changedFiles(items), [items]);
+  const files = useMemo(() => changedFiles(inOrder(items, found)), [items, found]);
   const [open, setOpen] = useState<string | null>(null);
   const [pick, setPick] = useState<Picked | null>(null);
   const [comment, setComment] = useState("");
@@ -66,8 +69,9 @@ export function ChangesSheet({ sessionId, onClose }: SheetProps) {
   if (!file) {
     return (
       <Sheet title="변경 사항" onClose={onClose}>
-        <div className="mb-2 px-1 text-xs text-muted">화면에 불러온 대화에서 바뀐 파일만 보여 줍니다.</div>
-        {files.length === 0 && <div className="px-1 py-2 text-sm text-muted">바뀐 파일이 없습니다</div>}
+        {partial && found === undefined && <Waiting text="이전 대화의 변경을 불러오는 중입니다" />}
+        {partial && found === null && <div className="mb-2 px-1 text-xs text-muted">화면에 불러온 대화에서 바뀐 파일만 보여 줍니다.</div>}
+        {files.length === 0 && !(partial && found === undefined) && <div className="px-1 py-2 text-sm text-muted">바뀐 파일이 없습니다</div>}
         {files.map((f) => (
           <button key={f.file} onClick={() => setOpen(f.file)} className="flex w-full items-center gap-2 rounded-xl px-2 py-2.5 text-left hover:bg-surface-2">
             <span className="min-w-0 flex-1 font-mono text-[13px] break-all">{name(f.file)}</span>

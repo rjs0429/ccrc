@@ -326,25 +326,6 @@ test("the route needs a session, checks the query and keeps it out of the log", 
   await app.close();
 });
 
-test("a snapshot reaches back to a focused item within a bound, and brings a far one with the items around it", async () => {
-  const { tail } = await import("../src/sessions/manager.ts");
-  const items = Array.from({ length: 3000 }, (_, i) => ({ kind: "user" as const, id: `i${i}`, text: "" }));
-  const ids = (r: { items: { id: string }[] }) => [r.items[0].id, r.items.length];
-  assert.deepEqual(ids(tail(items)), ["i2600", 400]);
-  assert.deepEqual(ids(tail(items, "i2000")), ["i1980", 1020]);
-  assert.deepEqual(ids(tail(items, "i2900")), ["i2600", 400]);
-  const far = tail(items, "i100");
-  assert.deepEqual([far.items[0].id, far.items[219].id, far.items[220].id, far.items.length, far.hasMore], ["i80", "i299", "i2600", 620, true]);
-  assert.deepEqual(far.gap, { before: "i2600", skipped: 2600 - 300 });
-  assert.equal(tail(items, "i2000").gap, undefined);
-  const first = tail(items, "i0");
-  assert.deepEqual([first.items[0].id, first.items.length, first.hasMore, first.gap?.skipped], ["i0", 600, false, 2400]);
-  assert.deepEqual(ids(tail(items, "missing")), ["i2600", 400]);
-  assert.equal(tail(items, "i2000").hasMore, true);
-  assert.deepEqual(ids(tail(items.slice(0, 50), "i10")), ["i0", 50]);
-  assert.equal(tail(items.slice(0, 50), "i10").hasMore, false);
-});
-
 test("a message off the current conversation opens with the text of its own branch", async () => {
   const id = sid();
   const r = (uuid: string, parentUuid: string | null, type: "user" | "assistant", text: string, minute: number) =>

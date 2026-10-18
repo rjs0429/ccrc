@@ -470,3 +470,89 @@ test("a reload keeps the files a SendUserFile call sent", async () => {
   ]);
   assert.equal(send?.ts, "2026-10-16T06:00:01.000Z");
 });
+
+test("an unchanged transcript gives the conversation built before; one that changed is read again", async () => {
+  const sid = "5e7a9c1b-3d2f-4a6b-8c0e-1f3a5b7d9e2c";
+  const base = { isSidechain: false, userType: "external", cwd, sessionId: sid, version: "2.1.296", gitBranch: "HEAD" };
+  const rows = [
+    { ...base, parentUuid: null, type: "user", uuid: "m1", timestamp: "2026-10-18T01:00:00.000Z", origin: { kind: "human" }, message: { role: "user", content: "처음" } },
+    { ...base, parentUuid: "m1", type: "assistant", uuid: "m2", timestamp: "2026-10-18T01:00:01.000Z", message: { role: "assistant", content: [{ type: "text", text: "네" }] } },
+  ];
+  const dir = path.join(home, ".claude", "projects", projectDirName(cwd));
+  const file = path.join(dir, `${sid}.jsonl`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const first = await loadHistory(sid, cwd);
+  assert.equal(await loadHistory(sid, cwd), first);
+  const added = { ...base, parentUuid: "m2", type: "user", uuid: "m3", timestamp: "2026-10-18T01:01:00.000Z", origin: { kind: "human" }, message: { role: "user", content: "다음" } };
+  fs.appendFileSync(file, JSON.stringify(added) + "\n");
+  const grown = await loadHistory(sid, cwd);
+  assert.notEqual(grown, first);
+  assert.deepEqual(grown.map((i) => i.id), ["m1", "m2:0", "m3"]);
+  assert.equal(await loadHistory(sid, cwd), grown);
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(file, later, later);
+  const touched = await loadHistory(sid, cwd);
+  assert.notEqual(touched, grown);
+  assert.deepEqual(touched, grown);
+  const elsewhere = await loadHistory(sid, path.join(cwd, "sub"));
+  assert.notEqual(elsewhere, touched);
+});
+
+test("a long transcript compacted before is read from its last boundary on, lines over a megabyte and Korean text included", async () => {
+  const sid = "6b8d0f2a-4c3e-4b7d-9e1f-2a4c6e8b0d3f";
+  const base = { isSidechain: false, userType: "external", cwd, sessionId: sid, version: "2.1.296", gitBranch: "HEAD" };
+  const old: object[] = [];
+  let parent: string | null = null;
+  for (let n = 0; n < 300; n++) {
+    const uuid = `p${n}`;
+    old.push({ ...base, parentUuid: parent, type: n % 2 ? "assistant" : "user", uuid, timestamp: "2026-10-17T00:00:00.000Z", message: { role: n % 2 ? "assistant" : "user", content: n % 2 ? [{ type: "text", text: "옛 답 ".repeat(2000) }] : "옛 질문" } });
+    parent = uuid;
+  }
+  const big = "가나다라마바사".repeat(240_000);
+  const patch = [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-첫 줄", "+고친 첫 줄"] }];
+  const rows = [
+    ...old,
+    { ...base, parentUuid: null, logicalParentUuid: parent, type: "system", subtype: "compact_boundary", uuid: "b0", timestamp: "2026-10-18T02:00:00.000Z", content: "Conversation compacted", isMeta: false, level: "info", compactMetadata: { trigger: "auto", preTokens: 9000 } },
+    { ...base, parentUuid: "b0", type: "user", uuid: "b1", timestamp: "2026-10-18T02:00:00.100Z", isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: "user", content: "This session is being continued from a previous conversation." } },
+    { ...base, parentUuid: "b1", type: "user", uuid: "b2", timestamp: "2026-10-18T02:01:00.000Z", origin: { kind: "human" }, message: { role: "user", content: "큰 파일을 읽고 첫 줄을 고쳐 줘" } },
+    { ...base, parentUuid: "b2", type: "assistant", uuid: "b3", timestamp: "2026-10-18T02:01:01.000Z", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_big", name: "Read", input: { file_path: `${cwd}/big.txt` } }] } },
+    { ...base, parentUuid: "b3", type: "user", uuid: "b4", timestamp: "2026-10-18T02:01:02.000Z", message: { role: "user", content: [{ tool_use_id: "toolu_big", type: "tool_result", content: big }] } },
+    { ...base, parentUuid: "b4", type: "assistant", uuid: "b5", timestamp: "2026-10-18T02:01:03.000Z", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_fix", name: "Edit", input: { file_path: `${cwd}/big.txt`, old_string: "첫 줄", new_string: "고친 첫 줄" } }] } },
+    {
+      ...base,
+      parentUuid: "b5",
+      type: "user",
+      uuid: "b6",
+      timestamp: "2026-10-18T02:01:04.000Z",
+      message: { role: "user", content: [{ tool_use_id: "toolu_fix", type: "tool_result", content: "The file has been updated." }] },
+      toolUseResult: { filePath: `${cwd}/big.txt`, oldString: "첫 줄", newString: "고친 첫 줄", originalFile: big, structuredPatch: patch, userModified: false, replaceAll: false },
+    },
+    { ...base, parentUuid: "b6", type: "assistant", uuid: "b7", timestamp: "2026-10-18T02:01:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "고쳤습니다." }] } },
+    { ...base, parentUuid: "b7", type: "system", subtype: "local_command", uuid: "b8", timestamp: "2026-10-18T02:02:00.000Z", content: "<local-command-stdout>Version 2.1.296</local-command-stdout>", level: "info", isMeta: false, commandRun: { command: "version", args: "" } },
+  ];
+  const dir = path.join(home, ".claude", "projects", projectDirName(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${sid}.jsonl`);
+  fs.writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  assert.ok(fs.statSync(file).size > 9 * 1024 * 1024);
+  const items = await loadHistory(sid, cwd);
+  assert.deepEqual(
+    items.map((i) => [i.kind, i.id, i.ts]),
+    [
+      ["user", "b2", "2026-10-18T02:01:00.000Z"],
+      ["tool", "toolu_big", "2026-10-18T02:01:01.000Z"],
+      ["tool", "toolu_fix", "2026-10-18T02:01:03.000Z"],
+      ["assistant", "b7:0", "2026-10-18T02:01:05.000Z"],
+      ["command", "b8", "2026-10-18T02:02:00.000Z"],
+    ],
+  );
+  const read = items[1];
+  assert.ok(read.kind === "tool" && read.result?.text.startsWith("가나다라마바사가나다") && read.result.truncated);
+  const fix = items[2];
+  assert.ok(fix.kind === "tool");
+  assert.equal(fix.file, `${cwd}/big.txt`);
+  assert.deepEqual(fix.patch?.[0].lines, ["-첫 줄", "+고친 첫 줄"]);
+  const command = items[4];
+  assert.ok(command.kind === "command" && command.name === "version");
+});

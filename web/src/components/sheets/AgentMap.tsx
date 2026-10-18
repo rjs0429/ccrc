@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ModelOption, TaskInfo, WorkflowAgent, WorkflowAgentState, WorkflowInfo } from "../../../../broker/src/protocol.ts";
 import { duration, errorText, modelLabel, taskKindLabel } from "../../labels.ts";
 import { call, useApp } from "../../state.ts";
+import { withEarlier } from "../../chatItems.ts";
 import type { TranscriptRef } from "../agents/links.ts";
 import { SHELL_KINDS } from "../agents/output.ts";
 import { ShellOutput } from "../agents/ShellOutput.tsx";
@@ -521,7 +522,8 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
   const models = useApp((s) => s.options?.models ?? NO_MODELS);
   const st = chat?.state;
   const busy = Boolean(st?.busy);
-  const map = useMemo(() => agentMap({ tasks: st?.tasks, items: chat?.items ?? [], pending: chat?.pending ?? [], busy }), [st?.tasks, chat?.items, chat?.pending, busy]);
+  const context = useMemo(() => (chat ? withEarlier(chat) : []), [chat?.items, chat?.earlier, chat?.earlierInGap, chat?.gap]);
+  const map = useMemo(() => agentMap({ tasks: st?.tasks, items: context, pending: chat?.pending ?? [], busy }), [st?.tasks, context, chat?.pending, busy]);
   const [selected, setSelected] = useState<Selected | null>(null);
   // With nothing listed the map opens on the conversation's past agents.
   const [showPast, setShowPast] = useState(() => map.nodes.length === 0);
@@ -698,7 +700,6 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
                       더 보기
                     </button>
                   )}
-                  {chat?.hasMore && <div className="px-2 py-1 text-xs text-muted">이전 대화의 에이전트는 빠져 있습니다</div>}
                 </div>
               )}
             </section>

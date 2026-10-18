@@ -31,14 +31,22 @@ import { dayLines, streamLine } from "../components/stamps.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { brokerSessionsBlocked, closedText, errorText, hostLabel, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
-import { call, composerInsert, focusDone, navigate, openAt, openSettingsFrom, send, toast, useApp } from "../state.ts";
+import { call, composerInsert, focusDone, loadMore, navigate, openAt, openSettingsFrom, refreshChat, send, toast, useApp } from "../state.ts";
+import { withEarlier } from "../chatItems.ts";
 import { takeSent } from "../sentPreviews.ts";
 import { worktreeOf } from "../../../broker/src/worktree-names.ts";
 import { placeLabel, shownBranch } from "../worktree.ts";
 
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
+// Within PIN_PX of the bottom the list stays at the bottom through any change; within NEAR_BOTTOM_PX new messages
+// scroll into view.
+const PIN_PX = 2;
 const NEAR_BOTTOM_PX = 160;
+// Earlier items load while the top of the list is less than this many screens away, and so does a gap's next part.
+const LOAD_SCREENS = 1.5;
+// A change of size this soon after a touch on the list comes from the touch: the touched item keeps its place.
+const TOUCH_MS = 600;
 const gapBelow = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight;
 const FLASH_MS = 2500;
 const NO_MODELS: ModelOption[] = [];
@@ -53,6 +61,34 @@ interface Awaited {
   name: string;
   before: Set<string>;
   late: boolean;
+}
+
+// Where the list holds back part of the conversation: before its first item, or in a gap after a far-back item. The part
+// loads as it nears the view; the button loads it too and tries again after a failure.
+function PartLoader({ part, skipped, loading, failed, onLoad }: { part: "earlier" | "gap"; skipped?: number; loading: boolean; failed: boolean; onLoad: () => void }) {
+  const name = part === "earlier" ? "이전" : "중간";
+  const text = loading
+    ? `${name} 대화를 불러오는 중…`
+    : failed
+      ? `${name} 대화를 불러오지 못했습니다`
+      : part === "earlier"
+        ? "이전 대화는 생략했습니다"
+        : `중간 대화 ${skipped ?? ""}개 항목은 생략했습니다`;
+  return (
+    <div className="flex items-center gap-3 text-xs text-muted" {...(part === "gap" ? { "data-gap": "" } : { "data-earlier": "" })}>
+      <span className="h-px flex-1 bg-line" />
+      <span className="flex min-h-11 items-center gap-1.5 text-center">
+        {loading && <Spinner className="size-3.5 shrink-0" />}
+        {text}
+        {!loading && (
+          <button onClick={onLoad} className="min-h-11 shrink-0 px-1 font-medium text-accent">
+            {failed ? "다시 시도" : "불러오기"}
+          </button>
+        )}
+      </span>
+      <span className="h-px flex-1 bg-line" />
+    </div>
+  );
 }
 
 // Hangs from the top edge of the to-do panel and composer, so it floats just above them whatever their height.
@@ -101,12 +137,19 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const [fork, setFork] = useState<{ before?: UserMessage; text?: string; name?: string; typed?: string } | null>(null);
   const [rewindAt, setRewindAt] = useState<string>();
   const listRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
   const stick = useRef(true);
   // A smooth scroll to the bottom from the jump button, until it lands or the user touches the list; a touch
   // stops it where it is, since browsers do not all cancel a smooth scroll for one.
   const glide = useRef(false);
-  // The list's height when the user left the bottom: anything taller has arrived since.
-  const seen = useRef(0);
+  // The first item in view and how far its top is below the list's top: any other change keeps it there.
+  const anchor = useRef<{ id: string; top: number } | null>(null);
+  const touched = useRef(0);
+  // Where the list was last scrolled to; only a scroll up from there leaves the bottom.
+  const lastTop = useRef(0);
+  // How the list ended at the last render, to tell what came at its end from changes to what was there.
+  const ends = useRef<{ snaps?: number; last?: string; stream: number; pending: number; queued: number } | null>(null);
   const [away, setAway] = useState(false);
   const [unseen, setUnseen] = useState(false);
 
@@ -115,15 +158,67 @@ export function Chat({ sessionId }: { sessionId: string }) {
     stick.current = on;
     setAway(!on);
     if (on) setUnseen(false);
-    else seen.current = listRef.current?.scrollHeight ?? 0;
+  };
+
+  const takeAnchor = (row?: HTMLElement | null) => {
+    const el = listRef.current;
+    if (!el?.clientHeight) return;
+    const top = el.getBoundingClientRect().top;
+    if (!row) {
+      const rows = el.querySelectorAll<HTMLElement>("[data-item]");
+      let lo = 0;
+      let hi = rows.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (rows[mid].getBoundingClientRect().bottom > top) {
+          row = rows[mid];
+          hi = mid - 1;
+        } else lo = mid + 1;
+      }
+    }
+    anchor.current = row?.dataset.item ? { id: row.dataset.item, top: row.getBoundingClientRect().top - top } : null;
+  };
+
+  // False when the anchored item is not in the list.
+  const keepAnchor = (): boolean => {
+    const el = listRef.current;
+    const a = anchor.current;
+    const row = a && el?.querySelector<HTMLElement>(`[data-item="${CSS.escape(a.id)}"]`);
+    if (!el || !a || !row) return false;
+    const moved = row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top;
+    if (Math.abs(moved) > 0.5) el.scrollTop += moved;
+    lastTop.current = el.scrollTop;
+    return true;
+  };
+
+  const toBottom = () => {
+    const el = listRef.current;
+    if (!el) return;
+    if (glide.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    else {
+      if (gapBelow(el) > 0.5) el.scrollTop = el.scrollHeight;
+      lastTop.current = el.scrollTop;
+      pinned.current = true;
+    }
+  };
+
+  // After any change of size: the bottom while the list is pinned there, else the item in view where it was. A list
+  // with no height shows nothing to hold.
+  const hold = () => {
+    if (!listRef.current?.clientHeight) return;
+    if ((pinned.current || glide.current) && performance.now() - touched.current > TOUCH_MS) toBottom();
+    else {
+      keepAnchor();
+      const el = listRef.current;
+      if (el) pinned.current = gapBelow(el) < PIN_PX;
+    }
   };
 
   const jump = () => {
-    const el = listRef.current;
-    if (!el) return;
+    if (!listRef.current) return;
     glide.current = !matchMedia("(prefers-reduced-motion: reduce)").matches;
     follow(true);
-    el.scrollTo({ top: el.scrollHeight, behavior: glide.current ? "smooth" : "auto" });
+    toBottom();
   };
 
   const endGlide = () => {
@@ -131,6 +226,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (!glide.current || !el) return;
     glide.current = false;
     el.scrollTo({ top: el.scrollTop });
+  };
+
+  // A touch or key on an item keeps that item in place while what it opens changes the list.
+  const touch = (e: React.SyntheticEvent) => {
+    touched.current = performance.now();
+    takeAnchor((e.target as HTMLElement).closest<HTMLElement>("[data-item]"));
   };
 
   const st = chat?.state;
@@ -168,6 +269,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
     });
   };
   const items = useMemo(() => shownItems(chat?.items ?? []), [chat?.items]);
+  // The items with the agent and to-do calls of the parts not loaded, for what reads the whole conversation.
+  const context = useMemo(() => (chat ? withEarlier(chat) : []), [chat?.items, chat?.earlier, chat?.earlierInGap, chat?.gap]);
   const days = useMemo(() => dayLines(items), [items]);
   // The first shown item of the latest part, when a far-back search hit left items out before it.
   const gapAt = useMemo(() => {
@@ -273,10 +376,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     openTarget(stopped);
   }, [stopped, controllable]);
 
-  const agentChip = useMemo(
-    () => agentMap({ tasks: st?.tasks, items: chat?.items ?? [], pending: chat?.pending ?? [], busy }).chip,
-    [st?.tasks, chat?.items, chat?.pending, busy],
-  );
+  const agentChip = useMemo(() => agentMap({ tasks: st?.tasks, items: context, pending: chat?.pending ?? [], busy }).chip, [st?.tasks, context, chat?.pending, busy]);
 
   // The subagent a permission request comes from, by its task or as an agent of a workflow.
   const askingAgent = (agentId?: string) => {
@@ -287,13 +387,22 @@ export function Chat({ sessionId }: { sessionId: string }) {
     return w ? `워크플로 에이전트 · ${w.label}` : "서브에이전트";
   };
 
+  // Shows an element of the list in its middle, which then holds its place.
+  const reveal = (el: Element) => {
+    const list = listRef.current!;
+    el.scrollIntoView({ block: "center" });
+    glide.current = false;
+    pinned.current = gapBelow(list) < PIN_PX;
+    follow(gapBelow(list) < NEAR_BOTTOM_PX);
+    takeAnchor(el.closest<HTMLElement>("[data-item]"));
+  };
+
   // Closes the map and shows a conversation item, fetching the part around it when it is not loaded.
   const jumpTo = (itemId: string) => {
     setSheet(null);
     const el = listRef.current?.querySelector(`[data-item="${CSS.escape(itemId)}"]`);
     if (!el) return openAt(sessionId, itemId);
-    el.scrollIntoView({ block: "center" });
-    follow(gapBelow(listRef.current!) < NEAR_BOTTOM_PX);
+    reveal(el);
     setFlash(itemId);
   };
 
@@ -301,8 +410,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     setSheet(null);
     const el = listRef.current?.querySelector(`[data-pending="${CSS.escape(requestId)}"]`);
     if (!el) return;
-    el.scrollIntoView({ block: "center" });
-    follow(gapBelow(listRef.current!) < NEAR_BOTTOM_PX);
+    reveal(el);
     setFlash(requestId);
   };
 
@@ -312,22 +420,42 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const openMessage = useCallback((m: UserMessage) => setMessage(m), []);
   const roots = useMemo(() => (cwd ? [cwd] : []), [cwd]);
 
+  // Only a message, request or reply added at the end is new: it scrolls into view near the bottom and is marked
+  // away from it. Any other change keeps the list at the bottom while it is pinned there, else the item in view in place.
   useLayoutEffect(() => {
     const el = listRef.current;
-    if (!el) return;
-    if (!stick.current) {
-      if (el.scrollHeight > seen.current) setUnseen(true);
-    } else if (glide.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    else el.scrollTop = el.scrollHeight;
-  }, [chat?.items, chat?.stream?.text, chat?.pending.length, chat?.loaded, queued.length]);
+    if (!el || !chat?.loaded) return;
+    const now = { snaps: chat.snaps, last: items.at(-1)?.id, stream: chat.stream ? chat.stream.text.length : -1, pending: chat.pending.length, queued: queued.length };
+    const was = ends.current;
+    ends.current = now;
+    if (chat.focus) return;
+    if (!was || was.snaps !== now.snaps) {
+      if (!was || pinned.current || !keepAnchor()) {
+        toBottom();
+        follow(true);
+      }
+    } else {
+      const added =
+        (now.last !== was.last && (was.last === undefined || items.some((i) => i.id === was.last))) ||
+        now.stream > was.stream ||
+        now.pending > was.pending ||
+        now.queued > was.queued;
+      if (added && (stick.current || glide.current)) toBottom();
+      else {
+        if (added) setUnseen(true);
+        hold();
+      }
+    }
+    if (chat.hasMore && !chat.loading && !chat.failed && el.scrollTop < el.clientHeight * LOAD_SCREENS) void loadMore(sessionId, "earlier");
+    else if (chat.gap) nearGap(el);
+  });
 
-  // Resizing the list (rotation, a taller composer or to-do panel) keeps it at the bottom while it follows.
+  // A change of the list's size (rotation, a taller composer or to-do panel) or of what it holds that no render made
+  // (an image that loaded, an item opened) is held the same way.
   useEffect(() => {
-    const el = listRef.current!;
-    const resized = new ResizeObserver(() => {
-      if (stick.current) el.scrollTop = el.scrollHeight;
-    });
-    resized.observe(el);
+    const resized = new ResizeObserver(() => hold());
+    resized.observe(listRef.current!);
+    resized.observe(contentRef.current!);
     return () => resized.disconnect();
   }, []);
 
@@ -338,16 +466,25 @@ export function Chat({ sessionId }: { sessionId: string }) {
     focusDone(sessionId);
     const el = listRef.current?.querySelector(`[data-item="${CSS.escape(focus)}"]`);
     if (!el) {
+      toBottom();
+      follow(true);
       api.thread(sessionId, focus).then(
         (t) => setThread({ ...t, ...(focusEarlier ? { earlier: true } : {}) }),
         () => toast("찾은 메시지가 지금 대화에 없습니다"),
       );
       return;
     }
-    el.scrollIntoView({ block: "center" });
-    follow(gapBelow(listRef.current!) < NEAR_BOTTOM_PX);
+    reveal(el);
     setFlash(focus);
   }, [focus, focusEarlier, sessionId]);
+
+  // The next part of a gap loads as it nears the view.
+  const nearGap = (el: HTMLElement) => {
+    const marker = el.querySelector("[data-gap]");
+    if (!marker || chat?.loading || chat?.failed) return;
+    const top = marker.getBoundingClientRect().top - el.getBoundingClientRect().top;
+    if (top > -el.clientHeight * LOAD_SCREENS && top < el.clientHeight * (1 + LOAD_SCREENS)) void loadMore(sessionId, "gap");
+  };
 
   useEffect(() => {
     if (!flash) return;
@@ -408,33 +545,42 @@ export function Chat({ sessionId }: { sessionId: string }) {
       <div
         ref={listRef}
         onScroll={(e) => {
-          const gap = gapBelow(e.currentTarget);
-          if (gap < 2) glide.current = false;
-          const near = gap < NEAR_BOTTOM_PX;
+          const el = e.currentTarget;
+          const gap = gapBelow(el);
+          const up = el.scrollTop < lastTop.current - 0.5;
+          lastTop.current = el.scrollTop;
+          if (gap < PIN_PX) glide.current = false;
+          pinned.current = gap < PIN_PX || (pinned.current && !up);
+          const near = gap < NEAR_BOTTOM_PX || (stick.current && !up);
           if (near !== stick.current && (near || !glide.current)) follow(near);
+          takeAnchor();
+          if (chat?.hasMore && !chat.loading && el.scrollTop < el.clientHeight * LOAD_SCREENS) void loadMore(sessionId, "earlier");
+          if (chat?.gap) nearGap(el);
         }}
-        onPointerDown={endGlide}
+        onPointerDown={(e) => {
+          endGlide();
+          touch(e);
+        }}
+        onKeyDown={touch}
         onWheel={endGlide}
-        className="flex-1 overflow-y-auto overscroll-contain px-safe-0"
+        className="flex-1 overflow-y-auto overscroll-contain px-safe-0 [overflow-anchor:none]"
         data-scroll-root
       >
         <FileLinks.Provider value={openFile}>
           <FileRoots.Provider value={roots}>
-            <div className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:py-3">
+            <div ref={contentRef} className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:py-3">
               {!chat?.loaded && (
                 <div className="flex justify-center py-10 text-muted">
                   <Spinner className="size-6" />
                 </div>
               )}
-              {chat?.hasMore && <div className="text-center text-xs text-muted">이전 대화는 생략했습니다</div>}
+              {chat?.loaded && chat.hasMore && (
+                <PartLoader part="earlier" loading={chat.loading === "earlier"} failed={chat.failed === "earlier"} onLoad={() => void loadMore(sessionId, "earlier")} />
+              )}
               {items.map((item) => (
                 <Fragment key={item.id}>
                   {item.id === gapAt && (
-                    <div className="flex items-center gap-3 text-xs text-muted" data-gap>
-                      <span className="h-px flex-1 bg-line" />
-                      중간 대화 {chat?.gap?.skipped}개 항목은 생략했습니다
-                      <span className="h-px flex-1 bg-line" />
-                    </div>
+                    <PartLoader part="gap" skipped={chat?.gap?.skipped} loading={chat?.loading === "gap"} failed={chat?.failed === "gap"} onLoad={() => void loadMore(sessionId, "gap")} />
                   )}
                   <DateLine day={days.get(item.id)} />
                   <div
@@ -522,7 +668,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       </div>
 
       {away && <JumpButton unseen={unseen} onClick={jump} />}
-      {chat?.loaded && <TodoPanel items={chat.items} />}
+      {chat?.loaded && <TodoPanel items={context} />}
 
       <Composer
         sessionId={sessionId}
@@ -543,7 +689,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onUltracode={(on) => send({ t: "set_ultracode", sessionId, on })}
         onFast={(on) => send({ t: "set_fast", sessionId, on })}
         onThinking={(on) => send({ t: "set_thinking", sessionId, on })}
-        inConversation={items.some((i) => i.kind === "user" || i.kind === "assistant")}
+        inConversation={Boolean(chat?.hasMore) || items.some((i) => i.kind === "user" || i.kind === "assistant")}
         onContext={() => setSheet("contextUsage")}
         agents={agentChip}
         onAgents={() => setSheet("agents")}
@@ -567,7 +713,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           )}
           <div className="mt-1 mb-2">
             <Tiles>
-              <Tile icon={<Icon.refresh />} label="새로고침" onClick={() => (send({ t: "view", sessionId }), setMenu(false))} />
+              <Tile icon={<Icon.refresh />} label="새로고침" onClick={() => (refreshChat(), setMenu(false))} />
               <Tile icon={<Icon.pencil />} label="이름 바꾸기" disabled={Boolean(renameRefused)} describedBy={renameRefused ? unableId : undefined} onClick={rename} />
               <Tile
                 icon={archived ? <Icon.unarchive /> : <Icon.archive />}

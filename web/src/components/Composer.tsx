@@ -359,8 +359,12 @@ export function Composer({
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // The box holds its height while the field is measured at one row; the composer changes height once, to the new one.
+    const box = el.parentElement!;
+    box.style.minHeight = `${box.getBoundingClientRect().height}px`;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_PX)}px`;
+    box.style.minHeight = "";
     if (nextCaret.current !== null) {
       el.setSelectionRange(nextCaret.current, nextCaret.current);
       nextCaret.current = null;
