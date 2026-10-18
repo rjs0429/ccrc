@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 
 type IconProps = { className?: string };
 
@@ -147,6 +147,7 @@ export function Choice({
   disabled,
   describedBy,
   onClick,
+  ref,
 }: {
   label: string;
   hint?: ReactNode;
@@ -156,11 +157,13 @@ export function Choice({
   disabled?: boolean;
   describedBy?: string;
   onClick: () => void;
+  ref?: Ref<HTMLButtonElement>;
 }) {
   const valueId = useId();
   const described = [describedBy, value && valueId].filter(Boolean).join(" ");
   return (
     <button
+      ref={ref}
       onClick={onClick}
       disabled={disabled}
       aria-label={value ? label : undefined}

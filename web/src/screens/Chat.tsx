@@ -122,8 +122,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const othersWaiting = useApp((s) => (s.sessions ?? []).some((x) => x.id !== sessionId && x.pendingCount));
   // The ⋯ menu decides as it opens whether it offers 이번 턴 중지 and keeps that row while open, enabled while a turn
   // runs, so a turn starting or ending moves none of its rows.
-  // more: it shows the rows used less often instead, with a way back.
+  // more: it shows the rows used less often instead, in the same sheet, with a way back.
   const [menu, setMenu] = useState<false | { stop: boolean; more?: boolean }>(false);
+  const menuBack = useRef<HTMLButtonElement>(null);
+  const menuMore = useRef<HTMLButtonElement>(null);
+  const menuTop = useRef(0);
   const [sheet, setSheet] = useState<SheetName | null>(null);
   const [usageCommand, setUsageCommand] = useState("usage");
   const [stopped, setStopped] = useState<string | null>(null);
@@ -279,6 +282,18 @@ export function Chat({ sessionId }: { sessionId: string }) {
       setMenu(false);
       setRenaming(true);
     });
+  };
+  // 더 보기 opens at its top with the focus on 메뉴; 메뉴 brings the menu back scrolled as it was, the focus and the
+  // view on 더 보기.
+  const showMore = (more: boolean) => {
+    const sheet = (more ? menuMore : menuBack).current?.closest<HTMLElement>('[role="dialog"]');
+    if (more) menuTop.current = sheet?.scrollTop ?? 0;
+    flushSync(() => setMenu((m) => m && { ...m, more }));
+    if (!sheet) return;
+    sheet.scrollTop = more ? 0 : menuTop.current;
+    const to = (more ? menuBack : menuMore).current;
+    to?.focus({ preventScroll: true });
+    if (!more) to?.scrollIntoView({ block: "nearest" });
   };
   const items = useMemo(() => shownItems(chat?.items ?? []), [chat?.items]);
   // The items with the agent and to-do calls of the parts not loaded, for what reads the whole conversation.
@@ -557,7 +572,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               </span>
             </span>
           </button>
-          <button onClick={() => setMenu({ stop: busy && controllable })} aria-label="메뉴" className="rounded-lg p-2 text-muted">
+          <button onClick={() => setMenu({ stop: busy && controllable })} aria-label="메뉴" className="relative -m-1 rounded-lg p-3 text-muted">
             <Icon.dots />
           </button>
         </div>
@@ -716,81 +731,84 @@ export function Chat({ sessionId }: { sessionId: string }) {
         onAgents={() => setSheet("agents")}
       />
 
-      {menu && menu.more && (
+      {menu && (
         <Sheet title={title} onClose={() => setMenu(false)}>
-          <button onClick={() => setMenu({ ...menu, more: false })} className="mb-1 flex min-h-11 items-center gap-1 px-2 text-sm font-medium text-accent" data-menu-back>
-            <Icon.back className="size-4" /> 메뉴
-          </button>
-          {controllable && (
-            <>
-              <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
-              <Choice label="출력 스타일" value={st?.outputStyle && outputStyleLabel(st.outputStyle)} onClick={() => (setSheet("outputStyle"), setMenu(false))} />
-            </>
-          )}
-          <Choice
-            label="읽지 않음으로 표시"
-            onClick={() => {
-              setMenu(false);
-              void setUnread(sessionId, true).then((ok) => ok && navigate({ name: "home" }));
-            }}
-          />
-          {(worktree || kind === "owned") && <div className="mx-3 my-1.5 h-px bg-line" />}
-          {worktree && <Choice label="worktree 정리" onClick={() => (setCleaning(true), setMenu(false))} />}
-          {kind === "owned" && (
-            <Choice label="원격 실행 끝내기" hint="Claude Code 프로세스를 닫습니다. 대화 기록은 남습니다." onClick={() => (send({ t: "release", sessionId }), setMenu(false))} />
-          )}
-        </Sheet>
-      )}
-      {menu && !menu.more && (
-        <Sheet title={title} onClose={() => setMenu(false)}>
-          <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
-          {menu.stop && (
-            <Choice
-              label="이번 턴 중지"
-              hint={
+          {menu.more ? (
+            <Fragment key="more">
+              <button ref={menuBack} onClick={() => showMore(false)} className="mb-1 flex min-h-11 items-center gap-1 px-2 text-sm font-medium text-accent" data-menu-back>
+                <Icon.back className="size-4" /> 메뉴
+              </button>
+              {controllable && (
                 <>
-                  <span className="block">입력창에 쓴 글은 그대로 둡니다.</span>
-                  <span className="block">백그라운드 에이전트는 에이전트 지도에서 멈춥니다.</span>
+                  <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
+                  <Choice label="출력 스타일" value={st?.outputStyle && outputStyleLabel(st.outputStyle)} onClick={() => (setSheet("outputStyle"), setMenu(false))} />
                 </>
-              }
-              disabled={!busy || !controllable}
-              onClick={() => (stop(), setMenu(false))}
-            />
+              )}
+              <Choice
+                label="읽지 않음으로 표시"
+                onClick={() => {
+                  setMenu(false);
+                  void setUnread(sessionId, true).then((ok) => ok && navigate({ name: "home" }));
+                }}
+              />
+              {(worktree || kind === "owned") && <div className="mx-3 my-1.5 h-px bg-line" />}
+              {worktree && <Choice label="worktree 정리" onClick={() => (setCleaning(true), setMenu(false))} />}
+              {kind === "owned" && (
+                <Choice label="원격 실행 끝내기" hint="Claude Code 프로세스를 닫습니다. 대화 기록은 남습니다." onClick={() => (send({ t: "release", sessionId }), setMenu(false))} />
+              )}
+            </Fragment>
+          ) : (
+            <Fragment key="menu">
+              <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
+              {menu.stop && (
+                <Choice
+                  label="이번 턴 중지"
+                  hint={
+                    <>
+                      <span className="block">입력창에 쓴 글은 그대로 둡니다.</span>
+                      <span className="block">백그라운드 에이전트는 에이전트 지도에서 멈춥니다.</span>
+                    </>
+                  }
+                  disabled={!busy || !controllable}
+                  onClick={() => (stop(), setMenu(false))}
+                />
+              )}
+              <div className="mt-1 mb-2">
+                <Tiles>
+                  <Tile icon={<Icon.refresh />} label="새로고침" onClick={() => (refreshChat(), setMenu(false))} />
+                  <Tile icon={<Icon.pencil />} label="이름 바꾸기" disabled={Boolean(renameRefused)} describedBy={renameRefused ? unableId : undefined} onClick={rename} />
+                  <Tile
+                    icon={archived ? <Icon.unarchive /> : <Icon.archive />}
+                    label={archived ? "보관 해제" : "보관하기"}
+                    onClick={() => (!archived && worktree ? setArchiving(true) : setArchived(sessionId, !archived), setMenu(false))}
+                  />
+                  <Tile
+                    icon={<Icon.branch />}
+                    label="갈래로 떼기"
+                    disabled={folderMissing || Boolean(brokerOff)}
+                    describedBy={folderMissing || brokerOff ? unableId : undefined}
+                    onClick={() => (setFork({}), setMenu(false))}
+                  />
+                </Tiles>
+                {unable && (
+                  <p id={unableId} className="mt-2 px-3 text-xs text-muted" data-menu-unable>
+                    {unable}
+                  </p>
+                )}
+              </div>
+              <Choice label="곁질문" onClick={() => (openSide(), setMenu(false))} />
+              <Choice
+                label="되돌리기"
+                disabled={folderMissing}
+                describedBy={folderMissing ? unableId : undefined}
+                onClick={() => (setRewindAt(undefined), setSheet("rewind"), setMenu(false))}
+              />
+              <Choice label="변경 사항" onClick={() => (setSheet("changes"), setMenu(false))} />
+              <Choice label="Context와 사용량" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
+              <Choice label="에이전트 지도" onClick={() => (setSheet("agents"), setMenu(false))} />
+              <Choice ref={menuMore} label="더 보기" next onClick={() => showMore(true)} />
+            </Fragment>
           )}
-          <div className="mt-1 mb-2">
-            <Tiles>
-              <Tile icon={<Icon.refresh />} label="새로고침" onClick={() => (refreshChat(), setMenu(false))} />
-              <Tile icon={<Icon.pencil />} label="이름 바꾸기" disabled={Boolean(renameRefused)} describedBy={renameRefused ? unableId : undefined} onClick={rename} />
-              <Tile
-                icon={archived ? <Icon.unarchive /> : <Icon.archive />}
-                label={archived ? "보관 해제" : "보관하기"}
-                onClick={() => (!archived && worktree ? setArchiving(true) : setArchived(sessionId, !archived), setMenu(false))}
-              />
-              <Tile
-                icon={<Icon.branch />}
-                label="갈래로 떼기"
-                disabled={folderMissing || Boolean(brokerOff)}
-                describedBy={folderMissing || brokerOff ? unableId : undefined}
-                onClick={() => (setFork({}), setMenu(false))}
-              />
-            </Tiles>
-            {unable && (
-              <p id={unableId} className="mt-2 px-3 text-xs text-muted" data-menu-unable>
-                {unable}
-              </p>
-            )}
-          </div>
-          <Choice label="곁질문" onClick={() => (openSide(), setMenu(false))} />
-          <Choice
-            label="되돌리기"
-            disabled={folderMissing}
-            describedBy={folderMissing ? unableId : undefined}
-            onClick={() => (setRewindAt(undefined), setSheet("rewind"), setMenu(false))}
-          />
-          <Choice label="변경 사항" onClick={() => (setSheet("changes"), setMenu(false))} />
-          <Choice label="Context와 사용량" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
-          <Choice label="에이전트 지도" onClick={() => (setSheet("agents"), setMenu(false))} />
-          <Choice label="더 보기" next onClick={() => setMenu({ ...menu, more: true })} />
         </Sheet>
       )}
       {file && (

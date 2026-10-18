@@ -97,8 +97,8 @@ your version and the new one, and the lines under "Breaking" separately.
 - A NotebookEdit call shows the cell's change when Claude Code reports the cell's source from before it.
 - The session's ⋯ menu keeps its four tiles and the rows used most: 곁질문, 되돌리기, 변경 사항, Context와 사용량 and
   에이전트 지도. MCP 서버, 출력 스타일, 읽지 않음으로 표시, worktree 정리 and 원격 실행 끝내기 moved under its last row,
-  더 보기, which leads back to the menu. The menu has the same rows in every session and, with 이번 턴 중지 on top while
-  a turn runs, still fits a 390×844 screen.
+  더 보기, which shows them in the same sheet and leads back to the menu where it was. The menu has the same rows in
+  every session and, with 이번 턴 중지 on top while a turn runs, still fits a 390×844 screen.
 
 ### Fixed
 
@@ -126,6 +126,8 @@ your version and the new one, and the lines under "Breaking" separately.
   update need a reload to get the new wrapper's features too (the names in its hello's `caps`), so it now also says so
   when there are new ones, and names them. The version you update from gives this advice: updating from 0.7 still does
   not, see "Upgrading from 0.7".
+- The ⋯ button in a conversation's header took taps on a 36px square; it now takes them on 44px, as the back button
+  does.
 
 ### Security
 
