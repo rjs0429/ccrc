@@ -19,6 +19,13 @@ your version and the new one, and the lines under "Breaking" separately.
   for sudo as before; when it stays missing (sudo not given, `--no-system`, no package manager, or its install
   failing), the install goes on with a warning that `ccrc update` will stop at the signature check until it is
   installed. Installing never used it: `install.sh` does not check tag signatures.
+- The composer's agent chip stays for the whole conversation: dimmed until the conversation uses a subagent or
+  workflow, and beside the notice that takes the composer's place in a session the phone can only view (open in VS
+  Code without the wrapper, its folder gone, remote sessions off). Tapping it opens the agent map, which says when no
+  agent was used. Its running count has a place two digits wide, empty while no agent runs, so the chip keeps one
+  width. The Context ring moved next to the paperclip: one line reads paperclip, Context, model, Effort, agents …
+  permission mode, send; when that does not fit, line 1 holds the agent chip and the permission mode, line 2 the rest.
+  The new-session screen has neither the ring nor the agent chip.
 
 ### Fixed
 
@@ -27,6 +34,9 @@ your version and the new one, and the lines under "Breaking" separately.
   signature, reported as one that does not check out or as needing OpenSSH 8.2 while `ccrc setup` found `ssh-keygen`
   fine. It now always checks with the `ssh-keygen` on `PATH`, the one setup checks, against `.ccrc-allowed-signers`
   alone.
+- The composer no longer moves while typing in a session whose agents start and end: the agent chip coming and going
+  changed the number of chip lines, and its running count its width. The input also fits its text again when the
+  window's size changes, so the first key after turning the phone no longer grows it by a few pixels.
 
 ### Security
 

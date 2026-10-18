@@ -11,7 +11,8 @@ const DOT: Record<Exclude<ChipDot, "idle">, string> = {
   done: "bg-ok",
 };
 
-function label(chip: Chip): string {
+function label(chip?: Chip): string {
+  if (!chip) return "이 대화에서 쓴 에이전트가 없습니다. 에이전트 지도 열기";
   if (chip.dot === "waiting") return "권한을 기다리는 에이전트가 있습니다. 에이전트 지도 열기";
   if (chip.running) return `에이전트 ${chip.running}개 실행 중. 에이전트 지도 열기`;
   if (chip.dot === "failed") return "실패한 에이전트가 있습니다. 에이전트 지도 열기";
@@ -19,37 +20,37 @@ function label(chip: Chip): string {
   return `이 대화의 에이전트 ${chip.total}개. 에이전트 지도 열기`;
 }
 
-// The chip's width with its word and without, from its parts as laid out now: icon, word, then the count; and with
-// its word but no count, as once no agent runs. An idle chip has no dot or count to show instead, so it always keeps
-// its word.
-export function agentChipWidths(el: HTMLElement): { word: number; icon?: number; settled: number } {
+// The chip's width with its word, from its parts as laid out now: icon, word and the count's place.
+export function agentChipWidth(el: HTMLElement): number {
   const s = getComputedStyle(el);
   const gap = parseFloat(s.columnGap) || 0;
-  const [icon, word, ...rest] = [...el.children].map((e) => e.getBoundingClientRect().width);
+  const parts = [...el.children].map((e) => e.getBoundingClientRect().width);
   const pad = parseFloat(s.paddingLeft) + parseFloat(s.paddingRight);
-  const bare = pad + icon + rest.reduce((sum, w) => sum + gap + w, 0);
-  const min = parseFloat(s.minWidth) || 0;
-  return { word: Math.max(min, bare + gap + word), icon: el.dataset.dot === "idle" ? undefined : Math.max(min, bare), settled: Math.max(min, pad + icon + gap + word) };
+  return Math.max(parseFloat(s.minWidth) || 0, pad + parts.reduce((sum, w) => sum + w, 0) + gap * (parts.length - 1));
 }
 
-// Shows while the conversation has subagents or workflows. Without `word` the word stays laid out, hidden and out
-// of the row, so the chip's width with it can still be measured.
-export function AgentChip({ chip, word, onClick, ref, className = "" }: { chip: Chip; word: boolean; onClick: () => void; ref?: Ref<HTMLButtonElement>; className?: string }) {
+// Dimmed while the conversation has no subagent or workflow. The running count keeps a place two digits wide, empty
+// while no agent runs, so the chip is as wide whatever its agents do. Without `word` the word stays laid out, hidden
+// and out of the row, so the chip's width with it can still be measured.
+export function AgentChip({ chip, word, onClick, ref, className = "" }: { chip?: Chip; word: boolean; onClick: () => void; ref?: Ref<HTMLButtonElement>; className?: string }) {
   return (
     <button
       ref={ref}
       onClick={onClick}
       data-chip="agents"
-      data-dot={chip.dot}
+      data-dot={chip?.dot ?? "none"}
       aria-label={label(chip)}
-      className={`relative flex min-h-8 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-1.5 py-1 text-[13px] text-muted hover:bg-surface-2 ${className}`}
+      className={`relative flex min-h-8 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-1.5 py-1 text-[13px] hover:bg-surface-2 ${chip ? "text-muted" : "text-muted/60"} ${className}`}
     >
       <span className="relative flex">
         <Icon.agents className="size-[18px]" />
-        {chip.dot !== "idle" && <span className={`absolute -top-0.5 -right-0.5 size-1.5 rounded-full ring-2 ring-surface ${DOT[chip.dot]}`} />}
+        {chip && chip.dot !== "idle" && <span className={`absolute -top-0.5 -right-0.5 size-1.5 rounded-full ring-2 ring-surface ${DOT[chip.dot]}`} />}
       </span>
       <span className={`whitespace-nowrap ${word ? "" : "invisible absolute left-0"}`}>에이전트</span>
-      {chip.running > 0 && <span className="font-medium text-fg tabular-nums">{chip.running}</span>}
+      <span className="grid font-medium text-fg tabular-nums">
+        <span className="invisible col-start-1 row-start-1">00</span>
+        <span className="col-start-1 row-start-1">{chip?.running || ""}</span>
+      </span>
     </button>
   );
 }
