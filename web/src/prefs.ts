@@ -1,13 +1,16 @@
 import { useSyncExternalStore } from "react";
+import type { LangPref } from "./i18n/index.ts";
 
 // Preferences of this browser, kept in localStorage.
 export interface Prefs {
   // Enter sends the message (Shift+Enter adds a line); otherwise Ctrl/Cmd+Enter sends.
   enterToSend: boolean;
+  // The language of the app, here and on the login screen.
+  lang: LangPref;
 }
 
 const KEY = "ccrc.prefs";
-const DEFAULTS: Prefs = { enterToSend: false };
+const DEFAULTS: Prefs = { enterToSend: false, lang: "auto" };
 const listeners = new Set<() => void>();
 
 function load(): Prefs {

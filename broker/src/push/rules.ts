@@ -1,9 +1,11 @@
 import path from "node:path";
 import type { Hub } from "../hub.ts";
-import type { DisplayItem, LiveState, PendingKind, PendingRequest, ServerMsg } from "../protocol.ts";
+import type { Lang } from "../lang.ts";
+import type { DisplayItem, LiveState, PendingRequest, ServerMsg } from "../protocol.ts";
 import type { SessionManager } from "../sessions/manager.ts";
-import type { ErrorReason, TurnEnd, TurnOutcome } from "../sessions/outcome.ts";
+import type { TurnEnd } from "../sessions/outcome.ts";
 import type { Subscription } from "./subscriptions.ts";
+import { PUSH_TEXT } from "./text.ts";
 import type { PushPayload } from "./types.ts";
 
 export type Urgency = "high" | "normal";
@@ -31,50 +33,24 @@ const TITLE_MAX = 80;
 const TOOL_MAX = 60;
 const SENT_CALLS_KEEP = 200;
 const SENT_SESSIONS_KEEP = 200;
-const SENT = "파일을 보냈습니다";
-const CLAUDE = "Claude의 알림";
 // PushNotification asks Claude to keep a message under this length.
 const CLAUDE_MAX = 200;
 const CLAUDE_CALLS_KEEP = 200;
-
-const BODY: Record<PendingKind, string> = {
-  permission: "권한 요청",
-  question: "질문이 있습니다",
-  plan: "계획 승인 요청",
-  dialog: "확인 요청",
-  elicitation: "입력 요청",
-};
-const LOCAL_ONLY = "VS Code에서 답변하기";
-const ENDED: Record<Exclude<TurnOutcome, "interrupted" | "local">, string> = {
-  done: "작업을 마쳤습니다",
-  error: "오류로 끝났습니다",
-  limit: "사용 한도에 걸렸습니다",
-  crashed: "Claude Code가 비정상 종료되었습니다",
-};
-const REASON: Record<Exclude<ErrorReason, "api">, string> = { context: "문맥 한도", login: "로그인 필요", model: "모델 없음" };
 
 function clip(s: string, max: number): string {
   const chars = [...s.replace(/\s+/g, " ").trim()];
   return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("");
 }
 
-const pad = (n: number) => String(n).padStart(2, "0");
-
-// In the broker's time zone, with the date when it is not today.
-function resetText(at: number, now: number): string {
-  const d = new Date(at);
-  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return d.toDateString() === new Date(now).toDateString() ? time : `${d.getMonth() + 1}/${d.getDate()} ${time}`;
-}
-
 // The kind of stop goes along, never anything Claude Code or the user wrote.
-export function endText(end: TurnEnd, now = Date.now()): string {
-  const text = ENDED[end.outcome as keyof typeof ENDED];
+export function endText(end: TurnEnd, now = Date.now(), lang: Lang = "ko"): string {
+  const words = PUSH_TEXT[lang];
+  const text = words.ended[end.outcome as keyof typeof words.ended];
   if (end.outcome === "error") {
-    const why = end.reason === "api" ? `API ${end.status}` : end.reason ? REASON[end.reason] : "";
+    const why = end.reason === "api" ? `API ${end.status}` : end.reason ? words.reason[end.reason] : "";
     return why ? `${text} · ${why}` : text;
   }
-  return end.outcome === "limit" && end.resetsAt ? `${text} · ${resetText(end.resetsAt, now)} 초기화` : text;
+  return end.outcome === "limit" && end.resetsAt ? `${text} · ${words.resets(end.resetsAt, now)}` : text;
 }
 
 // What became of a notification Claude asked for: on its way to the devices that want it, not needed as the user is
@@ -231,9 +207,10 @@ export class Notifier {
         if (this.hub.isWatching(sessionId)) return;
         const now = this.d.subscriptions().find((s) => s.endpoint === sub.endpoint);
         if (!now) return;
-        const named = now.prefs.details ? ` · ${clip(name, TOOL_MAX)}${count > 1 ? ` 외 ${count - 1}개` : ""}` : "";
+        const words = PUSH_TEXT[now.prefs.lang];
+        const named = now.prefs.details ? ` · ${clip(name, TOOL_MAX)}${count > 1 ? words.more(count - 1) : ""}` : "";
         this.manager.markUnread(sessionId);
-        const payload: PushPayload = { title, body: `${SENT}${named}`, tag: `${sessionId}:file`, data: { url: `/#/s/${sessionId}` } };
+        const payload: PushPayload = { title, body: `${words.sent}${named}`, tag: `${sessionId}:file`, data: { url: `/#/s/${sessionId}` } };
         this.deliver(now, sessionId, payload, "normal");
       });
     }
@@ -255,7 +232,7 @@ export class Notifier {
       this.arm(key, this.d.timing.ownedMs, () => {
         const sub = this.d.subscriptions().find((s) => s.endpoint === endpoint);
         if (!sub?.prefs.claude || this.hub.isWatching(sessionId)) return void told.delete(endpoint);
-        const body = sub.prefs.details && message.trim() ? clip(message, CLAUDE_MAX) : CLAUDE;
+        const body = sub.prefs.details && message.trim() ? clip(message, CLAUDE_MAX) : PUSH_TEXT[sub.prefs.lang].claude;
         this.manager.markUnread(sessionId);
         const payload: PushPayload = { title, body, tag: `${sessionId}:claude`, data: { url: `/#/s/${sessionId}` } };
         this.deliver(sub, sessionId, payload, "high");
@@ -279,7 +256,7 @@ export class Notifier {
       const sub = this.d.subscriptions().find((s) => s.endpoint === endpoint);
       if (!sub) return;
       const tool = (request.kind === "permission" || request.kind === "elicitation") && sub.prefs.details ? request.toolName : undefined;
-      this.deliver(sub, sessionId, this.requestPayload(sessionId, request, title, tool), "high", request.id);
+      this.deliver(sub, sessionId, this.requestPayload(sessionId, request, title, sub.prefs.lang, tool), "high", request.id);
     };
     for (const sub of this.d.subscriptions()) {
       const wait = attached && request.kind !== "elicitation" ? sub.prefs.vscodeDelaySec * this.d.timing.secondMs : this.d.timing.ownedMs;
@@ -346,7 +323,7 @@ export class Notifier {
         if (!now || !wants(now)) return;
         if (end.outcome === "done" && !files && told?.has(now.endpoint)) return;
         this.manager.markUnread(sessionId);
-        this.deliver(now, sessionId, this.endPayload(sessionId, end, title, files), end.outcome === "done" ? "normal" : "high");
+        this.deliver(now, sessionId, this.endPayload(sessionId, end, title, now.prefs.lang, files), end.outcome === "done" ? "normal" : "high");
       });
     }
   }
@@ -365,14 +342,15 @@ export class Notifier {
   }
 
   // The tag joins the session and the kind, so a newer notification replaces the older one on the device.
-  private requestPayload(sessionId: string, request: PendingRequest, title: string, tool?: string): PushPayload {
-    const text = request.localOnly ? `${LOCAL_ONLY} · ${BODY[request.kind]}` : BODY[request.kind];
+  private requestPayload(sessionId: string, request: PendingRequest, title: string, lang: Lang, tool?: string): PushPayload {
+    const words = PUSH_TEXT[lang];
+    const text = request.localOnly ? `${words.localOnly} · ${words.request[request.kind]}` : words.request[request.kind];
     return { title, body: tool ? `${text} · ${clip(tool, TOOL_MAX)}` : text, tag: `${sessionId}:${request.kind}`, data: { url: `/#/s/${sessionId}` } };
   }
 
   // files: how many files Claude sent since the last turn end without telling them on their own.
-  private endPayload(sessionId: string, end: TurnEnd, title: string, files = 0): PushPayload {
-    return { title, body: `${endText(end)}${files ? ` · 파일 ${files}개` : ""}`, tag: `${sessionId}:end`, data: { url: `/#/s/${sessionId}` } };
+  private endPayload(sessionId: string, end: TurnEnd, title: string, lang: Lang, files = 0): PushPayload {
+    return { title, body: `${endText(end, Date.now(), lang)}${files ? ` · ${PUSH_TEXT[lang].files(files)}` : ""}`, tag: `${sessionId}:end`, data: { url: `/#/s/${sessionId}` } };
   }
 
   private arm(key: string, ms: number, fn: () => void): void {

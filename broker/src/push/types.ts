@@ -1,3 +1,5 @@
+import type { Lang } from "../lang.ts";
+
 // Shapes the web client shares with the broker's push notifications.
 
 // Which turn ends a device hears of: on sessions the remote user sent to or answered in lately, on all sessions, or none.
@@ -13,10 +15,12 @@ export interface PushPrefs {
   details: boolean;
   // The notifications Claude decides to send (its PushNotification tool).
   claude: boolean;
+  // The language the device shows; its notifications are written in it.
+  lang: Lang;
 }
 
 export const VSCODE_DELAYS = [0, 30, 120];
-export const DEFAULT_PREFS: PushPrefs = { vscodeDelaySec: 30, turnEnd: "remote", details: false, claude: true };
+export const DEFAULT_PREFS: PushPrefs = { vscodeDelaySec: 30, turnEnd: "remote", details: false, claude: true, lang: "ko" };
 
 // GET /api/push/status: what the broker knows about one device's subscription.
 export interface PushStatus {

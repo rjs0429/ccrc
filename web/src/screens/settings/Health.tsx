@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { SEND_FILES_CLI, type DoctorCheck, type HealthInfo, type UpdateInfo } from "../../../../broker/src/admin-protocol.ts";
 import { request } from "../../api.ts";
 import { Button, Icon, Spinner } from "../../components/ui.tsx";
-import { BROKER_SESSIONS_LABEL } from "../../labels.ts";
+import { brokerSessionsLabel } from "../../labels.ts";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
 
 const RECHECK_MS = 3000;
@@ -64,7 +64,7 @@ function wrapperText(w: HealthInfo["wrapper"]): string {
 // The brokerSessions setting, which only the laptop changes.
 function brokerSessionsText(b: HealthInfo["brokerSessions"]): string {
   if (!b) return "-";
-  const label = BROKER_SESSIONS_LABEL[b.mode] ?? b.mode;
+  const label = brokerSessionsLabel(b.mode);
   return b.mode === "apiKey" ? `${label} · ${b.ready ? "설정됨" : "키 없음"}` : label;
 }
 

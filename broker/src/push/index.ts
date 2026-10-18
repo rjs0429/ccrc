@@ -1,8 +1,10 @@
 import type { Hub } from "../hub.ts";
+import type { Lang } from "../lang.ts";
 import type { SessionManager } from "../sessions/manager.ts";
 import { encrypt } from "./encrypt.ts";
 import { Notifier, TIMING, type PushTiming, type Urgency } from "./rules.ts";
 import { PushError, PushStore, isPushService, parseEndpoint, parsePrefs, parseSubscription, type Subscription } from "./subscriptions.ts";
+import { PUSH_TEXT } from "./text.ts";
 import { DEFAULT_PREFS, type PushBadge, type PushPayload, type PushRecent, type PushStatus } from "./types.ts";
 import { VapidTokens } from "./vapid.ts";
 
@@ -18,7 +20,7 @@ export interface PushOptions {
 const TTL_SEC = 3600;
 const SEND_TIMEOUT_MS = 15_000;
 const MAX_RETRY_MS = 60_000;
-const TEST: PushPayload = { title: "ccrc", body: "테스트 알림입니다", tag: "test", data: { url: "/#/settings/alerts" } };
+const test = (lang: Lang): PushPayload => ({ title: "ccrc", body: PUSH_TEXT[lang].test, tag: "test", data: { url: "/#/settings/alerts" } });
 
 interface Health {
   lastSent?: number;
@@ -124,14 +126,14 @@ export class Push {
   async test(endpoint: unknown): Promise<void> {
     const sub = this.store.get(parseEndpoint(endpoint));
     if (!sub) throw new PushError("not_subscribed");
-    const status = await this.deliver(sub, TEST, "normal", false);
+    const status = await this.deliver(sub, test(sub.prefs.lang), "normal", false);
     if (status < 200 || status > 299) throw new PushError("push_failed", status);
   }
 
-  // A notification for every subscribed device; false when there is none.
-  announce(payload: PushPayload): boolean {
+  // A notification for every subscribed device, in its language; false when there is none.
+  announce(payload: (lang: Lang) => PushPayload): boolean {
     const subs = this.store.list();
-    for (const sub of subs) this.send(sub, payload, "normal", true);
+    for (const sub of subs) this.send(sub, payload(sub.prefs.lang), "normal", true);
     return subs.length > 0;
   }
 

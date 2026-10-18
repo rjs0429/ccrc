@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Thread } from "../../../../broker/src/search-protocol.ts";
+import { shortDateTime } from "../../i18n/format.ts";
 import { Markdown } from "../Markdown.tsx";
 import { Sheet } from "../ui.tsx";
 
@@ -10,9 +11,7 @@ export function threadTitle(t: ShownThread): string {
 }
 
 function when(at?: number): string {
-  if (!at) return "";
-  const d = new Date(at);
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return at ? shortDateTime(new Date(at)) : "";
 }
 
 // A search hit the chat view does not hold, read-only, with the messages around it along its own branch.

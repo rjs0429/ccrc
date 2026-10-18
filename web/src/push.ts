@@ -1,5 +1,6 @@
 import type { PushBadge, PushPrefs, PushRecent, PushStatus } from "../../broker/src/push/types.ts";
 import { ApiError, request } from "./api.ts";
+import { lang } from "./i18n/index.ts";
 
 const SW = "/sw.js";
 const READY_MS = 10_000;
@@ -101,7 +102,7 @@ export async function turnOn(device: PushDevice, prefs?: Partial<PushPrefs>): Pr
   if (permission !== "granted") throw Error(permission === "denied" ? "알림 권한이 거부되었습니다" : "알림을 허용하지 않았습니다");
   await (await device.reg.pushManager.getSubscription())?.unsubscribe();
   const sub = await device.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(device.key) });
-  const subscribe = (p?: Partial<PushPrefs>) => request<PushStatus>("POST", "/api/push/subscribe", { subscription: sub.toJSON(), prefs: p });
+  const subscribe = (p?: Partial<PushPrefs>) => request<PushStatus>("POST", "/api/push/subscribe", { subscription: sub.toJSON(), prefs: { ...p, lang: lang() } });
   const kept = prefs ? undefined : lastPrefs();
   const status = await subscribe(prefs ?? kept).catch((e: unknown) => {
     if (kept && e instanceof ApiError && e.body.error === "invalid_prefs") return subscribe();
@@ -147,6 +148,20 @@ export async function recentRequest(): Promise<PushRecent["request"]> {
   const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
   if (!sub) return undefined;
   return (await request<PushRecent>("GET", `/api/push/recent?endpoint=${encodeURIComponent(sub.endpoint)}`)).request;
+}
+
+let langSync = Promise.resolve();
+
+// Notifications are written in the app's language; the broker hears of it whenever what it keeps differs.
+export function syncPushLang(): Promise<void> {
+  langSync = langSync.catch(() => {}).then(async () => {
+    if (!window.isSecureContext || !("serviceWorker" in navigator)) return;
+    const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
+    if (!sub) return;
+    const status = await request<PushStatus>("GET", `/api/push/status?endpoint=${encodeURIComponent(sub.endpoint)}`);
+    if (status.prefs && status.prefs.lang !== lang()) await request("POST", "/api/push/prefs", { endpoint: sub.endpoint, prefs: { lang: lang() } });
+  });
+  return langSync;
 }
 
 export async function savePrefs(device: PushDevice, prefs: Partial<PushPrefs>): Promise<PushPrefs> {

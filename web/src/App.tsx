@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Notice, Spinner } from "./components/ui.tsx";
+import { t } from "./i18n/index.ts";
+import { useLang } from "./i18n/react.ts";
 import { errorText } from "./labels.ts";
 import { Chat } from "./screens/Chat.tsx";
 import { Home } from "./screens/Home.tsx";
@@ -49,7 +51,12 @@ function Toast() {
   );
 }
 
+// A new language draws every screen again from the start.
 export function App() {
+  return <Screens key={useLang()} />;
+}
+
+function Screens() {
   const me = useApp((s) => s.me);
   const route = useApp((s) => s.route);
   const conn = useApp((s) => s.conn);
@@ -75,12 +82,12 @@ export function App() {
         <Home />
       )}
       {conn === "offline" && (
-        <div className="pt-safe fixed inset-x-0 top-0 z-30 bg-warn/90 px-safe-4 py-1.5 text-center text-xs text-white">연결이 끊겼습니다. 다시 연결하는 중…</div>
+        <div className="pt-safe fixed inset-x-0 top-0 z-30 bg-warn/90 px-safe-4 py-1.5 text-center text-xs text-white">{t("연결이 끊겼습니다. 다시 연결하는 중…")}</div>
       )}
       {conn === "conflict" && (
-        <Notice title="다른 창에서 사용 중입니다" body="이 창에서 계속하면 다른 창의 연결은 끊깁니다." action="이 창에서 계속" onAction={takeWindow} />
+        <Notice title={t("다른 창에서 사용 중입니다")} body={t("이 창에서 계속하면 다른 창의 연결은 끊깁니다.")} action={t("이 창에서 계속")} onAction={takeWindow} />
       )}
-      {conn === "taken" && <Notice title="다른 창에서 사용을 시작했습니다" body="이 창의 연결은 끊겼습니다." action="이 창에서 다시 사용" onAction={takeWindow} />}
+      {conn === "taken" && <Notice title={t("다른 창에서 사용을 시작했습니다")} body={t("이 창의 연결은 끊겼습니다.")} action={t("이 창에서 다시 사용")} onAction={takeWindow} />}
       <Toast />
     </>
   );

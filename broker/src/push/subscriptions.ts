@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ECDH } from "node:crypto";
 import { writeFileAtomic } from "../config.ts";
+import { isLang } from "../lang.ts";
 import type { ClientKeys } from "./encrypt.ts";
 import { DEFAULT_PREFS, TURN_END_MODES, VSCODE_DELAYS, type PushPrefs, type TurnEndMode } from "./types.ts";
 import { generateVapidKeys, type VapidKeys } from "./vapid.ts";
@@ -100,13 +101,23 @@ export function parsePrefs(v: unknown, base: PushPrefs): PushPrefs {
     if (typeof v !== "boolean") throw new PushError("invalid_prefs");
     out[key] = v;
   }
+  if (o.lang !== undefined) {
+    if (!isLang(o.lang)) throw new PushError("invalid_prefs");
+    out.lang = o.lang;
+  }
   return out;
 }
 
 // Settings as saved, those from before the turn-end choice included: turnDone on became "remote", off became "off".
+// A device saved before it named its language is written to in Korean.
 function storedPrefs(p: Partial<PushPrefs> & { turnDone?: unknown } = {}): PushPrefs {
   const { turnDone, ...rest } = p;
-  return { ...DEFAULT_PREFS, ...rest, turnEnd: isTurnEnd(rest.turnEnd) ? rest.turnEnd : turnDone === false ? "off" : "remote" };
+  return {
+    ...DEFAULT_PREFS,
+    ...rest,
+    turnEnd: isTurnEnd(rest.turnEnd) ? rest.turnEnd : turnDone === false ? "off" : "remote",
+    lang: isLang(rest.lang) ? rest.lang : DEFAULT_PREFS.lang,
+  };
 }
 
 interface PushFile {

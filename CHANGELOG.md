@@ -8,6 +8,13 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ### Added
 
+- The phone app in English. It shows Korean when the phone's first preferred language is Korean and English otherwise
+  (자동, the default), or the language chosen under Settings > Language (언어 / Language). The choice is kept on the
+  phone, so the login screen follows it as well. Notifications are written in each phone's language: the app tells the
+  broker when it subscribes and whenever its language changes, which the broker keeps as `lang` in that device's
+  notification settings in `~/.config/ccrc/push.json`. A conversation exported from the phone gets the broker's
+  headings and lines in the same language. English covers the settings home, the login screen, the account and input
+  settings, the language setting, error messages, notes and the list's times so far; the rest still shows in Korean.
 - `ccrc setup`'s `ssh-keygen` step also checks that it is from OpenSSH 8.2 or newer, which `ccrc update` needs to
   check release signatures: it asks ssh-keygen what git asks it, and one without `-Y find-principals` gets a warning
   that updates will stop at that check, with how to fix it. Setup goes on either way. `ccrc update`, when it stops
@@ -200,6 +207,8 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ### Upgrading from 0.7
 
+- Phones that turned notifications on under 0.7 are written to in Korean until the app is opened once after the
+  update, when it tells the broker its language.
 - After `ccrc update`, reload VS Code windows (Developer: Reload Window): updating from 0.7 does not say so, and a
   Claude tab opened before the update keeps the wrapper of 0.7 until it is opened again. Until then, in that tab's
   session, the side question sheet and the cards and agent map that would offer "백그라운드로" say to open Claude Code again

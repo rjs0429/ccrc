@@ -352,6 +352,42 @@ test("an error or a limit is told with high urgency and the kind of stop", async
   assert.equal(endText(end({ outcome: "done" }), now), "작업을 마쳤습니다");
 });
 
+test("each device is written to in its own language", async () => {
+  const korean: Subscription = { endpoint: OTHER, keys: { p256dh: "", auth: "" }, device: "tablet", createdAt: 0, prefs: { ...DEFAULT_PREFS, vscodeDelaySec: 0, turnEnd: "all" } };
+  const { manager, hub, sent, notifier } = setup({ lang: "en", vscodeDelaySec: 0, turnEnd: "all", details: true }, [korean]);
+  const body = (endpoint: string, tag: string) => sent.filter((s) => s.endpoint === endpoint && s.payload.tag === `${A}:${tag}`).map((s) => s.payload.body);
+  manager.state({ busy: true });
+  manager.ask("r1", "permission", "Bash");
+  manager.ask("r2", "question", "AskUserQuestion");
+  await sleep(40);
+  assert.deepEqual(body(ENDPOINT, "permission"), ["Waiting for your permission · Bash"]);
+  assert.deepEqual(body(ENDPOINT, "question"), ["Claude has a question"]);
+  assert.deepEqual(body(OTHER, "permission"), ["권한 요청"]);
+  sendFiles(manager, "toolu_l1", "proactive", [{ name: "report.md" }, { name: "chart.png" }]);
+  sendFiles(manager, "toolu_l2", "", [{ name: "a.txt" }, { name: "b.txt" }]);
+  manager.push("toolu_l3", "");
+  await sleep(40);
+  assert.deepEqual(body(ENDPOINT, "file"), ["Claude sent a file · report.md and 1 more"]);
+  assert.deepEqual(body(OTHER, "file"), ["파일을 보냈습니다"]);
+  assert.deepEqual(body(ENDPOINT, "claude"), ["Notification from Claude"]);
+  manager.settle("r1");
+  manager.settle("r2");
+  manager.state({ busy: false });
+  hub.activity = Date.now();
+  manager.end({ outcome: "error", reason: "context" });
+  await sleep(40);
+  assert.deepEqual(body(ENDPOINT, "end"), ["Stopped with an error · context limit · 2 files"]);
+  assert.deepEqual(body(OTHER, "end"), ["오류로 끝났습니다 · 문맥 한도 · 파일 2개"]);
+  notifier.close();
+  const now = new Date(2026, 9, 16, 1, 0).getTime();
+  const end = (e: Partial<TurnEnd>): TurnEnd => ({ outcome: "limit", startedAt: now, attached: false, ...e });
+  assert.equal(endText(end({ outcome: "done" }), now, "en"), "Finished");
+  assert.equal(endText(end({ outcome: "crashed" }), now, "en"), "Claude Code exited unexpectedly");
+  assert.equal(endText(end({ outcome: "error", reason: "api", status: 529 }), now, "en"), "Stopped with an error · API 529");
+  assert.equal(endText(end({ resetsAt: new Date(2026, 9, 16, 5, 20).getTime() }), now, "en").replace(/[\u202f\u00a0]/g, " "), "Usage limit reached · resets 5:20 AM");
+  assert.equal(endText(end({ resetsAt: new Date(2026, 9, 17, 22, 0).getTime() }), now, "en").replace(/[\u202f\u00a0]/g, " "), "Usage limit reached · resets Oct 17, 10:00 PM");
+});
+
 test("the badge counts each session once, as the list shows them: waiting requests and unread sessions", async (t) => {
   const other: Subscription = { endpoint: OTHER, keys: { p256dh: "", auth: "" }, device: "ipad", createdAt: 0, prefs: { ...DEFAULT_PREFS, turnEnd: "off" } };
   const { manager, hub, notifier, sent } = setup({}, [other]);

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { EffortName, LiveState, ModelOption, PermissionModeName, StartSettings } from "../../../broker/src/protocol.ts";
-import { MODE_HINT, MODE_LABEL, baseName, effortLabel, effortLevels, fastReasonText, findModel, modelLabel, modelOffers, type PeerNote } from "../labels.ts";
+import { MODE_LABEL, baseName, effortLabel, effortLevels, fastReasonText, findModel, modelLabel, modeHints, modelOffers, type PeerNote } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
 import { usePrefs } from "../prefs.ts";
 import { rememberSent } from "../sentPreviews.ts";
@@ -753,7 +753,7 @@ export function Composer({
           {choosing && <StartHint draft={Boolean(draft)} />}
           {onReset && <Choice label="기본값" hint="Claude Code 설정을 따릅니다" selected={!mode} onClick={() => (onReset("mode"), setSheet(null))} />}
           {MODES.map((m) => (
-            <Choice key={m} label={MODE_LABEL[m]} hint={MODE_HINT[m]} selected={mode === m} onClick={() => (onMode(m), setSheet(null))} />
+            <Choice key={m} label={MODE_LABEL[m]} hint={modeHints()[m]} selected={mode === m} onClick={() => (onMode(m), setSheet(null))} />
           ))}
         </Sheet>
       )}

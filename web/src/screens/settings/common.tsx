@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { ApiError } from "../../api.ts";
-import { clock } from "../../labels.ts";
+import { dateTime as formatDateTime } from "../../i18n/format.ts";
 import { loggedOut, toast } from "../../state.ts";
 
 export function SectionTitle({ children }: { children: ReactNode }) {
@@ -16,7 +16,7 @@ export function showError(e: unknown, known: Record<string, string> = {}): void 
 
 export function dateTime(ts: string): string {
   const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? ts : `${d.getMonth() + 1}월 ${d.getDate()}일 ${clock(ts)}`;
+  return Number.isNaN(d.getTime()) ? ts : formatDateTime(d);
 }
 
 export function Switch({ on }: { on: boolean }) {
