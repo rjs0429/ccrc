@@ -424,6 +424,68 @@ export interface OutputStyleInfo {
   available: string[];
 }
 
+// One file of a session folder's git changes. path: from the repository's top as git names it, "old => new" for a rename,
+// whose plain names are previousPath and newPath. hunks: none for a binary, untracked or too large ("large") file, nor
+// for one whose contents stay hidden: a key or token file, or one outside the session's folders. cut: lines left out.
+export interface GitFileChange {
+  path: string;
+  status: "added" | "modified" | "removed" | "renamed" | "copied";
+  added: number;
+  removed: number;
+  binary?: boolean;
+  untracked?: boolean;
+  previousPath?: string;
+  newPath?: string;
+  hunks?: Hunk[];
+  cut?: number;
+  large?: boolean;
+  hidden?: boolean;
+}
+
+// A session folder's git changes as the official diff panel shows them: since the branch left its base branch when it is
+// ahead of it (committed and uncommitted together), else since HEAD. state "none": no repository; "busy": mid merge or
+// rebase. more: files beyond the ones listed. via: Claude Code worked them out, or ccrc did with git.
+export interface GitChanges {
+  state: "ok" | "none" | "busy";
+  root?: string;
+  base?: { branch: string; ref: string };
+  stats?: { files: number; added: number; removed: number };
+  files: GitFileChange[];
+  more?: number;
+  via: "claude" | "broker";
+}
+
+// A file change a subagent made, from its transcript: the call that made it (id), the subagent, what the subagent is
+// for (agent), the tool and when.
+export interface AgentFileChange {
+  id: string;
+  agentId: string;
+  agent?: string;
+  name: string;
+  ts?: string;
+  file: string;
+  patch: Hunk[];
+  patchCut?: number;
+}
+
+// The most UTF-8 a side question's thread may take as JSON: with the question it stays well inside one WebSocket message.
+export const SIDE_THREAD_BYTES = 256 * 1024;
+
+// An earlier side question and its answer, which a follow-up is asked with.
+export interface SideTurn {
+  question: string;
+  answer: string;
+  notice?: string;
+}
+
+// The answer to a side question; null when Claude Code had none. synthetic: the text is Claude Code's notice in place of
+// an answer. notice: the answer came from another model after a refusal.
+export interface SideAnswer {
+  answer: string | null;
+  synthetic?: boolean;
+  notice?: string;
+}
+
 // Requests the web client makes about one session and their answers ("call" / "call_result").
 export interface CallMap {
   // summary: from the last response's usage, without counting each category.
@@ -460,6 +522,17 @@ export interface CallMap {
   rename: { args: { title: string }; data: { title: string } };
   // Leaves the session out of ccrc's full list, or brings it back.
   archive: { args: { archived: boolean }; data: { archived: boolean } };
+  // The git changes of the session's folder.
+  git_changes: { args: Record<string, never>; data: GitChanges };
+  // The file changes the session's subagents made; follow: asked again while the sheet stays open.
+  agent_changes: { args: { follow?: boolean }; data: AgentFileChange[] };
+  // A question beside the conversation that neither interrupts a turn nor enters the conversation, answered after
+  // call_progress lines. history: the earlier questions and answers of the same thread. ask: the phone's id for it.
+  side_question: { args: { question: string; history?: SideTurn[]; ask?: string }; data: SideAnswer };
+  // The side question asked with `ask`, waited for again after the connection dropped; how it ended is kept a while.
+  side_question_wait: { args: { ask: string }; data: SideAnswer };
+  // Gives up the side question under way, only the one asked with `ask` where given.
+  side_question_cancel: { args: { ask?: string }; data: Record<string, never> };
 }
 export type CallOp = keyof CallMap;
 export const CALL_OPS: CallOp[] = ["context", "usage", "mcp_status", "mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "commands", "files", "resume", "output_style", "set_output_style", "unqueue", "rename", "archive"];
@@ -472,6 +545,7 @@ CALL_OPS.push("agent_transcript", "task_output", "workflow_agents");
 CALL_OPS.push("worktree_status", "worktree_remove");
 CALL_OPS.push("fork", "rewind_conversation");
 CALL_OPS.push("history", "history_find");
+CALL_OPS.push("git_changes", "agent_changes", "side_question", "side_question_wait", "side_question_cancel");
 
 export interface CallMap {
   // Marks the session unread until it is opened again, or read.
@@ -650,8 +724,9 @@ export interface LiveState {
   fastCredits?: boolean;
   // Thinking as the broker knows it; absent when it cannot know.
   thinking?: boolean;
-  // The VS Code wrapper is too old to change Fast mode and Thinking.
+  // The VS Code wrapper is too old to change Fast mode and Thinking, or to pass side questions on.
   optionsUnknown?: boolean;
+  sideUnknown?: boolean;
 }
 
 export type ClientMsg =
@@ -731,4 +806,6 @@ export type ServerMsg =
   // as it stands. follow_end: the broker no longer watches it.
   | { t: "follow"; sessionId: string; id: string; base?: { count: number; lastId: string }; transcript?: AgentTranscript; output?: TaskOutput }
   | { t: "follow_end"; sessionId: string; id: string }
+  // How a long call is going: Claude Code took the side question up, or retries the API after an error.
+  | { t: "call_progress"; id: number; status: "started" | "retry"; attempt?: number; maxRetries?: number; retryInMs?: number }
   | { t: "pong" };

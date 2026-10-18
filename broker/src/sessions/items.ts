@@ -206,10 +206,34 @@ function capPatch(all: Hunk[]): { patch: Hunk[]; patchCut?: number } {
   return cut ? { patch, patchCut: cut } : { patch };
 }
 
-// The file a tool changed and how, from its structured output (Edit, Write, MultiEdit). Claude Code
-// reports a newly written file without hunks, so its whole content becomes one added hunk.
-function fileChange(output: unknown): Pick<ToolItem, "file" | "patch" | "patchCut"> {
+// A notebook cell's change, numbered within the cell: the lines both sides share at the start and the end around the
+// ones removed and added.
+function cellChange(before: string, after: string): Hunk {
+  const a = before ? before.split("\n") : [];
+  const b = after ? after.split("\n") : [];
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const lines = [
+    ...a.slice(0, head).map((l) => ` ${l}`),
+    ...a.slice(head, a.length - tail).map((l) => `-${l}`),
+    ...b.slice(head, b.length - tail).map((l) => `+${l}`),
+    ...a.slice(a.length - tail).map((l) => ` ${l}`),
+  ];
+  return { oldStart: a.length ? 1 : 0, oldLines: a.length, newStart: b.length ? 1 : 0, newLines: b.length, lines };
+}
+
+// The file a tool changed and how, from its structured output (Edit, Write, MultiEdit, NotebookEdit). Claude Code
+// reports a newly written file without hunks, so its whole content becomes one added hunk; a notebook edit shows only
+// when the output holds the cell's source from before it.
+export function fileChange(output: unknown): Pick<ToolItem, "file" | "patch" | "patchCut"> {
   const r = record(output);
+  if (r && typeof r.notebook_path === "string" && typeof r.new_source === "string" && !r.error) {
+    const before = r.edit_mode === "insert" ? "" : typeof r.old_source === "string" ? r.old_source : undefined;
+    const cell = before === undefined ? undefined : cellChange(before, r.edit_mode === "delete" ? "" : r.new_source);
+    return cell?.lines.some((l) => l[0] !== " ") ? { file: r.notebook_path, ...capPatch([cell]) } : {};
+  }
   if (!r || typeof r.filePath !== "string" || !Array.isArray(r.structuredPatch) || r.staged === true) return {};
   let all = hunks(r.structuredPatch);
   if (!all.length && r.type === "create" && typeof r.content === "string") all = [createdFile(r.content)];

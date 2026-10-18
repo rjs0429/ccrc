@@ -16,7 +16,7 @@ const SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor="];
 // The lock Claude Code puts on a worktree one of its sessions or agents works in.
 const CLAUDE_LOCK = /^claude (?:agent|session) .{1,255} \(pid (\d{1,10})(?: start (.{1,255}))?\)$/;
 
-interface Run {
+export interface Run {
   code: number;
   out: string;
   err: string;
@@ -27,7 +27,7 @@ function gitEnv(): NodeJS.ProcessEnv {
   return { ...env, LC_ALL: "C", GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
 }
 
-function git(dir: string, args: string[], ms = INFO_MS): Promise<Run> {
+export function git(dir: string, args: string[], ms = INFO_MS): Promise<Run> {
   return new Promise((resolve) => {
     execFile("git", [...SAFE, "-C", dir, ...args], { timeout: ms, maxBuffer: 16 << 20, env: gitEnv() }, (err, stdout, stderr) => {
       const code = err ? (typeof (err as { code?: unknown }).code === "number" ? (err as { code: number }).code : -1) : 0;

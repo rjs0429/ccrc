@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { elicitInfo } from "../elicit.ts";
 import type { Link } from "../link/server.ts";
-import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, LiveState, McpServerInfo, PermissionModeName, RewindResult, TaskOutput } from "../protocol.ts";
+import type { ContextDetail, DisplayItem, ElicitInfo, UsageInfo, EffortName, LiveState, McpServerInfo, PermissionModeName, RewindResult, SideTurn, TaskOutput } from "../protocol.ts";
 import { argValue } from "../wrapper/relay.ts";
 import { rememberCommands } from "./commands.ts";
 import {
   CONTEXT_MS,
+  DIFF_MS,
   ELICIT_MS,
   ELICIT_UNWATCHED_MS,
   MCP_CHANGE_MS,
@@ -16,6 +17,7 @@ import {
   mcpServers,
   rewindResult,
   shellOutput,
+  sideHistory,
   type ContentBlock,
   type Decision,
   type ElicitAnswer,
@@ -30,7 +32,7 @@ type Held = { from: "out" | "in" | "settled"; v: unknown; at: string };
 // The extension's own MCP server inside Claude Code; the extension leaves it out of its server list too.
 const HOST_SERVER = "claude-vscode";
 const ELICIT_SEEN_MAX = 100;
-// How a wrapper that predates Fast mode and Thinking changes refuses them; the web client explains it.
+// How a wrapper that predates a request refuses it; the web client explains it.
 const OLD_WRAPPER = "rejected by the wrapper: request not allowed";
 
 const obj = (v: unknown): Obj => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
@@ -65,6 +67,7 @@ export class WrappedSession extends SessionCore {
   private startThinking: boolean;
   // The wrapper does not pass on moves to the background.
   private backgroundUnknown: boolean;
+  private diffs: boolean;
 
   // Thinking starts as VS Code launched Claude Code; an older wrapper does not pass on VS Code's later changes.
   constructor(link: Link, id: string, cwd: string, title?: string) {
@@ -74,6 +77,8 @@ export class WrappedSession extends SessionCore {
     const caps: unknown[] = Array.isArray(link.hello?.caps) ? link.hello.caps : [];
     this.optionsUnknown = !caps.includes("fast_mode") || !caps.includes("thinking");
     this.backgroundUnknown = !caps.includes("background_tasks");
+    this.sideUnknown = !caps.includes("side_question");
+    this.diffs = caps.includes("workspace_diff");
     this.startThinking = thinkingArg(link.hello?.args ?? []);
     this.thinking = this.startThinking;
   }
@@ -254,6 +259,17 @@ export class WrappedSession extends SessionCore {
   readFile(path: string, maxBytes: number, encoding: "utf-8" | "base64"): Promise<FileContents> | undefined {
     if (this.closed) return undefined;
     return this.link.request({ subtype: "read_file", path, max_bytes: maxBytes, encoding }, READ_MS).then(fileContents);
+  }
+
+  workspaceDiff(): Promise<Record<string, unknown>> | undefined {
+    if (this.closed || !this.diffs) return undefined;
+    return this.link.request({ subtype: "get_workspace_diff" }, DIFF_MS);
+  }
+
+  protected askSide(question: string, history: SideTurn[], progress: (m: Record<string, unknown>) => void, signal: AbortSignal): Promise<unknown> {
+    if (this.sideUnknown) return Promise.reject(Error(OLD_WRAPPER));
+    const request = { subtype: "side_question", question, ...(history.length ? { history: sideHistory(history) } : {}) };
+    return this.link.request(request, this.sideMs + READ_MS, { onProgress: progress, signal });
   }
 
   async usage(): Promise<UsageInfo> {

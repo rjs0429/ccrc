@@ -7,7 +7,7 @@ import { usePrefs } from "../prefs.ts";
 import { rememberSent } from "../sentPreviews.ts";
 import { toast, useApp } from "../state.ts";
 import { commandName, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
-import { bareCommandSheet } from "./commandSheets.ts";
+import { bareCommandSheet, withPhoneCommands } from "./commandSheets.ts";
 import { ContextRing } from "./ContextRing.tsx";
 import { AgentChip, agentChipWidth } from "./agents/AgentChip.tsx";
 import type { AgentMap } from "./agents/tree.ts";
@@ -289,7 +289,7 @@ export function Composer({
   const command = target && !dismissed && !mention ? commandQuery(text) : undefined;
   const files = useFileSuggestions(target, mention?.query);
   const listed = useCommands(target, command !== undefined);
-  const commands = draft ? listed?.filter((c) => !DRAFT_HIDDEN.has(c.name)) : listed;
+  const commands = draft ? listed?.filter((c) => !DRAFT_HIDDEN.has(c.name)) : withPhoneCommands(listed);
   const rows: SuggestRow[] =
     mention && files
       ? files.map((f) => ({ key: f, label: baseName(f), hint: f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : undefined }))

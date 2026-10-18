@@ -23,8 +23,10 @@ export interface Hello {
   sessionId?: string;
   // Session the wrapper waits to start until the broker hands it over.
   claim?: string;
-  // What this wrapper passes on beyond what LINK_VERSION promises: "fast_mode" and "thinking" changes, and
-  // "claude_push": it tells Claude what became of a PushNotification call as the broker's claude_push frames say.
+  // What this wrapper passes on beyond what LINK_VERSION promises: "fast_mode" and "thinking" changes,
+  // "background_tasks" for a call in the foreground, "workspace_diff" reads, "side_question"s with their progress and
+  // cancelling, and "claude_push": it tells Claude what became of a PushNotification call as the broker's claude_push
+  // frames say.
   caps?: string[];
 }
 

@@ -12,6 +12,14 @@ interface Waiter {
   resolve: (payload: Record<string, unknown>) => void;
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
+  progress?: (m: Record<string, unknown>) => void;
+}
+
+export interface RequestOptions {
+  // Claude Code's control_request_progress lines for the request.
+  onProgress?: (m: Record<string, unknown>) => void;
+  // Gives the request up and asks Claude Code to cancel it.
+  signal?: AbortSignal;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -55,16 +63,27 @@ export class Link extends EventEmitter {
   }
 
   // Sends a control request to Claude Code and resolves with its success payload.
-  request(request: Record<string, unknown>, ms = REQUEST_TIMEOUT_MS): Promise<Record<string, unknown>> {
+  request(request: Record<string, unknown>, ms = REQUEST_TIMEOUT_MS, opts: RequestOptions = {}): Promise<Record<string, unknown>> {
     if (!this.usable) return Promise.reject(Error("session closed"));
+    const { signal, onProgress } = opts;
+    if (signal?.aborted) return Promise.reject(Error("cancelled"));
     const id = `${REMOTE_PREFIX}${randomUUID()}`;
-    return new Promise((resolve, reject) => {
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiting.delete(id);
         reject(Error("Claude Code did not answer"));
       }, ms);
-      this.waiting.set(id, { resolve, reject, timer });
+      this.waiting.set(id, { resolve, reject, timer, ...(onProgress ? { progress: onProgress } : {}) });
       this.send({ t: "to_cli", m: { type: "control_request", request_id: id, request } });
+      signal?.addEventListener(
+        "abort",
+        () =>
+          this.settleWaiter(id, (w) => {
+            this.send({ t: "to_cli", m: { type: "control_cancel_request", request_id: id } });
+            w.reject(Error("cancelled"));
+          }),
+        { once: true },
+      );
     });
   }
 
@@ -104,6 +123,10 @@ export class Link extends EventEmitter {
         return;
       case "out": {
         if (!this.hello || !isObject(f.m)) return;
+        if (f.m.type === "system" && f.m.subtype === "control_request_progress") {
+          if (typeof f.m.request_id === "string") this.waiting.get(f.m.request_id)?.progress?.(f.m);
+          return;
+        }
         const sid = f.m.session_id;
         if (typeof sid === "string" && sid && sid !== this.sessionId) {
           this.sessionId = sid;

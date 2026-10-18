@@ -227,3 +227,90 @@ test("an ask that must not be approved by a stray tap reaches the phone with den
   await s.answer("r1", { kind: "permission", decision: "allow_always" });
   assert.deepEqual(await result, { behavior: "allow", updatedInput: { url: "https://bank.example.com" } });
 });
+
+// The SDK's request(): answers after `ms`, or gives up with its own error when the signal aborts.
+function requester(answer: (r: Record<string, unknown>) => unknown, ms = 20) {
+  const asked: Record<string, unknown>[] = [];
+  const request = (r: Record<string, unknown>, opts?: { signal?: AbortSignal }) =>
+    new Promise((resolve, reject) => {
+      asked.push(r);
+      const t = setTimeout(() => resolve({ response: answer(r) }), ms);
+      opts?.signal?.addEventListener("abort", () => (clearTimeout(t), reject(Error("This operation was aborted"))), { once: true });
+    });
+  return { asked, request };
+}
+
+test("an owned session asks a side question with its thread, and the progress lines meanwhile are its own", async () => {
+  const { s } = owned();
+  const r = requester(() => ({ response: "It is reading the tests.", synthetic: false, refusal_fallback: { content: "answered by another model" } }), 40);
+  Object.assign((s as unknown as { q: object }).q, { request: r.request });
+  const heard: unknown[] = [];
+  const asked = s.sideQuestion("what is it doing?", [{ question: "q", answer: "a" }], (p) => heard.push(p));
+  (s as unknown as { onMessage(m: Record<string, unknown>): void }).onMessage({ type: "system", subtype: "control_request_progress", request_id: "sdk-1", status: "started" });
+  await assert.rejects(s.sideQuestion("another", []), /a side question is under way/);
+  assert.deepEqual(await asked, { answer: "It is reading the tests.", notice: "answered by another model" });
+  assert.deepEqual(r.asked, [{ subtype: "side_question", question: "what is it doing?", history: [{ question: "q", response: "a" }] }]);
+  assert.deepEqual(heard, [{ status: "started" }]);
+  (s as unknown as { onMessage(m: Record<string, unknown>): void }).onMessage({ type: "system", subtype: "control_request_progress", request_id: "sdk-2", status: "started" });
+  assert.equal(heard.length, 1, "progress after the answer is nobody's");
+  assert.equal(s.builder.items.length, 1, "nothing enters the conversation");
+});
+
+test("an owned session's side question gives up after its time, when cancelled, and when the session closes", async () => {
+  const { s } = owned();
+  Object.assign((s as unknown as { q: object }).q, { request: requester(() => ({ response: "late" }), 5000).request, close: () => {} });
+  s.sideMs = 30;
+  await assert.rejects(s.sideQuestion("slow", []), /side question timed out/);
+  s.sideMs = 60_000;
+  const cancelled = s.sideQuestion("slow", []);
+  s.cancelSideQuestion();
+  await assert.rejects(cancelled, /side question cancelled/);
+  const closing = s.sideQuestion("slow", []);
+  await s.close("released");
+  await assert.rejects(closing, /session closed/);
+  await assert.rejects(s.sideQuestion("after", []), /session closed/);
+});
+
+test("an empty or synthetic side answer says so", async () => {
+  const { s } = owned();
+  let answer: unknown = { response: "   ", synthetic: false };
+  Object.assign((s as unknown as { q: object }).q, { request: requester(() => answer).request });
+  assert.deepEqual(await s.sideQuestion("q", []), { answer: null });
+  answer = { response: "(No answer available for this side question.)", synthetic: true };
+  assert.deepEqual(await s.sideQuestion("q", []), { answer: "(No answer available for this side question.)", synthetic: true });
+});
+
+test("an owned session asks Claude Code for its folder's git changes", async () => {
+  const { s } = owned();
+  const r = requester(() => ({ diff: null }), 1);
+  Object.assign((s as unknown as { q: object }).q, { request: r.request });
+  assert.deepEqual(await s.workspaceDiff(), { diff: null });
+  assert.deepEqual(r.asked, [{ subtype: "get_workspace_diff" }]);
+});
+
+test("a side question asked with an id is waited for again with its progress, and cancelling one waits for it to end", async () => {
+  const { s } = owned();
+  const progress = (status: string) => (s as unknown as { onMessage(m: Record<string, unknown>): void }).onMessage({ type: "system", subtype: "control_request_progress", request_id: "sdk-1", status });
+  Object.assign((s as unknown as { q: object }).q, { request: requester((r) => ({ response: `answer to ${r.question}` }), 60).request });
+  const [first, again]: unknown[][] = [[], []];
+  const asked = s.sideQuestion("what now?", [], (p) => first.push(p), "ask-1");
+  assert.equal(s.sideWait("ask-2"), undefined, "another id has nothing to wait for");
+  const waited = s.sideWait("ask-1", (p) => again.push(p));
+  progress("started");
+  assert.deepEqual(await waited, { answer: "answer to what now?" });
+  assert.deepEqual(await asked, { answer: "answer to what now?" });
+  assert.deepEqual([first, again], [[{ status: "started" }], [{ status: "started" }]]);
+  assert.equal(s.sideWait("ask-1"), undefined, "an answered question is no longer under way");
+
+  Object.assign((s as unknown as { q: object }).q, { request: requester(() => ({ response: "late" }), 5000).request });
+  const slow = assert.rejects(s.sideQuestion("slow", [], undefined, "ask-3"), /side question cancelled/);
+  await s.cancelSideQuestion("ask-4");
+  const waitedSlow = s.sideWait("ask-3");
+  assert.ok(waitedSlow, "a cancel naming another id leaves it running");
+  const waitedEnd = assert.rejects(waitedSlow, /side question cancelled/);
+  await s.cancelSideQuestion("ask-3");
+  assert.equal(s.sideWait("ask-3"), undefined, "the cancel returns once it has ended");
+  await Promise.all([slow, waitedEnd]);
+  Object.assign((s as unknown as { q: object }).q, { request: requester(() => ({ response: "next" }), 1).request });
+  assert.deepEqual(await s.sideQuestion("next", []), { answer: "next" }, "another question may be asked at once");
+});

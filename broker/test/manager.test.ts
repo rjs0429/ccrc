@@ -231,3 +231,94 @@ test("a VS Code session whose Claude Code crashes mid-turn ends as crashed with 
   await until(() => !manager.isControlled(Y), "ended");
   assert.deepEqual(ends, [[X, "crashed", true]], "a wrapper that does not say how Claude Code ended reports no crash");
 });
+
+test("a running session's git changes come from Claude Code, and from ccrc when it cannot answer or no process runs", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const G = "3b4c5d6e-7f80-4a9b-8c1d-2e3f4a5b6c7d";
+  const repo = fs.realpathSync(tempDir("ccrc-repo-"));
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-C", repo, ...args]);
+  git("init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "base");
+  fs.writeFileSync(path.join(repo, "a.txt"), "two\n");
+  const dir = path.join(home, ".claude", "projects", projectDirName(repo));
+  fs.mkdirSync(dir, { recursive: true });
+  const row = { sessionId: G, cwd: repo, type: "user", uuid: "3b4c5d6e-0000-4000-8000-000000000001", parentUuid: null, timestamp: new Date(Date.now() - 60_000).toISOString() };
+  fs.writeFileSync(path.join(dir, `${G}.jsonl`), JSON.stringify({ ...row, message: { role: "user", content: "change a.txt" } }) + "\n");
+  fs.writeFileSync(path.join(repo, "made-by-the-session.txt"), "new\n");
+
+  const { manager, connect } = await setup();
+  const stopped = (await manager.call(G, "git_changes", {})) as { via: string; files: { path: string; untracked?: boolean; hunks?: unknown[] }[] };
+  assert.equal(stopped.via, "broker");
+  assert.deepEqual(
+    stopped.files.map((f) => [f.path, Boolean(f.untracked), Boolean(f.hunks?.length)]),
+    [
+      ["a.txt", false, true],
+      ["made-by-the-session.txt", true, false],
+    ],
+  );
+
+  const w = await connect({ sessionId: G, cwd: repo, caps: ["fast_mode", "thinking", "workspace_diff", "side_question"] });
+  await until(() => manager.isControlled(G), "attached");
+  const answer = (diff: unknown, error?: string) =>
+    void w.wait((f) => f.t === "to_cli" && ((f.m as Msg).request as Msg | undefined)?.subtype === "get_workspace_diff" && !answered.has((f.m as Msg).request_id), "diff asked").then((f) => {
+      const id = (f.m as Msg).request_id;
+      answered.add(id);
+      w.send({ m: { type: "control_response", response: error ? { subtype: "error", request_id: id, error } : { subtype: "success", request_id: id, response: { diff } } }, t: "reply" });
+    });
+  const answered = new Set<unknown>();
+  answer({ stats: { filesCount: 1, linesAdded: 1, linesRemoved: 1 }, perFileStats: [{ path: "a.txt", added: 1, removed: 1, isBinary: false, isUntracked: false, status: "modified" }], hunks: [], skippedLarge: [], restricted: [], source: { kind: "working-tree" } });
+  const live = (await manager.call(G, "git_changes", {})) as { via: string; root: string };
+  assert.equal(live.via, "claude");
+  assert.equal(live.root, repo);
+  answer(undefined, "Unsupported control request subtype: get_workspace_diff");
+  const fallback = (await manager.call(G, "git_changes", {})) as { via: string };
+  assert.equal(fallback.via, "broker");
+  w.sock.destroy();
+});
+
+test("a side question asked with an id is waited for again while it runs, and how it ended is kept for a while", async () => {
+  const Q = "4c5d6e7f-8091-4a2b-9c3d-4e5f6a7b8c9d";
+  const { manager, connect } = await setup();
+  const w = await connect({ sessionId: Q, cwd: home, caps: ["fast_mode", "thinking", "workspace_diff", "side_question"] });
+  await until(() => manager.isControlled(Q), "attached");
+  const seen = new Set<unknown>();
+  const sent = async (question: string) => {
+    const f = await w.wait((f) => f.t === "to_cli" && ((f.m as Msg).request as Msg | undefined)?.question === question && !seen.has((f.m as Msg).request_id), `${question} sent`);
+    seen.add((f.m as Msg).request_id);
+    return (f.m as Msg).request_id as string;
+  };
+  const reply = (id: string, response: Msg) => w.send({ m: { type: "control_response", response: { request_id: id, ...response } }, t: "reply" });
+
+  const heard: unknown[] = [];
+  const asked = manager.call(Q, "side_question", { question: "q1", history: [], ask: "a1" });
+  const id1 = await sent("q1");
+  const again = manager.call(Q, "side_question_wait", { ask: "a1" }, (p) => heard.push(p));
+  w.send({ m: { type: "system", subtype: "control_request_progress", request_id: id1, status: "started" }, t: "out" });
+  await until(() => heard.length === 1, "progress heard by the one waiting again");
+  reply(id1, { subtype: "success", response: { response: "A1" } });
+  assert.deepEqual(await asked, { answer: "A1" });
+  assert.deepEqual(await again, { answer: "A1" });
+  assert.deepEqual(await manager.call(Q, "side_question_wait", { ask: "a1" }), { answer: "A1" }, "an answer is kept after it came");
+  await assert.rejects(manager.call(Q, "side_question_wait", { ask: "nobody" }), /side question gone/);
+
+  const failed = assert.rejects(manager.call(Q, "side_question", { question: "q2", history: [], ask: "a2" }), /API Error: 500/);
+  reply(await sent("q2"), { subtype: "error", error: "API Error: 500" });
+  await failed;
+  await assert.rejects(manager.call(Q, "side_question_wait", { ask: "a2" }), /API Error: 500/, "so is the error a question ended with");
+  await assert.rejects(manager.call(Q, "side_question_wait", { ask: "a1" }), /side question gone/, "only the last question is kept");
+
+  const slow = assert.rejects(manager.call(Q, "side_question", { question: "q3", history: [], ask: "a3" }), /side question cancelled/);
+  const id3 = await sent("q3");
+  await assert.rejects(manager.call(Q, "side_question", { question: "q4", history: [], ask: "a4" }), /a side question is under way/);
+  await assert.rejects(manager.call(Q, "side_question_wait", { ask: "a4" }), /side question gone/, "a question refused is not kept");
+  await assert.rejects(manager.call(Q, "side_question_wait", { ask: "a2" }), /API Error: 500/, "nor does it put out the one kept");
+  await manager.call(Q, "side_question_cancel", { ask: "a1" });
+  assert.ok(!w.frames.some((f) => (f.m as Msg | undefined)?.type === "control_cancel_request"), "a cancel naming another question leaves this one");
+  await manager.call(Q, "side_question_cancel", { ask: "a3" });
+  await w.wait((f) => (f.m as Msg | undefined)?.type === "control_cancel_request" && (f.m as Msg).request_id === id3, "cancel sent");
+  await slow;
+  await assert.rejects(manager.call(Q, "side_question_wait", { ask: "a3" }), /side question cancelled/);
+  w.sock.destroy();
+});

@@ -44,6 +44,9 @@ const EVENT_LABEL: Record<string, string> = {
   worktree_remove: "worktree 지우기",
   fork: "갈래",
   rewind_conversation: "대화 되돌리기",
+  git_changes: "git 변경 열람",
+  agent_changes: "에이전트 변경 열람",
+  side_question: "곁질문",
 };
 
 const CALL_LABEL: Record<string, string> = {
@@ -157,6 +160,10 @@ function detail(e: AuditEntry): string {
       return [e.before ? "메시지에서" : "지금까지", typeof e.chars === "number" ? "바로 시작" : "", typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : ""].filter(Boolean).join(" · ");
     case "rewind_conversation":
       return [e.choice === "both" ? "대화와 코드" : "대화만", e.mode === "in_place" ? "제자리" : "새 세션"].join(" · ");
+    case "git_changes":
+      return [e.via === "claude" ? "Claude Code가 읽음" : "ccrc가 읽음", typeof e.files === "number" ? `파일 ${e.files}개` : ""].filter(Boolean).join(" · ");
+    case "side_question":
+      return typeof e.thread === "number" ? `이어서 묻기 · 앞선 질문 ${e.thread}개` : "";
     default:
       return "";
   }

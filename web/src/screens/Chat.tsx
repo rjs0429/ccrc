@@ -17,6 +17,7 @@ import { ContextUsageSheet } from "../components/sheets/ContextUsage.tsx";
 import { McpSheet } from "../components/sheets/Mcp.tsx";
 import { OutputStyleSheet, outputStyleLabel } from "../components/sheets/OutputStyle.tsx";
 import { RewindSheet } from "../components/sheets/Rewind.tsx";
+import { SideQuestionSheet } from "../components/sheets/SideQuestion.tsx";
 import { ForkSheet } from "../components/sheets/Fork.tsx";
 import { MessageActionsSheet } from "../components/sheets/MessageActions.tsx";
 import type { UserMessage } from "../components/messageActions.ts";
@@ -139,6 +140,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
   // typed: the "/fork" or "/branch" message that opened the sheet, back in the composer when the sheet goes without a fork.
   const [fork, setFork] = useState<{ before?: UserMessage; text?: string; name?: string; typed?: string } | null>(null);
   const [rewindAt, setRewindAt] = useState<string>();
+  // A side question sheet; typed: the "/btw" message that opened it, back in the composer when the sheet goes unasked.
+  const [side, setSide] = useState<{ question?: string; typed?: string } | null>(null);
+  const sideAsked = useRef(false);
+  const openSide = (question?: string, typed?: string) => {
+    sideAsked.current = false;
+    setSide({ question, typed });
+  };
   const listRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -315,6 +323,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
       setFork({ ...(commandName(c.name) === "branch" ? { name: c.args } : { text: c.args }), typed: text });
       return true;
     }
+    // "/btw" asks what follows it beside the conversation; nothing is sent.
+    if (c && commandSheet(c.name)?.sheet === "btw") {
+      (document.activeElement as HTMLElement | null)?.blur();
+      openSide(c.args || undefined, text);
+      return true;
+    }
     const before = new Set((chat?.items ?? []).filter((i) => i.kind === "command").map((i) => i.id));
     const ok = send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
     if (ok) follow(true);
@@ -357,6 +371,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     else if (target === "config") openSettingsFrom("claude");
     else if (target === "permissions") openSettingsFrom("claude", "permissions");
     else if (target === "fork") setFork({});
+    else if (target === "btw") openSide();
     else if (target === "usage") {
       setUsageCommand(name);
       setSheet("usage");
@@ -739,6 +754,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               </p>
             )}
           </div>
+          <Choice label="곁질문" onClick={() => (openSide(), setMenu(false))} />
           <Choice
             label="되돌리기"
             disabled={folderMissing}
@@ -784,6 +800,18 @@ export function Chat({ sessionId }: { sessionId: string }) {
       {archiving && <SessionActions session={renameTarget} step="archive" onClose={() => setArchiving(false)} />}
       {cleaning && <WorktreeSheet sessionId={sessionId} onClose={() => setCleaning(false)} />}
       {sheet === "changes" && <ChangesSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
+      {side && (
+        <SideQuestionSheet
+          sessionId={sessionId}
+          question={side.question}
+          ask={Boolean(side.typed)}
+          onAsked={() => (sideAsked.current = true)}
+          onClose={() => {
+            if (side.typed && !sideAsked.current) composerInsert(side.typed, true);
+            setSide(null);
+          }}
+        />
+      )}
       {sheet === "agents" && (
         <AgentMapSheet sessionId={sessionId} title={title} controllable={controllable} onClose={() => setSheet(null)} onJump={jumpTo} onPending={jumpToRequest} onFile={openFile} />
       )}

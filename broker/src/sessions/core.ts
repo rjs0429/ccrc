@@ -18,6 +18,8 @@ import {
   type PermissionModeName,
   type QueuedMessage,
   type RewindResult,
+  type SideAnswer,
+  type SideTurn,
   type TaskOutput,
   type UsageInfo,
 } from "../protocol.ts";
@@ -58,6 +60,14 @@ export const ELICIT_MS = 15 * 60_000;
 export const ELICIT_UNWATCHED_MS = 2 * 60_000;
 // A file of up to 10MB travels base64-encoded in one line.
 export const READ_MS = 30_000;
+// Claude Code gives itself a few seconds for the git changes of its folder.
+export const DIFF_MS = 10_000;
+// A side question unanswered this long is cancelled, as VS Code does.
+export const SIDE_MS = 5 * 60_000;
+// Cancelling a side question waits this long for it to end.
+const SIDE_CANCEL_MS = 5000;
+const ANSWER_MAX = 100_000;
+const NOTICE_MAX = 10_000;
 // The budget VS Code turns Thinking on with; a model that thinks adaptively ignores it.
 export const THINKING_TOKENS = 31_999;
 
@@ -138,6 +148,30 @@ export function rewindResult(r: unknown): RewindResult {
   };
 }
 
+// Claude Code's side_question answer: an empty response is no answer.
+export function sideAnswer(r: unknown): SideAnswer {
+  const o = isObj(r) ? r : {};
+  const answer = typeof o.response === "string" && o.response.trim() ? o.response.slice(0, ANSWER_MAX) : null;
+  const notice = clipped(isObj(o.refusal_fallback) ? o.refusal_fallback.content : undefined, NOTICE_MAX);
+  return { answer, ...(answer && o.synthetic === true ? { synthetic: true } : {}), ...(answer && notice ? { notice } : {}) };
+}
+
+// A thread's earlier questions and answers as Claude Code takes them.
+export function sideHistory(history: SideTurn[]): Record<string, string>[] {
+  return history.map((t) => ({ question: t.question, response: t.answer, ...(t.notice ? { fallback_notice: t.notice } : {}) }));
+}
+
+export type SideProgress = { status: "started" | "retry"; attempt?: number; maxRetries?: number; retryInMs?: number };
+
+// A control_request_progress line as the phone hears of it.
+export function sideProgress(m: Record<string, unknown>): SideProgress | undefined {
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+  if (m.status === "started") return { status: "started" };
+  if (m.status !== "api_retry") return undefined;
+  const [attempt, maxRetries, retryInMs] = [n(m.attempt), n(m.max_retries), n(m.retry_delay_ms)];
+  return { status: "retry", ...(attempt !== undefined ? { attempt } : {}), ...(maxRetries !== undefined ? { maxRetries } : {}), ...(retryInMs !== undefined ? { retryInMs } : {}) };
+}
+
 // Claude Code's get_task_output answer.
 export function shellOutput(r: unknown): TaskOutput {
   const o = isObj(r) ? r : {};
@@ -162,7 +196,8 @@ interface StreamEvent {
 
 // A session whose Claude Code process the broker can drive: one it runs itself ("owned") or one
 // that runs in VS Code and is reached through the wrapper ("attached").
-// Events: item, stream, pending_add, pending_remove, state, models, window, applied (model, ultracodeAvailable), turn_end (TurnEnd), title, cwd, closed.
+// Events: item, stream, pending_add, pending_remove, state, models, window, applied (model, ultracodeAvailable), turn_end (TurnEnd), title, cwd, closed,
+// request_progress (a control_request_progress line).
 export abstract class SessionCore extends EventEmitter {
   abstract readonly kind: "owned" | "attached";
   abstract readonly host: string;
@@ -189,6 +224,8 @@ export abstract class SessionCore extends EventEmitter {
   fastCredits?: boolean;
   thinking?: boolean;
   optionsUnknown?: boolean;
+  sideUnknown?: boolean;
+  sideMs = SIDE_MS;
   outputStyles?: string[];
   context?: ContextGauge;
   costUsd?: number;
@@ -209,6 +246,8 @@ export abstract class SessionCore extends EventEmitter {
   private streamTimer?: NodeJS.Timeout;
   private turnStartedAt?: number;
   private facts: TurnFacts = {};
+  // The side question under way, one at a time: the id it was asked with, and who hears of its progress.
+  private side?: { ask?: string; ac: AbortController; hear: Set<(p: SideProgress) => void>; done: Promise<SideAnswer> };
   // When VS Code last wrote a message to Claude Code.
   protected hostInputAt?: number;
 
@@ -334,6 +373,69 @@ export abstract class SessionCore extends EventEmitter {
   // when no process is running.
   readFile(_path: string, _maxBytes: number, _encoding: "utf-8" | "base64"): Promise<FileContents> | undefined {
     return undefined;
+  }
+
+  // Claude Code's get_workspace_diff answer for the folder it works in, under its own read rules; undefined where the
+  // process cannot be asked.
+  workspaceDiff(): Promise<Record<string, unknown>> | undefined {
+    return undefined;
+  }
+
+  // A question beside the conversation, which Claude Code answers from it without interrupting a turn or adding to it.
+  // It is cancelled when sideMs passes, when cancelSideQuestion is called or when the session closes. ask: an id to wait
+  // for it again by (sideWait).
+  async sideQuestion(question: string, history: SideTurn[], onProgress: (p: SideProgress) => void = () => {}, ask?: string): Promise<SideAnswer> {
+    this.ensureOpen();
+    if (this.side) throw Error("a side question is under way");
+    const ac = new AbortController();
+    const hear = new Set([onProgress]);
+    const done = this.runSide(question, history, ac, hear);
+    this.side = { ac, hear, done, ...(ask ? { ask } : {}) };
+    return done;
+  }
+
+  private async runSide(question: string, history: SideTurn[], ac: AbortController, hear: Set<(p: SideProgress) => void>): Promise<SideAnswer> {
+    const timer = setTimeout(() => ac.abort("timeout"), this.sideMs);
+    timer.unref();
+    const progress = (m: Record<string, unknown>) => {
+      const p = sideProgress(m);
+      if (p && !ac.signal.aborted) for (const h of hear) h(p);
+    };
+    try {
+      return sideAnswer(await this.askSide(question, history, progress, ac.signal));
+    } catch (e) {
+      if (ac.signal.aborted) throw Error(ac.signal.reason === "timeout" ? "side question timed out" : this.closed ? "session closed" : "side question cancelled");
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      if (this.side?.ac === ac) this.side = undefined;
+    }
+  }
+
+  sideRunning(ask: string): boolean {
+    return this.side?.ask === ask;
+  }
+
+  // The side question asked with `ask`, waited for again with its progress; undefined when it is not under way.
+  sideWait(ask: string, onProgress: (p: SideProgress) => void = () => {}): Promise<SideAnswer> | undefined {
+    const run = this.side;
+    if (!run || run.ask !== ask) return undefined;
+    run.hear.add(onProgress);
+    return run.done.finally(() => run.hear.delete(onProgress));
+  }
+
+  // Gives up the side question under way, only the one asked with `ask` where given, and waits a little for it to end.
+  async cancelSideQuestion(ask?: string): Promise<void> {
+    const run = this.side;
+    if (!run || (ask !== undefined && run.ask !== ask)) return;
+    run.ac.abort("cancel");
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([run.done.catch(() => {}), new Promise<void>((r) => (timer = setTimeout(r, SIDE_CANCEL_MS)))]);
+    clearTimeout(timer);
+  }
+
+  protected askSide(_question: string, _history: SideTurn[], _progress: (m: Record<string, unknown>) => void, _signal: AbortSignal): Promise<unknown> {
+    return Promise.reject(Error("not available for this session"));
   }
 
   // The web client names servers, messages and tasks; only the ones this session reports are passed on.
@@ -578,6 +680,7 @@ export abstract class SessionCore extends EventEmitter {
     this.closed = true;
     this.closedReason = reason;
     this.busy = false;
+    this.side?.ac.abort("closed");
     for (const id of [...this.pending.keys()]) this.unask(id);
     this.tasks.clear();
     this.queue.clear();
@@ -614,6 +717,10 @@ export abstract class SessionCore extends EventEmitter {
       return;
     }
     if (m.type === "system") {
+      if (m.subtype === "control_request_progress") {
+        this.emit("request_progress", m);
+        return;
+      }
       if (m.subtype === "init") {
         this.busy = true;
         this.turnStartedAt = Date.now();
@@ -770,6 +877,7 @@ export abstract class SessionCore extends EventEmitter {
       ...(this.fastCredits ? { fastCredits: true } : {}),
       ...(this.thinking !== undefined ? { thinking: this.thinking } : {}),
       ...(this.optionsUnknown ? { optionsUnknown: true } : {}),
+      ...(this.sideUnknown ? { sideUnknown: true } : {}),
     };
   }
 
