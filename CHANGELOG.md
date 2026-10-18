@@ -20,6 +20,14 @@ your version and the new one, and the lines under "Breaking" separately.
   failing), the install goes on with a warning that `ccrc update` will stop at the signature check until it is
   installed. Installing never used it: `install.sh` does not check tag signatures.
 
+### Fixed
+
+- `ccrc update` checked release signatures with the `gpg.ssh.program` of your git config, if one was set, and under its
+  `gpg.minTrustLevel`. A program that only signs, or the trust level `ultimate`, stopped the update at a good
+  signature, reported as one that does not check out or as needing OpenSSH 8.2 while `ccrc setup` found `ssh-keygen`
+  fine. It now always checks with the `ssh-keygen` on `PATH`, the one setup checks, against `.ccrc-allowed-signers`
+  alone.
+
 ### Security
 
 - `ccrc setup` offered every iOS and Android machine in the tailnet for `allowedDevices`, and `--yes` allowed all
@@ -28,6 +36,13 @@ your version and the new one, and the lines under "Breaking" separately.
   and says how to add yours (`ccrc setup` in a terminal, or `ccrc config set allowedDevices`). A tagged machine, or a
   Tailscale that does not report users, gets none offered. A list already in config.json is left as it is: to see
   whether an earlier `--yes` let in phones that are not yours, look at `devices` in `ccrc status`.
+- `ccrc update` used a copy of the version it updates to that was already in `versions/` without checking its tag: one
+  left by `install.sh`, which does not check signatures, or by an update checked against an older
+  `.ccrc-allowed-signers`. It now checks such a copy as it checks a download, and fetches the tag again when the copy
+  does not pass.
+- `ccrc update` took a signed tag of an older release, offered under a newer release's name, for the newer release, as
+  `git verify-tag` does not look at the name. It now checks that the tag was signed under the name it was fetched as,
+  and that the copy is at the commit the tag names.
 
 ## [0.7.3] - 2026-10-18
 

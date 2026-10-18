@@ -164,6 +164,23 @@ function installed(repo: Repo, version = "v0.7.0"): World {
   return w;
 }
 
+// A test SSH signing key and the signers file line that lists it.
+function signingKey(): { keys: string; key: string; signers: string } {
+  const keys = tempDir();
+  const key = path.join(keys, "id");
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "test@example.com", "-f", key]);
+  return { keys, key, signers: `test@example.com namespaces="git" ${fs.readFileSync(`${key}.pub`, "utf8").trim()}\n` };
+}
+
+// A copy of a tag as install.sh leaves it in versions/: cloned from `from`, built, recorded with `source`, unchecked.
+function leaveCopy(w: World, from: string, version: string, source: string): string {
+  const dir = path.join(w.dataDir, "versions", version);
+  git(w.dataDir, "-c", "advice.detachedHead=false", "clone", "-q", "--branch", version, from, dir);
+  fs.mkdirSync(path.join(dir, "node_modules"));
+  writeInstallInfo(dir, { version, commit: git(dir, "rev-parse", "HEAD"), source, node: process.execPath, installedAt: "2026-10-18T00:00:00Z" });
+  return dir;
+}
+
 const current = (w: World) => fs.readlinkSync(path.join(w.dataDir, "current"));
 const config = (w: World) => JSON.parse(fs.readFileSync(path.join(w.configDir, "config.json"), "utf8"));
 const history = (w: World): HistoryEntry[] => JSON.parse(fs.readFileSync(path.join(w.dataDir, "history.json"), "utf8"));
@@ -445,7 +462,8 @@ test("with allowed signers but no ssh-keygen, or one too old, the update stops a
   const keys = tempDir();
   const key = path.join(keys, "id");
   execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "test@example.com", "-f", key]);
-  const w = installed(makeRepo({ key }));
+  const repo = makeRepo({ key });
+  const w = installed(repo);
   fs.writeFileSync(path.join(w.root, ".ccrc-allowed-signers"), `test@example.com namespaces="git" ${fs.readFileSync(`${key}.pub`, "utf8").trim()}\n`);
   // PATH with git and a package manager, without ssh-keygen.
   const bin = tempDir();
@@ -456,6 +474,16 @@ test("with allowed signers but no ssh-keygen, or one too old, the update stops a
   assert.match(output(w), /Run ccrc update again once it is installed; install it with: sudo apt-get install openssh-client$/m);
   assert.equal(current(w), path.join("versions", "v0.7.0"));
   assert.deepEqual(versions(w), ["v0.7.0"]);
+
+  // A copy already in versions/ is neither used nor fetched over while it cannot be checked.
+  leaveCopy(w, repo.bare, "v0.7.1", repo.bare);
+  w.lines.length = 0;
+  w.calls.length = 0;
+  assert.equal(await update({ yes: true }, w.deps), 1, output(w));
+  assert.match(output(w), /could not check the signature of v0\.7\.1: git checks it with ssh-keygen, which it could not run/);
+  assert.ok(!w.calls.some((c) => c.includes(" clone ")), w.calls.join("\n"));
+  assert.equal(current(w), path.join("versions", "v0.7.0"));
+  assert.ok(readInstallInfo(path.join(w.dataDir, "versions", "v0.7.1")));
 
   // An unsigned tag is reported as such, ssh-keygen or not: git does not get as far as running it.
   const unsigned = installed(makeRepo());
@@ -499,6 +527,83 @@ test("with allowed signers in the install, an OpenPGP signature does not pass ev
   assert.equal(await update({ yes: true }, w.deps), 1, output(w));
   assert.match(output(w), /the signature of v0\.7\.1 does not check out/);
   assert.equal(current(w), path.join("versions", "v0.7.0"));
+});
+
+test("a tag is checked by the ssh-keygen on PATH and the signers file alone, whatever the user's git config sets", async (t) => {
+  if (spawnSync("ssh-keygen", ["-?"]).error) return t.skip("no ssh-keygen");
+  const { keys, key, signers } = signingKey();
+  const repo = makeRepo({ key });
+  // A program that only signs and answers anything else with its usage, one that is not there, and a GnuPG trust level
+  // above the one git gives an SSH signature.
+  const signOnly = path.join(keys, "sign-only");
+  fs.writeFileSync(signOnly, '#!/bin/sh\necho "usage: sign-only -Y sign -n namespace -f key_file" >&2\nexit 1\n', { mode: 0o755 });
+  const configs = [`[gpg "ssh"]\n\tprogram = ${signOnly}\n`, `[gpg "ssh"]\n\tprogram = ${path.join(keys, "missing")}\n`, "[gpg]\n\tminTrustLevel = ultimate\n"];
+  for (const [i, text] of configs.entries()) {
+    const file = path.join(keys, `user-${i}.gitconfig`);
+    fs.writeFileSync(file, text);
+    const w = installed(repo);
+    w.deps = { ...w.deps, env: { ...GIT_ENV, GIT_CONFIG_GLOBAL: file } };
+    fs.writeFileSync(path.join(w.root, ".ccrc-allowed-signers"), signers);
+    assert.equal(await update({ yes: true }, w.deps), 0, `${text}${output(w)}`);
+    assert.match(output(w), /The tag v0\.7\.1 is signed/);
+    assert.ok(w.calls.some((c) => c.includes(" -c gpg.ssh.program=ssh-keygen -c gpg.minTrustLevel=undefined ") && c.endsWith(" verify-tag refs/tags/v0.7.1")));
+  }
+});
+
+test("a copy of the version already in versions/ is used once it passes the check, and fetched again when it does not", async (t) => {
+  if (spawnSync("ssh-keygen", ["-?"]).error) return t.skip("no ssh-keygen");
+  const { key, signers } = signingKey();
+  const repo = makeRepo({ key });
+  const tagged = git(repo.work, "rev-parse", "v0.7.1^{commit}");
+
+  const good = installed(repo);
+  fs.writeFileSync(path.join(good.root, ".ccrc-allowed-signers"), signers);
+  const copy = leaveCopy(good, repo.bare, "v0.7.1", repo.bare);
+  assert.equal(await update({ yes: true }, good.deps), 0, output(good));
+  assert.match(output(good), /Using the copy already in versions\/v0\.7\.1\.\nThe tag v0\.7\.1 is signed by a key in \.ccrc-allowed-signers\./);
+  assert.ok(good.calls.some((c) => c.startsWith(`git -C ${copy} `) && c.endsWith(" verify-tag refs/tags/v0.7.1")));
+  assert.ok(!good.calls.some((c) => c.includes(" clone ") || c.startsWith("npm")), good.calls.join("\n"));
+  assert.equal(current(good), path.join("versions", "v0.7.1"));
+
+  // One install.sh made of an unsigned tag, and one moved off its tag's commit.
+  const unsigned = makeRepo();
+  const spoiled: [string, (w: World) => void][] = [
+    ["the signature of v0\\.7\\.1 does not check out against .*no signature found", (w) => leaveCopy(w, unsigned.bare, "v0.7.1", repo.bare)],
+    ["versions/v0\\.7\\.1 is at [0-9a-f]{12}, not at [0-9a-f]{12}, the commit v0\\.7\\.1 names", (w) => git(leaveCopy(w, repo.bare, "v0.7.1", repo.bare), "commit", "-q", "--allow-empty", "-m", "Local change")],
+  ];
+  for (const [why, spoil] of spoiled) {
+    const w = installed(repo);
+    fs.writeFileSync(path.join(w.root, ".ccrc-allowed-signers"), signers);
+    spoil(w);
+    assert.equal(await update({ yes: true }, w.deps), 0, output(w));
+    assert.match(output(w), new RegExp(`Not using the copy already in versions/v0\\.7\\.1: ${why}\\.\\nFetching v0\\.7\\.1 from `));
+    assert.match(output(w), /The tag v0\.7\.1 is signed/);
+    assert.equal(current(w), path.join("versions", "v0.7.1"));
+    assert.equal(readInstallInfo(path.join(w.dataDir, "versions", "v0.7.1"))!.commit, tagged);
+  }
+
+  // When the fetched tag does not pass either, nothing switches.
+  const bad = installed(unsigned);
+  fs.writeFileSync(path.join(bad.root, ".ccrc-allowed-signers"), signers);
+  leaveCopy(bad, unsigned.bare, "v0.7.1", unsigned.bare);
+  assert.equal(await update({ yes: true }, bad.deps), 1);
+  assert.match(output(bad), /Not using the copy already in versions\/v0\.7\.1: the signature of v0\.7\.1 does not check out/);
+  assert.match(output(bad), /ccrc update: the signature of v0\.7\.1 does not check out .*no signature found/);
+  assert.equal(current(bad), path.join("versions", "v0.7.0"));
+  assert.ok(!fs.existsSync(path.join(bad.dataDir, "versions", "v0.7.1.tmp")));
+});
+
+test("a signed tag of an older release offered under a newer name does not pass", async (t) => {
+  if (spawnSync("ssh-keygen", ["-?"]).error) return t.skip("no ssh-keygen");
+  const { key, signers } = signingKey();
+  const repo = makeRepo({ key });
+  git(repo.bare, "update-ref", "refs/tags/v0.9.0", git(repo.bare, "rev-parse", "refs/tags/v0.7.0"));
+  const w = installed(repo);
+  fs.writeFileSync(path.join(w.root, ".ccrc-allowed-signers"), signers);
+  assert.equal(await update({ yes: true }, w.deps), 1, output(w));
+  assert.match(output(w), /ccrc update: the tag v0\.9\.0 is the signed tag of v0\.7\.0, not of v0\.9\.0$/m);
+  assert.equal(current(w), path.join("versions", "v0.7.0"));
+  assert.deepEqual(versions(w), ["v0.7.0"]);
 });
 
 test("the repository's .ccrc-allowed-signers lists SSH keys for git signatures", (t) => {

@@ -102,7 +102,7 @@ bash install.sh --version v0.7.0
 4. Clones the release into `~/.local/share/ccrc/versions/<version>`, runs `npm ci` and `npm run build` there,
    records the install in `.ccrc-install.json`, and links `~/.local/share/ccrc/current` and `~/.local/bin/ccrc`. The
    tag's signature is not checked here (see [Verifying a release](#verifying-a-release) to check it by hand);
-   `ccrc update` checks each tag it updates to.
+   `ccrc update` checks each tag it updates to, also when it finds that version already in `versions/`.
 5. Runs `ccrc setup`. Under `curl | bash`, questions are read from the terminal (`/dev/tty`).
 
 The log is `~/.local/state/ccrc/install.log`. When a step fails, fix what it says and run the script again; finished
@@ -113,7 +113,7 @@ versions) and runs setup again.
 |---|---|
 | `--version <tag>` | Install this release instead of the newest one (`0.7.0` and `v0.7.0` both name the tag `v0.7.0`) |
 | `--channel stable\|rc` | With `rc`, release candidates count when looking for the newest release |
-| `--yes` | Take the default answer to every question except whether to use sudo; steps that need you still wait |
+| `--yes` | Take the default answer to every question except whether to use sudo; steps that need you still wait, except `devices`, which adds your phone only when you have exactly one and does not wait for one |
 | `--allow-sudo` | Without a terminal, let the steps that need sudo run; sudo then has to work without asking for a password. With a terminal each one is still asked. Passed on to `ccrc setup` |
 | `--dry-run` | Show what would be done and change nothing; with an install in place, setup shows its part too |
 | `--no-system` | Never use sudo or change the system (for testing) |
@@ -128,9 +128,9 @@ from, for mirrors).
 ### What `ccrc setup` does
 
 Setup checks each step and does only what is missing, so running it again finishes or repairs an install. Steps
-that need you show what to do and wait until it is done. The change to VS Code's settings is asked first; `--yes`
-takes the default answer to it and to the other questions. Steps that need sudo are asked separately (see
-[sudo](#sudo)).
+that need you show what to do and wait until it is done (with `--yes`, `devices` does not wait; see its row). The
+change to VS Code's settings is asked first; `--yes` takes the default answer to it and to the other questions.
+Steps that need sudo are asked separately (see [sudo](#sudo)).
 
 | Step id | Checks and does |
 |---|---|
@@ -232,7 +232,8 @@ ccrc rollback              # back to the version before the last update
 1. Finds the newest release tag (release candidates only with `--channel rc` or `updateChannel: "rc"`).
 2. Fetches it into `versions/<version>`, shows its CHANGELOG section (breaking changes separately), and asks.
    From 0.7.2 an install holds `.ccrc-allowed-signers`, and the tag's SSH signature must check out against it
-   (`git verify-tag`); see [Verifying a release](#verifying-a-release).
+   (`git verify-tag`); see [Verifying a release](#verifying-a-release). A copy already in `versions/<version>`
+   (left by `install.sh` or an earlier update) is used only when it passes the same check, and fetched again otherwise.
 3. Builds it beside the running version (`npm ci`, `npm run build`); the service keeps running meanwhile.
 4. Backs up config and state to `~/.local/state/ccrc/backup/update-<old>-<new>-<time>/` and migrates them with the
    new version's code.
@@ -509,11 +510,16 @@ SHA256:7tvRIQuI7tARS7iihd3ezgTJycbqrIN8E9TPofkuAAw` and exits with 0; a tag with
 in the file, fails. Look for that line: git checks an OpenPGP signature against your GnuPG keyring, not the file
 (`ccrc update` and the release workflow accept SSH signatures only). The file comes with the clone, so compare its key
 with the signing key on the author's GitHub account (<https://api.github.com/users/rjs0429/ssh_signing_keys>); GitHub
-also marks the tag Verified.
+also marks the tag Verified. If your git config sets `gpg.ssh.program` to a program that only signs, add
+`-c gpg.ssh.program=ssh-keygen` to the command.
 
 `ccrc update` does this by itself from 0.7.2: an install of 0.7.2 or newer holds `.ccrc-allowed-signers`, and
-`ccrc update` checks the signature of the tag it fetched against the install's own copy of the file before building
-it, and stops when the signature does not check out. An update from 0.7.1 or older to 0.7.2 is not checked, as those
+`ccrc update` checks the tag it fetched against the install's own copy of the file before building it, and stops when
+it does not pass. The signature must check out, the tag must have been signed under the name it was fetched as (a
+signed older release offered under a newer name does not pass), and the copy must be at the commit the tag names. A
+copy of that version already in `versions/` gets the same check before it is used, and the tag is fetched again when
+the copy does not pass. git checks with the `ssh-keygen` on `PATH` and the file alone, whatever `gpg.ssh.program` or
+`gpg.minTrustLevel` your git config sets. An update from 0.7.1 or older to 0.7.2 is not checked, as those
 versions have no such file; check `v0.7.2` by hand as above if you want to. Without `ssh-keygen`, `ccrc update` on
 0.7.2 or newer cannot check and stops, with the command that installs it; `install.sh` installs it with the other base
 tools (and goes on with a warning when it stays missing), and `ccrc setup` warns when it is missing. An `ssh-keygen`
