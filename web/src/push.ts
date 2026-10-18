@@ -1,4 +1,4 @@
-import type { PushBadge, PushPrefs, PushStatus } from "../../broker/src/push/types.ts";
+import type { PushBadge, PushPrefs, PushRecent, PushStatus } from "../../broker/src/push/types.ts";
 import { ApiError, request } from "./api.ts";
 
 const SW = "/sw.js";
@@ -122,6 +122,14 @@ export async function syncBadge(): Promise<void> {
   const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
   const n = sub ? (await request<PushBadge>("GET", `/api/push/badge?endpoint=${encodeURIComponent(sub.endpoint)}`)).badge : 0;
   await (n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge());
+}
+
+// The request this browser was notified of lately that still waits for an answer; none without notifications.
+export async function recentRequest(): Promise<PushRecent["request"]> {
+  if (!window.isSecureContext || !("serviceWorker" in navigator)) return undefined;
+  const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
+  if (!sub) return undefined;
+  return (await request<PushRecent>("GET", `/api/push/recent?endpoint=${encodeURIComponent(sub.endpoint)}`)).request;
 }
 
 export async function savePrefs(device: PushDevice, prefs: Partial<PushPrefs>): Promise<PushPrefs> {

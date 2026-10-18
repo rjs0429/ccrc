@@ -1,4 +1,4 @@
-import type { BrokerSessionsInfo, EffortName, ModelOption, NoteCode, SessionSummary } from "../../broker/src/protocol.ts";
+import type { BrokerSessionsInfo, EffortName, InboxInfo, ModelOption, NoteCode, SessionSummary } from "../../broker/src/protocol.ts";
 
 // Why sessions cannot start from the phone, and how to turn them on at the laptop.
 const BROKER_OFF = "원격 세션이 꺼져 있어 여기서 Claude Code를 시작할 수 없습니다. 노트북에서 ccrc config set brokerSessions apiKey (또는 subscription) 로 켭니다.";
@@ -90,6 +90,22 @@ const DESTINATION_LABEL: Record<string, string> = {
 
 export function hostLabel(host?: string): string {
   return host === "Terminal" ? "터미널" : host === "ccrc" ? "원격" : (host ?? "");
+}
+
+export interface PeerNote {
+  text: string;
+  warn?: boolean;
+}
+
+// What becomes of a message sent to a session open in another program, shown before it is sent.
+export function inboxNotes(host: string | undefined, inbox: InboxInfo | undefined): PeerNote[] {
+  const where = host === "Terminal" ? "터미널" : host === "VS Code" ? "VS Code" : "그 세션";
+  const notes: PeerNote[] = [{ text: `다른 세션 메시지로 전달됩니다. Claude가 중요한 작업은 ${where}에서 다시 묻습니다.` }];
+  if (inbox?.gate === "approve") notes.push({ text: "터미널에서 승인해야 전달됩니다.", warn: true });
+  else if (inbox?.gate === "held" && inbox.why === "mode") notes.push({ text: "권한 확인을 건너뛰는 세션이라 5분 안에 권한 모드를 바꾸지 않으면 전달되지 않습니다.", warn: true });
+  else if (inbox?.gate === "held") notes.push({ text: "이 세션의 설정(crossSessionInbound)에 따라 보류되어 전달되지 않습니다.", warn: true });
+  else if (inbox?.gate === "refused") notes.push({ text: "이 세션의 설정(crossSessionInbound)에 따라 다른 세션 메시지를 받지 않습니다.", warn: true });
+  return notes;
 }
 
 const DIALOG_LABEL: Record<string, string> = {
@@ -190,6 +206,9 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
   [/^Claude Code process terminated by signal (\w+)/, (m) => `Claude Code가 강제로 종료되었습니다 (${m[1]})`],
   [/^request is no longer pending$/, "이미 처리된 요청입니다"],
   [/^session is not running here$/, "원격에서 실행 중인 세션이 아닙니다. 메시지를 보내면 이어서 실행합니다"],
+  [/^session is not open elsewhere$/, "다른 곳에서 열려 있지 않아 보내지 않았습니다"],
+  [/^session takes no messages$/, "이 세션은 다른 세션 메시지를 받을 수 없습니다"],
+  [/^inbox send failed: (.+)$/, (m) => `보내지 못했습니다. 그 세션이 방금 닫혔을 수 있습니다 (${m[1]})`],
   [/^session closed$/, "세션 프로세스가 종료되었습니다"],
   [/^unknown session$/, "세션을 찾을 수 없습니다"],
   [/^session runs in VS Code$/, "VS Code에서 실행 중인 세션입니다"],

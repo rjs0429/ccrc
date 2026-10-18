@@ -93,7 +93,8 @@ export function DateLine({ day }: { day?: Day }) {
 }
 
 // A message Claude Code has not taken in yet. One sent from here can be taken back.
-export function QueuedItem({ message, host, onTakeBack, taking }: { message: QueuedMessage; host: string; onTakeBack?: () => void; taking?: boolean }) {
+// note: what the line under it says in place of "대기 중".
+export function QueuedItem({ message, host, onTakeBack, taking, note }: { message: QueuedMessage; host: string; onTakeBack?: () => void; taking?: boolean; note?: string }) {
   return (
     <div className="flex flex-col items-end" data-queued={message.id}>
       <div className="flex max-w-[88%] items-end gap-1">
@@ -112,7 +113,7 @@ export function QueuedItem({ message, host, onTakeBack, taking }: { message: Que
         </div>
       </div>
       <div className="mt-1 text-[11px] text-muted">
-        {taking ? "되돌리는 중…" : message.from === "host" && host ? `대기 중 · ${host}에서 보냄` : "대기 중"}
+        {taking ? "되돌리는 중…" : note ? note : message.from === "host" && host ? `대기 중 · ${host}에서 보냄` : "대기 중"}
       </div>
     </div>
   );

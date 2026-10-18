@@ -37,7 +37,7 @@ async function setup() {
 
 test("push routes need a login", async () => {
   const { app } = await setup();
-  for (const [method, url] of [["GET", "/api/push/key"], ["GET", "/api/push/status?endpoint=x"], ["GET", "/api/push/badge?endpoint=x"], ["POST", "/api/push/subscribe"], ["POST", "/api/push/test"]] as const) {
+  for (const [method, url] of [["GET", "/api/push/key"], ["GET", "/api/push/status?endpoint=x"], ["GET", "/api/push/badge?endpoint=x"], ["GET", "/api/push/recent?endpoint=x"], ["POST", "/api/push/subscribe"], ["POST", "/api/push/test"]] as const) {
     assert.equal((await app.inject({ method, url, payload: method === "POST" ? {} : undefined })).statusCode, 401, url);
   }
 });
@@ -173,4 +173,15 @@ test("the badge is asked for by endpoint; an unknown one counts nothing", async 
   const bad = await app.inject({ method: "GET", url: "/api/push/badge", headers: AUTHED });
   assert.equal(bad.statusCode, 400);
   assert.equal(bad.json().error, "invalid_endpoint");
+});
+
+test("the request a device was told of lately is asked for by its endpoint", async () => {
+  const { app, post } = await setup();
+  const get = (endpoint: string) => app.inject({ method: "GET", url: `/api/push/recent?endpoint=${encodeURIComponent(endpoint)}`, headers: AUTHED });
+  const unknown = await get(APPLE);
+  assert.equal(unknown.statusCode, 404);
+  assert.equal(unknown.json().error, "not_subscribed");
+  await post("/api/push/subscribe", { subscription: { endpoint: APPLE, keys: newBrowser().keys } });
+  assert.deepEqual((await get(APPLE)).json(), {});
+  assert.equal((await app.inject({ method: "GET", url: "/api/push/recent", headers: AUTHED })).json().error, "invalid_endpoint");
 });

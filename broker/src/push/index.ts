@@ -3,7 +3,7 @@ import type { SessionManager } from "../sessions/manager.ts";
 import { encrypt } from "./encrypt.ts";
 import { Notifier, TIMING, type PushTiming, type Urgency } from "./rules.ts";
 import { PushError, PushStore, isPushService, parseEndpoint, parsePrefs, parseSubscription, type Subscription } from "./subscriptions.ts";
-import { DEFAULT_PREFS, type PushBadge, type PushPayload, type PushStatus } from "./types.ts";
+import { DEFAULT_PREFS, type PushBadge, type PushPayload, type PushRecent, type PushStatus } from "./types.ts";
 import { VapidTokens } from "./vapid.ts";
 
 export { PushError, type Subscription };
@@ -105,6 +105,14 @@ export class Push {
     const sub = this.store.get(parseEndpoint(endpoint));
     if (!sub) return { subscribed: false };
     return { subscribed: true, device: sub.device, createdAt: sub.createdAt, prefs: sub.prefs, ...this.health.get(sub.endpoint) };
+  }
+
+  // The request this device was notified of lately that still waits for an answer.
+  recent(endpoint: unknown): PushRecent {
+    const sub = this.store.get(parseEndpoint(endpoint));
+    if (!sub) throw new PushError("not_subscribed");
+    const request = this.notifier?.recent(sub.endpoint);
+    return request ? { request } : {};
   }
 
   badge(endpoint: unknown): PushBadge {

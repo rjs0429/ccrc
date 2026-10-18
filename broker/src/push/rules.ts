@@ -19,9 +19,11 @@ export interface PushTiming {
   doneMs: number;
   // Wait before the one retry after a 429 or 5xx answer.
   retryMs: number;
+  // How long after a request's notification the app, coming to the front, goes to that request.
+  recentMs: number;
 }
 
-export const TIMING: PushTiming = { ownedMs: 1000, secondMs: 1000, recheckMs: 15_000, doneMs: 1500, retryMs: 20_000 };
+export const TIMING: PushTiming = { ownedMs: 1000, secondMs: 1000, recheckMs: 15_000, doneMs: 1500, retryMs: 20_000, recentMs: 120_000 };
 
 // What the remote user did this long before a turn started still makes the turn theirs.
 const REMOTE_WINDOW_MS = 2 * 3600_000;
@@ -109,6 +111,8 @@ export class Notifier {
   // current turn, until the session is opened.
   private claudeCalls = new Map<string, ClaudeNotice>();
   private told = new Map<string, Set<string>>();
+  // The last notification each device got, by endpoint, with the request it was about if it was one.
+  private last = new Map<string, { sessionId: string; requestId?: string; at: number }>();
   private listener = (sessionId: string, msg: ServerMsg) => {
     try {
       this.onEvent(sessionId, msg);
@@ -151,6 +155,20 @@ export class Notifier {
   badge(): { badge: number; unseen: string[] } {
     const unseen = this.manager.unreadSessions();
     return { badge: new Set([...this.manager.waitingSessions(), ...unseen]).size, unseen };
+  }
+
+  // The request the device's last notification was about, while that is recent and the request still waits.
+  recent(endpoint: string): { sessionId: string; requestId: string } | undefined {
+    const l = this.last.get(endpoint);
+    if (!l?.requestId || Date.now() - l.at > this.d.timing.recentMs || !this.manager.pendingRequest(l.sessionId, l.requestId)) return undefined;
+    return { sessionId: l.sessionId, requestId: l.requestId };
+  }
+
+  private deliver(sub: Subscription, sessionId: string, payload: PushPayload, urgency: Urgency, requestId?: string): void {
+    this.d.deliver(sub, { ...payload, badge: this.badge().badge }, urgency);
+    this.last.delete(sub.endpoint);
+    this.last.set(sub.endpoint, { sessionId, ...(requestId ? { requestId } : {}), at: Date.now() });
+    for (const old of [...this.last.keys()].slice(0, -SENT_SESSIONS_KEEP)) this.last.delete(old);
   }
 
   // A PushNotification call Claude Code ran, from its result in the conversation or from the session's PostToolUse
@@ -216,7 +234,7 @@ export class Notifier {
         const named = now.prefs.details ? ` · ${clip(name, TOOL_MAX)}${count > 1 ? ` 외 ${count - 1}개` : ""}` : "";
         this.manager.markUnread(sessionId);
         const payload: PushPayload = { title, body: `${SENT}${named}`, tag: `${sessionId}:file`, data: { url: `/#/s/${sessionId}` } };
-        this.d.deliver(now, { ...payload, badge: this.badge().badge }, "normal");
+        this.deliver(now, sessionId, payload, "normal");
       });
     }
   }
@@ -240,7 +258,7 @@ export class Notifier {
         const body = sub.prefs.details && message.trim() ? clip(message, CLAUDE_MAX) : CLAUDE;
         this.manager.markUnread(sessionId);
         const payload: PushPayload = { title, body, tag: `${sessionId}:claude`, data: { url: `/#/s/${sessionId}` } };
-        this.d.deliver(sub, { ...payload, badge: this.badge().badge }, "high");
+        this.deliver(sub, sessionId, payload, "high");
       });
     }
   }
@@ -261,7 +279,7 @@ export class Notifier {
       const sub = this.d.subscriptions().find((s) => s.endpoint === endpoint);
       if (!sub) return;
       const tool = (request.kind === "permission" || request.kind === "elicitation") && sub.prefs.details ? request.toolName : undefined;
-      this.d.deliver(sub, { ...this.requestPayload(sessionId, request, title, tool), badge: this.badge().badge }, "high");
+      this.deliver(sub, sessionId, this.requestPayload(sessionId, request, title, tool), "high", request.id);
     };
     for (const sub of this.d.subscriptions()) {
       const wait = attached && request.kind !== "elicitation" ? sub.prefs.vscodeDelaySec * this.d.timing.secondMs : this.d.timing.ownedMs;
@@ -328,7 +346,7 @@ export class Notifier {
         if (!now || !wants(now)) return;
         if (end.outcome === "done" && !files && told?.has(now.endpoint)) return;
         this.manager.markUnread(sessionId);
-        this.d.deliver(now, { ...this.endPayload(sessionId, end, title, files), badge: this.badge().badge }, end.outcome === "done" ? "normal" : "high");
+        this.deliver(now, sessionId, this.endPayload(sessionId, end, title, files), end.outcome === "done" ? "normal" : "high");
       });
     }
   }

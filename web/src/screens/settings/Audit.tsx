@@ -44,6 +44,7 @@ const EVENT_LABEL: Record<string, string> = {
   worktree_remove: "worktree 지우기",
   fork: "갈래",
   rewind_conversation: "대화 되돌리기",
+  config: "ccrc 설정 바꿈",
 };
 
 const CALL_LABEL: Record<string, string> = {
@@ -152,7 +153,9 @@ function detail(e: AuditEntry): string {
     case "device_denied":
       return named(e.ip);
     case "send":
-      return typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : "";
+      return e.via === "inbox" ? "다른 세션 메시지로" : typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : "";
+    case "config":
+      return e.key === "vscodeArchive" ? `VS Code 보관 보기 ${e.value ? "켬" : "끔"}` : named(e.key);
     case "fork":
       return [e.before ? "메시지에서" : "지금까지", typeof e.chars === "number" ? "바로 시작" : "", typeof e.attachments === "number" ? `첨부 ${e.attachments}개` : ""].filter(Boolean).join(" · ");
     case "rewind_conversation":

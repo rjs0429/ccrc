@@ -36,6 +36,11 @@ export interface PushBadge {
   unseen: string[];
 }
 
+// GET /api/push/recent: the request one device was notified of lately that still waits for an answer.
+export interface PushRecent {
+  request?: { sessionId: string; requestId: string };
+}
+
 // What the service worker shows. badge: the app icon's number, when the notification carries one.
 export interface PushPayload {
   title: string;

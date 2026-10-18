@@ -20,6 +20,7 @@ import {
   type EffortName,
   type BrokerSessionsInfo,
   type ForkResult,
+  type InboxInfo,
   type LiveState,
   type ModelOption,
   type PendingRequest,
@@ -45,7 +46,8 @@ import type { ContentBlock, SessionCore } from "./core.ts";
 import { writeTitle } from "./custom-title.ts";
 import { searchFiles } from "./files.ts";
 import { forkPoint, lastCwd, loadHistory, projectDirName, transcriptPath, turnPoint } from "./history.ts";
-import { liveProcesses } from "./live.ts";
+import { inboxInfo, inboxLine, inboxToken, inboundSetting, lastPermissionMode, postToInbox, usableSocket } from "./inbox.ts";
+import { liveProcesses, type LiveProcess } from "./live.ts";
 import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
@@ -54,6 +56,7 @@ import { SessionCwds } from "./session-cwd.ts";
 import { agentItem, agentTranscript, workflowAgents } from "./subagents.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
 import { UnreadStore } from "./unread-store.ts";
+import { VscodeArchive } from "./vscode-archive.ts";
 import { gitFolderInfo, removeWorktree, worktreeState, worktreeStatus, worktreeTarget, type WorktreeTarget } from "./worktrees.ts";
 import { WrappedSession } from "./wrapped.ts";
 
@@ -151,6 +154,9 @@ function within(dir: string, root: string): boolean {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// The inbox socket of a session open elsewhere, when ccrc can use it.
+const inboxOf = (l: LiveProcess): string | undefined => (l.inbox && usableSocket(l.inbox) ? l.inbox : undefined);
+
 // Claude Code starts in the session's working folder, so a session whose folder is gone cannot start.
 function isFolder(dir: string): boolean {
   try {
@@ -213,6 +219,7 @@ export class SessionManager extends EventEmitter {
   private windows = new ContextWindows(path.join(paths.stateDir, "context-windows.json"));
   private ultracodeModels = new UltracodeModels(path.join(paths.stateDir, "ultracode-models.json"));
   private archive = new ArchiveStore(path.join(paths.stateDir, "archived.json"));
+  private vscodeArchive = new VscodeArchive(path.join(paths.stateDir, "vscode-unarchived.json"), () => path.join(paths.vscodeUserDir, "User", "globalStorage", "state.vscdb"));
   private unread = new UnreadStore(path.join(paths.stateDir, "unread.json"));
   private claudePush = false;
   private watched: string | null = null;
@@ -332,6 +339,7 @@ export class SessionManager extends EventEmitter {
   // announced serves until the transcript has one.
   async list(): Promise<SessionSummary[]> {
     const infos = await this.infos();
+    const hidden = await this.vscodeHidden();
     const live = new Map(liveProcesses().filter((l) => !this.controlled(l.sessionId)).map((l) => [l.sessionId, l]));
     const summary = (s: SessionCore, info?: SDKSessionInfo): SessionSummary => ({
       id: s.id,
@@ -344,7 +352,7 @@ export class SessionManager extends EventEmitter {
       host: s.host,
       busy: s.busy,
       pendingCount: s.pending.size || undefined,
-      ...this.archived(s.id),
+      ...this.archived(s.id, hidden),
       ...this.unreadFlag(s.id),
     });
     const folders = new Map<string, boolean>();
@@ -372,8 +380,9 @@ export class SessionManager extends EventEmitter {
         host: l?.host,
         liveStatus: l?.status,
         busy: l?.status === "busy",
+        ...(l && inboxOf(l) ? { inbox: true } : {}),
         ...(!l && info.cwd && missing(info.sessionId, info.cwd) ? { folderMissing: true } : {}),
-        ...this.archived(info.sessionId),
+        ...this.archived(info.sessionId, hidden),
         ...this.unreadFlag(info.sessionId),
       };
     });
@@ -475,6 +484,7 @@ export class SessionManager extends EventEmitter {
     const start = l ? undefined : this.starts.get(sessionId);
     const folder = await this.resumeFolder(sessionId, cwd);
     const origin = l || isFolder(folder) ? undefined : await worktreeOrigin(sessionId, folder);
+    const inbox = l && inboxOf(l) ? await this.inboxState(l, sessionId, cwd) : undefined;
     return {
       sessionId,
       cwd,
@@ -482,11 +492,17 @@ export class SessionManager extends EventEmitter {
       state: l ? "live" : "inactive",
       host: l?.host,
       busy: l?.status === "busy",
+      ...(inbox ? { inbox } : {}),
       ...(ended ? { closedReason: ended.reason } : {}),
       ...(context ? { context } : {}),
       ...(start ? { start } : {}),
       ...(l || isFolder(folder) ? {} : origin ? { resumeIn: origin } : { folderMissing: true }),
     };
+  }
+
+  private async inboxState(l: LiveProcess, sessionId: string, cwd: string): Promise<InboxInfo> {
+    const file = transcriptPath(sessionId, cwd);
+    return inboxInfo(l.entrypoint, file ? await lastPermissionMode(file) : undefined, inboundSetting(claudeSettingsFile(), l.cwd || cwd));
   }
 
   private async restate(sessionId: string): Promise<void> {
@@ -830,10 +846,29 @@ export class SessionManager extends EventEmitter {
   async send(sessionId: string, text: string, blocks?: ContentBlock[]): Promise<void> {
     const s = this.controlled(sessionId) ?? (await this.activate(sessionId));
     s.send(text, blocks);
-    if (this.archive.set(sessionId, false)) {
-      this.audit?.log("archive", { sessionId, archived: false, by: "send" });
-      this.emit("changed");
+    await this.broughtBack(sessionId);
+  }
+
+  private async broughtBack(sessionId: string): Promise<void> {
+    if (!(await this.markArchived(sessionId, false))) return;
+    this.audit?.log("archive", { sessionId, archived: false, by: "send" });
+    this.emit("changed");
+  }
+
+  // Text to a session open in a program this broker cannot drive, through its inbox socket, as Claude Code's other
+  // sessions send one; like a message from here it brings an archived session back to the list.
+  async sendToInbox(sessionId: string, text: string): Promise<void> {
+    const l = this.controlled(sessionId) ? undefined : liveProcesses({ fresh: true }).find((p) => p.sessionId === sessionId);
+    if (!l) throw Error("session is not open elsewhere");
+    const socket = inboxOf(l);
+    if (!socket) throw Error("session takes no messages");
+    const token = inboxToken(paths.claudeSessionsDir, l.pid, l.procStart);
+    try {
+      await postToInbox(socket, [...(token ? [JSON.stringify({ type: "auth", token })] : []), inboxLine(sessionId, text)]);
+    } catch (e) {
+      throw Error(`inbox send failed: ${(e as NodeJS.ErrnoException).code ?? (e instanceof Error ? e.message : String(e))}`);
     }
+    await this.broughtBack(sessionId);
   }
 
   // Names a session where Claude Code keeps names. A process this broker drives saves the name itself; a session
@@ -881,12 +916,38 @@ export class SessionManager extends EventEmitter {
 
   async setArchived(sessionId: string, on: boolean): Promise<{ archived: boolean }> {
     if (!this.controlled(sessionId) && !(await this.info(sessionId))) throw Error("unknown session");
-    if (this.archive.set(sessionId, on)) this.emit("changed");
+    if (await this.markArchived(sessionId, on)) this.emit("changed");
     return { archived: on };
   }
 
-  private archived(sessionId: string): { archived?: true } {
-    return this.archive.has(sessionId) ? { archived: true } : {};
+  // ccrc's own mark, and for a session VS Code archived while vscodeArchive is on, whether it is brought back here.
+  // Whether either changed.
+  private async markArchived(sessionId: string, on: boolean): Promise<boolean> {
+    const own = this.archive.set(sessionId, on);
+    const shown = on ? this.vscodeArchive.setShown(sessionId, false) : Boolean((await this.vscodeHidden())?.has(sessionId)) && this.vscodeArchive.setShown(sessionId, true);
+    return own || shown;
+  }
+
+  // The sessions VS Code archived, while vscodeArchive is on.
+  private async vscodeHidden(): Promise<Set<string> | undefined> {
+    return this.cfg.vscodeArchive ? this.vscodeArchive.hidden() : undefined;
+  }
+
+  private archived(sessionId: string, hidden?: Set<string>): { archived?: true; vscodeArchived?: true } {
+    const vscode = hidden?.has(sessionId) ? { vscodeArchived: true as const } : {};
+    return this.archive.has(sessionId) || (vscode.vscodeArchived && !this.vscodeArchive.shown(sessionId)) ? { archived: true, ...vscode } : vscode;
+  }
+
+  vscodeArchiveOn(): boolean {
+    return this.cfg.vscodeArchive === true;
+  }
+
+  // vscodeArchive as the remote user turned it on or off; the config file is written by the caller.
+  setVscodeArchive(on: boolean): void {
+    if (Boolean(this.cfg.vscodeArchive) === on) return;
+    this.cfg.vscodeArchive = on;
+    this.emit("changed");
+    this.emit("options_changed");
   }
 
   async setUnread(sessionId: string, on: boolean): Promise<{ unread: boolean }> {
@@ -905,6 +966,7 @@ export class SessionManager extends EventEmitter {
     const ids = transcriptIds(paths.claudeProjectsDir);
     if (!ids) return;
     this.archive.prune((id) => ids.has(id));
+    this.vscodeArchive.prune((id) => ids.has(id));
     this.unread.prune((id) => ids.has(id));
   }
 
@@ -965,6 +1027,9 @@ export class SessionManager extends EventEmitter {
         return this.setArchived(sessionId, args.archived === true);
       case "mark_unread":
         return this.setUnread(sessionId, args.unread === true);
+      case "inbox_send":
+        await this.sendToInbox(sessionId, String(args.text));
+        return {};
       case "worktree_status":
         return this.worktreeStatus(sessionId);
       case "worktree_remove":

@@ -37,7 +37,8 @@ export type AuditEvent =
   | "push_unsubscribe"
   | "doctor"
   | "fork"
-  | "rewind_conversation";
+  | "rewind_conversation"
+  | "config";
 
 // Records who did what; message text and tool input are not recorded.
 export class Audit {

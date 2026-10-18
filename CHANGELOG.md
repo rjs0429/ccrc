@@ -8,6 +8,22 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ### Added
 
+- Sessions open in a terminal, in the background, under `claude -p` or in a VS Code tab opened before the wrapper
+  take text from the phone through Claude Code's inbox socket for messages from other sessions (Claude Code 2.1.224
+  or later). Claude gets it as a message from another session, "ccrc 휴대폰", and the composer says so before
+  sending: what Claude asks again where the session runs, that "/" commands are not run, and, from the transcript's
+  last permission mode and the `crossSessionInbound` settings ccrc can read, when the message waits for approval in
+  the terminal or is not delivered. The message waits under the conversation until its transcript shows it.
+  Such sessions no longer read "보기만" in the list; a session of another inbox format stays view-only.
+- On iOS, when the app comes to the front within two minutes of a notification about a request that still waits, it
+  goes to that request's card, once per request: iOS can open the app from a notification without going where it
+  points. Other platforms, a new session's draft and answered requests are left alone. `GET /api/push/recent`.
+- The config key `vscodeArchive` (default `false`, also switched on the phone in 알림과 입력 > 세션 목록): sessions
+  VS Code's Claude Code extension archived, by hand or after its days without use, count as archived in ccrc's list,
+  marked "VS Code 보관". VS Code's state database is only read. Bringing such a session back on the phone, or sending
+  it a message, keeps it in the list (`<stateDir>/vscode-unarchived.json`) and leaves it archived in VS Code; the mark
+  goes once VS Code shows the session again.
+
 ### Changed
 
 - `install.sh` no longer stops when `ssh-keygen` is the only base tool missing. It still offers to install it, asking
@@ -34,6 +50,7 @@ your version and the new one, and the lines under "Breaking" separately.
   own, but not the 5.5 ones: it is shown on those models' rows and on a row of its own, where it can only be removed.
 - The app icon's badge counts the sessions waiting for an answer and the unread sessions, the same sessions the list
   marks. It no longer depends on which device was told, and a turn that starts by itself no longer clears it.
+- Sessions run by `claude -p` show as open in "SDK" instead of "sdk-cli".
 
 ### Fixed
 

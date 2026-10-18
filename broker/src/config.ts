@@ -35,6 +35,9 @@ export interface Config {
   updateChannel?: UpdateChannel;
   updateRepo?: string;
   updateNotify?: boolean;
+  // Sessions the Claude Code extension in VS Code archived, by hand or after its days without use, count as archived in
+  // ccrc's list too. Read from VS Code's state database, never written. Unset means false.
+  vscodeArchive?: boolean;
 }
 
 export const FOLLOW_VSCODE = "vscode";
@@ -55,6 +58,7 @@ function defaults(): Config {
     updateCheck: true,
     updateChannel: "stable",
     updateNotify: true,
+    vscodeArchive: false,
   };
 }
 
@@ -111,6 +115,7 @@ const KEYS: Record<string, { ok: (v: unknown) => boolean; expected: string; rest
   updateChannel: { ok: (v) => UPDATE_CHANNELS.includes(v as UpdateChannel), expected: UPDATE_CHANNELS.map((m) => `"${m}"`).join(", ") },
   updateRepo: { ok: (v) => isText(v) && v !== "", expected: "a git URL or path" },
   updateNotify: { ok: (v) => typeof v === "boolean", expected: "true or false" },
+  vscodeArchive: { ok: (v) => typeof v === "boolean", expected: "true or false" },
 };
 
 export const CONFIG_KEYS = Object.keys(KEYS);
@@ -271,6 +276,14 @@ export function writeFileAtomic(file: string, data: string): void {
 
 export function writeConfig(raw: Obj, file = paths.configFile): void {
   writeFileAtomic(file, JSON.stringify(raw, null, 2) + "\n");
+}
+
+// Sets one key of the config file, the others left as the file has them, checked as the broker reads it.
+export function setConfigKey(key: string, value: unknown, file = paths.configFile): void {
+  const raw = fs.existsSync(file) ? readConfig(file).raw : (newConfig() as unknown as Obj);
+  const next = { ...raw, [key]: value };
+  checkConfig(applyMigrations(next, file).config, file);
+  writeConfig(next, file);
 }
 
 // The config, made with the defaults of a new install when there is no file. Warnings go to stderr.

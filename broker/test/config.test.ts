@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { applyConfig, watchConfig } from "../src/config-watch.ts";
-import { ConfigError, ConfigTooNewError, SCHEMA_VERSION, jsonErrorAt, loadConfig, readConfig, type Config } from "../src/config.ts";
+import { ConfigError, ConfigTooNewError, SCHEMA_VERSION, jsonErrorAt, loadConfig, readConfig, setConfigKey, type Config } from "../src/config.ts";
 import { migrateConfigFile } from "../src/migrate.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -94,7 +94,7 @@ test("broken JSON is reported with its line and column", () => {
   assert.equal(jsonErrorAt('{"a":1,}'), 7);
 });
 
-const base = (): Config => ({ ...OLD, schemaVersion: 1, brokerSessions: "subscription", updateCheck: true, updateChannel: "stable", updateNotify: true });
+const base = (): Config => ({ ...OLD, schemaVersion: 1, brokerSessions: "subscription", updateCheck: true, updateChannel: "stable", updateNotify: true, vscodeArchive: false });
 
 test("live keys change in place and the ones that need a restart are named", () => {
   const current = base();
@@ -131,4 +131,20 @@ test("a watched file is read again when it changes; a broken one changes nothing
   } finally {
     stop();
   }
+});
+
+test("vscodeArchive is off unless set, takes true or false, and changes without a restart", () => {
+  assert.equal(readConfig(file({ ...OLD, schemaVersion: 1 })).config.vscodeArchive, false);
+  assert.throws(() => readConfig(file({ ...OLD, schemaVersion: 1, vscodeArchive: "yes" })), /"vscodeArchive" must be true or false/);
+  const current = base();
+  assert.deepEqual(applyConfig(current, { ...base(), vscodeArchive: true }), { applied: ["vscodeArchive"], restart: [] });
+  assert.equal(current.vscodeArchive, true);
+});
+
+test("setting one key leaves the others as the file has them", () => {
+  const f = file({ ...OLD, schemaVersion: 1, extra: 1 });
+  setConfigKey("vscodeArchive", true, f);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f, "utf8")), { ...OLD, schemaVersion: 1, extra: 1, vscodeArchive: true });
+  assert.throws(() => setConfigKey("vscodeArchive", "on", f), ConfigError);
+  assert.equal(JSON.parse(fs.readFileSync(f, "utf8")).vscodeArchive, true, "a wrong value is never written");
 });

@@ -397,6 +397,12 @@ export class Hub {
         reply({ ok: true, data: await this.rewindConversation(sessionId, args) });
         return;
       }
+      if (msg.op === "inbox_send") {
+        const text = str(args.text, MAX_TEXT);
+        this.audit.log("send", { device: this.device, sessionId, chars: text.length, via: "inbox" });
+        reply({ ok: true, data: await this.manager.call(sessionId, "inbox_send", { text }) });
+        return;
+      }
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {
         const detail = Object.fromEntries(
           Object.entries(args).filter(([k, v]) => ["server", "enabled", "taskId", "userMessageId", "style", "messageId"].includes(k) && (typeof v === "string" || typeof v === "boolean")),

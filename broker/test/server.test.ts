@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { Writable } from "node:stream";
 import { Audit } from "../src/audit.ts";
@@ -20,11 +21,14 @@ const status = async () => ({ Peer: { a: { DNSName: "phone.example.ts.net.", Tai
 async function setup(log?: { stream: NodeJS.WritableStream }, o: { allowLocal?: boolean } = {}) {
   const store = tempStore();
   const leases = new Leases(store, 60);
+  let vscodeArchive = false;
   const manager = {
     list: async () => [],
     folders: async () => [],
     modelList: async () => [],
     brokerSessions: () => ({ mode: "off", ready: false }),
+    vscodeArchiveOn: () => vscodeArchive,
+    setVscodeArchive: (on: boolean) => (vscodeArchive = on),
   } as unknown as SessionManager;
   const hub = { attach() {} } as unknown as Hub;
   const app = await buildServer({
@@ -111,6 +115,33 @@ test("options say how broker sessions sign in", async () => {
   const login = await app.inject({ method: "POST", url: "/api/login", headers: ORIGIN, payload: { id: "owner", password: "correct horse battery" } });
   const res = await app.inject({ method: "GET", url: "/api/options", headers: { cookie: cookieOf(login) } });
   assert.deepEqual(res.json().brokerSessions, { mode: "off", ready: false });
+});
+
+test("the phone turns the VS Code archive on and off in config.json, and nothing else", async (t) => {
+  const dir = tempDir();
+  const saved = process.env.CCRC_CONFIG_DIR;
+  process.env.CCRC_CONFIG_DIR = dir;
+  t.after(() => (saved === undefined ? delete process.env.CCRC_CONFIG_DIR : (process.env.CCRC_CONFIG_DIR = saved)));
+  const file = path.join(dir, "config.json");
+  fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, port: 0, roots: ["/home/user/work"], updateCheck: false }, null, 2) + "\n");
+  const { app, store } = await setup();
+  await setCredentials(store, "owner", "correct horse battery");
+  const login = await app.inject({ method: "POST", url: "/api/login", headers: ORIGIN, payload: { id: "owner", password: "correct horse battery" } });
+  const headers = { ...ORIGIN, cookie: cookieOf(login) };
+  assert.equal((await app.inject({ method: "GET", url: "/api/options", headers })).json().vscodeArchive, false);
+  const on = await app.inject({ method: "POST", url: "/api/options/vscode-archive", headers, payload: { on: true } });
+  assert.deepEqual(on.json(), { vscodeArchive: true });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { schemaVersion: 1, port: 0, roots: ["/home/user/work"], updateCheck: false, vscodeArchive: true });
+  assert.equal((await app.inject({ method: "GET", url: "/api/options", headers })).json().vscodeArchive, true);
+  for (const payload of [{ on: "yes" }, {}, { on: true, port: 1 }]) {
+    const res = await app.inject({ method: "POST", url: "/api/options/vscode-archive", headers, payload });
+    assert.equal(res.statusCode, Object.hasOwn(payload, "port") ? 200 : 400, JSON.stringify(payload));
+  }
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).port, 0, "only the one key is written");
+  assert.equal((await app.inject({ method: "POST", url: "/api/options/vscode-archive", headers: ORIGIN, payload: { on: false } })).statusCode, 401);
+  fs.writeFileSync(file, "{ broken");
+  assert.deepEqual((await app.inject({ method: "POST", url: "/api/options/vscode-archive", headers, payload: { on: false } })).json(), { error: "config_unwritable" });
+  assert.equal((await app.inject({ method: "GET", url: "/api/options", headers })).json().vscodeArchive, true, "a file that cannot be written changes nothing");
 });
 
 test("session data needs a login", async () => {

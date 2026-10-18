@@ -6,6 +6,7 @@ import websocket from "@fastify/websocket";
 import fastifyStatic from "@fastify/static";
 import type { Audit } from "./audit.ts";
 import { checkCredentials, setCredentials } from "./auth.ts";
+import { setConfigKey } from "./config.ts";
 import type { ClaudeSettings } from "./claude-settings.ts";
 import { DeviceGate } from "./devices.ts";
 import type { Doctor } from "./doctor.ts";
@@ -193,7 +194,23 @@ export async function buildServer(d: ServerDeps) {
     modes: PERMISSION_MODES,
     folders: await d.manager.folders(),
     brokerSessions: d.manager.brokerSessions(),
+    vscodeArchive: d.manager.vscodeArchiveOn(),
   }));
+
+  // The one config key the phone sets: whether sessions VS Code archived count as archived in the list.
+  app.post<{ Body: { on?: unknown } }>("/api/options/vscode-archive", { preHandler: requireAuth }, async (req, reply) => {
+    const on = req.body?.on;
+    if (typeof on !== "boolean") return reply.code(400).send({ error: "invalid" });
+    try {
+      setConfigKey("vscodeArchive", on);
+    } catch (e) {
+      req.log.warn({ err: e }, "config not written");
+      return reply.code(500).send({ error: "config_unwritable" });
+    }
+    d.manager.setVscodeArchive(on);
+    d.audit.log("config", { device: req.device, key: "vscodeArchive", value: on });
+    return { vscodeArchive: on };
+  });
 
   const routes = { ...d, requireAuth };
   await registerUploads(app, routes);

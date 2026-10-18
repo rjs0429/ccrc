@@ -31,6 +31,8 @@ export interface SearchResult {
   hits: number;
   snippets: SearchSnippet[];
   archived?: boolean;
+  // Archived by VS Code, as the list says.
+  vscodeArchived?: boolean;
 }
 
 export interface SearchResponse {

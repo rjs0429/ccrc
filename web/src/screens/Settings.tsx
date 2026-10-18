@@ -7,7 +7,7 @@ import { AuditSection } from "./settings/Audit.tsx";
 import { ClaudeSettingsSection } from "./settings/ClaudeSettings.tsx";
 import { HealthSection } from "./settings/Health.tsx";
 import { NotificationsSection } from "./settings/Notifications.tsx";
-import { PrefsSection } from "./settings/Prefs.tsx";
+import { ListSection, PrefsSection } from "./settings/Prefs.tsx";
 
 const PAGES: { page: SettingsPage; title: string }[] = [
   { page: "claude", title: "Claude Code" },
@@ -58,6 +58,7 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
             <>
               <NotificationsSection />
               <PrefsSection />
+              <ListSection />
             </>
           )}
           {page === "account" && (

@@ -8,7 +8,7 @@ import { call, patchSession, toast } from "../state.ts";
 import { ArchiveWorktree } from "./sheets/Worktree.tsx";
 import { Button, Choice, Sheet, Spinner } from "./ui.tsx";
 
-type Target = Pick<SessionSummary, "id" | "title" | "state" | "host" | "archived" | "unread"> & { cwd?: string };
+type Target = Pick<SessionSummary, "id" | "title" | "state" | "host" | "archived" | "vscodeArchived" | "unread"> & { cwd?: string };
 
 const RENAME_HOW: Partial<Record<SessionSummary["state"], string>> = {
   owned: "Claude Code가 이름을 저장합니다.",
@@ -16,12 +16,12 @@ const RENAME_HOW: Partial<Record<SessionSummary["state"], string>> = {
   inactive: "세션을 실행하지 않고 이름만 바꿉니다.",
 };
 
-// Archives a session in ccrc or brings it back; the list follows at once.
-export function setArchived(sessionId: string, on: boolean): void {
+// Archives a session in ccrc or brings it back; the list follows at once. vscode: VS Code archived it, and keeps it so.
+export function setArchived(sessionId: string, on: boolean, vscode = false): void {
   call(sessionId, "archive", { archived: on }).then(
     () => {
       patchSession(sessionId, { archived: on || undefined });
-      toast(on ? "보관했습니다" : "보관을 풀었습니다");
+      toast(on ? "보관했습니다" : vscode ? "보관을 풀었습니다 · VS Code에서는 그대로 보관됩니다" : "보관을 풀었습니다");
     },
     (e: Error) => toast(e.message),
   );
@@ -43,8 +43,8 @@ export function setUnread(sessionId: string, on: boolean): Promise<boolean> {
 }
 
 // Sits in a line of small text without making the line taller.
-export function ArchivedBadge() {
-  return <span className="-my-px shrink-0 rounded border border-line px-1 text-[11px] leading-4">보관됨</span>;
+export function ArchivedBadge({ vscode = false }: { vscode?: boolean }) {
+  return <span className="-my-px shrink-0 rounded border border-line px-1 text-[11px] leading-4">{vscode ? "VS Code 보관" : "보관됨"}</span>;
 }
 
 // Why the session cannot be renamed from here: a program ccrc cannot drive has it open.
@@ -99,7 +99,14 @@ export function SessionActions({ session, step: first, onClose }: { session: Tar
           label={session.archived ? "보관 해제" : "보관하기"}
           hint={
             session.archived ? (
-              "목록에 다시 보입니다"
+              session.vscodeArchived ? (
+                <>
+                  <span className="block">목록에 다시 보입니다.</span>
+                  <span className="block">VS Code에서는 그대로 보관됩니다.</span>
+                </>
+              ) : (
+                "목록에 다시 보입니다"
+              )
             ) : (
               <>
                 <span className="block">ccrc 목록에서만 숨깁니다.</span>
@@ -109,7 +116,7 @@ export function SessionActions({ session, step: first, onClose }: { session: Tar
           }
           onClick={() => {
             if (!session.archived && session.cwd && worktreeOf(session.cwd)) return setStep("archive");
-            setArchived(session.id, !session.archived);
+            setArchived(session.id, !session.archived, session.vscodeArchived);
             onClose();
           }}
         />

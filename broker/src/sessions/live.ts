@@ -1,13 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import { paths } from "../paths.ts";
+import { INBOX_PROTOCOL } from "./inbox.ts";
 
+// inbox: the session's inbox socket, when it speaks the line format ccrc knows.
 export interface LiveProcess {
   pid: number;
   sessionId: string;
   cwd: string;
   host: string;
   status?: string;
+  procStart: string;
+  entrypoint?: string;
+  inbox?: string;
 }
 
 const CACHE_MS = 2000;
@@ -15,6 +20,7 @@ const CACHE_MS = 2000;
 const HOSTS: Record<string, string> = {
   "claude-vscode": "VS Code",
   cli: "Terminal",
+  "sdk-cli": "SDK",
   "sdk-ts": "SDK",
   "sdk-py": "SDK",
 };
@@ -52,6 +58,9 @@ export function liveProcesses(opts: { dir?: string; fresh?: boolean } = {}): Liv
         cwd: r.cwd,
         host: HOSTS[r.entrypoint] ?? r.entrypoint ?? "Claude Code",
         status: r.status,
+        procStart: String(r.procStart),
+        ...(typeof r.entrypoint === "string" ? { entrypoint: r.entrypoint } : {}),
+        ...(r.peerProtocol === INBOX_PROTOCOL && typeof r.messagingSocketPath === "string" ? { inbox: r.messagingSocketPath } : {}),
       });
     } catch {}
   }

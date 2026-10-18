@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { EffortName, LiveState, ModelOption, PermissionModeName, StartSettings } from "../../../broker/src/protocol.ts";
-import { MODE_HINT, MODE_LABEL, baseName, effortLabel, effortLevels, fastReasonText, findModel, modelLabel, modelOffers } from "../labels.ts";
+import { MODE_HINT, MODE_LABEL, baseName, effortLabel, effortLevels, fastReasonText, findModel, modelLabel, modelOffers, type PeerNote } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
 import { usePrefs } from "../prefs.ts";
 import { rememberSent } from "../sentPreviews.ts";
@@ -196,6 +196,9 @@ interface Props {
   // composer; agents is absent while the conversation has no subagent or workflow.
   agents?: AgentMap["chip"];
   onAgents?: () => void;
+  // A session open in another program that takes text from here only as a message from another session: the text,
+  // with notes on what becomes of it above, and no attachments, chips, commands or stop button.
+  peer?: { notes: PeerNote[] };
 }
 
 export function Composer({
@@ -223,6 +226,7 @@ export function Composer({
   onContext,
   agents,
   onAgents,
+  peer,
 }: Props) {
   const scope = sessionId ?? (draft ? NEW_SESSION_SCOPE : undefined);
   const [text, setText] = useState(() => loadDraft(scope));
@@ -278,15 +282,15 @@ export function Composer({
   const uploading = attachments.some((a) => !a.uploaded);
   // While a new session starts, its first message stays as it was sent.
   const locked = Boolean(draft && starting);
-  const filled = text.trim() !== "" || attachments.length > 0;
-  const canSend = !uploading && !locked && filled;
+  const filled = text.trim() !== "" || (!peer && attachments.length > 0);
+  const canSend = (Boolean(peer) || !uploading) && !locked && filled;
   // One round button: stop while a turn runs and there is nothing to send, else send, which queues during a turn.
-  const stops = busy && !filled;
+  const stops = !peer && busy && !filled;
 
   const draftCwd = draft?.cwd;
   const target = useMemo<SuggestTarget | undefined>(() => (sessionId ? { sessionId } : draftCwd ? { cwd: draftCwd } : undefined), [sessionId, draftCwd]);
   const mention = target && !dismissed ? mentionAt(text, caret) : undefined;
-  const command = target && !dismissed && !mention ? commandQuery(text) : undefined;
+  const command = target && !dismissed && !mention && !peer ? commandQuery(text) : undefined;
   const files = useFileSuggestions(target, mention?.query);
   const listed = useCommands(target, command !== undefined);
   const commands = draft ? listed?.filter((c) => !DRAFT_HIDDEN.has(c.name)) : listed;
@@ -491,6 +495,12 @@ export function Composer({
 
   const submit = () => {
     if (!canSend || disabledReason) return;
+    if (peer) {
+      if (!onSend(text.trim(), [])) return toast("not connected");
+      setText("");
+      setDismissed(false);
+      return;
+    }
     const c = attachments.length ? undefined : parseCommand(text);
     const fast = c && onFast && commandName(c.name) === "fast" ? fastCommand(c.args) : false;
     if (fast === "kept") return;
@@ -559,6 +569,57 @@ export function Composer({
     }
   };
 
+  const field = (
+    <textarea
+      ref={ref}
+      value={text}
+      rows={1}
+      readOnly={locked}
+      enterKeyHint={enterToSend ? "send" : "enter"}
+      placeholder={peer ? "다른 세션 메시지로 보내기" : busy ? "대기열에 추가할 메시지…" : placeholder}
+      onChange={(e) => {
+        setText(e.target.value);
+        setCaret(e.target.selectionStart);
+        setDismissed(false);
+      }}
+      onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+      onKeyDown={onKeyDown}
+      className="block max-h-42 w-full resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-muted short:max-h-20 short:leading-snug"
+    />
+  );
+
+  if (peer && !disabledReason) {
+    const notes = text.trimStart().startsWith("/") ? [...peer.notes, { text: "/ 명령은 실행되지 않고 글로 전달됩니다.", warn: true }] : peer.notes;
+    return (
+      <div className="pb-safe border-t border-line bg-bg px-safe-3 pt-2 short:pt-1">
+        <div className="relative mx-auto max-w-3xl">
+          {shown && <Suggestions rows={rows} active={active} onPick={pick} />}
+          <div className="relative rounded-2xl border border-line bg-surface px-3 pt-2 pb-1.5 focus-within:border-accent short:pt-1.5 short:pb-1">
+            <div className="mb-1 space-y-0.5 text-[12px] leading-snug break-keep text-pretty short:text-[11px]" data-peer-notes>
+              {notes.map((n) => (
+                <p key={n.text} className={n.warn ? "text-warn" : "text-muted"} data-peer-note={n.warn ? "warn" : ""}>
+                  {n.text}
+                </p>
+              ))}
+            </div>
+            {field}
+            <div className="mt-1 flex items-center gap-x-1 short:mt-0.5">
+              {onAgents && <AgentChip chip={agents} word onClick={openAgents} />}
+              <button
+                onClick={submit}
+                disabled={!canSend}
+                aria-label="보내기"
+                className={`ml-auto flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30 ${ROUND_TAP}`}
+              >
+                <Icon.send className="size-4 [stroke-width:2.5]" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (disabledReason) {
     if (!onAgents) return <div className="pb-safe border-t border-line bg-bg px-safe-4 pt-3 text-center text-sm text-muted short:pt-2">{disabledReason}</div>;
     return (
@@ -603,22 +664,7 @@ export function Composer({
             </div>
           )}
           {scope && <AttachmentChips scope={scope} items={attachments} locked={locked} />}
-          <textarea
-            ref={ref}
-            value={text}
-            rows={1}
-            readOnly={locked}
-            enterKeyHint={enterToSend ? "send" : "enter"}
-            placeholder={busy ? "대기열에 추가할 메시지…" : placeholder}
-            onChange={(e) => {
-              setText(e.target.value);
-              setCaret(e.target.selectionStart);
-              setDismissed(false);
-            }}
-            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-            onKeyDown={onKeyDown}
-            className="block max-h-42 w-full resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-muted short:max-h-20 short:leading-snug"
-          />
+          {field}
           {chosen && (
             <div className="mt-1 text-[11px] text-muted" data-start-hint>
               고른 값은 여기서 시작할 때 적용됩니다
