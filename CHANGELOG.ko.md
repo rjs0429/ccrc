@@ -6,6 +6,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-23
+
 ### 추가
 
 - 휴대폰 앱의 영어 화면. 휴대폰의 첫 번째 선호 언어가 한국어면 한국어로, 아니면 영어로 보인다(기본값 "자동"). 설정 > 언어 / Language 에서 한국어나 English 를 고르면 그것을 따른다. 고른 언어는 휴대폰에 저장되므로 로그인 화면도 따른다. 모든 화면을 옮겼고, Claude 와 Claude Code 가 쓴 글은 쓴 그대로 보인다. 알림은 휴대폰마다 그 언어로 쓴다. 앱은 구독할 때와 언어가 바뀔 때마다 브로커에 언어를 알리고, 브로커는 이를 `~/.config/ccrc/push.json` 의 그 기기 알림 설정에 `lang` 으로 둔다. 휴대폰에서 내보낸 대화도 브로커가 쓰는 머리글과 줄이 같은 언어로 나온다.
@@ -294,7 +296,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 - 쉬는 브로커 세션 프로세스는 15분 뒤 닫는다. 메시지 내용 없는 감사 로그. 라이트·다크 테마.
 - `ccrc serve | passwd | status | logout` 과 `deploy/install-service.sh`.
 
-[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/rjs0429/ccrc/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/rjs0429/ccrc/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/rjs0429/ccrc/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/rjs0429/ccrc/compare/v0.7.0...v0.7.1

@@ -8,6 +8,8 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-23
+
 ### Added
 
 - The phone app in English. It shows Korean when the phone's first preferred language is Korean and English otherwise
@@ -618,7 +620,8 @@ The first public release: an installer, updates, and the changes needed to run o
 - Idle broker session processes close after 15 minutes; an audit log without message contents; light and dark themes.
 - `ccrc serve | passwd | status | logout` and `deploy/install-service.sh`.
 
-[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/rjs0429/ccrc/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/rjs0429/ccrc/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/rjs0429/ccrc/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/rjs0429/ccrc/compare/v0.7.0...v0.7.1
