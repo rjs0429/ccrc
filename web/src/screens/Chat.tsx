@@ -37,7 +37,7 @@ import { dayLines, streamLine } from "../components/stamps.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { brokerSessionsBlocked, closedText, errorText, hostLabel, inboxNotes, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
-import { call, composerInsert, focusDone, getState, joinParked, loadMore, navigate, openAt, openSettingsFrom, refreshChat, requestShown, send, toast, useApp } from "../state.ts";
+import { call, composerInsert, dropParked, focusDone, getState, joinParked, loadMore, navigate, openAt, openSettingsFrom, refreshChat, requestShown, send, toast, useApp } from "../state.ts";
 import { withEarlier } from "../chatItems.ts";
 import { markShown, newest, type PeerSent } from "../peerSent.ts";
 import { takeSent } from "../sentPreviews.ts";
@@ -170,7 +170,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const pinned = useRef(true);
   const stick = useRef(true);
   // A smooth scroll to the bottom from the jump button, until it lands or the user touches the list; a touch
-  // stops it where it is, since browsers do not all cancel a smooth scroll for one.
+  // stops it where it is, since browsers do not all cancel a smooth scroll for one. A write to the position would stop
+  // it short, so a change on the way sends it on to the new bottom, and no part loads meanwhile.
   const glide = useRef(false);
   // The first item in view and how far its top is below the list's top: any other change keeps it there.
   const anchor = useRef<{ id: string; top: number } | null>(null);
@@ -264,19 +265,21 @@ export function Chat({ sessionId }: { sessionId: string }) {
       return;
     }
     const tapped = performance.now() - touched.current <= TOUCH_MS;
-    if ((pinned.current || glide.current) && !tapped) toBottom();
+    if (glide.current || (pinned.current && !tapped)) toBottom();
     else {
       keepAnchor(force || tapped);
       pinned.current = gapBelow(el) < PIN_PX;
     }
   };
 
-  // What the user asks from elsewhere (the jump button, a search hit, the agent map) takes over from their scroll.
+  // What the user asks from elsewhere (the jump button, a search hit, the agent map) takes over from their scroll and
+  // touch on the list. A part loaded for that scroll is dropped; it loads again if the new place nears it.
   const stopScroll = () => {
     clearTimeout(restTimer.current);
     scrolling.current = false;
     owed.current = {};
-    joinParked(sessionId);
+    touched.current = 0;
+    dropParked(sessionId);
   };
 
   const jump = () => {
@@ -313,7 +316,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const loadParts = (retry: boolean) => {
     const el = listRef.current;
     const c = getState().chat;
-    if (!el || c?.sessionId !== sessionId || !c.loaded || c.loading) return;
+    if (!el || glide.current || c?.sessionId !== sessionId || !c.loaded || c.loading) return;
     if (c.hasMore && (retry || !c.failed) && el.scrollTop < el.clientHeight * LOAD_SCREENS) void loadMore(sessionId, "earlier", canJoin);
     else if (c.gap && !c.failed) nearGap(el);
   };
@@ -665,7 +668,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       follow(true);
     } else if (was.snaps !== now.snaps) {
       if (scrolling.current) owed.current.hold = true;
-      else if (pinned.current || !keepAnchor(true)) {
+      else if (pinned.current || glide.current || !keepAnchor(true)) {
         toBottom();
         follow(true);
       }

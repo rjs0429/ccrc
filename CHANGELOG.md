@@ -22,6 +22,9 @@ your version and the new one, and the lines under "Breaking" separately.
   moves the list while you scroll. Safari 27 and other browsers keep what you read in place themselves; on older iOS the
   app does it once the list rests. An earlier page that arrives while you scroll goes in when the list rests, so after a
   fast fling to the top it shows a moment later.
+- The jump-to-bottom button, tapped right after touching the conversation (just after a fling up, say), could stop well
+  short of the bottom and then stay hidden until the list was touched again. It now goes all the way down, and puts in no
+  earlier pages on the way.
 
 ## [0.8.1] - 2026-10-23
 

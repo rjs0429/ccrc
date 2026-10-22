@@ -677,6 +677,14 @@ export function joinParked(sessionId: string): boolean {
   return true;
 }
 
+// Drops the part loadMore kept out; it loads again when the list nears it.
+export function dropParked(sessionId: string): void {
+  const p = parked;
+  if (p?.sessionId !== sessionId) return;
+  parked = undefined;
+  updateChat(sessionId, (c) => (c.loading === p.part ? { loading: undefined } : undefined));
+}
+
 function onServer(msg: ServerMsg): void {
   switch (msg.t) {
     case "ready":
