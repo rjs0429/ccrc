@@ -15,6 +15,15 @@ your version and the new one, and the lines under "Breaking" separately.
   text as it comes. A streaming thought now opens and closes on a tap like the others; a box opened or closed by hand
   stays so, after a reload of the page too, and the rest follow the setting.
 
+### Changed
+
+- A long press on Claude's reply (one still streaming too) or on a message you sent (one still queued too) selects its
+  text, with the magnifier and the menu to copy it, as text does elsewhere on the phone; on a computer a right click
+  shows the browser's own menu. A reply still streaming holds still while text in it is selected and catches up once
+  it is not; a long press on a file link in a reply shows no link menu (a tap still opens it in the viewer). The actions
+  of replies and messages (Copy as Markdown, Export conversation, Fork from here, Redo from here) open from the ⋯ before
+  the time only, and its 44px target no longer reaches into a message's bubble.
+
 ## [0.8.1] - 2026-10-23
 
 ### Fixed

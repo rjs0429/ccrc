@@ -7,10 +7,12 @@ import { FileImages, FileLinks, isWebLink, urlTransform } from "./fileLinks.ts";
 
 function Link({ href, children }: { href?: string; children?: React.ReactNode }) {
   const open = useContext(FileLinks);
+  // iOS's link menu opens a link without its click, so a link the app opens itself offers none.
   if (href && open && !isWebLink(href)) {
     return (
       <a
         href={href}
+        className="[-webkit-touch-callout:none]"
         onClick={(e) => {
           e.preventDefault();
           open(href);
