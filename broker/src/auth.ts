@@ -50,6 +50,21 @@ export async function checkCredentials(store: Store, id: string, password: strin
   return { ok: false, reason: "invalid" };
 }
 
+// Reads the credentials file again after it changed while the broker runs (`ccrc passwd`, `ccrc logout`): whether the
+// login's lease went, and whether the password was set since the last look. The last look is kept here, since other
+// readers reload the store too.
+export function credentialsWatch(store: Store): () => { leaseGone: boolean; passwordSet: boolean } {
+  let setAt = store.state.user?.changedAt;
+  return () => {
+    const hadLease = Boolean(store.state.lease);
+    store.reload();
+    const at = store.state.user?.changedAt;
+    const passwordSet = at !== setAt;
+    setAt = at;
+    return { leaseGone: hadLease && !store.state.lease, passwordSet };
+  };
+}
+
 export async function setCredentials(store: Store, id: string, password: string): Promise<void> {
   if (!ID_PATTERN.test(id)) throw Error("ID must be 3-32 characters: letters, digits, . _ -");
   if (password.length < MIN_PASSWORD_LENGTH) throw Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);

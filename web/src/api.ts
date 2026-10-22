@@ -1,12 +1,17 @@
 import type { SearchResponse, Thread } from "../../broker/src/search-protocol.ts";
 import type { BrokerSessionsInfo, ModelOption, PermissionModeName, SessionSummary, UploadInfo } from "../../broker/src/protocol.ts";
+import { noteAnswered } from "./offline.ts";
 
 // passkey "due": the login holds until a passkey confirms it, and nothing else answers before that.
+// leaseIdleMinutes and loginSetAt, while logged in: how long the login lasts without activity, and when its password
+// was set; the phone's copy of recent conversations goes by them.
 export interface Me {
   configured: boolean;
   loggedIn: boolean;
   device: string;
   passkey?: "due";
+  leaseIdleMinutes?: number;
+  loginSetAt?: string;
 }
 
 export interface PasskeyView {
@@ -64,15 +69,18 @@ function failure(status: number, body: Record<string, unknown>): ApiError {
   return new ApiError(PASSKEY_DUE, body);
 }
 
-export async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+export async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const at = Date.now();
   const res = await fetch(url, {
     method,
     credentials: "same-origin",
     headers: body === undefined ? {} : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) throw failure(res.status, data);
+  noteAnswered(at);
   return data as T;
 }
 
@@ -91,18 +99,21 @@ function upload(file: Blob, name: string, onProgress: (fraction: number) => void
       try {
         body = JSON.parse(xhr.responseText) as Record<string, unknown>;
       } catch {}
-      if (xhr.status >= 200 && xhr.status < 300) resolve(body as unknown as UploadInfo);
-      else reject(failure(xhr.status, body));
+      if (xhr.status >= 200 && xhr.status < 300) {
+        noteAnswered(at);
+        resolve(body as unknown as UploadInfo);
+      } else reject(failure(xhr.status, body));
     };
     xhr.onerror = () => reject(new ApiError(0, { error: "network" }));
     xhr.onabort = () => reject(new DOMException("aborted", "AbortError"));
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    const at = Date.now();
     xhr.send(file);
   });
 }
 
 export const api = {
-  me: () => request<Me>("GET", "/api/me"),
+  me: (signal?: AbortSignal) => request<Me>("GET", "/api/me", undefined, signal),
   login: (id: string, password: string, takeover: boolean) => request<{ ok: true; passkey?: "due" }>("POST", "/api/login", { id, password, takeover }),
   logout: () => request<{ ok: true }>("POST", "/api/logout", {}),
   changePassword: (current: string, next: string) => request<{ ok: true }>("POST", "/api/password", { current, next }),

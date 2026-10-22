@@ -3,7 +3,7 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import { readApiKey, writeApiKey } from "./api-key.ts";
 import { Audit } from "./audit.ts";
-import { setCredentials } from "./auth.ts";
+import { credentialsWatch, setCredentials } from "./auth.ts";
 import { watchConfig } from "./config-watch.ts";
 import {
   BROKER_SESSIONS,
@@ -120,10 +120,11 @@ async function serve(): Promise<void> {
   fs.watchFile(paths.apiKeyFile, { interval: 2000 }, () => manager.emit("options_changed"));
 
   // `ccrc passwd` and `ccrc logout` edit the credentials file while the broker runs.
+  const credentialsChanged = credentialsWatch(store);
   fs.watchFile(paths.credentialsFile, { interval: 2000 }, () => {
-    const hadLease = Boolean(store.state.lease);
-    store.reload();
-    if (hadLease && !store.state.lease) leases.emit("revoked", "logout");
+    const { leaseGone, passwordSet } = credentialsChanged();
+    if (leaseGone) leases.emit("revoked", "logout");
+    if (passwordSet) hub.loginChanged();
   });
 
   const search = new SessionSearch();

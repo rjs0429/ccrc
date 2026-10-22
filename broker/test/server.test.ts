@@ -64,7 +64,24 @@ test("login works only after credentials are set", async () => {
   assert.match(String(res.headers["set-cookie"]), /HttpOnly/);
   assert.match(String(res.headers["set-cookie"]), /SameSite=Strict/);
   const me = await app.inject({ method: "GET", url: "/api/me", headers: { cookie: cookieOf(res) } });
-  assert.deepEqual(me.json(), { configured: true, loggedIn: true, device: "local" });
+  assert.deepEqual(me.json(), { configured: true, loggedIn: true, device: "local", leaseIdleMinutes: 60, loginSetAt: store.state.user!.changedAt });
+});
+
+test("me says the login's idle time and when its password was set only while logged in", async () => {
+  const { app, store, leases } = await setup();
+  await setCredentials(store, "owner", "correct horse battery");
+  assert.deepEqual((await app.inject({ method: "GET", url: "/api/me" })).json(), { configured: true, loggedIn: false, device: "local" });
+  const login = await app.inject({ method: "POST", url: "/api/login", headers: ORIGIN, payload: { id: "owner", password: "correct horse battery" } });
+  const cookie = cookieOf(login);
+  const first = (await app.inject({ method: "GET", url: "/api/me", headers: { cookie } })).json();
+  leases.setIdleMinutes(90);
+  await new Promise((r) => setTimeout(r, 5));
+  await setCredentials(store, "owner", "another horse battery");
+  const again = (await app.inject({ method: "GET", url: "/api/me", headers: { cookie } })).json();
+  assert.equal(again.loggedIn, true, "a new password keeps the login");
+  assert.equal(again.leaseIdleMinutes, 90);
+  assert.notEqual(again.loginSetAt, first.loginSetAt);
+  assert.equal(again.loginSetAt, store.state.user!.changedAt);
 });
 
 test("a second login asks before taking over, then ends the first", async () => {

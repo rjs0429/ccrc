@@ -60,6 +60,8 @@ async function setup() {
 }
 
 const cookieOf = (res: { headers: Record<string, unknown> }) => String(res.headers["set-cookie"] ?? "").split(";")[0];
+// What /api/me says of the login and its passkey, without how long the login lasts and when its password was set.
+const meOf = (body: Record<string, unknown>) => Object.fromEntries(Object.entries(body).filter(([k]) => k !== "leaseIdleMinutes" && k !== "loginSetAt"));
 
 async function login(app: Awaited<ReturnType<typeof setup>>["app"], headers: Record<string, string> = PHONE) {
   const res = await app.inject({ method: "POST", url: "/api/login", headers, payload: { id: "owner", password: PASSWORD, takeover: true } });
@@ -93,7 +95,7 @@ test("a phone registers a passkey with its password, after which every login of 
   const h2 = { ...PHONE, cookie: second.cookie };
   const denied = await t.app.inject({ method: "GET", url: "/api/sessions", headers: h2 });
   assert.deepEqual([denied.statusCode, denied.json().error], [401, "passkey_required"]);
-  assert.deepEqual((await t.app.inject({ method: "GET", url: "/api/me", headers: h2 })).json(), { configured: true, loggedIn: true, device: "phone", passkey: "due" });
+  assert.deepEqual(meOf((await t.app.inject({ method: "GET", url: "/api/me", headers: h2 })).json()), { configured: true, loggedIn: true, device: "phone", passkey: "due" });
   const before = await t.app.inject({ method: "POST", url: "/api/passkeys/register/options", headers: h2, payload: { password: PASSWORD } });
   assert.deepEqual([before.statusCode, before.json().error], [401, "passkey_required"], "a phone with a passkey of its own confirms with it");
 
@@ -106,7 +108,7 @@ test("a phone registers a passkey with its password, after which every login of 
   const ok = await t.app.inject({ method: "POST", url: "/api/passkeys/verify", headers: h2, payload: { credential: a.get(vo2.json().options, ORIGIN) } });
   assert.equal(ok.statusCode, 200);
   assert.equal((await t.app.inject({ method: "GET", url: "/api/sessions", headers: h2 })).statusCode, 200);
-  assert.deepEqual((await t.app.inject({ method: "GET", url: "/api/me", headers: h2 })).json(), { configured: true, loggedIn: true, device: "phone" });
+  assert.deepEqual(meOf((await t.app.inject({ method: "GET", url: "/api/me", headers: h2 })).json()), { configured: true, loggedIn: true, device: "phone" });
   const done = await t.app.inject({ method: "POST", url: "/api/passkeys/verify/options", headers: h2, payload: {} });
   assert.deepEqual([done.statusCode, done.json().error], [409, "not_due"]);
 

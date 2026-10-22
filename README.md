@@ -10,8 +10,9 @@ small wrapper that VS Code's Claude Code extension starts the CLI with; inactive
 started by the broker itself.
 
 - **Personal tool.** Each person installs ccrc on their own machine and uses it with their own Claude Code login.
-  There is no ccrc server: the phone talks to your machine over your tailnet, and transcripts stay on the machine.
-  Claude Code itself talks to Anthropic's API as it always does.
+  There is no ccrc server: the phone talks to your machine over your tailnet, and transcripts stay on the machine
+  (the phone keeps only the end of the last conversations it showed, to read while the machine is off; see
+  [Security model](#security-model)). Claude Code itself talks to Anthropic's API as it always does.
 - **Not an Anthropic product.** ccrc is not made, endorsed or supported by Anthropic. It does not include or modify
   Claude Code (see [License and Anthropic's terms](#license-and-anthropics-terms)).
 - **Korean screens.** The phone app is in Korean only for now; the command line and documentation are in English.
@@ -369,7 +370,8 @@ column, and unknown keys are only warned about. A running broker takes in change
 | `vscodeArchive` | `false` | Sessions VS Code's Claude Code extension archived count as archived in ccrc's list too (see [VS Code](#vs-code)). The phone switches it too |
 | `passkeyHours` | `18` | Once a phone has registered a passkey, a remote login is confirmed with one when it starts and again after this many hours. Logins on the machine itself are never asked |
 
-Other settings (notifications, Enter to send, Claude Code's own settings) are changed in the phone's settings screen.
+Other settings (notifications, Enter to send, the phone's copy of recent conversations, Claude Code's own settings) are
+changed in the phone's settings screen.
 
 ### Environment variables
 
@@ -471,6 +473,18 @@ does the file.
   logs, the audit log, the screen or API answers. Notifications carry the session title and the kind of request only,
   unless "도구 이름 표시" (show tool names) is on for the device: then also the tool or file name, or the text of a
   notification Claude sends.
+- **The phone's copy.** So that recent conversations can be read while the machine is off or out of reach, the phone
+  keeps the end of the last five it showed in its browser's storage (IndexedDB, 160KB each at most), and the app
+  itself in its service worker's cache. The copy holds what was said and tool calls by name and summary; tool input
+  and output, diffs, command output, thinking and pictures are not kept. It shows read only, and only as long as the
+  phone's login would last without activity (`leaseIdleMinutes` from the last request or message of the phone's that
+  the broker took in, less a minute). It is deleted on logout, when that time runs out (also from a screen showing
+  it), at once when the password is changed (on the phone, or with `ccrc passwd` while the phone is connected), and
+  otherwise when the phone next reaches the machine and learns that its login ended (`ccrc logout`, a login
+  elsewhere), that the password was changed or that the device is no longer allowed. The phone's settings
+  (계정과 보안 > "최근 대화를 휴대폰에 저장", on by default) turn it off and delete it. A lost phone that cannot reach the
+  machine shows the copy to whoever unlocks it until the time runs out: run `ccrc logout` on the machine, and rely on
+  the phone's lock.
 
 ### What leaves your machine
 
@@ -482,6 +496,7 @@ does the file.
   session title and the kind of request (with "도구 이름 표시" on, also the names and Claude's text described above).
 - **Tailscale** keeps its own connection to its coordination server; the phone's traffic to the broker stays on the
   tailnet.
+- **The phone** keeps a copy of the end of the conversations it showed last (see "The phone's copy" above).
 - **Installing and updating** fetch from GitHub, nodejs.org and the npm registry.
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
@@ -515,8 +530,9 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
   and its extensions in `~/.vscode/extensions`, as Microsoft's build keeps them: not Insiders, VSCodium or Code - OSS
   (Arch's `code` package; use `visual-studio-code-bin` there). With another build, setup skips the `vscode` step.
 - One user per machine and one remote login at a time.
-- Sessions run on the machine, so it has to be on and online. Sessions open in a terminal or another program take
-  text from the phone only as messages from another session; their prompts, model, mode and turns stay there.
+- Sessions run on the machine, so it has to be on and online; while it is not, the phone shows only its read-only
+  copy of the last conversations it showed. Sessions open in a terminal or another program take text from the phone
+  only as messages from another session; their prompts, model, mode and turns stay there.
 - In `apiKey` mode, commands Claude runs in a broker session (the Bash tool, for example) inherit Claude Code's
   environment and so can read the key.
 - The installer is new. ccrc has run daily on Ubuntu 24.04. On 2026-10-18 `install.sh` from GitHub installed v0.7.0

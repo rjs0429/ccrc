@@ -388,6 +388,21 @@ export function clock(ts?: string | Date): string {
   return Number.isNaN(d.getTime()) ? "" : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+// A span of minutes in words: "45분", "12시간", "1시간 30분".
+export function minutesText(minutes: number): string {
+  const m = Math.max(1, Math.round(minutes));
+  if (m < 60) return `${m}분`;
+  return m % 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${m / 60}시간`;
+}
+
+// A time to come with its day: "오늘 21:30", "내일 09:10", "10월 20일 09:10".
+export function dayClock(ms: number, now = new Date()): string {
+  const d = new Date(ms);
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const ahead = Math.round((day(d) - day(now)) / 86_400_000);
+  return `${ahead === 0 ? "오늘" : ahead === 1 ? "내일" : `${d.getMonth() + 1}월 ${d.getDate()}일`} ${clock(d)}`;
+}
+
 export function usageLimitLabel(kind: string, scope?: string): string {
   if (kind === "session") return "현재 세션";
   if (kind === "weekly_all") return "이번 주 · 모든 모델";

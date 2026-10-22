@@ -4,10 +4,12 @@ import { useSyncExternalStore } from "react";
 export interface Prefs {
   // Enter sends the message (Shift+Enter adds a line); otherwise Ctrl/Cmd+Enter sends.
   enterToSend: boolean;
+  // The end of the last conversations shown stays on this browser, to read while the laptop cannot be reached.
+  keepCopies: boolean;
 }
 
 const KEY = "ccrc.prefs";
-const DEFAULTS: Prefs = { enterToSend: false };
+const DEFAULTS: Prefs = { enterToSend: false, keepCopies: true };
 const listeners = new Set<() => void>();
 
 function load(): Prefs {

@@ -5,6 +5,7 @@ import { Chat } from "./screens/Chat.tsx";
 import { Home } from "./screens/Home.tsx";
 import { Login } from "./screens/Login.tsx";
 import { NewSession } from "./screens/NewSession.tsx";
+import { OfflineChat, OfflineHome } from "./screens/Offline.tsx";
 import { Settings } from "./screens/Settings.tsx";
 import { Verify } from "./screens/Verify.tsx";
 import { takeWindow, useApp } from "./state.ts";
@@ -52,10 +53,20 @@ function Toast() {
 
 export function App() {
   const me = useApp((s) => s.me);
+  const offline = useApp((s) => s.offline);
   const route = useApp((s) => s.route);
   const conn = useApp((s) => s.conn);
+  const shown = useApp((s) => s.route.name === "chat" && s.chat?.sessionId === s.route.sessionId && s.chat.loaded);
 
   if (!me) {
+    if (offline) {
+      return (
+        <>
+          {route.name === "chat" ? <OfflineChat key={route.sessionId} sessionId={route.sessionId} /> : <OfflineHome reason={offline} />}
+          <Toast />
+        </>
+      );
+    }
     return (
       <div className="flex h-dvh items-center justify-center text-muted">
         <Spinner className="size-6" />
@@ -65,10 +76,15 @@ export function App() {
   if (!me.loggedIn) return <Login />;
   if (me.passkey === "due") return <Verify />;
 
+  // A chat the page has not got while the connection is down shows from the phone's copy until it comes.
   return (
     <>
       {route.name === "chat" ? (
-        <Chat key={route.sessionId} sessionId={route.sessionId} />
+        shown || conn !== "offline" ? (
+          <Chat key={route.sessionId} sessionId={route.sessionId} />
+        ) : (
+          <OfflineChat key={route.sessionId} sessionId={route.sessionId} />
+        )
       ) : route.name === "new" ? (
         <NewSession />
       ) : route.name === "settings" ? (

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { UserAttachment } from "../../../broker/src/protocol.ts";
 import { sizeText } from "../labels.ts";
 import { sentPreview } from "../sentPreviews.ts";
 import { useApp } from "../state.ts";
 import { SERVED_IMAGES, messageImageUrl } from "./composer/attachments.ts";
+import { OfflineView } from "./offlineView.ts";
 import { Icon, Spinner } from "./ui.tsx";
 
 // Larger images wait for a tap before they are fetched.
@@ -220,8 +221,9 @@ function ImageViewer({ images, start, onClose }: { images: Shown[]; start: numbe
 // message is not in the transcript yet, so only the previews kept here show.
 export function UserAttachments({ messageId, list, waiting }: { messageId: string; list: UserAttachment[]; waiting?: boolean }) {
   const sessionId = useApp((s) => s.chat?.sessionId);
+  const offline = useContext(OfflineView);
   const [open, setOpen] = useState<number | null>(null);
-  const servable = !waiting && Boolean(sessionId) && UUID.test(messageId);
+  const servable = !waiting && !offline && Boolean(sessionId) && UUID.test(messageId);
   const entries = list.map((a, i) => ({ a, i }));
   const images: Shown[] = entries
     .filter((e) => e.a.kind === "image")

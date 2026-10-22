@@ -103,6 +103,16 @@ test("a slow snapshot from before a session attached does not replace the attach
   hub.close();
 });
 
+test("a password set again is told to every window, the one waiting to take over too", () => {
+  const { hub, ws } = setup();
+  const other = new FakeSocket();
+  hub.attach(other as never, "test", "token");
+  hub.loginChanged();
+  assert.deepEqual(ws.sent.at(-1), { t: "login_changed" });
+  assert.deepEqual(other.sent.at(-1), { t: "login_changed" });
+  hub.close();
+});
+
 test("leaving and reopening a view quickly leaves one transcript watch", async () => {
   const { manager, hub, view } = setup();
   manager.delay = 50;

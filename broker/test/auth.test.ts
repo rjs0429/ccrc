@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkCredentials, setCredentials } from "../src/auth.ts";
+import { checkCredentials, credentialsWatch, setCredentials } from "../src/auth.ts";
 import { Store } from "../src/store.ts";
 import path from "node:path";
 import { tempDir, tempStore } from "./helpers.ts";
@@ -51,4 +51,24 @@ test("weak IDs and short passwords are rejected", async () => {
   await assert.rejects(setCredentials(store, "owner name", "long enough password"));
   await assert.rejects(setCredentials(store, "owner", "short"));
   assert.equal(store.state.user, undefined);
+});
+
+test("the broker's watch of the credentials file sees a password set elsewhere once, even after another reload", async () => {
+  const file = path.join(tempDir(), "state.json");
+  const broker = new Store(file);
+  await setCredentials(broker, "owner", "correct horse battery");
+  broker.state.lease = { tokenHash: "00", device: "phone", createdAt: 1, lastSeen: 1 };
+  broker.save();
+  const look = credentialsWatch(broker);
+  assert.deepEqual(look(), { leaseGone: false, passwordSet: false });
+
+  await setCredentials(new Store(file), "owner", "another horse battery");
+  broker.reload();
+  assert.deepEqual(look(), { leaseGone: false, passwordSet: true }, "as `ccrc passwd`, with /api/me reloading the store first");
+  assert.deepEqual(look(), { leaseGone: false, passwordSet: false });
+
+  const cli = new Store(file);
+  delete cli.state.lease;
+  cli.save();
+  assert.deepEqual(look(), { leaseGone: true, passwordSet: false }, "as `ccrc logout`");
 });
