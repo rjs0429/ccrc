@@ -2,7 +2,8 @@
 // a user message is replayed and answered; "ASK" opens a permission prompt; "CANCEL" opens one and
 // withdraws it; "ELICIT" asks for MCP input and "ELICIT_CANCEL" withdraws that shortly after; "MCP" sends VS Code an MCP request; "BIG" answers with a very long line; "HOLD" leaves
 // the turn running; "CRASH" exits with code 1 mid-turn; "FAIL" and "LIMIT" end the turn on an API error and on a usage
-// limit as Claude Code reports them. Its init line reports whether it was asked to continue a cut-off turn. Control
+// limit as Claude Code reports them. Its init line reports whether it was asked to continue a cut-off turn; it comes at
+// the start, or with FAKE_INIT_AT_TURN=1 with each message that starts a turn, as Claude Code's headless mode sends it. Control
 // requests get a success response, and each control_response it receives is reported back as
 // {"type":"answered"}. FAKE_BURST=1 writes a long line and an error result at start and exits at once;
 // FAKE_LINGER_MS keeps it running that long after its input ends. "COMMANDS" announces two changes of the command list.
@@ -150,7 +151,9 @@ const savedTitle = () => {
 };
 const named = value("--resume") ? savedTitle() : undefined;
 if (named) out({ type: "system", subtype: "session_title_changed", title: named, uuid: randomUUID(), session_id: sid });
-out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: value("--permission-mode") || "default", output_style: style ?? "default", args, continueTurn: process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN ?? null });
+const sayInit = () =>
+  out({ type: "system", subtype: "init", session_id: sid, model: "fake-model", permissionMode: value("--permission-mode") || "default", output_style: style ?? "default", args, continueTurn: process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN ?? null });
+if (!process.env.FAKE_INIT_AT_TURN) sayInit();
 if (process.env.FAKE_BURST) {
   out({ type: "user", session_id: sid, message: { content: [{ type: "tool_result", content: "y".repeat(3_000_000) }] } });
   process.stdout.write(JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, session_id: sid }) + "\n", () => process.exit(1));
@@ -180,6 +183,7 @@ function handle(m) {
       if (m.uuid) lifecycle(m.uuid, "queued");
       return;
     }
+    if (process.env.FAKE_INIT_AT_TURN) sayInit();
     if (text === "/status") {
       const shown = "Version: 2.1.296 (fake)\nModel: fake-model";
       out({

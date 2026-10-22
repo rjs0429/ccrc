@@ -22,6 +22,7 @@ const TASKS = Buffer.from('"subtype":"background_tasks_changed"');
 const MODELS = Buffer.from('"models":');
 const RESULT = Buffer.from('"type":"result"');
 const USER = Buffer.from('"type":"user"');
+const ASSISTANT = Buffer.from('"type":"assistant"');
 const APPLIED = Buffer.from('"applied":');
 const RATE_LIMITS = Buffer.from('"rate_limits"');
 const STYLES = Buffer.from('"available_output_styles"');
@@ -572,10 +573,12 @@ export class Relay extends EventEmitter {
   // The broker sends Claude's notifications to a device, but not while the remote user has the session in front of them.
   private claudePush = false;
   private watching = false;
-  // What VS Code is told once Claude Code has answered its initialize: why the session opened as it did. A copy the
-  // broker named is renamed once VS Code's initialize has reached Claude Code, which writes the name with the copy's
-  // first message.
+  // What VS Code is told once Claude Code has answered its initialize: why the session opened as it did. A copy's notice
+  // comes again below the first message after the copy's first init, as VS Code then starts the conversation over and adds
+  // a notice only below a conversation. A copy the broker named is renamed once VS Code's initialize has reached Claude
+  // Code, which writes the name with the copy's first message.
   private notice?: string;
+  private retell?: { notice: string; afterInit: boolean };
   private copyName?: string;
   private initialized = false;
   // What a hand-over would cut short besides a turn, a request or a message: background tasks, and jobs Claude scheduled.
@@ -833,8 +836,9 @@ export class Relay extends EventEmitter {
     if (!held && !withdrawn) this.toHost(line);
     if (this.notice && this.hostReady) {
       this.toHost(informational(this.notice, this.sessionId));
+      if (this.fork && !this.sessionId) this.retell = { notice: this.notice, afterInit: false };
       this.notice = undefined;
-    }
+    } else if (this.retell) this.retellNotice(line, msg);
     this.noteTurn(line, msg);
     if (line.includes(TASK_EVENT)) {
       const m = msg ?? parseLine(line);
@@ -847,6 +851,22 @@ export class Relay extends EventEmitter {
     this.noteState(line, msg);
     this.copy("out", line);
     if (held) this.send({ t: "held", id: msg!.request_id as string });
+  }
+
+  private retellNotice(line: Buffer, parsed?: Record<string, unknown>): void {
+    const r = this.retell!;
+    if (!(r.afterInit ? line.includes(USER) || line.includes(ASSISTANT) : line.includes(INIT))) return;
+    const m = parsed ?? parseLine(line);
+    if (!r.afterInit) {
+      if (m?.type !== "system" || m.subtype !== "init" || typeof m.session_id !== "string" || !m.session_id) return;
+      if (m.session_id === this.claim) this.retell = undefined;
+      else r.afterInit = true;
+      return;
+    }
+    if ((m?.type !== "user" && m?.type !== "assistant") || typeof m.parent_tool_use_id === "string") return;
+    this.o.log("telling VS Code again that the session opened as a copy");
+    this.toHost(informational(r.notice, this.sessionId));
+    this.retell = undefined;
   }
 
   private answerPushHook(id: string, input: unknown): void {
