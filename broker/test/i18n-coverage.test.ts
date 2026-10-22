@@ -8,10 +8,11 @@ import { g4 } from "../../web/src/i18n/en/g4.ts";
 import { g5 } from "../../web/src/i18n/en/g5.ts";
 import { byFile, missing, placeholders, scanFiles } from "./i18n-scan.ts";
 
-// Where the screens stood when t() came in. Translating the screens brings both to 0; LIMIT then holds them there
-// (a limit left out is counted and reported only). node broker/test/i18n-scan.ts lists each one.
-const BASELINE = { outside: 1303, missing: 0 };
-const LIMIT: { outside?: number; missing?: number } = {};
+// Where the screens stood when all their features had come in. LIMIT holds them there, so new Korean goes through t()
+// with its English; translating the screens brings both to 0 (a limit left out is counted and reported only).
+// node broker/test/i18n-scan.ts lists each one.
+const BASELINE = { outside: 1462, missing: 0 };
+const LIMIT: { outside?: number; missing?: number } = { outside: 1462, missing: 0 };
 
 const scan = scanFiles();
 
