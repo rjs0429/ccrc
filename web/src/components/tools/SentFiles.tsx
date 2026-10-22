@@ -2,6 +2,7 @@ import { Suspense, lazy, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { SENT_MAX_BYTES, type DisplayItem, type FileView, type SentFile, type SentRef } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
+import { k, t } from "../../i18n/index.ts";
 import { shortPath, sizeText } from "../../labels.ts";
 import { toast, useApp } from "../../state.ts";
 import { FileLinks, SentAgent } from "../fileLinks.ts";
@@ -18,20 +19,20 @@ type ToolItem = Extract<DisplayItem, { kind: "tool" }>;
 
 const TYPES: [RegExp, string][] = [
   [/^(md|markdown|mdx)$/, "Markdown"],
-  [/^(txt|log)$/, "텍스트"],
-  [/^svg$/, "SVG 그림"],
-  [/^(png|jpe?g|gif|webp|bmp|ico|heic|heif|avif|tiff?)$/, "그림"],
+  [/^(txt|log)$/, k("텍스트")],
+  [/^svg$/, k("SVG 그림")],
+  [/^(png|jpe?g|gif|webp|bmp|ico|heic|heif|avif|tiff?)$/, k("그림")],
   [/^pdf$/, "PDF"],
   [/^json$/, "JSON"],
-  [/^(csv|tsv)$/, "표"],
+  [/^(csv|tsv)$/, k("표")],
   [/^html?$/, "HTML"],
   [/^xml$/, "XML"],
-  [/^(mp4|m4v|mov|webm|avi|mkv)$/, "동영상"],
-  [/^(mp3|m4a|wav|ogg|aac|flac)$/, "소리"],
-  [/^docx?$/, "Word 문서"],
-  [/^xlsx?$/, "Excel 시트"],
+  [/^(mp4|m4v|mov|webm|avi|mkv)$/, k("동영상")],
+  [/^(mp3|m4a|wav|ogg|aac|flac)$/, k("소리")],
+  [/^docx?$/, k("Word 문서")],
+  [/^xlsx?$/, k("Excel 시트")],
   [/^pptx?$/, "PowerPoint"],
-  [/^(zip|gz|tgz|7z|rar|tar)$/, "압축 파일"],
+  [/^(zip|gz|tgz|7z|rar|tar)$/, k("압축 파일")],
 ];
 
 function extOf(name: string): string {
@@ -41,7 +42,8 @@ function extOf(name: string): string {
 
 function typeLabel(name: string, mediaType?: string): string {
   const ext = extOf(name);
-  return TYPES.find(([re]) => re.test(ext))?.[1] ?? (mediaType?.startsWith("text/") ? "텍스트" : "파일");
+  const type = TYPES.find(([re]) => re.test(ext))?.[1];
+  return type ? t(type) : mediaType?.startsWith("text/") ? t("텍스트") : t("파일");
 }
 
 const isImage = (f: SentFile) => f.image === true || Boolean(f.mediaType?.startsWith("image/")) || /^(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(extOf(f.name));
@@ -115,7 +117,7 @@ function Download({ sessionId, file, name, primary }: { sessionId: string; file:
     link.current?.click();
   }, [ticket]);
   const onClick = (e: React.MouseEvent) => {
-    if (offline) return (e.preventDefault(), toast(LAPTOP_ONLY));
+    if (offline) return (e.preventDefault(), toast(t(LAPTOP_ONLY)));
     if (ticket && Date.now() < ticket.until - 3000) return;
     e.preventDefault();
     if (busy) return;
@@ -125,7 +127,7 @@ function Download({ sessionId, file, name, primary }: { sessionId: string; file:
         go.current = true;
         setTicket({ url: t.url, until: Date.now() + t.expiresInMs });
       })
-      .catch(() => toast("내려받지 못했습니다. 다시 시도하세요"))
+      .catch(() => toast(t("내려받지 못했습니다. 다시 시도하세요")))
       .finally(() => setBusy(false));
   };
   return (
@@ -134,7 +136,7 @@ function Download({ sessionId, file, name, primary }: { sessionId: string; file:
       href={ticket ? `${ticket.url}?download=1` : sentUrl(sessionId, file, true, true)}
       download={name}
       onClick={onClick}
-      aria-label={`${name} 내려받기`}
+      aria-label={t("{name} 내려받기", { name })}
       className={`flex size-11 shrink-0 items-center justify-center rounded-xl ${primary ? "bg-accent-soft text-accent" : "text-muted"}`}
       data-download
     >
@@ -160,11 +162,15 @@ function SentRow({ sessionId, file, at, attach, failed, opened, onOpen, onFailed
   const shut = file.error !== undefined || tooLarge;
   const note =
     file.error !== undefined
-      ? `보내지 못한 파일입니다${file.error ? `: ${file.error}` : ""}`
+      ? file.error
+        ? t("보내지 못한 파일입니다: {error}", { error: file.error })
+        : t("보내지 못한 파일입니다")
       : tooLarge
-        ? "너무 커서(50MB 초과) 받을 수 없습니다"
+        ? t("너무 커서(50MB 초과) 받을 수 없습니다")
         : failed
-          ? (SENT_ERROR_TEXT[failed] ?? "파일을 열지 못했습니다")
+          ? Object.hasOwn(SENT_ERROR_TEXT, failed)
+            ? t(SENT_ERROR_TEXT[failed])
+            : t("파일을 열지 못했습니다")
           : undefined;
   // A row that says why its file does not open offers no download.
   const closed = failed !== undefined && Object.hasOwn(SENT_ERROR_TEXT, failed);
@@ -255,7 +261,13 @@ export function SentFiles({ item, running }: { item: ToolItem; running: boolean 
   const count = files ? files.filter((f) => f.error === undefined).length + (item.sentCut ?? 0) : asked.length;
   const ref = (n: number): SentRef => ({ call: item.id, n, ...(agent ? { agent } : {}) });
   const nothing = !pending && (refused || count === 0);
-  const head = pending ? "파일을 보내는 중…" : nothing ? "파일을 보내지 못했습니다" : count > 1 ? `파일 ${count}개를 보냈습니다` : "파일을 보냈습니다";
+  const head = pending
+    ? t("파일을 보내는 중…")
+    : nothing
+      ? t("파일을 보내지 못했습니다")
+      : count > 1
+        ? t("파일 {n}개를 보냈습니다", { n: count })
+        : t("파일을 보냈습니다");
   const close = () => {
     const n = viewing;
     setViewing(null);
@@ -278,7 +290,8 @@ export function SentFiles({ item, running }: { item: ToolItem; running: boolean 
         </span>
         {item.by && (
           <span className="max-w-[50%] shrink-0 truncate text-xs text-muted" data-sent-by>
-            에이전트{byName ? ` · ${byName}` : ""}
+            {t("에이전트")}
+            {byName ? ` · ${byName}` : ""}
           </span>
         )}
       </div>
@@ -300,14 +313,14 @@ export function SentFiles({ item, running }: { item: ToolItem; running: boolean 
                   attach={attach}
                   failed={failed[n]}
                   opened={opened.has(n)}
-                  onOpen={() => (offline ? toast(LAPTOP_ONLY) : setViewing(n))}
+                  onOpen={() => (offline ? toast(t(LAPTOP_ONLY)) : setViewing(n))}
                   onFailed={(code) => setFailed((s) => ({ ...s, [n]: code }))}
                 />
               ))
             : asked.map((p, n) => <AskedRow key={n} path={p} pending={pending} />)}
         </div>
       )}
-      {files && asked.length > files.length && <div className="border-t border-line px-3 py-2 text-xs text-muted">나머지 {asked.length - files.length}개는 여기 보이지 않습니다</div>}
+      {files && asked.length > files.length && <div className="border-t border-line px-3 py-2 text-xs text-muted">{t("나머지 {n}개는 여기 보이지 않습니다", { n: asked.length - files.length })}</div>}
       {target &&
         sessionId &&
         createPortal(

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { DisplayItem, HistoryFind } from "../../../../broker/src/protocol.ts";
+import { t } from "../../i18n/index.ts";
 import { call } from "../../state.ts";
 import { Spinner } from "../ui.tsx";
 
@@ -44,7 +45,7 @@ export function Failed({ text, onRetry }: { text: string; onRetry?: () => void }
       <div className="text-danger">{text}</div>
       {onRetry && (
         <button onClick={onRetry} className="mt-1.5 font-medium text-accent">
-          다시 시도
+          {t("다시 시도")}
         </button>
       )}
     </div>

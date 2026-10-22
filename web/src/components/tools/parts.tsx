@@ -1,4 +1,5 @@
 import { useContext, useState, type ReactNode } from "react";
+import { t } from "../../i18n/index.ts";
 import { FileLinks, FileRoots } from "../fileLinks.ts";
 import { looksLikeFile } from "../filePaths.ts";
 import { Markdown } from "../Markdown.tsx";
@@ -34,7 +35,7 @@ export function Folded({ text, mono, plain }: { text: string; mono?: boolean; pl
       </div>
       {long && (
         <button onClick={() => setOpen(!open)} className="mt-1 text-sm font-medium text-accent">
-          {open ? "접기" : "더 보기"}
+          {open ? t("접기") : t("더 보기")}
         </button>
       )}
     </div>
@@ -126,14 +127,14 @@ export function Value({ name, value }: { name: string; value: unknown }) {
   const roots = useContext(FileRoots);
   const isFile = (v: string) => looksLikeFile(v, roots, PATH_KEY.test(name));
   if (typeof value === "string") {
-    if (!value) return <span className="text-muted">(비어 있음)</span>;
+    if (!value) return <span className="text-muted">{t("(비어 있음)")}</span>;
     if (isFile(value)) return <FileLink path={value} />;
     if (value.length > LONG_TEXT || value.includes("\n")) return <Folded text={value} plain />;
     return <span className="whitespace-pre-wrap">{value}</span>;
   }
-  if (typeof value === "boolean") return <span>{value ? "예" : "아니요"}</span>;
+  if (typeof value === "boolean") return <span>{value ? t("예") : t("아니요")}</span>;
   if (typeof value === "number") return <span className="font-mono text-[13px]">{value}</span>;
-  if (value == null) return <span className="text-muted">없음</span>;
+  if (value == null) return <span className="text-muted">{t("없음")}</span>;
   if (Array.isArray(value) && value.length && value.every((v) => typeof v === "string" && isFile(v))) {
     return (
       <div className="space-y-0.5">

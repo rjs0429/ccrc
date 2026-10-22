@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ToolReply } from "../../../../broker/src/protocol.ts";
+import { t } from "../../i18n/index.ts";
 import { Icon } from "../ui.tsx";
 import { Chip, Code, Folded, record, str, type Input } from "./parts.tsx";
 
@@ -52,7 +53,7 @@ function Preview({ text, open: initial = false }: { text: string; open?: boolean
   return (
     <div className="mt-1.5">
       <button onClick={() => setOpen(!open)} className="-my-1.5 -ml-2 flex items-center gap-0.5 px-2 py-1.5 text-xs font-medium text-accent">
-        미리보기
+        {t("미리보기")}
         <Icon.chevronDown className={`size-3.5 transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
       {open && (
@@ -92,7 +93,7 @@ function QuestionBlock({ q, answer, note, preview, answered }: { q: Question; an
       {(q.header || q.multiSelect) && (
         <div className="flex items-center gap-2">
           {q.header && <Chip>{q.header}</Chip>}
-          {q.multiSelect && <span className="text-xs text-muted">여러 개 선택</span>}
+          {q.multiSelect && <span className="text-xs text-muted">{t("여러 개 선택")}</span>}
         </div>
       )}
       <div className="text-[15px] font-medium">{q.question}</div>
@@ -102,7 +103,7 @@ function QuestionBlock({ q, answer, note, preview, answered }: { q: Question; an
       {other !== undefined && (
         <div role={q.multiSelect ? "checkbox" : "radio"} aria-checked className="flex items-start gap-2 rounded-xl border border-accent bg-accent-soft px-3 py-2" data-other>
           <span className="min-w-0 flex-1">
-            <span className="block text-xs text-muted">직접 입력</span>
+            <span className="block text-xs text-muted">{t("직접 입력")}</span>
             <span className="block text-[15px] whitespace-pre-wrap">{other}</span>
           </span>
           <Icon.check className="mt-0.5 size-4 shrink-0 text-accent" />
@@ -110,7 +111,7 @@ function QuestionBlock({ q, answer, note, preview, answered }: { q: Question; an
       )}
       {shownPreview && (
         <div>
-          <div className="text-xs text-muted">고른 미리보기</div>
+          <div className="text-xs text-muted">{t("고른 미리보기")}</div>
           <div className="mt-1">
             <Code text={shownPreview} />
           </div>
@@ -118,11 +119,11 @@ function QuestionBlock({ q, answer, note, preview, answered }: { q: Question; an
       )}
       {note && (
         <div className="rounded-lg bg-surface-2 px-2.5 py-1.5 text-sm" data-note>
-          <span className="mr-1.5 text-xs text-muted">메모</span>
+          <span className="mr-1.5 text-xs text-muted">{t("메모")}</span>
           <span className="whitespace-pre-wrap">{note}</span>
         </div>
       )}
-      {answered && !chosen && !note && <div className="text-sm text-muted">답하지 않음</div>}
+      {answered && !chosen && !note && <div className="text-sm text-muted">{t("답하지 않음")}</div>}
     </div>
   );
 }
@@ -130,13 +131,13 @@ function QuestionBlock({ q, answer, note, preview, answered }: { q: Question; an
 function status(reply?: ToolReply): string | undefined {
   switch (reply?.kind) {
     case "unanswered":
-      return "답하지 않았습니다";
+      return t("답하지 않았습니다");
     case "declined":
-      return "질문을 거절했습니다";
+      return t("질문을 거절했습니다");
     case "interrupted":
-      return "중단되었습니다";
+      return t("중단되었습니다");
     case "answered":
-      return reply.timedOut ? "자리를 비운 사이 시간이 지났습니다" : reply.followUp ? "질문을 더 해 달라고 했습니다" : undefined;
+      return reply.timedOut ? t("자리를 비운 사이 시간이 지났습니다") : reply.followUp ? t("질문을 더 해 달라고 했습니다") : undefined;
   }
   return undefined;
 }
@@ -151,7 +152,7 @@ export function QuestionView({ input, reply }: { input: Input; reply?: ToolReply
       {line && (
         <div className="rounded-lg bg-surface-2 px-2.5 py-1.5 text-sm text-muted" data-status>
           {line}
-          {reply?.kind === "declined" && reply.reason && <div className="mt-0.5 whitespace-pre-wrap text-fg">이유: {reply.reason}</div>}
+          {reply?.kind === "declined" && reply.reason && <div className="mt-0.5 whitespace-pre-wrap text-fg">{t("이유: {reason}", { reason: reply.reason })}</div>}
         </div>
       )}
       {questions.map((q) => (
@@ -166,7 +167,7 @@ export function QuestionView({ input, reply }: { input: Input; reply?: ToolReply
       ))}
       {answered?.response && (
         <div className="rounded-xl border border-accent bg-accent-soft px-3 py-2" data-response>
-          <div className="text-xs text-muted">답 대신 남긴 말</div>
+          <div className="text-xs text-muted">{t("답 대신 남긴 말")}</div>
           <Folded text={answered.response} plain />
         </div>
       )}
