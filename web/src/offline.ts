@@ -80,7 +80,7 @@ let confirmBy: number | undefined;
 let stamp: string | undefined;
 const contact = new Contact();
 let written = 0;
-// The copy went because its time ran out; the next contact clears it.
+// The copy went because its time ran out: its end is not written again until the next contact or /api/me clears this.
 let ended = false;
 let endTimer: number | undefined;
 
@@ -94,7 +94,7 @@ function readLogin(): CopyLogin | undefined {
 }
 
 function writeLogin(): void {
-  if (!signedIn || !contact.at) return;
+  if (!signedIn || !contact.at || ended) return;
   written = Date.now();
   try {
     localStorage.setItem(LOGIN_KEY, JSON.stringify({ until: copyUntil(contact.at, idleMinutes, confirmBy), ...(stamp ? { stamp } : {}) }));
