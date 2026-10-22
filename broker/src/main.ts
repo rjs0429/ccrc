@@ -39,6 +39,7 @@ import { Uploads } from "./uploads.ts";
 import { UPDATE_CHANNELS, type UpdateChannel } from "./releases.ts";
 import { UpdateCheck } from "./update-check.ts";
 import { rollback, update, updateStatus, type UpdateOptions } from "./update.ts";
+import { envLang } from "./wrapper/hold.ts";
 
 const WARM_DELAY_MS = 5000;
 
@@ -91,6 +92,7 @@ async function serve(): Promise<void> {
   push.watch(manager, hub);
   manager.remoteReachable = () => hub.connected || push.reaches(leases.current()?.device);
   manager.remoteWatching = () => hub.connected;
+  manager.holdLang = () => push.lang(leases.current()?.device) ?? envLang(process.env);
   const doctor = new Doctor({ brokerCli: () => manager.cli.peek() });
   doctor.start();
   const updates = new UpdateCheck({

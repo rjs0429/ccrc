@@ -98,6 +98,12 @@ export class Push {
     return next;
   }
 
+  // The language a device's notifications are written in, or the newest subscription's when it has none.
+  lang(device: string | undefined): Lang | undefined {
+    const subs = this.store.list().sort((a, b) => b.createdAt - a.createdAt);
+    return (subs.find((s) => s.device === device) ?? subs[0])?.prefs.lang;
+  }
+
   // Whether any device takes the notifications Claude sends.
   claudeWanted(): boolean {
     return this.store.list().some((s) => s.prefs.claude);

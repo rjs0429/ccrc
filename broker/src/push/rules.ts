@@ -4,6 +4,7 @@ import type { Lang } from "../lang.ts";
 import type { DisplayItem, LiveState, PendingRequest, ServerMsg } from "../protocol.ts";
 import type { SessionManager } from "../sessions/manager.ts";
 import type { TurnEnd } from "../sessions/outcome.ts";
+import { HOLD_TEXT, holderKind } from "../wrapper/hold.ts";
 import type { Subscription } from "./subscriptions.ts";
 import { PUSH_TEXT } from "./text.ts";
 import type { PushPayload } from "./types.ts";
@@ -71,7 +72,8 @@ export interface NotifierDeps {
 // command such as /compact is not notified. Files Claude sends are told at once when Claude marks them proactive, the
 // user being away; others are counted on the next turn end's notice. A notification Claude asks for goes out at once
 // and stands in for the notice that its turn finished. A turn the remote user waits for, and any notice told, leaves
-// the session unread until it is opened.
+// the session unread until it is opened. A copy VS Code opened beside the process that kept a session is told of once,
+// at its first message.
 export class Notifier {
   private manager: SessionManager;
   private hub: Hub;
@@ -107,6 +109,7 @@ export class Notifier {
     for (const what of ["end", "crash", "file", "claude"]) this.cancel(`${sessionId} ${what}`);
   };
   private notice = (sessionId: string, toolUseId: string, message: string) => this.claudeCall(sessionId, toolUseId, message);
+  private copied = (sessionId: string, holder: string) => void this.onCopy(sessionId, holder).catch((e) => this.fail(e));
 
   constructor(manager: SessionManager, hub: Hub, deps: NotifierDeps) {
     this.manager = manager;
@@ -115,6 +118,7 @@ export class Notifier {
     manager.on("event", this.listener);
     manager.on("turn_end", this.ended);
     manager.on("seen", this.seen);
+    manager.on("copy_started", this.copied);
     manager.claudeNotice = this.notice;
   }
 
@@ -122,6 +126,7 @@ export class Notifier {
     this.manager.off("event", this.listener);
     this.manager.off("turn_end", this.ended);
     this.manager.off("seen", this.seen);
+    this.manager.off("copy_started", this.copied);
     if (this.manager.claudeNotice === this.notice) this.manager.claudeNotice = undefined;
     for (const key of [...this.timers.keys()]) this.cancel(key);
   }
@@ -237,6 +242,20 @@ export class Notifier {
         const payload: PushPayload = { title, body, tag: `${sessionId}:claude`, data: { url: `/#/s/${sessionId}` } };
         this.deliver(sub, sessionId, payload, "high");
       });
+    }
+  }
+
+  // The conversation forks from here, which the laptop's tab says only in a line under it; nothing goes while the phone
+  // shows the copy.
+  private async onCopy(sessionId: string, holder: string): Promise<void> {
+    if (!this.d.subscriptions().length) return;
+    const { title } = await this.describe(sessionId);
+    if (this.hub.isWatching(sessionId)) return;
+    this.manager.markUnread(sessionId);
+    for (const sub of this.d.subscriptions()) {
+      const lang = sub.prefs.lang;
+      const body = `${title} · ${PUSH_TEXT[lang].original(HOLD_TEXT[lang].holder[holderKind(holder)])}`;
+      this.deliver(sub, sessionId, { title: PUSH_TEXT[lang].copied, body, tag: `${sessionId}:copy`, data: { url: `/#/s/${sessionId}` } }, "normal");
     }
   }
 

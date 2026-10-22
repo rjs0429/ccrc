@@ -767,3 +767,28 @@ test("a dialog is named by what it asks, and the credits consent says to answer 
   assert.deepEqual(t.bodies().sort(), ["Auto 모드 분류기 과금 확인", "VS Code에서 답변하기 · 사용 크레딧 동의", "VS Code에서 답변하기 · 확인 요청"].sort());
   t.notifier.close();
 });
+
+test("a copy's first message is told once to each device in its language, naming where the original stays, unless the phone shows the copy", async () => {
+  const tablet: Subscription = { endpoint: OTHER, keys: { p256dh: "", auth: "" }, device: "tablet", createdAt: 0, prefs: { ...DEFAULT_PREFS, lang: "en", turnEnd: "off" } };
+  const { manager, hub, sent, notifier } = setup({}, [tablet]);
+  manager.sessions.push({ id: B, title: "(복사본) Fix the invoice export", cwd: "/home/u/billing-api", lastModified: 0, state: "attached" });
+  manager.emit("copy_started", B, "Terminal");
+  await sleep(30);
+  assert.deepEqual(
+    sent.map((s) => [s.endpoint, s.urgency, s.payload.title, s.payload.body, s.payload.tag, s.payload.data.url]),
+    [
+      [ENDPOINT, "normal", "복사본에서 대화를 시작했습니다", "(복사본) Fix the invoice export · 원본은 터미널에 그대로 있습니다", `${B}:copy`, `/#/s/${B}`],
+      [OTHER, "normal", "A copy of a conversation started", "(복사본) Fix the invoice export · the original is still open in a terminal", `${B}:copy`, `/#/s/${B}`],
+    ],
+  );
+  assert.deepEqual(manager.unreadSessions(), [B], "unread, as after any notice, until the phone opens it or VS Code writes to it");
+  hub.watching = true;
+  manager.emit("copy_started", B, "VS Code");
+  await sleep(30);
+  assert.equal(sent.length, 2, "nothing while the phone shows it");
+  notifier.close();
+  hub.watching = false;
+  manager.emit("copy_started", B, "VS Code");
+  await sleep(30);
+  assert.equal(sent.length, 2, "nor once the notifier is closed");
+});

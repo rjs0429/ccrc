@@ -26,7 +26,8 @@ export interface Hello {
   // What this wrapper passes on beyond what LINK_VERSION promises: "fast_mode" and "thinking" changes,
   // "background_tasks" for a call in the foreground, "workspace_diff" reads, "side_question"s with their progress and
   // cancelling, and "claude_push": it tells Claude what became of a PushNotification call as the broker's claude_push
-  // frames say.
+  // frames say. "hand_over": it ends its resting Claude Code when asked; "claim_notice": it shows claim_ok's notice and
+  // names the copy it starts.
   caps?: string[];
 }
 
@@ -44,13 +45,18 @@ export type WrapperFrame =
   | { t: "rejected"; id?: string; reason: string }
   // An MCP input request the wrapper keeps from VS Code, which would decline it, until the broker takes or passes it.
   | { t: "held"; id: string }
+  // The wrapper closed its Claude Code's input as hand_over asked; a refusal comes as rejected with the same id.
+  | { t: "handed_over"; id: string }
   // hostLeft: VS Code closed Claude Code's input or passed it a signal; running: a turn was under way. Older wrappers send neither.
   | { t: "exit"; code: number | null; signal: string | null; hostLeft?: boolean; running?: boolean };
 
 export type BrokerFrame =
   | { t: "claim_wait"; ms: number }
-  // fork: the session is still held by another process, so Claude Code starts on a copy of it.
-  | { t: "claim_ok"; fork?: boolean }
+  // fork: the session is still held by another process, so Claude Code starts on a copy of it, named `title` when given.
+  // notice: what VS Code shows once Claude Code has answered its initialize.
+  | { t: "claim_ok"; fork?: boolean; title?: string; notice?: string }
+  // The session moves to another tab: the wrapper ends its Claude Code if it rests, after VS Code shows the notice.
+  | { t: "hand_over"; id: string; notice?: string }
   | { t: "to_cli"; m: Record<string, unknown> }
   // take: the phone answers the held input request; pass: VS Code gets it after all.
   | { t: "take"; id: string }

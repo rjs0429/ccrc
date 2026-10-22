@@ -39,6 +39,7 @@ import {
 } from "./core.ts";
 import { fileContents, type FileContents } from "./file-read.ts";
 import type { RawMessage } from "./items.ts";
+import type { LiveProcess } from "./live.ts";
 import { contextDetail, usageAnswer, usageCauses } from "./reports.ts";
 
 type Obj = Record<string, unknown>;
@@ -67,6 +68,7 @@ export function thinkingArg(args: readonly unknown[]): boolean {
 // wrapper keeps whichever answer comes first; a dialog the phone may not answer (dialogs.ts) stays with VS Code. MCP input
 // requests, which the extension would decline unseen, are answered here: the wrapper holds one back from VS Code
 // and the session takes it while a phone can be reached, or passes it on to VS Code.
+// Emits "copy_started" (holder) at the first message of a copy VS Code opened while another process held the session.
 export class WrappedSession extends SessionCore {
   readonly kind = "attached";
   readonly host = "VS Code";
@@ -88,6 +90,10 @@ export class WrappedSession extends SessionCore {
   // The wrapper passes on answers to dialogs, and MCP sign-ins.
   private dialogs: boolean;
   private mcpAuth: boolean;
+  // The wrapper can end its Claude Code for another tab.
+  private handsOver: boolean;
+  // On a copy opened while another process held the session: that process's kind (live.ts), until the copy's first message.
+  copyHolder?: string;
 
   // Thinking starts as VS Code launched Claude Code; an older wrapper does not pass on VS Code's later changes.
   constructor(link: Link, id: string, cwd: string, title?: string) {
@@ -102,6 +108,7 @@ export class WrappedSession extends SessionCore {
     this.causes = caps.includes("usage_causes");
     this.dialogs = caps.includes("user_dialogs");
     this.mcpAuth = caps.includes("mcp_auth");
+    this.handsOver = caps.includes("hand_over");
     this.startThinking = thinkingArg(link.hello?.args ?? []);
     this.thinking = this.startThinking;
   }
@@ -148,6 +155,7 @@ export class WrappedSession extends SessionCore {
         this.emit("host_input", this.hostInputAt);
       }
       this.enqueue(m.uuid, obj(m.message).content, m.remote === true ? "remote" : "host", str(m.timestamp));
+      this.copyStarted();
       return;
     }
     if (m.type !== "control_request") return;
@@ -195,14 +203,50 @@ export class WrappedSession extends SessionCore {
     this.end(crashed ? "crashed" : "vscode_closed");
   }
 
-  // Input requests taken but not answered go back to VS Code while Claude Code still runs.
+  // Input requests taken but not answered go back to VS Code while Claude Code still runs. A session whose tab handed it
+  // over ends as moved, however its wrapper goes.
   end(reason: string): void {
     for (const [id, timer] of this.elicitTimers) {
       clearTimeout(timer);
       this.link.send({ t: "pass", id });
     }
     this.elicitTimers.clear();
-    this.finish(reason);
+    this.finish(this.link.handedOver ? "moved" : reason);
+  }
+
+  // Whether the session can move from this tab at once: the process holding it (`holder`, from the session registry) is
+  // this tab's Claude Code, resting, with no request, queued message or running task, under a wrapper that can end it.
+  restsIn(holder: LiveProcess): boolean {
+    return (
+      this.handsOver &&
+      !this.closed &&
+      this.link.usable &&
+      holder.host === "VS Code" &&
+      holder.status === "idle" &&
+      this.link.cpid === holder.pid &&
+      !this.busy &&
+      !this.pending.size &&
+      !this.queue.size &&
+      !this.tasks.running()
+    );
+  }
+
+  // Asks the wrapper to end Claude Code for another tab, VS Code being told why first; false when it refused or did not
+  // answer in time. Once the wrapper says it did, the session takes nothing more here: the tab it moves to has it.
+  handOver(notice: string, ms: number): Promise<boolean> {
+    return this.link.handOver(notice, ms);
+  }
+
+  protected ensureOpen(): void {
+    super.ensureOpen();
+    if (this.link.handedOver) throw Error("session is opening in VS Code");
+  }
+
+  private copyStarted(): void {
+    if (this.copyHolder === undefined) return;
+    const holder = this.copyHolder;
+    this.copyHolder = undefined;
+    this.emit("copy_started", holder);
   }
 
   send(text: string, blocks: ContentBlock[] = []): void {
@@ -222,6 +266,7 @@ export class WrappedSession extends SessionCore {
     this.queueSent(uuid, text, blocks);
     this.busy = true;
     this.touch();
+    this.copyStarted();
   }
 
   async interrupt(): Promise<void> {

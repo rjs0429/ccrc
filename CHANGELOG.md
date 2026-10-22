@@ -149,6 +149,17 @@ your version and the new one, and the lines under "Breaking" separately.
   저장" under 계정과 보안 (on by default) turns it off and deletes it, and shows how much it holds. `/api/me` also gives
   a logged-in phone `leaseIdleMinutes`, when the password was set (`loginSetAt`) and, with passkeys, how long until the
   next confirmation (`passkeyLeftMs`); a connected phone asks again when one of them changes while the broker runs.
+- A session VS Code opens while another process holds it no longer turns into a copy without a word. When it rests
+  in another VS Code tab (nothing running, waiting or queued there, no background task, no job scheduled with
+  CronCreate or ScheduleWakeup) under this version's wrapper, it moves to the new tab at once: the old tab's Claude Code
+  ends as when the tab closes (input closed, no error), and both tabs say so in a line below the conversation; sending
+  in the old tab moves it back. Otherwise the new tab still opens a copy after up to 9 seconds and says which kind of
+  process keeps the original (another VS Code tab, a terminal, a background session) and that messages sent there do
+  not reach it, and the copy is named "(복사본) <title>" ("(copy) <title>"; a copy of a copy counts on as "(복사본 2)"),
+  which Claude Code writes with the copy's first message. The phone is notified once, when the copy takes its first
+  message, and its activity log tells "VS Code 다른 탭에서 옮김" from "VS Code에서 복사본으로 엶". The lines are in the
+  language of the phone's notifications, or of the laptop's locale when no phone is subscribed. The wrapper says it
+  can in its hello (`hand_over`, `claim_notice`).
 
 ### Changed
 
@@ -264,8 +275,9 @@ your version and the new one, and the lines under "Breaking" separately.
   session, the side question sheet and the cards and agent map that would offer "백그라운드로" say to open Claude Code again
   instead, the changes sheet's git view is read by the broker, the usage sheet's causes come from another Claude Code,
   a "/" list Claude Code changed while the broker was away shows from its next change, Claude Code's dialogs are
-  answered in VS Code only, the MCP sheet's 인증 says the wrapper does not know it yet, and Claude reads Claude Code's
-  "not sent" after a PushNotification call that reached the phone.
+  answered in VS Code only, the MCP sheet's 인증 says the wrapper does not know it yet, Claude reads Claude Code's
+  "not sent" after a PushNotification call that reached the phone, and the session does not move from that tab when
+  another tab opens it: the other tab opens a copy after up to 9 seconds, named and announced as other copies are.
 
 ## [0.7.3] - 2026-10-18
 

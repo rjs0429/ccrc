@@ -219,9 +219,16 @@ probes, `auth status`, worktree cleanup) runs Claude Code directly. VS Code keep
 broker is down, and the wrapper reconnects when it comes back.
 
 - A permission prompt shows in VS Code and on the phone; the first answer counts.
-- Opening a session in VS Code that the broker is running hands it over to VS Code. A session another process
-  (a terminal, say) still holds opens in VS Code as a fork after waiting up to 9 seconds, so two processes never write
-  one transcript.
+- Opening a session in VS Code that the broker is running hands it over to VS Code. One that rests in another VS Code
+  tab moves to the new tab: that tab's Claude Code ends as when the tab closes, and both tabs say so in a line below
+  the conversation; sending in the old tab moves it back. A tab keeps the session while it answers, waits for you,
+  holds a message not yet taken in, runs a background task or has a job scheduled in it (CronCreate, ScheduleWakeup).
+- A session another process still holds (such a tab, a terminal, a background session, a tab without ccrc's wrapper
+  or with an older one) opens in VS Code as a copy after waiting up to 9 seconds, so two processes never write one
+  transcript. The tab says which kind of process keeps the original and that messages sent here do not reach it, and
+  the copy is named "(복사본) <title>" ("(copy)" in English; a copy of a copy counts on as "(복사본 2)"). The phone is
+  notified once, when the copy takes its first message, and its activity log tells a move from a copy. These lines
+  are in the language of the phone's notifications, or of the laptop's locale when no phone is subscribed.
 - The wrapper does two things the extension turns off when a wrapper is set: it resumes a turn cut off by a window
   reload (up to twice, within an hour; `claudeCode.continueAfterReload: false` turns this off), and it starts new tabs
   in the permission mode VS Code remembered.
@@ -512,8 +519,10 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Known gaps of the VS Code wrapper
 
-- With a wrapper set, the extension skips its "still open somewhere else" check. ccrc covers it by waiting for the
-  other process and opening a fork when it does not let go.
+- With a wrapper set, the extension skips its "still open somewhere else" check. ccrc covers it as described above:
+  the session moves from a resting tab, and otherwise opens as a named copy with a line saying so. ccrc cannot ask
+  first, so the extension's "Open here anyway" is not offered, and a tab the session moved from still shows the
+  conversation as it was until it is opened again.
 - Reopening a conversation that ended in plan mode does not bring plan mode back.
 - With `claudeCode.useTerminal` on, VS Code does not use the wrapper, and those sessions take text from the phone only
   as messages from another session (see [Sessions open elsewhere](#sessions-open-elsewhere)).
