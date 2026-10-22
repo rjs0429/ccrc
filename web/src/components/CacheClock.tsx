@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { PromptCache } from "../../../broker/src/protocol.ts";
+import { t } from "../i18n/index.ts";
 import { cacheLabel, cacheNow, type CacheNow } from "./promptCache.ts";
 
 // Draws again as the minutes left change, when the cache runs out, and when the app comes back to the front.
@@ -42,7 +43,7 @@ export function CacheClock({ cache, onClick }: { cache?: PromptCache; onClick: (
       className={`flex h-8 w-12 shrink-0 items-center justify-center gap-0.5 rounded-lg text-[12px] tabular-nums hover:bg-surface-2 ${s.kind === "warm" ? "text-fg" : "text-muted/70"}`}
     >
       <ClockIcon />
-      <span>{s.kind === "warm" ? `${s.minutes}분` : "만료"}</span>
+      <span>{s.kind === "warm" ? t("{m}분", { m: s.minutes }) : t("만료")}</span>
     </button>
   );
 }

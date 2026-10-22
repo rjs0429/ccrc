@@ -1,6 +1,7 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { UserAttachment } from "../../../broker/src/protocol.ts";
+import { t } from "../i18n/index.ts";
 import { sizeText } from "../labels.ts";
 import { sentPreview } from "../sentPreviews.ts";
 import { useApp } from "../state.ts";
@@ -79,7 +80,7 @@ function Thumb({ shown, index, onOpen }: { shown: Shown; index: number; onOpen: 
     <button
       ref={ref}
       onClick={onOpen}
-      aria-label={`첨부 이미지 ${index + 1}${shown.size ? ` · ${sizeText(shown.size)}` : ""}`}
+      aria-label={`${t("첨부 이미지 {n}", { n: index + 1 })}${shown.size ? ` · ${sizeText(shown.size)}` : ""}`}
       className="relative flex size-18 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-2 text-muted"
       data-thumb={big ? "big" : load ? (loaded ? "loaded" : "loading") : "idle"}
     >
@@ -106,7 +107,7 @@ function Thumb({ shown, index, onOpen }: { shown: Shown; index: number; onOpen: 
 }
 
 function DocumentChip({ a }: { a: UserAttachment }) {
-  const name = a.name || (a.mediaType === "application/pdf" ? "PDF 문서" : "문서");
+  const name = a.name || (a.mediaType === "application/pdf" ? t("PDF 문서") : t("문서"));
   return (
     <div className="flex max-w-full min-w-0 items-center gap-1.5 rounded-xl border border-line bg-surface-2 px-2.5 py-1.5 text-xs" data-doc>
       <Icon.file className="size-4 shrink-0 text-muted" />
@@ -146,7 +147,7 @@ function ImageViewer({ images, start, onClose }: { images: Shown[]; start: numbe
     <div
       className="fixed inset-0 z-50 flex flex-col bg-black text-white"
       role="dialog"
-      aria-label="첨부 이미지"
+      aria-label={t("첨부 이미지")}
       onTouchStart={(e) => (touch.current = e.touches[0]?.clientX ?? null)}
       onTouchEnd={(e) => {
         const from = touch.current;
@@ -157,10 +158,10 @@ function ImageViewer({ images, start, onClose }: { images: Shown[]; start: numbe
     >
       <header className="screen-header pt-safe flex items-center gap-2 bg-black px-safe-2 py-2">
         <div className="min-w-0 flex-1 px-2 text-sm text-white/80">
-          {images.length > 1 ? `${at + 1} / ${images.length}` : "이미지"}
+          {images.length > 1 ? `${at + 1} / ${images.length}` : t("이미지")}
           {shown.size > 0 && ` · ${sizeText(shown.size)}`}
         </div>
-        <button onClick={onClose} aria-label="닫기" className="rounded-lg p-2">
+        <button onClick={onClose} aria-label={t("닫기")} className="rounded-lg p-2">
           <Icon.x />
         </button>
       </header>
@@ -187,7 +188,7 @@ function ImageViewer({ images, start, onClose }: { images: Shown[]; start: numbe
         {(!src || state === "failed") && (
           <div className="flex flex-col items-center gap-3 px-6 text-center text-sm text-white/80">
             <Icon.image className="size-10 opacity-60" />
-            {src ? "이미지를 불러오지 못했습니다." : "이 이미지는 미리 볼 수 없습니다."}
+            {src ? t("이미지를 불러오지 못했습니다.") : t("이 이미지는 미리 볼 수 없습니다.")}
             {src && (
               <button
                 onClick={() => {
@@ -196,18 +197,18 @@ function ImageViewer({ images, start, onClose }: { images: Shown[]; start: numbe
                 }}
                 className="rounded-xl bg-white/15 px-4 py-2 font-medium"
               >
-                다시 시도
+                {t("다시 시도")}
               </button>
             )}
           </div>
         )}
         {at > 0 && (
-          <button onClick={() => go(-1)} aria-label="이전 이미지" className="absolute left-1 rounded-full bg-white/15 p-2">
+          <button onClick={() => go(-1)} aria-label={t("이전 이미지")} className="absolute left-1 rounded-full bg-white/15 p-2">
             <Icon.back />
           </button>
         )}
         {at < images.length - 1 && (
-          <button onClick={() => go(1)} aria-label="다음 이미지" className="absolute right-1 rounded-full bg-white/15 p-2">
+          <button onClick={() => go(1)} aria-label={t("다음 이미지")} className="absolute right-1 rounded-full bg-white/15 p-2">
             <Icon.chevronRight />
           </button>
         )}

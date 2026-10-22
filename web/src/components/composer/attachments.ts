@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { ReattachResult, UploadInfo, UserAttachment } from "../../../../broker/src/protocol.ts";
 import { ApiError, api } from "../../api.ts";
+import { t } from "../../i18n/index.ts";
 import { call, loggedOut, toast } from "../../state.ts";
 import type { ReattachFailure } from "../messageActions.ts";
 
@@ -99,7 +100,7 @@ export async function reattachMessage(scope: string, sessionId: string, messageI
   const room = Math.max(0, MAX_ATTACHMENTS - (lists.get(scope)?.length ?? 0));
   const placed: Attachment[] = list.slice(0, room).map((a, i) => ({
     key: ++seq,
-    name: a.name || (a.kind === "image" ? "이미지" : "문서"),
+    name: a.name || (a.kind === "image" ? t("이미지") : t("문서")),
     kind: a.kind === "image" ? "image" : a.mediaType === "application/pdf" ? "pdf" : "text",
     ...(a.kind === "image" && SERVED_IMAGES.has(a.mediaType) ? { thumb: messageImageUrl(sessionId, messageId, i) } : {}),
     progress: 0,
@@ -195,9 +196,9 @@ async function prepareImage(file: File): Promise<Blob> {
 
 function uploadError(e: unknown, name: string, kind: Kind): string {
   const status = e instanceof ApiError ? e.status : 0;
-  if (status === 413) return `파일이 너무 큽니다 (${name}, 최대 ${LIMIT_LABEL[kind]})`;
-  if (status === 415) return `보낼 수 없는 파일 형식입니다 (${name})`;
-  return `파일을 올리지 못했습니다 (${name})`;
+  if (status === 413) return t("파일이 너무 큽니다 ({name}, 최대 {limit})", { name, limit: LIMIT_LABEL[kind] });
+  if (status === 415) return t("보낼 수 없는 파일 형식입니다 ({name})", { name });
+  return t("파일을 올리지 못했습니다 ({name})", { name });
 }
 
 async function upload(sessionId: string, a: Attachment, file: File, signal: AbortSignal): Promise<void> {
@@ -224,10 +225,10 @@ async function upload(sessionId: string, a: Attachment, file: File, signal: Abor
 export function addFiles(sessionId: string, files: File[]): void {
   for (const file of files) {
     const list = lists.get(sessionId) ?? [];
-    if (list.length >= MAX_ATTACHMENTS) return toast(`첨부는 ${MAX_ATTACHMENTS}개까지 할 수 있습니다`);
+    if (list.length >= MAX_ATTACHMENTS) return toast(t("첨부는 {n}개까지 할 수 있습니다", { n: MAX_ATTACHMENTS }));
     const kind = kindOf(file);
     if (!kind) {
-      toast(`보낼 수 없는 파일 형식입니다 (${file.name})`);
+      toast(t("보낼 수 없는 파일 형식입니다 ({name})", { name: file.name }));
       continue;
     }
     const a: Attachment = { key: ++seq, name: file.name, kind, progress: 0 };

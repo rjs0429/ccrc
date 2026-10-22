@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { EffortName, LiveState, ModelOption, PermissionModeName, StartSettings } from "../../../broker/src/protocol.ts";
+import { k, t } from "../i18n/index.ts";
 import { MODE_LABEL, baseName, effortLabel, effortLevels, fastReasonText, findModel, modelLabel, modeHints, modelOffers, type PeerNote } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
 import { usePrefs } from "../prefs.ts";
@@ -24,8 +25,8 @@ const MODES: PermissionModeName[] = ["default", "acceptEdits", "plan", "auto"];
 const MAX_INPUT_PX = 168;
 const MAX_COMMAND_ROWS = 50;
 const DRAFT_KEY = "ccrc.draft.";
-const START_HINT = "여기서 이 세션을 시작할 때 적용합니다. VS Code에서 열면 적용되지 않습니다.";
-const DRAFT_HINT = "새 세션을 시작할 때 적용합니다.";
+const START_HINT = k("여기서 이 세션을 시작할 때 적용합니다. VS Code에서 열면 적용되지 않습니다.");
+const DRAFT_HINT = k("새 세션을 시작할 때 적용합니다.");
 // Commands that mean nothing before a session exists.
 const DRAFT_HIDDEN = new Set(["clear", "compact", "rename", "recap", "heapdump"]);
 // The round button sits on the last chip line. Its tap target grows to 44px across and mostly downward, into
@@ -33,7 +34,7 @@ const DRAFT_HIDDEN = new Set(["clear", "compact", "rename", "recap", "heapdump"]
 const ROUND_TAP = "relative after:absolute after:-inset-x-1.5 after:-top-0.5 after:-bottom-2.5";
 const STOP_SETTLE_MS = 500;
 const FAST_ASKED_KEY = "ccrc.fastAsked";
-const OLD_WRAPPER = "VS Code에서 Claude Code를 다시 띄우면 바꿀 수 있습니다.";
+const OLD_WRAPPER = k("VS Code에서 Claude Code를 다시 띄우면 바꿀 수 있습니다.");
 
 // Each composerInsert request is applied once, by the composer that is mounted when it arrives.
 let appliedInsert = 0;
@@ -74,12 +75,12 @@ function rememberFastAsked(sessionId: string): void {
 // What Fast mode is doing, under its switch.
 function fastStatus(state?: LiveState): { text: string; tone: string } | undefined {
   if (!state) return undefined;
-  if (state.fastWanted !== undefined) return { text: state.fastWanted ? "다음 턴부터 켜집니다" : "다음 턴부터 꺼집니다", tone: "text-muted" };
-  if (state.fastCredits) return { text: "사용 크레딧이 다 떨어져 표준 속도로 보냅니다", tone: "text-danger" };
-  if (state.fastMode === "cooldown") return { text: "속도 제한으로 잠시 표준 속도로 보냅니다", tone: "text-muted" };
+  if (state.fastWanted !== undefined) return { text: state.fastWanted ? t("다음 턴부터 켜집니다") : t("다음 턴부터 꺼집니다"), tone: "text-muted" };
+  if (state.fastCredits) return { text: t("사용 크레딧이 다 떨어져 표준 속도로 보냅니다"), tone: "text-danger" };
+  if (state.fastMode === "cooldown") return { text: t("속도 제한으로 잠시 표준 속도로 보냅니다"), tone: "text-muted" };
   const reason = state.fastMode === "off" ? fastReasonText(state.fastReason) : undefined;
   if (!reason) return undefined;
-  return state.fastReason === "pending" ? { text: reason, tone: "text-muted" } : { text: `쓸 수 없음: ${reason}`, tone: "text-warn" };
+  return state.fastReason === "pending" ? { text: reason, tone: "text-muted" } : { text: t("쓸 수 없음: {reason}", { reason }), tone: "text-warn" };
 }
 
 function SwitchRow({
@@ -119,7 +120,7 @@ function SwitchRow({
 }
 
 function StartHint({ draft }: { draft: boolean }) {
-  return <div className="mb-2 px-3 text-xs text-muted">{draft ? DRAFT_HINT : START_HINT}</div>;
+  return <div className="mb-2 px-3 text-xs text-muted">{t(draft ? DRAFT_HINT : START_HINT)}</div>;
 }
 
 function Chip({
@@ -307,9 +308,9 @@ export function Composer({
   const chipText = efforts ? (effort ? effortLabel(effort) : "Effort") : thinkingRow ? "Thinking" : "Fast";
   const effortName = [
     efforts ? (effort ? `Effort ${effortLabel(effort)}` : "Effort") : chipText,
-    ultracode ? "Ultracode 켜짐" : "",
-    fastMark === "on" || fastMark === "credits" ? "Fast 모드 켜짐" : fastMark === "cooldown" ? "Fast 모드 쿨다운" : fastMark ? (choosing ? "Fast 모드로 시작" : "Fast 모드 켜는 중") : "",
-    thinkingMark ? "Thinking 꺼짐" : "",
+    ultracode ? t("Ultracode 켜짐") : "",
+    fastMark === "on" || fastMark === "credits" ? t("Fast 모드 켜짐") : fastMark === "cooldown" ? t("Fast 모드 쿨다운") : fastMark ? (choosing ? t("Fast 모드로 시작") : t("Fast 모드 켜는 중")) : "",
+    thinkingMark ? t("Thinking 꺼짐") : "",
   ]
     .filter(Boolean)
     .join(", ");
@@ -395,7 +396,7 @@ export function Composer({
   useEffect(() => {
     const was = shownCwd.current;
     shownCwd.current = draftCwd;
-    if (was && was !== draftCwd && /(^|\s)@\S/.test(text)) toast("입력한 @ 파일은 새 폴더 기준으로 다시 확인하세요");
+    if (was && was !== draftCwd && /(^|\s)@\S/.test(text)) toast(t("입력한 @ 파일은 새 폴더 기준으로 다시 확인하세요"));
   }, [draftCwd]);
 
   useEffect(() => setActive(0), [mention?.query, command, rows.length]);
@@ -472,14 +473,14 @@ export function Composer({
       return setSheet("fast");
     }
     onFast?.(on);
-    if (told) toast(choosing ? "시작 설정을 바꿨습니다" : on ? "Fast 모드를 켰습니다 (이번 세션만)" : "Fast 모드를 껐습니다");
+    if (told) toast(choosing ? t("시작 설정을 바꿨습니다") : on ? t("Fast 모드를 켰습니다 (이번 세션만)") : t("Fast 모드를 껐습니다"));
   };
 
   // "/fast", "/fast on" and "/fast off" act as the switch does, for this session only; a draft's bare "/fast" opens it.
   const fastCommand = (args: string): boolean | "kept" => {
     const v = args.toLowerCase();
     if (v && v !== "on" && v !== "off") {
-      toast("/fast 다음에는 on이나 off만 쓸 수 있습니다");
+      toast(t("/fast 다음에는 on이나 off만 쓸 수 있습니다"));
       return "kept";
     }
     if (draft && !v) {
@@ -487,12 +488,12 @@ export function Composer({
       return true;
     }
     if (!choosable || optionsUnknown) {
-      toast(optionsUnknown ? OLD_WRAPPER : "session is starting");
+      toast(optionsUnknown ? t(OLD_WRAPPER) : "session is starting");
       return "kept";
     }
     const on = v ? v === "on" : !fastOn;
     if (on && !fastRow) {
-      toast("이 모델에서는 Fast 모드를 쓸 수 없습니다");
+      toast(t("이 모델에서는 Fast 모드를 쓸 수 없습니다"));
       return true;
     }
     turnFast(on, true);
@@ -582,7 +583,7 @@ export function Composer({
       rows={1}
       readOnly={locked}
       enterKeyHint={enterToSend ? "send" : "enter"}
-      placeholder={peer ? "다른 세션 메시지로 보내기" : busy ? "대기열에 추가할 메시지…" : placeholder}
+      placeholder={peer ? t("다른 세션 메시지로 보내기") : busy ? t("대기열에 추가할 메시지…") : placeholder}
       onChange={(e) => {
         setText(e.target.value);
         setCaret(e.target.selectionStart);
@@ -595,7 +596,7 @@ export function Composer({
   );
 
   if (peer && !disabledReason) {
-    const notes = text.trimStart().startsWith("/") ? [...peer.notes, { text: "/ 명령은 실행되지 않고 글로 전달됩니다.", warn: true }] : peer.notes;
+    const notes = text.trimStart().startsWith("/") ? [...peer.notes, { text: t("/ 명령은 실행되지 않고 글로 전달됩니다."), warn: true }] : peer.notes;
     return (
       <div className="pb-safe border-t border-line bg-bg px-safe-3 pt-2 short:pt-1">
         <div className="relative mx-auto max-w-3xl">
@@ -614,7 +615,7 @@ export function Composer({
               <button
                 onClick={submit}
                 disabled={!canSend}
-                aria-label="보내기"
+                aria-label={t("보내기")}
                 className={`ml-auto flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30 ${ROUND_TAP}`}
               >
                 <Icon.send className="size-4 [stroke-width:2.5]" />
@@ -657,10 +658,10 @@ export function Composer({
               className={`pointer-events-none absolute -top-[7px] right-4 z-10 flex h-3 items-center gap-1 px-1 before:absolute before:inset-x-0 before:top-[4px] before:z-[-1] before:h-[3px] before:bg-bg ${choosing ? "opacity-60" : ""}`}
               data-legend
             >
-              {thinkingMark && <span className="text-[11px] leading-none text-muted">Thinking 끔</span>}
+              {thinkingMark && <span className="text-[11px] leading-none text-muted">{t("Thinking 끔")}</span>}
               {fastMark && (
                 <span
-                  title={fastMark === "cooldown" ? "Fast 모드 쿨다운" : fastMark === "credits" ? "Fast 모드: 사용 크레딧 소진" : "Fast 모드"}
+                  title={fastMark === "cooldown" ? t("Fast 모드 쿨다운") : fastMark === "credits" ? t("Fast 모드: 사용 크레딧 소진") : t("Fast 모드")}
                   data-fast-mark={fastMark}
                   className={fastMark === "credits" ? "text-danger" : fastMark === "cooldown" ? "text-muted" : `text-accent ${fastMark === "wanted" && !choosing ? "opacity-50" : ""}`}
                 >
@@ -673,7 +674,7 @@ export function Composer({
           {field}
           {chosen && (
             <div className="mt-1 text-[11px] text-muted" data-start-hint>
-              고른 값은 여기서 시작할 때 적용됩니다
+              {t("고른 값은 여기서 시작할 때 적용됩니다")}
             </div>
           )}
           <div ref={rowsRef} className="mt-1 short:mt-0.5" data-chip-rows={layout.lines}>
@@ -682,7 +683,7 @@ export function Composer({
                 {scope && (
                   <span className="relative shrink-0">
                     <button
-                      aria-label="파일 첨부"
+                      aria-label={t("파일 첨부")}
                       onClick={attach}
                       disabled={locked}
                       className="flex size-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2 disabled:opacity-50"
@@ -727,7 +728,7 @@ export function Composer({
               {agentChip}
               <div ref={rightRef} className={`flex min-w-0 items-center justify-end ${two ? "col-[2/4] row-start-1" : "ml-auto shrink-0"}`} data-chip-group="right">
                 <Chip name="mode" className="min-w-0" disabled={!choosable} onClick={() => setSheet("mode")}>
-                  <span ref={modeRef} className="truncate">{MODE_LABEL[mode ?? ""] ?? "권한 모드"}</span>
+                  <span ref={modeRef} className="truncate">{MODE_LABEL[mode ?? ""] ?? t("권한 모드")}</span>
                   <Icon.chevronDown className="size-3 shrink-0" />
                 </Chip>
               </div>
@@ -737,7 +738,7 @@ export function Composer({
                 onPointerCancel={() => (pressed.current = null)}
                 onClick={tapRound}
                 disabled={!stops && !canSend}
-                aria-label={locked ? "시작하는 중" : stops ? "중지" : draft ? "시작" : busy ? "대기열에 추가" : "보내기"}
+                aria-label={locked ? t("시작하는 중") : stops ? t("중지") : draft ? t("시작") : busy ? t("대기열에 추가") : t("보내기")}
                 data-starting={locked || undefined}
                 className={`ml-0.5 flex size-8 shrink-0 items-center justify-center rounded-full ${ROUND_TAP} ${two ? "col-start-3 row-start-2" : ""} ${stops ? "bg-surface-2 text-fg" : `bg-accent text-white ${locked ? "" : "disabled:opacity-30"}`}`}
               >
@@ -749,19 +750,19 @@ export function Composer({
       </div>
 
       {sheet === "mode" && (
-        <Sheet title="권한 모드" onClose={() => setSheet(null)}>
+        <Sheet title={t("권한 모드")} onClose={() => setSheet(null)}>
           {choosing && <StartHint draft={Boolean(draft)} />}
-          {onReset && <Choice label="기본값" hint="Claude Code 설정을 따릅니다" selected={!mode} onClick={() => (onReset("mode"), setSheet(null))} />}
+          {onReset && <Choice label={t("기본값")} hint={t("Claude Code 설정을 따릅니다")} selected={!mode} onClick={() => (onReset("mode"), setSheet(null))} />}
           {MODES.map((m) => (
             <Choice key={m} label={MODE_LABEL[m]} hint={modeHints()[m]} selected={mode === m} onClick={() => (onMode(m), setSheet(null))} />
           ))}
         </Sheet>
       )}
       {sheet === "model" && (
-        <Sheet title="모델" onClose={() => setSheet(null)}>
+        <Sheet title={t("모델")} onClose={() => setSheet(null)}>
           {choosing && <StartHint draft={Boolean(draft)} />}
-          {models.length === 0 && <div className="px-3 py-2 text-sm text-muted">모델 목록을 불러오는 중입니다</div>}
-          {onReset && <Choice label="기본값" hint="Claude Code 설정을 따릅니다" selected={!model} onClick={() => (onReset("model"), setSheet(null))} />}
+          {models.length === 0 && <div className="px-3 py-2 text-sm text-muted">{t("모델 목록을 불러오는 중입니다")}</div>}
+          {onReset && <Choice label={t("기본값")} hint={t("Claude Code 설정을 따릅니다")} selected={!model} onClick={() => (onReset("model"), setSheet(null))} />}
           {models.map((m) => (
             <Choice key={m.value} label={m.label} hint={m.description} selected={m === current} onClick={() => (onModel(m.value), setSheet(null))} />
           ))}
@@ -770,8 +771,8 @@ export function Composer({
       {sheet === "effort" && (
         <Sheet title="Effort" onClose={() => setSheet(null)}>
           {choosing && <StartHint draft={Boolean(draft)} />}
-          {!efforts && <div className="px-3 py-2 text-sm text-muted">이 모델은 Effort를 고를 수 없습니다</div>}
-          {onReset && efforts && <Choice label="Auto" hint="모델 기본값" selected={!effort} onClick={() => (onReset("effort"), setSheet(null))} />}
+          {!efforts && <div className="px-3 py-2 text-sm text-muted">{t("이 모델은 Effort를 고를 수 없습니다")}</div>}
+          {onReset && efforts && <Choice label="Auto" hint={t("모델 기본값")} selected={!effort} onClick={() => (onReset("effort"), setSheet(null))} />}
           {(efforts ?? []).map((e) => (
             <Choice key={e} label={effortLabel(e)} selected={effort === e} onClick={() => (onEffort(e), setSheet(null))} />
           ))}
@@ -785,7 +786,7 @@ export function Composer({
               <span>
                 <span className="block text-[15px]">Ultracode</span>
                 <span className="block text-xs text-muted">
-                  {deferred && offered === undefined ? "모델이 지원하면 시작할 때 켭니다 (이번 세션만)" : "모든 작업에 동적 워크플로를 씁니다 (이번 세션만)"}
+                  {deferred && offered === undefined ? t("모델이 지원하면 시작할 때 켭니다 (이번 세션만)") : t("모든 작업에 동적 워크플로를 씁니다 (이번 세션만)")}
                 </span>
               </span>
               <Switch on={ultracode} />
@@ -793,26 +794,26 @@ export function Composer({
           )}
           {choosing && !ultracodeShown && (
             <div className="mt-2 border-t border-line px-3 pt-2.5 text-xs text-muted" data-ultracode-note>
-              {offered === false ? "이 모델에서는 Ultracode를 쓸 수 없습니다." : "이 모델이 Ultracode를 지원하는지는 세션을 시작한 뒤에 알 수 있습니다."}
+              {offered === false ? t("이 모델에서는 Ultracode를 쓸 수 없습니다.") : t("이 모델이 Ultracode를 지원하는지는 세션을 시작한 뒤에 알 수 있습니다.")}
             </div>
           )}
           {!deferred && state?.appliedUnknown && (
-            <div className="mt-2 border-t border-line px-3 pt-2.5 text-xs text-muted">VS Code가 Claude Code를 다시 시작하면 Ultracode와 지금 값이 보입니다.</div>
+            <div className="mt-2 border-t border-line px-3 pt-2.5 text-xs text-muted">{t("VS Code가 Claude Code를 다시 시작하면 Ultracode와 지금 값이 보입니다.")}</div>
           )}
           {fastRow && (
             <SwitchRow
               name="fast"
               label={
                 <>
-                  Fast 모드 <Icon.zap className="size-3 text-accent" />
+                  {t("Fast 모드")} <Icon.zap className="size-3 text-accent" />
                 </>
               }
               hint={
                 !choosing
-                  ? "Opus를 최대 2.5배 빠르게 돌리고, 사용 크레딧으로 더 비싸게 냅니다 (이번 세션만)"
+                  ? t("Opus를 최대 2.5배 빠르게 돌리고, 사용 크레딧으로 더 비싸게 냅니다 (이번 세션만)")
                   : fastUnknown
-                    ? "모델이 지원하면 시작할 때 켭니다 (이번 세션만)"
-                    : "시작할 때 켭니다 (이번 세션만)"
+                    ? t("모델이 지원하면 시작할 때 켭니다 (이번 세션만)")
+                    : t("시작할 때 켭니다 (이번 세션만)")
               }
               status={choosing ? undefined : fastStatus(state)}
               on={fastOn}
@@ -824,7 +825,7 @@ export function Composer({
             <SwitchRow
               name="thinking"
               label="Thinking"
-              hint={choosing ? "꺼 두면 Thinking 없이 시작합니다" : "끄면 생각하지 않고 바로 답합니다 (이번 세션만)"}
+              hint={choosing ? t("꺼 두면 Thinking 없이 시작합니다") : t("끄면 생각하지 않고 바로 답합니다 (이번 세션만)")}
               on={thinkingOn}
               disabled={optionsUnknown}
               onClick={() => onThinking?.(!thinkingOn)}
@@ -832,29 +833,29 @@ export function Composer({
           )}
           {(fastRow || thinkingRow) && (optionsUnknown || (thinkingRow && (capped || (!choosing && state?.host === "VS Code")))) && (
             <div className="space-y-1 px-3 pt-1 text-xs text-muted" data-toggle-notes>
-              {optionsUnknown && <p>{OLD_WRAPPER}</p>}
-              {thinkingRow && capped && <p>Thinking을 끄면 이 모델은 Effort High로 실행됩니다.</p>}
-              {thinkingRow && !optionsUnknown && !choosing && state?.host === "VS Code" && <p>VS Code 메뉴의 Thinking 표시는 바뀌지 않습니다.</p>}
+              {optionsUnknown && <p>{t(OLD_WRAPPER)}</p>}
+              {thinkingRow && capped && <p>{t("Thinking을 끄면 이 모델은 Effort High로 실행됩니다.")}</p>}
+              {thinkingRow && !optionsUnknown && !choosing && state?.host === "VS Code" && <p>{t("VS Code 메뉴의 Thinking 표시는 바뀌지 않습니다.")}</p>}
             </div>
           )}
           {(onFast || onThinking) && (!fastRow || (!thinkingRow && offers.thinkingOff === false)) && (
             <div className="mt-2 border-t border-line px-3 pt-2.5 text-xs text-muted" data-model-note>
               {!fastRow && !thinkingRow && offers.thinkingOff === false
-                ? "이 모델에서는 Fast 모드를 쓸 수 없고 Thinking을 끌 수 없습니다."
+                ? t("이 모델에서는 Fast 모드를 쓸 수 없고 Thinking을 끌 수 없습니다.")
                 : !fastRow
-                  ? "이 모델에서는 Fast 모드를 쓸 수 없습니다."
-                  : "이 모델은 늘 생각하므로 Thinking을 끌 수 없습니다."}
+                  ? t("이 모델에서는 Fast 모드를 쓸 수 없습니다.")
+                  : t("이 모델은 늘 생각하므로 Thinking을 끌 수 없습니다.")}
             </div>
           )}
         </Sheet>
       )}
       {sheet === "fast" && (
-        <Sheet title="Fast 모드" onClose={() => setSheet(null)}>
-          <p className="px-1 text-[15px] leading-relaxed">대화 중간에 켜면 지금까지의 대화를 다음 요청에서 한 번 Fast 모드 요금으로 다시 읽습니다. 계속할까요?</p>
-          <p className="mt-1 px-1 text-xs text-muted">이 세션에서는 다시 묻지 않습니다.</p>
+        <Sheet title={t("Fast 모드")} onClose={() => setSheet(null)}>
+          <p className="px-1 text-[15px] leading-relaxed">{t("대화 중간에 켜면 지금까지의 대화를 다음 요청에서 한 번 Fast 모드 요금으로 다시 읽습니다. 계속할까요?")}</p>
+          <p className="mt-1 px-1 text-xs text-muted">{t("이 세션에서는 다시 묻지 않습니다.")}</p>
           <div className="mt-4 flex gap-2">
             <Button className="flex-1" onClick={() => setSheet(null)}>
-              취소
+              {t("취소")}
             </Button>
             <Button
               kind="primary"
@@ -865,7 +866,7 @@ export function Composer({
                 turnFast(true, fastTold.current);
               }}
             >
-              켜기
+              {t("켜기")}
             </Button>
           </div>
         </Sheet>

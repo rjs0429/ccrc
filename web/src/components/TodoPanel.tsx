@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { DisplayItem } from "../../../broker/src/protocol.ts";
+import { t } from "../i18n/index.ts";
 import { currentTodos, type TodoStatus } from "./todos.ts";
 import { Icon } from "./ui.tsx";
 
@@ -17,9 +18,7 @@ export function TodoPanel({ items }: { items: DisplayItem[] }) {
     <div className="border-t border-line bg-bg px-safe-3 tiny:hidden">
       <div className="mx-auto max-w-3xl">
         <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 py-2 text-left text-[13px] short:py-1.5">
-          <span className="shrink-0 font-medium">
-            할 일 {done}/{todos.length}
-          </span>
+          <span className="shrink-0 font-medium">{t("할 일 {done}/{total}", { done, total: todos.length })}</span>
           <span className="min-w-0 flex-1 truncate text-muted">{current ? current.activeForm || current.text : ""}</span>
           <Icon.chevronDown className={`size-4 shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`} />
         </button>

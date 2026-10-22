@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import type { SessionSummary } from "../../../broker/src/protocol.ts";
 import { TITLE_MAX, cleanTitle } from "../../../broker/src/titles.ts";
 import { worktreeOf } from "../../../broker/src/worktree-names.ts";
+import { k, t } from "../i18n/index.ts";
 import { errorText, hostLabel, sessionTitle } from "../labels.ts";
 import { call, patchSession, toast } from "../state.ts";
 import { ArchiveWorktree } from "./sheets/Worktree.tsx";
@@ -11,9 +12,9 @@ import { Button, Choice, Sheet, Spinner } from "./ui.tsx";
 type Target = Pick<SessionSummary, "id" | "title" | "state" | "host" | "archived" | "vscodeArchived" | "unread"> & { cwd?: string };
 
 const RENAME_HOW: Partial<Record<SessionSummary["state"], string>> = {
-  owned: "Claude Code가 이름을 저장합니다.",
-  attached: "VS Code 탭과 목록 이름도 바로 바뀝니다.",
-  inactive: "세션을 실행하지 않고 이름만 바꿉니다.",
+  owned: k("Claude Code가 이름을 저장합니다."),
+  attached: k("VS Code 탭과 목록 이름도 바로 바뀝니다."),
+  inactive: k("세션을 실행하지 않고 이름만 바꿉니다."),
 };
 
 // Archives a session in ccrc or brings it back; the list follows at once. vscode: VS Code archived it, and keeps it so.
@@ -21,7 +22,7 @@ export function setArchived(sessionId: string, on: boolean, vscode = false): voi
   call(sessionId, "archive", { archived: on }).then(
     () => {
       patchSession(sessionId, { archived: on || undefined });
-      toast(on ? "보관했습니다" : vscode ? "보관을 풀었습니다 · VS Code에서는 그대로 보관됩니다" : "보관을 풀었습니다");
+      toast(on ? t("보관했습니다") : vscode ? t("보관을 풀었습니다 · VS Code에서는 그대로 보관됩니다") : t("보관을 풀었습니다"));
     },
     (e: Error) => toast(e.message),
   );
@@ -32,7 +33,7 @@ export function setUnread(sessionId: string, on: boolean): Promise<boolean> {
   return call(sessionId, "mark_unread", { unread: on }).then(
     () => {
       patchSession(sessionId, { unread: on || undefined });
-      toast(on ? "읽지 않음으로 표시했습니다" : "읽음으로 표시했습니다");
+      toast(on ? t("읽지 않음으로 표시했습니다") : t("읽음으로 표시했습니다"));
       return true;
     },
     (e: Error) => {
@@ -44,12 +45,12 @@ export function setUnread(sessionId: string, on: boolean): Promise<boolean> {
 
 // Sits in a line of small text without making the line taller.
 export function ArchivedBadge({ vscode = false }: { vscode?: boolean }) {
-  return <span className="-my-px shrink-0 rounded border border-line px-1 text-[11px] leading-4">{vscode ? "VS Code 보관" : "보관됨"}</span>;
+  return <span className="-my-px shrink-0 rounded border border-line px-1 text-[11px] leading-4">{vscode ? t("VS Code 보관") : t("보관됨")}</span>;
 }
 
 // Why the session cannot be renamed from here: a program ccrc cannot drive has it open.
 export function renameBlocked(s: Pick<SessionSummary, "state" | "host">): string | undefined {
-  return s.state === "live" ? `${hostLabel(s.host)}에서 열려 있어 여기서는 바꿀 수 없습니다` : undefined;
+  return s.state === "live" ? t("{host}에서 열려 있어 여기서는 바꿀 수 없습니다", { host: hostLabel(s.host) }) : undefined;
 }
 
 // A session's actions: the menu a long press opens and the rename step, which a tap on the chat title opens directly.
@@ -94,23 +95,23 @@ export function SessionActions({ session, step: first, onClose }: { session: Tar
   if (step === "menu") {
     return (
       <Sheet title={sessionTitle(session)} onClose={onClose}>
-        <Choice label="이름 바꾸기" hint={blocked ?? "VS Code 목록과 claude --resume에도 보입니다"} disabled={Boolean(blocked)} onClick={() => flushSync(() => setStep("rename"))} />
+        <Choice label={t("이름 바꾸기")} hint={blocked ?? t("VS Code 목록과 claude --resume에도 보입니다")} disabled={Boolean(blocked)} onClick={() => flushSync(() => setStep("rename"))} />
         <Choice
-          label={session.archived ? "보관 해제" : "보관하기"}
+          label={session.archived ? t("보관 해제") : t("보관하기")}
           hint={
             session.archived ? (
               session.vscodeArchived ? (
                 <>
-                  <span className="block">목록에 다시 보입니다.</span>
-                  <span className="block">VS Code에서는 그대로 보관됩니다.</span>
+                  <span className="block">{t("목록에 다시 보입니다.")}</span>
+                  <span className="block">{t("VS Code에서는 그대로 보관됩니다.")}</span>
                 </>
               ) : (
-                "목록에 다시 보입니다"
+                t("목록에 다시 보입니다")
               )
             ) : (
               <>
-                <span className="block">ccrc 목록에서만 숨깁니다.</span>
-                <span className="block">VS Code와 claude --resume에는 그대로 보입니다.</span>
+                <span className="block">{t("ccrc 목록에서만 숨깁니다.")}</span>
+                <span className="block">{t("VS Code와 claude --resume에는 그대로 보입니다.")}</span>
               </>
             )
           }
@@ -121,8 +122,8 @@ export function SessionActions({ session, step: first, onClose }: { session: Tar
           }}
         />
         <Choice
-          label={session.unread ? "읽음으로 표시" : "읽지 않음으로 표시"}
-          hint={session.unread ? "목록의 점을 지웁니다" : "다시 열 때까지 목록에 점이 남습니다"}
+          label={session.unread ? t("읽음으로 표시") : t("읽지 않음으로 표시")}
+          hint={session.unread ? t("목록의 점을 지웁니다") : t("다시 열 때까지 목록에 점이 남습니다")}
           onClick={() => {
             void setUnread(session.id, !session.unread);
             onClose();
@@ -132,8 +133,9 @@ export function SessionActions({ session, step: first, onClose }: { session: Tar
     );
   }
   if (step === "archive") return <ArchiveWorktree sessionId={session.id} onClose={onClose} />;
+  const how = RENAME_HOW[session.state];
   return (
-    <Sheet title="이름 바꾸기" onClose={onClose}>
+    <Sheet title={t("이름 바꾸기")} onClose={onClose}>
       <input
         ref={input}
         value={value}
@@ -141,8 +143,8 @@ export function SessionActions({ session, step: first, onClose }: { session: Tar
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.nativeEvent.isComposing) save();
         }}
-        aria-label="세션 이름"
-        placeholder="세션 이름"
+        aria-label={t("세션 이름")}
+        placeholder={t("세션 이름")}
         enterKeyHint="done"
         autoComplete="off"
         autoCorrect="off"
@@ -151,12 +153,12 @@ export function SessionActions({ session, step: first, onClose }: { session: Tar
         data-rename-input
       />
       <div className={`mt-2 px-1 text-xs ${error ? "text-danger" : "text-muted"}`} data-rename-note>
-        {error ?? RENAME_HOW[session.state]}
+        {error ?? (how && t(how))}
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <Button onClick={onClose}>취소</Button>
+        <Button onClick={onClose}>{t("취소")}</Button>
         <Button kind="primary" disabled={!ready} onClick={save}>
-          {saving ? <Spinner className="mx-auto size-5" /> : "저장"}
+          {saving ? <Spinner className="mx-auto size-5" /> : t("저장")}
         </Button>
       </div>
     </Sheet>
