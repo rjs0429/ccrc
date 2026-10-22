@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EffortName, ModelOption } from "../src/protocol.ts";
-import { PROBLEM, effortModels, failureText, inheritedEffort, valueText } from "../../web/src/screens/settings/claudeLabels.ts";
+import { setLang } from "../../web/src/i18n/index.ts";
+import { PROBLEM, choiceLabels, effortModels, failureText, inheritedEffort, valueText } from "../../web/src/screens/settings/claudeLabels.ts";
 
 const ALL: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const MODELS: ModelOption[] = [
@@ -44,4 +45,24 @@ test("why a save failed is told in Korean, a file that keeps changing included",
   assert.equal(failureText("bad_origin", 403), "노트북이 요청을 받지 않았습니다 (bad_origin)");
   assert.equal(failureText("", 0), "노트북에 연결하지 못했습니다");
   assert.equal(failureText("boom"), "알 수 없는 오류입니다 (boom)");
+});
+
+test("the settings' values and failures read in English once English is chosen", () => {
+  assert.equal(valueText("theme", "dark-daltonized", MODELS), "어둡게 (색각 보정)");
+  setLang("en", ["en-US"]);
+  try {
+    assert.equal(valueText("model", undefined, MODELS), "Default");
+    assert.equal(valueText("alwaysThinkingEnabled", false, MODELS), "Off");
+    assert.equal(valueText("theme", "dark-daltonized", MODELS), "Dark mode (colorblind-friendly)");
+    assert.equal(valueText("permissions.defaultMode", "acceptEdits", MODELS), "Edit automatically");
+    assert.equal(choiceLabels("theme").auto, "Auto (match terminal)");
+    assert.deepEqual(choiceLabels("language"), {});
+    assert.equal(failureText("changed", 409), "The settings file keeps changing");
+    assert.equal(failureText("", 403), "The laptop refused the request (HTTP 403)");
+    assert.equal(failureText("", 0), "Couldn't reach the laptop");
+    assert.equal(failureText("boom"), "Unknown error (boom)");
+  } finally {
+    setLang("ko");
+  }
+  assert.equal(failureText("changed", 409), "설정 파일이 계속 바뀌고 있습니다");
 });

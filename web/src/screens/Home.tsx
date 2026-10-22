@@ -7,6 +7,7 @@ import { Icon, Spinner } from "../components/ui.tsx";
 import { UpdateBanner } from "../components/UpdateBanner.tsx";
 import { TitleText } from "../components/TitleText.tsx";
 import { useLongPress } from "../components/useLongPress.ts";
+import { t } from "../i18n/index.ts";
 import { baseName, brokerSessionsBlocked, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
 import { loggedOut, navigate, openAt, refreshSessions, useApp } from "../state.ts";
 import { groupFolder, placeLabel, shownBranch } from "../worktree.ts";
@@ -57,7 +58,7 @@ function Meta({ text, archived, vscode }: { text: string; archived?: boolean; vs
 }
 
 function SearchRow({ r }: { r: SearchResult }) {
-  const meta = [placeLabel(r.cwd), relTime(r.lastModified), r.hits ? `메시지 ${r.hits}건` : ""].filter(Boolean).join(" · ");
+  const meta = [placeLabel(r.cwd), relTime(r.lastModified), r.hits ? t("메시지 {n}건", { n: r.hits }) : ""].filter(Boolean).join(" · ");
   return (
     <div className="mx-auto max-w-3xl border-b border-line">
       <button onClick={() => openAt(r.id, r.snippets.find((sn) => !sn.earlier)?.itemId)} className="block w-full px-4 pt-3 pb-1 text-left active:bg-surface-2">
@@ -68,8 +69,8 @@ function SearchRow({ r }: { r: SearchResult }) {
         {r.snippets.map((sn) => (
           <button key={sn.itemId} onClick={() => openSnippet(r.id, sn)} className="block w-full px-4 py-1 text-left active:bg-surface-2">
             <span className="line-clamp-2 text-[13px] leading-snug text-muted">
-              <span className="mr-1 font-medium text-fg">{sn.role === "user" ? "나" : "Claude"}</span>
-              {sn.earlier && <span className="mr-1 text-[11px]">(요약 전)</span>}
+              <span className="mr-1 font-medium text-fg">{sn.role === "user" ? t("나") : "Claude"}</span>
+              {sn.earlier && <span className="mr-1 text-[11px]">{t("(요약 전)")}</span>}
               {sn.cutStart && "…"}
               <Marked text={sn.text} marks={sn.marks} />
               {sn.cutEnd && "…"}
@@ -125,15 +126,15 @@ function useSearch(q: string): { found?: SearchResponse; busy: boolean; failed: 
 function status(s: SessionSummary): { text: string; dot: string } {
   const host = hostLabel(s.host);
   if (s.state === "owned" || s.state === "attached") {
-    if (s.pendingCount) return { text: s.state === "attached" ? `입력 필요 · ${host}` : "입력 필요", dot: "bg-warn" };
-    if (s.busy) return { text: s.state === "attached" ? `${host}에서 작업 중` : "작업 중", dot: "bg-accent animate-pulse" };
-    return { text: s.state === "attached" ? `${host} 연결됨` : "원격 실행 중", dot: "bg-ok" };
+    if (s.pendingCount) return { text: s.state === "attached" ? t("입력 필요 · {host}", { host }) : t("입력 필요"), dot: "bg-warn" };
+    if (s.busy) return { text: s.state === "attached" ? t("{host}에서 작업 중", { host }) : t("작업 중"), dot: "bg-accent animate-pulse" };
+    return { text: s.state === "attached" ? t("{host} 연결됨", { host }) : t("원격 실행 중"), dot: "bg-ok" };
   }
   if (s.state === "live") {
-    const only = s.inbox ? "" : " · 보기만";
-    return s.busy ? { text: `${host}에서 작업 중${only}`, dot: "bg-info animate-pulse" } : { text: `${host}에서 열림${only}`, dot: "bg-info" };
+    const only = s.inbox ? "" : ` · ${t("보기만")}`;
+    return s.busy ? { text: `${t("{host}에서 작업 중", { host })}${only}`, dot: "bg-info animate-pulse" } : { text: `${t("{host}에서 열림", { host })}${only}`, dot: "bg-info" };
   }
-  return { text: s.folderMissing ? "폴더 없음" : "", dot: "border border-line" };
+  return { text: s.folderMissing ? t("폴더 없음") : "", dot: "border border-line" };
 }
 
 // A long press or a right click opens the session's actions; in the archived view the row also offers to restore it.
@@ -152,7 +153,7 @@ function SessionRow({ s, view, onActions }: { s: SessionSummary; view: Filter; o
       <span className="min-w-0 flex-1">
         <span className={`block truncate text-[15px] ${s.pendingCount || s.unread ? "font-semibold" : "font-medium"}`}>
           <TitleText text={sessionTitle(s)} />
-          {s.unread && <span className="sr-only"> · 읽지 않음</span>}
+          {s.unread && <span className="sr-only"> · {t("읽지 않음")}</span>}
         </span>
         <Meta text={meta} archived={s.archived && view !== "archived"} vscode={s.vscodeArchived} />
       </span>
@@ -164,7 +165,7 @@ function SessionRow({ s, view, onActions }: { s: SessionSummary; view: Filter; o
     <div className={`flex items-center ${CARD}`}>
       {row}
       <button onClick={() => setArchived(s.id, false, s.vscodeArchived)} className="mr-2 min-h-11 shrink-0 rounded-lg px-3 text-sm font-medium text-accent active:bg-surface-2">
-        보관 해제
+        {t("보관 해제")}
       </button>
     </div>
   );
@@ -246,9 +247,10 @@ export function Home() {
             data-broker-off={brokerOff ? "" : undefined}
             className={`order-2 flex shrink-0 items-center gap-1 rounded-xl px-3 py-2 text-sm font-medium short:order-5 short:ml-auto ${brokerOff ? "bg-surface-2 text-muted" : "bg-accent text-white"}`}
           >
-            <Icon.plus className="size-4" />새 세션
+            <Icon.plus className="size-4" />
+            {t("새 세션")}
           </button>
-          <button onClick={() => navigate({ name: "settings" })} aria-label="설정" className="order-3 mr-1 shrink-0 rounded-lg p-2 text-muted short:order-6">
+          <button onClick={() => navigate({ name: "settings" })} aria-label={t("설정")} className="order-3 mr-1 shrink-0 rounded-lg p-2 text-muted short:order-6">
             <Icon.gear />
           </button>
           <div className="order-4 flex basis-full items-center gap-2 rounded-xl border border-line bg-surface px-3 short:order-3 short:max-w-xl short:min-w-0 short:flex-1 short:basis-0">
@@ -260,8 +262,8 @@ export function Home() {
                 if (e.key === "Enter") e.currentTarget.blur();
                 if (e.key === "Escape") setQ("");
               }}
-              placeholder="세션 제목·대화 내용 검색"
-              aria-label="세션 검색"
+              placeholder={t("세션 제목·대화 내용 검색")}
+              aria-label={t("세션 검색")}
               enterKeyHint="search"
               autoCapitalize="off"
               autoCorrect="off"
@@ -270,19 +272,19 @@ export function Home() {
             />
             {busy && <Spinner className="size-4 shrink-0 text-muted" />}
             {q && (
-              <button onClick={() => setQ("")} aria-label="검색 지우기" className="-mr-1.5 shrink-0 rounded-full p-1.5 text-muted">
+              <button onClick={() => setQ("")} aria-label={t("검색 지우기")} className="-mr-1.5 shrink-0 rounded-full p-1.5 text-muted">
                 <Icon.x className="size-4" />
               </button>
             )}
           </div>
           <div className={`order-5 flex basis-full gap-1 short:order-2 short:basis-auto ${searching ? "hidden" : ""}`}>
-            {(["sessions", "folders"] as const).map((t) => (
+            {(["sessions", "folders"] as const).map((name) => (
               <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`relative rounded-lg px-3 py-1.5 text-sm after:absolute after:inset-x-0 after:-inset-y-1.5 ${tab === t ? "bg-surface-2 font-semibold" : "text-muted"}`}
+                key={name}
+                onClick={() => setTab(name)}
+                className={`relative rounded-lg px-3 py-1.5 text-sm after:absolute after:inset-x-0 after:-inset-y-1.5 ${tab === name ? "bg-surface-2 font-semibold" : "text-muted"}`}
               >
-                {t === "sessions" ? "세션" : "폴더"}
+                {name === "sessions" ? t("세션") : t("폴더")}
               </button>
             ))}
           </div>
@@ -299,19 +301,21 @@ export function Home() {
 
         {searching && (
           <>
-            {found && found.pending > 0 && <div className="px-4 pt-2.5 text-xs text-muted">대화 기록을 읽는 중… 남은 세션 {found.pending}개</div>}
+            {found && found.pending > 0 && <div className="px-4 pt-2.5 text-xs text-muted">{t("대화 기록을 읽는 중… 남은 세션 {n}개", { n: found.pending })}</div>}
             {failed && (
               <div className="flex items-center justify-center gap-3 px-4 py-6 text-sm text-muted" data-search-failed>
-                검색하지 못했습니다
+                {t("검색하지 못했습니다")}
                 <button onClick={retry} className="min-h-11 rounded-lg bg-surface px-4 font-medium text-accent">
-                  다시 시도
+                  {t("다시 시도")}
                 </button>
               </div>
             )}
             {found?.results.map((r) => <SearchRow key={r.id} r={r} />)}
-            {found && !found.results.length && !found.pending && <div className="px-4 py-10 text-center text-sm text-muted">일치하는 세션이 없습니다</div>}
+            {found && !found.results.length && !found.pending && <div className="px-4 py-10 text-center text-sm text-muted">{t("일치하는 세션이 없습니다")}</div>}
             {found && found.total > found.results.length && (
-              <div className="px-4 py-4 text-center text-xs text-muted">일치한 세션 {found.total}개 중 {found.results.length}개를 보여 줍니다. 검색어를 더 넣어 좁혀 보세요.</div>
+              <div className="px-4 py-4 text-center text-xs text-muted">
+                {t("일치한 세션 {total}개 중 {shown}개를 보여 줍니다. 검색어를 더 넣어 좁혀 보세요.", { total: found.total, shown: found.results.length })}
+              </div>
             )}
           </>
         )}
@@ -321,11 +325,11 @@ export function Home() {
             <div className="flex gap-1.5 overflow-x-auto px-4 py-2.5 short:py-2">
               {(
                 [
-                  ["all", "전체"],
-                  ["running", "실행 중"],
-                  ["waiting", waiting ? `입력 필요 ${waiting}` : "입력 필요"],
-                  ["unread", unread ? `읽지 않음 ${unread}` : "읽지 않음"],
-                  ...(archived ? [["archived", `보관됨 ${archived}`]] : []),
+                  ["all", t("전체")],
+                  ["running", t("실행 중")],
+                  ["waiting", waiting ? t("입력 필요 {n}", { n: waiting }) : t("입력 필요")],
+                  ["unread", unread ? t("읽지 않음 {n}", { n: unread }) : t("읽지 않음")],
+                  ...(archived ? [["archived", t("보관됨 {n}", { n: archived })]] : []),
                 ] as [Filter, string][]
               ).map(([f, label]) => (
                 <button
@@ -349,11 +353,13 @@ export function Home() {
               ))}
             </div>
             {shown.length === 0 && (
-              <div className="px-4 py-10 text-center text-sm text-muted">{filter === "archived" ? "보관한 세션이 없습니다" : filter === "unread" ? "읽지 않은 세션이 없습니다" : "세션이 없습니다"}</div>
+              <div className="px-4 py-10 text-center text-sm text-muted">
+                {filter === "archived" ? t("보관한 세션이 없습니다") : filter === "unread" ? t("읽지 않은 세션이 없습니다") : t("세션이 없습니다")}
+              </div>
             )}
             {shown.length > limit && (
               <button onClick={() => setLimit(limit + PAGE)} className="w-full py-4 text-sm text-muted">
-                더 보기 ({shown.length - limit})
+                {t("더 보기 ({n})", { n: shown.length - limit })}
               </button>
             )}
           </>
@@ -378,8 +384,8 @@ export function Home() {
                   <span className="block truncate text-xs text-muted">{shortPath(g.cwd)}</span>
                 </span>
                 <span className="shrink-0 text-right text-xs text-muted">
-                  <span className="block">{g.count > 0 ? `세션 ${g.count}` : `보관 ${g.archived}`}</span>
-                  {g.running > 0 && <span className="block text-info">실행 중 {g.running}</span>}
+                  <span className="block">{g.count > 0 ? t("세션 {n}", { n: g.count }) : t("보관 {n}", { n: g.archived })}</span>
+                  {g.running > 0 && <span className="block text-info">{t("실행 중 {n}", { n: g.running })}</span>}
                 </span>
               </button>
             ))}
