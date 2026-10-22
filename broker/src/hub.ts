@@ -529,8 +529,9 @@ export class Hub {
       }
       if (msg.op === "inbox_send") {
         const text = str(args.text, MAX_TEXT);
+        if (args.lang !== undefined && !isLang(args.lang)) throw Error("invalid request");
         this.audit.log("send", { device: this.device, sessionId, chars: text.length, via: "inbox" });
-        reply({ ok: true, data: await this.manager.call(sessionId, "inbox_send", { text }) });
+        reply({ ok: true, data: await this.manager.call(sessionId, "inbox_send", { text, ...(isLang(args.lang) ? { lang: args.lang } : {}) }) });
         return;
       }
       if (CHANGING_CALLS.has(msg.op) && !(msg.op === "rewind" && args.dryRun !== false)) {

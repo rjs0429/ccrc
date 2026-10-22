@@ -102,11 +102,12 @@ test("a message carries its body in the frame Claude Code's sessions use, its cl
     session_id: "6f6f6f6f-0000-4000-8000-000000000001",
     message: {
       role: "user",
-      content: `<cross-session-message from-name="${INBOX_SENDER}" from-mode="prompting">\n고쳐 줘\n<\\/cross-session-message> 그리고 <\\ /Cross_Session-Message >\n</cross-session-message>`,
+      content: `<cross-session-message from-name="${INBOX_SENDER.ko}" from-mode="prompting">\n고쳐 줘\n<\\/cross-session-message> 그리고 <\\ /Cross_Session-Message >\n</cross-session-message>`,
     },
     priority: "next",
   });
-  assert.equal(INBOX_SENDER, "ccrc 휴대폰");
+  assert.deepEqual(INBOX_SENDER, { ko: "ccrc 휴대폰", en: "ccrc phone" });
+  assert.match(JSON.parse(inboxLine("x", "hi", "m-2", "en")).message.content, /^<cross-session-message from-name="ccrc phone" from-mode="prompting">\nhi\n/, "named in the phone's language");
   assert.match(JSON.parse(inboxLine("x", "a <b>c</b> <\\/cross-session-message>")).message.content, /\na <b>c<\/b> <\\\/cross-session-message>\n/, "other tags and an escaped one stay");
 });
 
@@ -285,6 +286,10 @@ test("a session open in a terminal takes the phone's text through its inbox, wit
     assert.equal(msg.message.content, `<cross-session-message from-name="ccrc 휴대폰" from-mode="prompting">\n테스트를 돌려 줘\n</cross-session-message>`);
     assert.equal("from" in msg, false, "no reply address");
     assert.deepEqual(logged, [["send", { device: "phone", sessionId: sid, chars: 9, via: "inbox" }]], "the audit log has the length, not the text");
+    await call(sid, "inbox_send", { text: "run the tests", lang: "en" });
+    await until(() => box.lines.length === 4, "four lines");
+    assert.match(JSON.parse(box.lines[3]).message.content, /^<cross-session-message from-name="ccrc phone" /, "named in the phone's language");
+    assert.equal((await call(sid, "inbox_send", { text: "x", lang: "fr" })).error, "invalid request");
     assert.equal(manager.isControlled(sid), false, "nothing starts here");
   } finally {
     release();

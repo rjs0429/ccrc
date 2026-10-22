@@ -33,7 +33,7 @@ export function newest(items: DisplayItem[]): number | undefined {
 // A message from here is the sent text with its id; one the transcript kept without an id, a text like it sent before
 // the message came.
 function shows(i: DisplayItem, q: PeerSent): boolean {
-  if (i.kind !== "message" || i.from !== "session" || i.name !== INBOX_SENDER) return false;
+  if (i.kind !== "message" || i.from !== "session" || !Object.values(INBOX_SENDER).includes(i.name ?? "")) return false;
   if (i.msgId) return i.msgId === q.msgId;
   return sameText(i.text, q.text) && (q.since === undefined || time(i) > q.since);
 }

@@ -35,8 +35,9 @@ export interface SessionSummary {
   inbox?: boolean;
 }
 
-// The sender name of a message sent from here to a session open in another program, as Claude and that session show it.
-export const INBOX_SENDER = "ccrc 휴대폰";
+// The sender name of a message sent from here to a session open in another program, as Claude and that session show it,
+// in the sending phone's language.
+export const INBOX_SENDER: Record<Lang, string> = { ko: "ccrc 휴대폰", en: "ccrc phone" };
 
 // How a session open in another program would treat a message from here, as far as ccrc can tell: delivered, held
 // until approved in its terminal, held where nobody can approve it (by its permission mode or its settings), or
@@ -705,7 +706,7 @@ CALL_OPS.push("export", "usage_causes");
 export interface CallMap {
   // Sends text to a session open in another program through its inbox socket; Claude gets it as a message from
   // another session. What becomes of it shows in the transcript, where its message has msgId.
-  inbox_send: { args: { text: string }; data: { msgId: string } };
+  inbox_send: { args: { text: string; lang?: Lang }; data: { msgId: string } };
 }
 CALL_OPS.push("inbox_send");
 

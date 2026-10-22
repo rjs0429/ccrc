@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, ModelOption, QueuedMessage } from "../../../broker/src/protocol.ts";
 import { DateLine, ItemView, QueuedItem, StreamPreview, shownItems } from "../components/Items.tsx";
-import { t, tc } from "../i18n/index.ts";
+import { lang, t, tc } from "../i18n/index.ts";
 import { Composer } from "../components/Composer.tsx";
 import { reattach } from "../components/composer/attachments.ts";
 import { afterKeyboard } from "../components/composer/picker.ts";
@@ -364,7 +364,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const id = `peer-${Date.now()}-${peerSent.length}`;
     setPeerSent((list) => [...list, { id, ts: new Date().toISOString(), text, from: "remote", since: newest(chat?.items ?? []) }]);
     follow(true);
-    call(sessionId, "inbox_send", { text }).then(
+    call(sessionId, "inbox_send", { text, lang: lang() }).then(
       ({ msgId }) => {
         setPeerSent((list) => list.map((q) => (q.id === id ? { ...q, msgId } : q)));
         toast(t("다른 세션 메시지로 보냈습니다"));

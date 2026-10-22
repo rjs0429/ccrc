@@ -17,10 +17,10 @@ function kept(content: string): string {
   return `Another Claude session sent a message:\n${content.slice(0, start)}${body}${content.slice(end)}\n\nThis came from another Claude session.`;
 }
 
-function shown(text: string, msgId?: unknown): DisplayItem {
-  const content = kept(JSON.parse(inboxLine(SID, text)).message.content as string);
+function shown(text: string, msgId?: unknown, lang: "ko" | "en" = "ko"): DisplayItem {
+  const content = kept(JSON.parse(inboxLine(SID, text, undefined, lang)).message.content as string);
   const b = new ItemBuilder("/tmp/peer");
-  const origin = { kind: "peer", from: "unknown", ...(msgId === undefined ? {} : { msg_id: msgId }), name: INBOX_SENDER, fromMode: "prompting" };
+  const origin = { kind: "peer", from: "unknown", ...(msgId === undefined ? {} : { msg_id: msgId }), name: INBOX_SENDER[lang], fromMode: "prompting" };
   const [item] = b.add({ type: "user", uuid: "6f6f6f6f-1111-4000-8000-000000000001", isMeta: true, origin, message: { role: "user", content } } as never);
   assert.equal(item?.kind, "message");
   return item;
@@ -29,7 +29,7 @@ function shown(text: string, msgId?: unknown): DisplayItem {
 const ID = ["6f6f6f6f-2222-4000-8000-000000000001", "6f6f6f6f-2222-4000-8000-000000000002", "6f6f6f6f-2222-4000-8000-000000000003"];
 const at = (min: number) => new Date(Date.UTC(2026, 9, 18, 0, min)).toISOString();
 // A message from this phone as the conversation shows it, and a reply.
-const fromHere = (id: string, text: string, min: number, msgId?: string): DisplayItem => ({ kind: "message", id, ts: at(min), from: "session", name: INBOX_SENDER, text, ...(msgId ? { msgId } : {}) });
+const fromHere = (id: string, text: string, min: number, msgId?: string): DisplayItem => ({ kind: "message", id, ts: at(min), from: "session", name: INBOX_SENDER.ko, text, ...(msgId ? { msgId } : {}) });
 const reply = (id: string, min: number): DisplayItem => ({ kind: "assistant", id, ts: at(min), text: "ok" });
 const sent = (id: string, text: string, items: DisplayItem[], msgId?: string): PeerSent => ({ id, ts: at(0), text, from: "remote", since: newest(items), ...(msgId ? { msgId } : {}) });
 const waiting = (list: PeerSent[], items: DisplayItem[]) =>
@@ -50,7 +50,7 @@ test("text sent to a session open elsewhere matches its message however Claude C
   ];
   for (const text of texts) {
     const item = shown(text);
-    assert.ok(item.kind === "message" && item.name === INBOX_SENDER && sameText(item.text, text), `${JSON.stringify(text)} -> ${JSON.stringify(item.kind === "message" && item.text)}`);
+    assert.ok(item.kind === "message" && item.name === INBOX_SENDER.ko && sameText(item.text, text), `${JSON.stringify(text)} -> ${JSON.stringify(item.kind === "message" && item.text)}`);
   }
   assert.equal(sameText("hello", "hello there"), false);
 });
@@ -62,9 +62,12 @@ test("a long message matches by the part the transcript keeps, and only its own 
   assert.ok(item.kind === "message" && sameText(item.text, long));
   assert.ok(item.kind === "message" && !sameText(item.text, `다른 글 ${long}`));
   const q = sent("q", "other", []);
-  assert.deepEqual(waiting([q], [{ kind: "message", id: "m", from: "agent", name: INBOX_SENDER, text: "other" }]), ["q"], "only messages from another session");
+  assert.deepEqual(waiting([q], [{ kind: "message", id: "m", from: "agent", name: INBOX_SENDER.ko, text: "other" }]), ["q"], "only messages from another session");
   assert.deepEqual(waiting([q], [{ kind: "message", id: "m", from: "session", name: "리뷰 세션", text: "other" }]), ["q"], "only this phone's");
-  assert.deepEqual(waiting([q], [{ kind: "message", id: "m", from: "session", name: INBOX_SENDER, text: "other" }]), []);
+  assert.deepEqual(waiting([q], [{ kind: "message", id: "m", from: "session", name: INBOX_SENDER.ko, text: "other" }]), []);
+  assert.deepEqual(waiting([q], [{ kind: "message", id: "m", from: "session", name: INBOX_SENDER.en, text: "other" }]), [], "sent while the phone showed English");
+  const en = shown("hello", ID[0], "en");
+  assert.ok(en.kind === "message" && en.name === "ccrc phone" && en.msgId === ID[0]);
 });
 
 test("a message from another session keeps the id it came with when Claude Code kept it, a UUID", () => {

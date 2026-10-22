@@ -3,6 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { isPrivateDir } from "../link/protocol.ts";
+import type { Lang } from "../lang.ts";
 import { INBOX_SENDER, type InboxInfo } from "../protocol.ts";
 
 // The line format of a session's inbox socket (cross-session messaging) that its registry file names peerProtocol 1.
@@ -19,8 +20,8 @@ type Inbound = (typeof LADDER)[number];
 
 // One message as Claude Code's own sessions send it, without a reply address. Claude Code drops it when its process
 // runs another conversation than session_id by then.
-export function inboxLine(sessionId: string, text: string, id: string = randomUUID()): string {
-  const content = `<${TAG} from-name="${INBOX_SENDER}" from-mode="prompting">\n${text.replace(CLOSING, "<\\")}\n</${TAG}>`;
+export function inboxLine(sessionId: string, text: string, id: string = randomUUID(), lang: Lang = "ko"): string {
+  const content = `<${TAG} from-name="${INBOX_SENDER[lang]}" from-mode="prompting">\n${text.replace(CLOSING, "<\\")}\n</${TAG}>`;
   return JSON.stringify({ msgV: INBOX_PROTOCOL, msg_id: id, type: "user", session_id: sessionId, message: { role: "user", content }, priority: "next" });
 }
 
