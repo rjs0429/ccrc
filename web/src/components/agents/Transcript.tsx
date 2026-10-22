@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentTranscript, DisplayItem } from "../../../../broker/src/protocol.ts";
+import { t } from "../../i18n/index.ts";
 import { errorText } from "../../labels.ts";
 import { call, following, toast } from "../../state.ts";
 import { ItemView, shownItems } from "../Items.tsx";
@@ -30,11 +31,11 @@ function Prompt({ text }: { text: string }) {
   const [open, setOpen] = useState(!long);
   return (
     <div className="rounded-xl bg-surface-2 px-3 py-2.5" data-prompt>
-      <div className="text-xs font-semibold text-muted">지시</div>
+      <div className="text-xs font-semibold text-muted">{t("지시")}</div>
       <div className={`mt-1 text-[14px] leading-relaxed whitespace-pre-wrap ${open ? "" : "line-clamp-12"}`}>{text}</div>
       {long && (
         <button onClick={() => setOpen(!open)} className="mt-1 min-h-8 text-sm font-medium text-accent">
-          {open ? "접기" : "더 보기"}
+          {open ? t("접기") : t("더 보기")}
         </button>
       )}
     </div>
@@ -46,7 +47,7 @@ function Entry({ item, promptId, running }: { item: DisplayItem; promptId?: stri
   if (item.id === promptId) return <Prompt text={item.text} />;
   return (
     <div className="rounded-xl border border-line px-3 py-2.5" data-agent-message>
-      <div className="text-xs font-semibold text-muted">메인 에이전트의 메시지</div>
+      <div className="text-xs font-semibold text-muted">{t("메인 에이전트의 메시지")}</div>
       <div className="mt-1 text-[14px] leading-relaxed whitespace-pre-wrap">{item.text}</div>
     </div>
   );
@@ -198,24 +199,24 @@ export function Transcript({ sessionId, target, active, startAt, running, roots,
   };
 
   const items = useMemo(() => shownItems(h?.items ?? []), [h?.items]);
-  const meta = [h?.agentType, h && !h.missing ? `기록 ${h.total}개` : ""].filter(Boolean).join(" · ");
+  const meta = [h?.agentType, h && !h.missing ? t("기록 {n}개", { n: h.total }) : ""].filter(Boolean).join(" · ");
   const lost = error !== undefined && LOST.test(error);
 
   return (
     <div ref={rootRef} hidden={!active} onPointerDown={endGlide} onWheel={endGlide} data-transcript={h?.agentId || target.agentId || target.toolUseId}>
       <div className="sticky -top-4 z-10 -mx-4 -mt-4 mb-3 border-b border-line bg-surface px-4 pt-2 pb-2 sm:top-0 sm:mx-0 sm:mt-0 sm:px-0 sm:pt-0" data-transcript-head>
         <div className="flex items-start gap-1">
-          <button onClick={onBack} aria-label="뒤로" className="-ml-2 flex size-11 shrink-0 items-center justify-center rounded-lg text-accent" data-transcript-back>
+          <button onClick={onBack} aria-label={t("뒤로")} className="-ml-2 flex size-11 shrink-0 items-center justify-center rounded-lg text-accent" data-transcript-back>
             <Icon.back className="size-5" />
           </button>
           <div className="min-w-0 flex-1 pt-2">
-            <div className="line-clamp-2 text-[16px] font-semibold break-words">{target.title || h?.description || "서브에이전트"}</div>
+            <div className="line-clamp-2 text-[16px] font-semibold break-words">{target.title || h?.description || t("서브에이전트")}</div>
             {meta && <div className="mt-0.5 text-xs text-muted">{meta}</div>}
           </div>
           {running && (
             <span className="mt-3 flex shrink-0 items-center gap-1.5 text-xs font-medium text-accent" data-transcript-running>
               <span className="size-2 animate-pulse rounded-full bg-accent" />
-              실행 중
+              {t("실행 중")}
             </span>
           )}
         </div>
@@ -223,16 +224,16 @@ export function Transcript({ sessionId, target, active, startAt, running, roots,
       <FileLinks.Provider value={onFile}>
         <FileRoots.Provider value={roots}>
           <AgentLinks.Provider value={onOpen}>
-            {!h && !error && <Waiting text="기록을 불러오는 중…" />}
-            {!h && error && <Failed text={lost ? "연결이 끊겨 기록을 받지 못했습니다" : errorText(error)} onRetry={/too large/.test(error) ? undefined : () => void read()} />}
+            {!h && !error && <Waiting text={t("기록을 불러오는 중…")} />}
+            {!h && error && <Failed text={lost ? t("연결이 끊겨 기록을 받지 못했습니다") : errorText(error)} onRetry={/too large/.test(error) ? undefined : () => void read()} />}
             {h && (h.missing || !h.total) && (
               <div className="px-1 py-3 text-sm text-muted" data-transcript-empty>
-                {running || !h.missing ? "아직 기록이 없습니다" : "에이전트 기록을 찾을 수 없습니다"}
+                {running || !h.missing ? t("아직 기록이 없습니다") : t("에이전트 기록을 찾을 수 없습니다")}
               </div>
             )}
             {h && h.from > 0 && (
               <button onClick={() => void loadEarlier()} disabled={earlier} className="mb-3 flex min-h-11 w-full items-center justify-center rounded-xl bg-surface-2 text-sm font-medium text-accent disabled:opacity-50" data-transcript-earlier>
-                {earlier ? "불러오는 중…" : `이전 기록 ${Math.min(PAGE, h.from)}개 더 보기`}
+                {earlier ? t("불러오는 중…") : t("이전 기록 {n}개 더 보기", { n: Math.min(PAGE, h.from) })}
               </button>
             )}
             {h && (
@@ -248,10 +249,10 @@ export function Transcript({ sessionId, target, active, startAt, running, roots,
             )}
             {h && running && h.total > 0 && !error && (
               <div className="mt-4 flex items-center gap-2 text-sm text-muted" data-transcript-working>
-                <Spinner className="size-3.5" /> 작업 중…
+                <Spinner className="size-3.5" /> {t("작업 중…")}
               </div>
             )}
-            {h && error && <div className="mt-3 px-1 text-xs text-warn">{lost ? "연결이 끊겨 새 기록을 받지 못했습니다" : errorText(error)}</div>}
+            {h && error && <div className="mt-3 px-1 text-xs text-warn">{lost ? t("연결이 끊겨 새 기록을 받지 못했습니다") : errorText(error)}</div>}
           </AgentLinks.Provider>
         </FileRoots.Provider>
       </FileLinks.Provider>
@@ -260,11 +261,11 @@ export function Transcript({ sessionId, target, active, startAt, running, roots,
           <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
             {unseen ? (
               <button onClick={toEnd} className="pointer-events-auto flex min-h-11 items-center gap-1.5 rounded-full bg-fg px-4 text-sm font-medium whitespace-nowrap text-bg shadow-lg" data-transcript-new>
-                새 기록
+                {t("새 기록")}
                 <Icon.arrowDown className="size-4" />
               </button>
             ) : (
-              <button onClick={toEnd} aria-label="맨 아래로" className="group pointer-events-auto flex size-11 items-center justify-center" data-transcript-end>
+              <button onClick={toEnd} aria-label={t("맨 아래로")} className="group pointer-events-auto flex size-11 items-center justify-center" data-transcript-end>
                 <span className="flex size-9 items-center justify-center rounded-full border border-line bg-surface text-fg shadow-md group-active:bg-surface-2">
                   <Icon.arrowDown className="size-[18px]" />
                 </span>

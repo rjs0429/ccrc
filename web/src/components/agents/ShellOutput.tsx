@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { TaskInfo, TaskOutput } from "../../../../broker/src/protocol.ts";
+import { t } from "../../i18n/index.ts";
 import { errorText, sizeText } from "../../labels.ts";
 import { call } from "../../state.ts";
 import { cleanOutput } from "./output.ts";
@@ -52,9 +53,9 @@ function Output({ sessionId, task }: { sessionId: string; task: TaskInfo }) {
 
   return (
     <div className="mt-4" data-shell-output>
-      <div className="text-xs font-semibold text-muted">출력</div>
-      {shown === undefined && !error && <div className="mt-1 text-sm text-muted">출력을 불러오는 중…</div>}
-      {shown !== undefined && !shown.text && <div className="mt-1 text-sm text-muted">{running ? "아직 출력이 없습니다" : "출력이 없습니다"}</div>}
+      <div className="text-xs font-semibold text-muted">{t("출력")}</div>
+      {shown === undefined && !error && <div className="mt-1 text-sm text-muted">{t("출력을 불러오는 중…")}</div>}
+      {shown !== undefined && !shown.text && <div className="mt-1 text-sm text-muted">{running ? t("아직 출력이 없습니다") : t("출력이 없습니다")}</div>}
       {shown?.text && (
         <pre
           ref={pre}
@@ -70,12 +71,12 @@ function Output({ sessionId, task }: { sessionId: string; task: TaskInfo }) {
       )}
       {shown?.truncated && (
         <div className="mt-1 text-xs text-muted">
-          끝부분 {sizeText(shown.bytes)}만 보입니다 (전체 {sizeText(shown.totalBytes)})
+          {t("끝부분 {shown}만 보입니다 (전체 {total})", { shown: sizeText(shown.bytes), total: sizeText(shown.totalBytes) })}
         </div>
       )}
       {error && (
         <div className="mt-1 text-sm break-keep text-muted" data-shell-output-error>
-          {refused ? "VS Code에서 Claude Code를 다시 띄우면 출력을 볼 수 있습니다." : `출력을 볼 수 없습니다. ${errorText(error)}`}
+          {refused ? t("VS Code에서 Claude Code를 다시 띄우면 출력을 볼 수 있습니다.") : t("출력을 볼 수 없습니다. {error}", { error: errorText(error) })}
         </div>
       )}
     </div>
@@ -88,10 +89,10 @@ export function ShellOutput({ sessionId, task, onAgent }: { sessionId: string; t
   if (task.background !== false) return <Output sessionId={sessionId} task={task} />;
   return (
     <div className="mt-4 rounded-xl bg-surface-2 px-3 py-2.5 text-sm" data-shell-foreground>
-      <p className="break-keep text-muted">포그라운드 명령입니다. 끝나면 결과가 대화나 띄운 에이전트의 기록에 나옵니다.</p>
+      <p className="break-keep text-muted">{t("포그라운드 명령입니다. 끝나면 결과가 대화나 띄운 에이전트의 기록에 나옵니다.")}</p>
       {onAgent && (
         <button onClick={onAgent} className="mt-1 min-h-11 font-medium text-accent">
-          띄운 에이전트 기록 보기 ›
+          {t("띄운 에이전트 기록 보기 ›")}
         </button>
       )}
     </div>

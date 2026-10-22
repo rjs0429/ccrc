@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import type { TaskInfo } from "../../../../broker/src/protocol.ts";
+import { k, t } from "../../i18n/index.ts";
 import { errorText } from "../../labels.ts";
 import { call, toast, useApp } from "../../state.ts";
 
 // Claude Code lists a Bash command the turn waits on once it has run this long, and a subagent as it starts, which is
 // offered to move once it has run as long.
 const FOREGROUND_MS = 2000;
-export const OLD_WRAPPER_NOTE = "VS Code에서 Claude Code를 다시 띄우면 백그라운드로 보낼 수 있습니다.";
+export const OLD_WRAPPER_NOTE = k("VS Code에서 Claude Code를 다시 띄우면 백그라운드로 보낼 수 있습니다.");
 const MOVED_KEEP = 200;
 // A call's result when it went on in the background without being started there.
 const MOVED_RESULT = /^Command (?:was manually backgrounded|did not complete within)|moved to the background/;
@@ -49,7 +50,7 @@ export function useMove(sessionId: string | undefined): { moving: boolean; move:
     call(sessionId, "background", { toolUseId })
       .then(
         (r) => {
-          if (!r.backgrounded) return toast("이미 끝났거나 백그라운드에서 실행 중입니다");
+          if (!r.backgrounded) return toast(t("이미 끝났거나 백그라운드에서 실행 중입니다"));
           moved.add(movedKey(sessionId, toolUseId));
           for (const old of [...moved].slice(0, -MOVED_KEEP)) moved.delete(old);
         },

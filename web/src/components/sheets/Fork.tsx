@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { PERMISSION_MODES, type GitFolderInfo, type LiveState, type PermissionModeName, type StartSettings } from "../../../../broker/src/protocol.ts";
+import { t } from "../../i18n/index.ts";
+import { tNode } from "../../i18n/react.ts";
 import { errorText, shortPath } from "../../labels.ts";
 import { rememberSent } from "../../sentPreviews.ts";
 import { call, navigate, toast, useApp } from "../../state.ts";
@@ -85,7 +87,7 @@ export function ForkSheet({
   const filled = text.trim() !== "" || attachments.length > 0;
   const worktreeOn = worktree.on && !worktreeBlocked(git);
   const picked = worktreeOn ? worktreeChoice(git as GitFolderInfo, worktree, true) : undefined;
-  const worktreeHold = worktree.on && git === "loading" ? "worktree를 쓸 수 있는지 확인하는 중입니다" : picked && "problem" in picked ? picked.problem : undefined;
+  const worktreeHold = worktree.on && git === "loading" ? t("worktree를 쓸 수 있는지 확인하는 중입니다") : picked && "problem" in picked ? picked.problem : undefined;
   const blocked = folderMissing || uploading || Boolean(going) || Boolean(worktreeHold);
 
   // The sheet starts from the message's files, and what it holds goes with it unless a fork takes it.
@@ -140,10 +142,10 @@ export function ForkSheet({
           clearAttachments(NEW_SESSION_SCOPE);
           moveAttachments(scope, NEW_SESSION_SCOPE);
           openNewSession(r.draft.cwd, text, startOf(st), choice ? { on: true, base: "head", name: choice.name } : undefined);
-          toast("첫 메시지라 같은 폴더의 새 세션으로 엽니다");
+          toast(t("첫 메시지라 같은 폴더의 새 세션으로 엽니다"));
         } else if (start) {
           rememberSent(r.sessionId, message, takeAttachments(scope));
-          toast("갈래를 시작했습니다", { label: "열기", run: () => navigate({ name: "chat", sessionId: r.sessionId }) });
+          toast(t("갈래를 시작했습니다"), { label: t("열기"), run: () => navigate({ name: "chat", sessionId: r.sessionId }) });
         } else {
           // A start asked for earlier in this sheet may have given the fork its first message; the text then stays sent.
           if (r.sent) rememberSent(r.sessionId, message, takeAttachments(scope));
@@ -163,25 +165,26 @@ export function ForkSheet({
   };
 
   return (
-    <Sheet title="갈래 만들기" onClose={onClose}>
+    <Sheet title={t("갈래 만들기")} onClose={onClose}>
       <p className="px-1 text-sm text-muted" data-fork-about>
         <span className="block">
-          {before ? "이 메시지 앞까지의 대화를 새 세션으로 복사합니다." : "지금까지의 대화를 새 세션으로 복사합니다."}
-          {!before && busy && " 지금 돌고 있는 턴은 빼고 복사합니다."}
+          {before ? t("이 메시지 앞까지의 대화를 새 세션으로 복사합니다.") : t("지금까지의 대화를 새 세션으로 복사합니다.")}
+          {!before && busy && ` ${t("지금 돌고 있는 턴은 빼고 복사합니다.")}`}
         </span>
-        <span className="block">원래 세션은 그대로입니다.</span>
+        <span className="block">{t("원래 세션은 그대로입니다.")}</span>
       </p>
       <p className="mt-1 px-1 text-xs text-muted">
-        갈래는 원격 세션으로 돌며 권한 모드, 모델, Effort를 이어받습니다.{fast && " Fast 모드는 끄고 시작합니다."}
+        {t("갈래는 원격 세션으로 돌며 권한 모드, 모델, Effort를 이어받습니다.")}
+        {fast && ` ${t("Fast 모드는 끄고 시작합니다.")}`}
       </p>
       {name && (
         <p className="mt-1 px-1 text-xs break-all text-muted" data-fork-name>
-          갈래 이름: <span className="font-medium text-fg">{name}</span>
+          {tNode("갈래 이름: {name}", { name: <span className="font-medium text-fg">{name}</span> })}
         </p>
       )}
       {folderMissing ? (
         <div className="mt-3">
-          <Failed text={`작업 폴더가 없어 갈래를 만들 수 없습니다: ${shortPath(cwd)}`} />
+          <Failed text={t("작업 폴더가 없어 갈래를 만들 수 없습니다: {folder}", { folder: shortPath(cwd) })} />
         </div>
       ) : (
         <div className="mt-3 rounded-2xl border border-line bg-bg px-3 pt-2.5 pb-1 focus-within:border-accent">
@@ -192,14 +195,14 @@ export function ForkSheet({
             rows={3}
             readOnly={Boolean(going)}
             onChange={(e) => setText(e.target.value)}
-            aria-label="갈래에서 할 일"
-            placeholder="갈래에서 할 일 (비우면 기다립니다)"
+            aria-label={t("갈래에서 할 일")}
+            placeholder={t("갈래에서 할 일 (비우면 기다립니다)")}
             className="block max-h-[30vh] w-full resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-muted"
             data-fork-text
           />
           <span className="relative -ml-1.5 inline-flex">
             <button
-              aria-label="파일 첨부"
+              aria-label={t("파일 첨부")}
               onClick={attach}
               disabled={Boolean(going)}
               className="flex size-11 items-center justify-center rounded-lg text-muted hover:bg-surface-2 disabled:opacity-50"
@@ -245,13 +248,13 @@ export function ForkSheet({
       )}
       <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-1 text-center text-xs text-muted">
         <Button disabled={blocked} onClick={() => go(false)} describedBy={`${hints}-open`}>
-          {going === "open" ? <Spinner className="mx-auto size-5" /> : "갈래 열기"}
+          {going === "open" ? <Spinner className="mx-auto size-5" /> : t("갈래 열기")}
         </Button>
         <Button kind="primary" disabled={blocked || !filled} onClick={() => go(true)} describedBy={`${hints}-start`}>
-          {going === "start" ? <Spinner className="mx-auto size-5" /> : "백그라운드로 시작"}
+          {going === "start" ? <Spinner className="mx-auto size-5" /> : t("백그라운드로 시작")}
         </Button>
-        <span id={`${hints}-open`}>보내지 않고 갈래로 갑니다</span>
-        <span id={`${hints}-start`}>보내고 이 화면에 남습니다</span>
+        <span id={`${hints}-open`}>{t("보내지 않고 갈래로 갑니다")}</span>
+        <span id={`${hints}-start`}>{t("보내고 이 화면에 남습니다")}</span>
       </div>
     </Sheet>
   );

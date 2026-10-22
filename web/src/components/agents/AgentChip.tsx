@@ -1,4 +1,5 @@
 import type { Ref } from "react";
+import { t } from "../../i18n/index.ts";
 import { Icon } from "../ui.tsx";
 import type { AgentMap, ChipDot } from "./tree.ts";
 
@@ -12,12 +13,12 @@ const DOT: Record<Exclude<ChipDot, "idle">, string> = {
 };
 
 function label(chip?: Chip): string {
-  if (!chip) return "이 대화에서 쓴 에이전트가 없습니다. 에이전트 지도 열기";
-  if (chip.dot === "waiting") return "권한을 기다리는 에이전트가 있습니다. 에이전트 지도 열기";
-  if (chip.running) return `에이전트 ${chip.running}개 실행 중. 에이전트 지도 열기`;
-  if (chip.dot === "failed") return "실패한 에이전트가 있습니다. 에이전트 지도 열기";
-  if (chip.dot === "done") return "에이전트가 모두 끝났습니다. 에이전트 지도 열기";
-  return `이 대화의 에이전트 ${chip.total}개. 에이전트 지도 열기`;
+  if (!chip) return t("이 대화에서 쓴 에이전트가 없습니다. 에이전트 지도 열기");
+  if (chip.dot === "waiting") return t("권한을 기다리는 에이전트가 있습니다. 에이전트 지도 열기");
+  if (chip.running) return t("에이전트 {n}개 실행 중. 에이전트 지도 열기", { n: chip.running });
+  if (chip.dot === "failed") return t("실패한 에이전트가 있습니다. 에이전트 지도 열기");
+  if (chip.dot === "done") return t("에이전트가 모두 끝났습니다. 에이전트 지도 열기");
+  return t("이 대화의 에이전트 {n}개. 에이전트 지도 열기", { n: chip.total });
 }
 
 // The chip's width with its word, from its parts as laid out now: icon, word and the count's place.
@@ -46,7 +47,7 @@ export function AgentChip({ chip, word, onClick, ref, className = "" }: { chip?:
         <Icon.agents className="size-[18px]" />
         {chip && chip.dot !== "idle" && <span className={`absolute -top-0.5 -right-0.5 size-1.5 rounded-full ring-2 ring-surface ${DOT[chip.dot]}`} />}
       </span>
-      <span className={`whitespace-nowrap ${word ? "" : "invisible absolute left-0"}`}>에이전트</span>
+      <span className={`whitespace-nowrap ${word ? "" : "invisible absolute left-0"}`}>{t("에이전트")}</span>
       <span className="grid font-medium text-fg tabular-nums">
         <span className="invisible col-start-1 row-start-1">00</span>
         <span className="col-start-1 row-start-1">{chip?.running || ""}</span>
