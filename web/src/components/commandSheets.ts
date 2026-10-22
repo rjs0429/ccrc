@@ -1,16 +1,16 @@
 import { commandName, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { CommandInfo } from "../../../broker/src/protocol.ts";
-import { k, t } from "../i18n/index.ts";
+import { k, kc, t, type Placed } from "../i18n/index.ts";
 
 export type CommandSheet = "context" | "usage" | "mcp" | "agents" | "rewind" | "model" | "effort" | "config" | "permissions" | "outputStyle" | "fork" | "btw" | "export" | "copy";
 
 // Bare "/" commands the phone answers with a sheet or page of its own instead of sending them, the way VS Code
 // opens a dialog. live: the sheet needs the session's Claude Code process. Aliases resolve through commandName. The
 // title is handed to t() where it is shown.
-export const COMMAND_SHEETS: Record<string, { sheet: CommandSheet; title: string; live?: boolean }> = {
+export const COMMAND_SHEETS: Record<string, { sheet: CommandSheet; title: string | Placed; live?: boolean }> = {
   context: { sheet: "context", title: "Context" },
   usage: { sheet: "usage", title: k("사용량") },
-  mcp: { sheet: "mcp", title: k("MCP 서버"), live: true },
+  mcp: { sheet: "mcp", title: kc("server list", "MCP 서버"), live: true },
   model: { sheet: "model", title: k("모델") },
   effort: { sheet: "effort", title: "Effort" },
   tasks: { sheet: "agents", title: k("에이전트 지도") },

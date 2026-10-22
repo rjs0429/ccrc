@@ -373,7 +373,7 @@ GitHub Actions 는 `main` 과 `dev` 로 push 할 때와 pull request 에서 Node
 
 설정 키, 상태 파일, 외부 도구, 경로를 더하는 변경은 `ccrc setup`, `broker/src/config.ts` 의 migrate, 이 README, CHANGELOG 의 Unreleased 절을 함께 고친다. 시험 자료에는 예시 값(`100.64.0.x`, `*.example.ts.net`, `/home/user`)만 쓴다.
 
-휴대폰 앱의 화면 글은 `t()`(`web/src/i18n`)로 한국어로 쓰고, 그 한국어 문장이 `web/src/i18n/en/` 에 있는 영어의 키다. 같은 문장에 자리마다 다른 영어가 필요하면 `tc()` 를 쓴다. `npm test` 는 이것들 밖에 남은 한국어와 영어가 없는 문장에서 실패하고, `node broker/test/i18n-scan.ts` 가 그 목록을 보인다.
+휴대폰 앱의 화면 글은 `t()`(`web/src/i18n`)로 한국어로 쓰고, 그 한국어 문장이 `web/src/i18n/en/` 에 있는 영어의 키다. 같은 문장에 자리마다 다른 영어가 필요하면 `tc()` 를 쓴다(모듈 맨 위 표에서는 `kc()`). `npm test` 는 이것들 밖에 남은 한국어와 영어가 없는 문장에서 실패하고, `node broker/test/i18n-scan.ts` 가 그 목록을 보인다.
 
 `README.md`, `CHANGELOG.md`, `SECURITY.md` 를 고치면 같은 커밋에서 한국어판(`README.ko.md`, `CHANGELOG.ko.md`, `SECURITY.ko.md`)도 고친다.
 

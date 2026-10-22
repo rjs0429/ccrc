@@ -160,6 +160,7 @@ export const g5: Record<string, string> = {
   "MCP 서버 안내": "MCP server instructions",
   "사용자 에이전트": "Custom agents",
   "메모리 파일": "Memory files",
+  "context category|스킬": "Skills",
   대화: "Messages",
   "요약 여유분": "Compact buffer",
   "빈 공간": "Free space",
@@ -227,4 +228,5 @@ export const g5: Record<string, string> = {
   "읽기만 할 수 있습니다.": "It's read-only.",
   "여기서부터 되감기 전 가지": "From here on, the branch before the rewind",
   "agent chip|에이전트": "Agents",
+  "이어서 실행": "Resume",
 };

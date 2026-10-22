@@ -1,5 +1,5 @@
-// The phone app's text as the screens hold it: sentences handed to t()/k()/tNode()/tc() and Korean left outside them.
-// Run it to list what is left: node broker/test/i18n-scan.ts [path ...] (paths under web/src; all files by default).
+// The phone app's text as the screens hold it: sentences handed to t()/k()/tNode()/tc()/kc() and Korean left outside
+// them. To list what is left: node broker/test/i18n-scan.ts [path ...] (paths under web/src; all files by default).
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,8 @@ export const WEB = path.resolve(import.meta.dirname, "../../web/src");
 const I18N = path.join(WEB, "i18n");
 const HANGUL = /[ㄱ-ㆎ가-힣]/;
 const KEYED = new Set(["t", "k", "tNode"]);
+// tc(place, sentence) and kc(place, sentence) keep their sentence under "place|sentence".
+const PLACED = new Set(["tc", "kc"]);
 // t(), tNode() and tc() give the text of the current language, so they run where it is shown, never at module level.
 const SHOWN = new Set(["t", "tNode", "tc"]);
 
@@ -62,9 +64,8 @@ export function scanFiles(files = webFiles()): Scan {
     const at = (node: ts.Node, t: string): Found => ({ file: rel, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, text: t });
     const keyed = new Set<ts.Node>();
     const visit = (node: ts.Node) => {
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && (KEYED.has(node.expression.text) || node.expression.text === "tc")) {
-        // tc(place, sentence) keeps its sentence under "place|sentence".
-        const args = node.expression.text === "tc" ? node.arguments.slice(0, 2) : node.arguments.slice(0, 1);
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && (KEYED.has(node.expression.text) || PLACED.has(node.expression.text))) {
+        const args = node.arguments.slice(0, PLACED.has(node.expression.text) ? 2 : 1);
         if (args.length && args.every((a) => ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a))) {
           const parts = args as (ts.StringLiteral | ts.NoSubstitutionTemplateLiteral)[];
           const key = parts.map((a) => a.text).join("|");

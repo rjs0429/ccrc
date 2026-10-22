@@ -2,17 +2,18 @@ import { useEffect, useState } from "react";
 import type { AuditEntry, AuditPage } from "../../../../broker/src/admin-protocol.ts";
 import { request } from "../../api.ts";
 import { Spinner } from "../../components/ui.tsx";
-import { k, t, tc } from "../../i18n/index.ts";
+import { k, kc, t, tc, type Placed } from "../../i18n/index.ts";
 import { EFFORT_LABEL, MODE_LABEL, baseName } from "../../labels.ts";
 import { placeLabel } from "../../worktree.ts";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
 
 const PAGE = 30;
 
-const EVENT_LABEL: Record<string, string> = {
-  login: k("로그인"),
+// What was done. A label whose Korean a button also shows takes the record's own English through kc("audit", ...).
+const EVENT_LABEL: Record<string, string | Placed> = {
+  login: kc("audit", "로그인"),
   login_failed: k("로그인 실패"),
-  logout: k("로그아웃"),
+  logout: kc("audit", "로그아웃"),
   lease_revoked: k("로그인 해제됨"),
   password_changed: k("비밀번호 바꿈"),
   window_taken: k("다른 창으로 옮김"),
@@ -20,7 +21,7 @@ const EVENT_LABEL: Record<string, string> = {
   send: k("메시지 보냄"),
   new_session: k("새 세션"),
   answer: k("요청에 답함"),
-  interrupt: k("중지"),
+  interrupt: kc("audit", "중지"),
   set_mode: k("권한 모드 바꿈"),
   set_model: k("모델 바꿈"),
   set_effort: k("Effort 바꿈"),
@@ -31,7 +32,7 @@ const EVENT_LABEL: Record<string, string> = {
   release: k("원격 실행 끝냄"),
   attach: k("VS Code 세션 연결"),
   handoff: k("VS Code로 넘김"),
-  upload: k("파일 첨부"),
+  upload: kc("audit", "파일 첨부"),
   reattach: k("첨부 다시 붙임"),
   file_read: k("파일 열람"),
   agent_transcript: k("에이전트 기록 열람"),
@@ -42,28 +43,28 @@ const EVENT_LABEL: Record<string, string> = {
   push_subscribe: k("알림 켬"),
   push_unsubscribe: k("알림 끔"),
   doctor: k("호환성 점검"),
-  archive: k("보관 해제"),
-  worktree_remove: k("worktree 지우기"),
+  archive: kc("audit", "보관 해제"),
+  worktree_remove: kc("audit", "worktree 지우기"),
   fork: k("갈래"),
   rewind_conversation: k("대화 되돌리기"),
   git_changes: k("git 변경 열람"),
   agent_changes: k("에이전트 변경 열람"),
   side_question: k("곁질문"),
-  export: k("대화 내보내기"),
+  export: kc("audit", "대화 내보내기"),
   config: k("ccrc 설정 바꿈"),
-  passkey_registered: k("패스키 등록"),
-  passkey_verified: k("패스키로 확인"),
+  passkey_registered: kc("audit", "패스키 등록"),
+  passkey_verified: kc("audit", "패스키로 확인"),
   passkey_failed: k("패스키 확인 실패"),
   passkey_removed: k("패스키 지움"),
   passkey_reset: k("패스키 모두 지움"),
 };
 
-const CALL_LABEL: Record<string, string> = {
+const CALL_LABEL: Record<string, string | Placed> = {
   mcp_toggle: k("MCP 켜기·끄기"),
   mcp_reconnect: k("MCP 다시 연결"),
   rewind: k("파일 되돌리기"),
   stop_task: k("작업 중지"),
-  resume: k("이어서 실행"),
+  resume: kc("audit", "이어서 실행"),
   set_output_style: k("출력 스타일 바꿈"),
   rename: k("이름 바꿈"),
   mcp_authenticate: k("MCP 인증 시작"),
@@ -81,7 +82,7 @@ const READ_OUTCOME: Record<string, string> = {
   ticket_expired: k("만료된 임시 링크"),
 };
 
-const WORD: Record<string, string> = {
+const WORD: Record<string, string | Placed> = {
   allow: k("허용"),
   allow_always: k("항상 허용"),
   deny: k("거부"),
@@ -90,7 +91,7 @@ const WORD: Record<string, string> = {
   locked: k("잠김"),
   taken_over: k("다른 기기에서 로그인"),
   idle: k("오래 쓰지 않음"),
-  logout: k("로그아웃"),
+  logout: kc("audit", "로그아웃"),
   expired: k("만료"),
   accept: k("보냄"),
   decline: k("거절"),
@@ -124,7 +125,7 @@ function original(e: AuditEntry): string {
 }
 
 // The value as a label from the first map that has it, else as it is.
-function named(v: unknown, ...maps: Record<string, string>[]): string {
+function named(v: unknown, ...maps: Record<string, string | Placed>[]): string {
   if (typeof v !== "string") return "";
   for (const m of maps) if (Object.hasOwn(m, v)) return t(m[v]);
   return v;
@@ -158,7 +159,7 @@ function detail(e: AuditEntry): string {
           ? [t("확인 요청"), named(e.choice, WORD)].filter(Boolean).join(" · ")
           : named(e.decision, WORD, MODE_LABEL);
     case "call":
-      return [e.op === "archive" ? (e.archived ? t("보관") : t("보관 해제")) : named(e.op, CALL_LABEL), named(e.server), named(e.style)].filter(Boolean).join(" · ");
+      return [e.op === "archive" ? (e.archived ? t("보관") : tc("audit", "보관 해제")) : named(e.op, CALL_LABEL), named(e.server), named(e.style)].filter(Boolean).join(" · ");
     case "archive":
       return e.by === "send" ? t("메시지를 보내서") : "";
     case "claude_settings":

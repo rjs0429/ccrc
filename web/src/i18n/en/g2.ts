@@ -251,4 +251,6 @@ export const g2: Record<string, string> = {
   "settings toast|되돌리기": "Undo",
   "list tab|세션": "Sessions",
   "folder list|폴더가 없습니다": "No folders",
+  "보관 해제": "Unarchive",
+  "worktree 지우기": "Remove worktree",
 };

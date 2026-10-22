@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { clock, dateTime, dayLabel, fullTime, monthDay, num, shortDateTime } from "../../web/src/i18n/format.ts";
-import { deviceLang, fill, k, lang, langKey, locale, localeOf, onLang, resolveLang, setLang, t, tc } from "../../web/src/i18n/index.ts";
-import { allowAlwaysLabel, duration, errorText, fastReasonText, hostLabel, idleText, noteText, relTime, sessionTitle, usageResetText } from "../../web/src/labels.ts";
+import { deviceLang, fill, k, kc, lang, langKey, locale, localeOf, onLang, resolveLang, setLang, t, tc } from "../../web/src/i18n/index.ts";
+import { allowAlwaysLabel, duration, errorText, fastReasonText, hostLabel, idleText, inboxNotes, noteText, relTime, sessionTitle, usageResetText } from "../../web/src/labels.ts";
 
 // Some ICU versions put a narrow no-break space before AM/PM.
 const plain = (s: string) => s.replace(/[\u202f\u00a0]/g, " ");
@@ -45,9 +45,12 @@ test("the screens read Korean until English is chosen; a sentence without Englis
 
 test("a place with its own English for a sentence reads that one, and Korean stays the sentence", () => {
   assert.equal(tc("settings toast", "되돌리기"), "되돌리기");
+  assert.equal(t(kc("settings toast", "되돌리기")), "되돌리기");
   english(() => {
     assert.equal(t("되돌리기"), "Rewind");
     assert.equal(tc("settings toast", "되돌리기"), "Undo");
+    assert.equal(t(kc("settings toast", "되돌리기")), "Undo", "a table's kc() reads as tc() where t() shows it");
+    assert.equal(t(kc("no such place", "{n}분 전"), { n: 5 }), "5m ago");
     assert.equal(tc("no such place", "되돌리기"), "Rewind", "a place without its own English takes the sentence's");
     assert.equal(tc("no such place", "아직 영어가 없는 문장 {n}", { n: 2 }), "아직 영어가 없는 문장 2");
   });
@@ -144,7 +147,8 @@ test("labels read in English once English is chosen", () => {
   const now = Date.now();
   english(() => {
     assert.equal(errorText("unknown session"), "Session not found");
-    assert.equal(errorText("session is open in Terminal"), "It's open in Terminal, so it can't run remotely");
+    assert.equal(errorText("session is open in Terminal"), "It's open in a terminal, so it can't run remotely");
+    assert.equal(errorText("worktree is in use in Background"), "It's running in a background session, so the worktree can't be removed. End it first");
     assert.equal(errorText("rewind refused: turn_running"), "Can't rewind while Claude is working. Stop it first");
     assert.equal(errorText("rewind refused: brand_new"), "Can't rewind right now (brand_new)");
     assert.equal(errorText("Claude Code process exited with code 3. stderr: boom"), "Claude Code exited (code 3): boom");
@@ -155,8 +159,8 @@ test("labels read in English once English is chosen", () => {
     assert.equal(noteText("unsent", undefined, 3), "Message Claude Code did not receive (3 attachments)");
     assert.equal(noteText("fast", "free"), "Couldn't turn on Fast mode. Needs a paid plan or usage credits");
     assert.equal(fastReasonText("brand_new"), "Not available right now (brand_new)");
-    assert.equal(hostLabel("Terminal"), "Terminal");
-    assert.equal(hostLabel("ccrc"), "Remote");
+    assert.deepEqual(["Terminal", "Background", "ccrc", "VS Code"].map(hostLabel), ["a terminal", "a background session", "a remote session", "VS Code"], "as a sentence names it");
+    assert.match(inboxNotes("Terminal", { gate: "approve" })[0].text, /Claude asks again in the terminal before/);
     assert.equal(sessionTitle({ title: " " }), "(Untitled)");
     assert.equal(relTime(now - 30_000, now), "just now");
     assert.equal(relTime(now - 5 * 60_000, now), "5m ago");

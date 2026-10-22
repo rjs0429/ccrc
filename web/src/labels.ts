@@ -1,6 +1,6 @@
 import type { BrokerSessionsInfo, EffortName, InboxInfo, ModelOption, NoteCode, SessionSummary } from "../../broker/src/protocol.ts";
 import { clock, dateTime, monthDay } from "./i18n/format.ts";
-import { k, locale, t } from "./i18n/index.ts";
+import { k, locale, t, tc } from "./i18n/index.ts";
 
 export { clock };
 
@@ -101,8 +101,9 @@ const DESTINATION_LABEL: Record<string, string> = {
   userSettings: k("모든 프로젝트"),
 };
 
+// The program a session is open in, as the sentences around it name it ("in a terminal").
 export function hostLabel(host?: string): string {
-  return host === "Terminal" ? t("터미널") : host === "Background" ? t("백그라운드") : host === "ccrc" ? t("원격") : (host ?? "");
+  return host === "Terminal" ? tc("host", "터미널") : host === "Background" ? tc("host", "백그라운드") : host === "ccrc" ? tc("host", "원격") : (host ?? "");
 }
 
 export interface PeerNote {
@@ -112,7 +113,7 @@ export interface PeerNote {
 
 // What becomes of a message sent to a session open in another program, shown before it is sent.
 export function inboxNotes(host: string | undefined, inbox: InboxInfo | undefined): PeerNote[] {
-  const where = host === "Terminal" ? t("터미널") : host === "Background" ? t("백그라운드 세션") : host === "VS Code" ? "VS Code" : t("그 세션");
+  const where = host === "Terminal" ? tc("inbox", "터미널") : host === "Background" ? t("백그라운드 세션") : host === "VS Code" ? "VS Code" : t("그 세션");
   const notes: PeerNote[] = [{ text: t("다른 세션 메시지로 전달됩니다. Claude가 중요한 작업은 {where}에서 다시 묻습니다.", { where }) }];
   if (inbox?.gate === "approve" && host === "Background") notes.push({ text: t("claude agents에서 이 세션을 열어 승인해야 전달됩니다."), warn: true });
   else if (inbox?.gate === "approve") notes.push({ text: t("터미널에서 승인해야 전달됩니다."), warn: true });

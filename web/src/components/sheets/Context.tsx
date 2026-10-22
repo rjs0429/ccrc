@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ContextDetail, ContextGauge, LiveState, SessionState } from "../../../../broker/src/protocol.ts";
 import { num } from "../../i18n/format.ts";
-import { k, t } from "../../i18n/index.ts";
+import { k, kc, t, type Placed } from "../../i18n/index.ts";
 import { errorText, modelLabel, shortPath } from "../../labels.ts";
 import { call, useApp } from "../../state.ts";
 import { compactLeft } from "../ContextRing.tsx";
@@ -13,7 +13,7 @@ export const DETAIL_WAIT_MS = 75_000;
 
 type Category = ContextDetail["categories"][number];
 
-const CATEGORY_LABEL: Record<string, string> = {
+const CATEGORY_LABEL: Record<string, string | Placed> = {
   "System prompt": k("시스템 프롬프트"),
   "System tools": k("시스템 도구"),
   "System tools (deferred)": k("시스템 도구"),
@@ -22,7 +22,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   "MCP server instructions": k("MCP 서버 안내"),
   "Custom agents": k("사용자 에이전트"),
   "Memory files": k("메모리 파일"),
-  Skills: k("스킬"),
+  Skills: kc("context category", "스킬"),
   Messages: k("대화"),
   "Compact buffer": k("요약 여유분"),
   "Free space": k("빈 공간"),

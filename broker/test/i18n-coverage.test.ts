@@ -49,7 +49,7 @@ test("the dictionary holds only sentences the screens hand to t()", () => {
   );
 });
 
-test("the scan finds Korean in strings, templates and JSX, and keys in t(), k(), tNode() and tc()", async () => {
+test("the scan finds Korean in strings, templates and JSX, and keys in t(), k(), tNode(), tc() and kc()", async () => {
   const fs = await import("node:fs");
   const os = await import("node:os");
   const path = await import("node:path");
@@ -61,6 +61,7 @@ test("the scan finds Korean in strings, templates and JSX, and keys in t(), k(),
       'import { k, t } from "./i18n/index.ts";',
       'const LABEL = k("표의 문장");',
       'const early = t("모듈에서 부른 문장");',
+      'const PLACED = kc("표 자리", "표의 다른 문장");',
       "// 주석의 한글은 세지 않는다",
       'export function A({ n }: { n: number }) {',
       '  const s = `${n}개 남음`;',
@@ -70,7 +71,7 @@ test("the scan finds Korean in strings, templates and JSX, and keys in t(), k(),
   );
   try {
     const s = scanFiles([file]);
-    assert.deepEqual([...s.keys.keys()].sort(), ["모듈에서 부른 문장", "열쇠 {n}", "요소 {x}", "자리|같은 문장", "표의 문장"].sort());
+    assert.deepEqual([...s.keys.keys()].sort(), ["모듈에서 부른 문장", "열쇠 {n}", "요소 {x}", "자리|같은 문장", "표 자리|표의 다른 문장", "표의 문장"].sort());
     assert.deepEqual(
       s.outside.map((f) => f.text),
       ["`${n}개 남음`", "제목", "본문"],

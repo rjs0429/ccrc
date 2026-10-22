@@ -186,7 +186,7 @@ export const g3: Record<string, string> = {
   "작업이 끝난 뒤 다시 할 수 있습니다": "Available once the work is done",
   "이 메시지 앞으로 대화를 되돌리고 글을 입력창에 넣습니다": "Rewinds the conversation to before this message and puts its text in the input",
   "세션을 이어서 실행한 뒤 이 메시지 앞으로 되돌립니다": "Resumes the session, then rewinds to before this message",
-  "{host} 대화는 그대로 두고, 이 메시지 앞까지를 새 세션으로 엽니다": "Leaves the {host} conversation as it is and opens what came before this message as a new session",
+  "{host} 대화는 그대로 두고, 이 메시지 앞까지를 새 세션으로 엽니다": "Leaves the conversation in {host} as it is and opens what came before this message as a new session",
   "글을 복사하지 못했습니다": "Couldn't copy the text",
   "글을 복사했습니다": "Text copied",
   메시지: "Message",
@@ -223,4 +223,6 @@ export const g3: Record<string, string> = {
   "task note|알림": "Notification",
   "session menu|더 보기": "More",
   "server list|MCP 서버": "MCP servers",
+  "파일 첨부": "Attach files",
+  "대화 내보내기": "Export conversation",
 };

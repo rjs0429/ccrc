@@ -7,7 +7,7 @@ import { NEW_SESSION_SCOPE, takeAttachments } from "../components/composer/attac
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { WorktreeOption, worktreeBlocked, worktreeChoice, type FolderGit, type WorktreeDraft } from "../components/WorktreeOption.tsx";
-import { k, t, tc } from "../i18n/index.ts";
+import { k, t, tc, type Placed } from "../i18n/index.ts";
 import { brokerSessionsBlocked, errorText, shortPath } from "../labels.ts";
 import { rememberSent } from "../sentPreviews.ts";
 import { offeredFolder, placeLabel } from "../worktree.ts";
@@ -81,7 +81,7 @@ export function NewSession() {
   const [start, setStart] = useState<StartSettings>(kept.start);
   const [composerSheet, setComposerSheet] = useState<{ name: "model" | "effort"; at: number }>();
   const [usage, setUsage] = useState(false);
-  const [later, setLater] = useState<{ title: string; text: string } | null>(null);
+  const [later, setLater] = useState<{ title: string | Placed; text: string } | null>(null);
   const conn = useApp((s) => s.conn);
   const [worktree, setWorktree] = useState<WorktreeDraft>(kept.worktree ?? NO_WORKTREE);
   const [gits, setGits] = useState<Record<string, FolderGit>>({});
@@ -202,7 +202,7 @@ export function NewSession() {
       case "context":
       case "mcp":
       case "outputStyle":
-        setLater({ title: target.title, text: t(AFTER_START[target.sheet]) });
+        setLater({ title: target.title, text: AFTER_START[target.sheet] });
         return true;
       default:
         toast(t("세션이 시작된 뒤 쓸 수 있습니다"));
@@ -307,9 +307,9 @@ export function NewSession() {
 
       {usage && cwd && <UsageSheet cwd={cwd} onClose={() => setUsage(false)} />}
       {later && (
-        <Sheet title={later.title} onClose={() => setLater(null)}>
+        <Sheet title={t(later.title)} onClose={() => setLater(null)}>
           <p className="px-1 text-sm text-muted" data-after-start>
-            {later.text}
+            {t(later.text)}
           </p>
         </Sheet>
       )}

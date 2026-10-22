@@ -603,8 +603,9 @@ When a change adds a config key, a state file, an outside tool or a path, update
 only (`100.64.0.x`, `*.example.ts.net`, `/home/user`).
 
 The phone app's text is written in Korean through `t()` (`web/src/i18n`), the Korean sentence being the key of its
-English in `web/src/i18n/en/`; a place that needs other English for the same sentence uses `tc()`. `npm test` fails on
-Korean left outside them and on a sentence without English, and `node broker/test/i18n-scan.ts` lists them.
+English in `web/src/i18n/en/`; a place that needs other English for the same sentence uses `tc()` (`kc()` in a table
+kept at module level). `npm test` fails on Korean left outside them and on a sentence without English, and
+`node broker/test/i18n-scan.ts` lists them.
 
 When you change `README.md`, `CHANGELOG.md` or `SECURITY.md`, change its Korean version (`README.ko.md`,
 `CHANGELOG.ko.md`, `SECURITY.ko.md`) in the same commit.

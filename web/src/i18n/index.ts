@@ -3,11 +3,16 @@ import { en } from "./en/index.ts";
 
 // Screens write their text in Korean through t(), and the Korean sentence is the key of the English dictionary
 // (en/g1.ts–g5.ts). The language can change while the app runs, so t() runs where the text is shown: a sentence kept
-// in a table at module level is marked with k() and handed to t() when it is shown.
+// in a table at module level is marked with k() (kc() for one with its place's own English, as tc()) and handed to
+// t() when it is shown.
 export type { Lang };
 // "auto" follows the device's language.
 export type LangPref = "auto" | Lang;
 export type Vars = Record<string, string | number>;
+export interface Placed {
+  readonly place: string;
+  readonly ko: string;
+}
 
 export const LANG_PREFS: LangPref[] = ["auto", "ko", "en"];
 export const LANG_NAMES: Record<Lang, string> = { ko: "한국어", en: "English" };
@@ -76,8 +81,8 @@ export function fill(text: string, vars?: Vars): string {
   });
 }
 
-export function t(ko: string, vars?: Vars): string {
-  return fill(translate(ko), vars);
+export function t(ko: string | Placed, vars?: Vars): string {
+  return typeof ko === "string" ? fill(translate(ko), vars) : tc(ko.place, ko.ko, vars);
 }
 
 // t() for a sentence that one place shows with another English than the rest (a toast's "Undo" where the rewind sheet
@@ -89,4 +94,8 @@ export function tc(place: string, ko: string, vars?: Vars): string {
 
 export function k(ko: string): string {
   return ko;
+}
+
+export function kc(place: string, ko: string): Placed {
+  return { place, ko };
 }
