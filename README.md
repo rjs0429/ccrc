@@ -208,8 +208,9 @@ files sent until the session is read (opened on the phone, or written to in VS C
 The phone closes the others when the app comes to the front, opens a session or hears that the list changed, and when
 the next notification arrives; a newer notification of the same session and kind takes the place of the older one.
 While the app is closed nothing else reaches the phone, so a session read in VS Code keeps its notification, and the
-icon its number, until then. iOS 26.5 and later do not close a notification within 30 seconds of showing it: the app
-tries again once that has passed, while it stays in front.
+icon its number, until then. 알림 끄기 and logging out in the settings close all of the app's notifications. iOS 26.5
+and later do not close a notification within 30 seconds of showing it: the app tries again once that has passed, while
+it is in front.
 
 Android with Chrome should work the same way, but has not been tested.
 

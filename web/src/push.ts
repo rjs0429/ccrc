@@ -109,6 +109,8 @@ export async function turnOn(device: PushDevice, prefs?: Partial<PushPrefs>): Pr
     if (kept && e instanceof ApiError && e.body.error === "invalid_prefs") return subscribe();
     throw e;
   });
+  closingAll = undefined;
+  clearTimeout(closeAllTimer);
   return { ...device, sub, status };
 }
 
@@ -123,7 +125,8 @@ export async function turnOff(device: PushDevice): Promise<PushDevice> {
     await device.sub.unsubscribe().catch(() => false);
   }
   await clearBadge();
-  await closeNotifications(device.reg, () => true).catch(() => 0);
+  closingAll = device.reg;
+  await closeAll();
   return { ...device, sub: null, status: { subscribed: false } };
 }
 
@@ -159,6 +162,24 @@ async function closeNotifications(reg: ServiceWorkerRegistration | undefined, go
   }
   return wait;
 }
+
+// Turning notifications off closes all of them. With no notification to come, those iOS kept are closed once it lets
+// them, while the app is in front, unless notifications are turned on again first.
+let closingAll: ServiceWorkerRegistration | undefined;
+let closeAllTimer: number | undefined;
+
+async function closeAll(): Promise<void> {
+  clearTimeout(closeAllTimer);
+  const reg = closingAll;
+  if (!reg || document.visibilityState !== "visible") return;
+  const wait = await closeNotifications(reg, () => true).catch(() => 0);
+  if (closingAll !== reg) return;
+  clearTimeout(closeAllTimer);
+  if (!wait) closingAll = undefined;
+  else if (document.visibilityState === "visible") closeAllTimer = window.setTimeout(() => void closeAll(), wait);
+}
+
+document.addEventListener("visibilitychange", () => void closeAll());
 
 // Sets the app icon to what the broker counts for this browser's subscription, the same number its notifications carry,
 // and closes the notifications that no longer count by the same state (viewing: the session the app shows). Answers how
