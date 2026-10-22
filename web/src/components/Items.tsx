@@ -18,6 +18,7 @@ import { NOT_KEPT, OfflineView } from "./offlineView.ts";
 import { Folded } from "./tools/parts.tsx";
 import { SentFiles } from "./tools/SentFiles.tsx";
 import { fullTime, stampTime, type Day } from "./stamps.ts";
+import { takeOver, useHeld } from "./streamSelection.ts";
 import { chooseThought, liveThought, thoughtChoice } from "./thoughts.ts";
 import { Icon, Spinner } from "./ui.tsx";
 
@@ -77,10 +78,12 @@ const REPLY_LINE = "mt-1 h-4 leading-4";
 type AssistantMessage = Extract<DisplayItem, { kind: "assistant" }>;
 
 function AssistantItem({ item, onActions }: { item: AssistantMessage; onActions?: (m: AssistantMessage) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => takeOver(ref.current, item.text), []);
   const at = stampTime(item);
   const open = onActions ? () => onActions(item) : undefined;
   return (
-    <div className={open ? ITEM_ROOM : undefined}>
+    <div ref={ref} className={open ? ITEM_ROOM : undefined}>
       <Markdown text={item.text} className={`text-[15px] ${SELECTABLE}`} />
       {(at || open) && (
         <div className={`${REPLY_LINE} flex items-center gap-1 text-[11px] text-muted`}>
@@ -534,10 +537,14 @@ export const ItemView = memo(function ItemView({
 });
 
 export function StreamPreview({ text, thinking }: { text: string; thinking: boolean }) {
-  if (thinking) return <Thinking text={text} />;
+  return thinking ? <Thinking text={text} /> : <StreamReply text={text} />;
+}
+
+function StreamReply({ text }: { text: string }) {
+  const [ref, shown] = useHeld(text);
   return (
-    <div className={ITEM_ROOM}>
-      <Markdown text={text} className={`text-[15px] ${SELECTABLE}`} />
+    <div ref={ref} className={ITEM_ROOM}>
+      <Markdown text={shown} className={`text-[15px] ${SELECTABLE}`} />
       <div className={`${REPLY_LINE} caret text-[15px]`} />
     </div>
   );
