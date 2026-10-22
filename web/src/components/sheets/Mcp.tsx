@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { McpAuthStart, McpServerInfo } from "../../../../broker/src/protocol.ts";
+import { k, t } from "../../i18n/index.ts";
 import { errorText } from "../../labels.ts";
 import { call } from "../../state.ts";
 import { Sheet, Spinner } from "../ui.tsx";
@@ -33,23 +34,23 @@ function keepAuth(sessionId: string, auth: AuthUnderWay | undefined): void {
 }
 
 const STATUS: Record<string, [label: string, dot: string]> = {
-  connected: ["연결됨", "bg-ok"],
-  pending: ["연결 중", "bg-info"],
-  failed: ["실패", "bg-danger"],
-  "needs-auth": ["인증 필요", "bg-warn"],
-  disabled: ["꺼짐", "border border-muted"],
+  connected: [k("연결됨"), "bg-ok"],
+  pending: [k("연결 중"), "bg-info"],
+  failed: [k("실패"), "bg-danger"],
+  "needs-auth": [k("인증 필요"), "bg-warn"],
+  disabled: [k("꺼짐"), "border border-muted"],
 };
 
 const SCOPE_LABEL: Record<string, string> = {
-  user: "사용자",
-  project: "프로젝트",
-  local: "로컬",
+  user: k("사용자"),
+  project: k("프로젝트"),
+  local: k("로컬"),
   claudeai: "claude.ai",
-  managed: "관리자 설정",
-  enterprise: "관리자 설정",
-  dynamic: "세션",
-  plugin: "플러그인",
-  agent: "에이전트",
+  managed: k("관리자 설정"),
+  enterprise: k("관리자 설정"),
+  dynamic: k("세션"),
+  plugin: k("플러그인"),
+  agent: k("에이전트"),
 };
 
 // Inside the sign-in panel a button stands apart from the panel's own colour and keeps a full 44px tap target.
@@ -77,15 +78,17 @@ function AuthPanel({ server, start, busy, onSend, onCancel }: { server: string; 
     <div className="mt-2 space-y-2 rounded-xl bg-surface-2 p-3 text-sm" data-mcp-auth={server}>
       {start.url ? (
         <a href={start.url} target="_blank" rel="noopener noreferrer" className="flex min-h-11 items-center justify-center rounded-lg bg-accent px-3 font-medium text-white">
-          로그인 페이지 열기
+          {t("로그인 페이지 열기")}
         </a>
       ) : (
-        <div className="text-muted">Claude Code가 로그인 주소를 주지 않았습니다.</div>
+        <div className="text-muted">{t("Claude Code가 로그인 주소를 주지 않았습니다.")}</div>
       )}
       {start.callback ? (
         <>
           <p className="text-muted">
-            로그인을 마치면 열리지 않는 페이지(localhost)로 넘어갑니다. 그 페이지의 주소를 통째로 복사해 붙여 넣으세요. 노트북의 Claude Code가 그 주소로 인증을 마칩니다.
+            {t(
+              "로그인을 마치면 열리지 않는 페이지(localhost)로 넘어갑니다. 그 페이지의 주소를 통째로 복사해 붙여 넣으세요. 노트북의 Claude Code가 그 주소로 인증을 마칩니다.",
+            )}
           </p>
           <div className="flex gap-2">
             <input
@@ -100,24 +103,24 @@ function AuthPanel({ server, start, busy, onSend, onCancel }: { server: string; 
             />
             {typeof navigator.clipboard?.readText === "function" && (
               <PanelButton onClick={() => void paste()} disabled={busy}>
-                붙여넣기
+                {t("붙여넣기")}
               </PanelButton>
             )}
           </div>
           <div className="flex justify-end gap-2">
             <PanelButton onClick={onCancel} disabled={busy}>
-              그만두기
+              {t("그만두기")}
             </PanelButton>
             <PanelButton onClick={() => onSend(url.trim())} disabled={busy || !url.trim()} primary>
-              {busy ? "인증 중…" : "보내기"}
+              {busy ? t("인증 중…") : t("보내기")}
             </PanelButton>
           </div>
         </>
       ) : (
         <>
-          <p className="text-muted">로그인과 연결을 마친 뒤 &lsquo;다시 연결&rsquo;을 누르세요.</p>
+          <p className="text-muted">{t("로그인과 연결을 마친 뒤 ‘다시 연결’을 누르세요.")}</p>
           <div className="flex justify-end">
-            <PanelButton onClick={onCancel}>닫기</PanelButton>
+            <PanelButton onClick={onCancel}>{t("닫기")}</PanelButton>
           </div>
         </>
       )}
@@ -136,10 +139,13 @@ function ServerRow(props: {
   children?: React.ReactNode;
 }) {
   const { server, working, locked, error } = props;
-  const [label, dot] = STATUS[server.status] ?? [server.status, "border border-muted"];
+  const [label, dot] = Object.hasOwn(STATUS, server.status) ? STATUS[server.status] : [server.status, "border border-muted"];
   const off = server.status === "disabled";
   const signIn = Boolean(server.auth) && (server.status === "needs-auth" || server.status === "failed");
-  const meta = [server.scope ? (SCOPE_LABEL[server.scope] ?? server.scope) : "", server.tools !== undefined ? `도구 ${server.tools}개` : ""]
+  const meta = [
+    server.scope ? (Object.hasOwn(SCOPE_LABEL, server.scope) ? t(SCOPE_LABEL[server.scope]) : server.scope) : "",
+    server.tools !== undefined ? t("도구 {n}개", { n: server.tools }) : "",
+  ]
     .filter(Boolean)
     .join(" · ");
   return (
@@ -148,24 +154,24 @@ function ServerRow(props: {
         <span className="min-w-0 flex-1 truncate text-[15px] font-medium">{server.name}</span>
         <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted">
           <span className={`size-2 rounded-full ${dot}`} />
-          {label}
+          {t(label)}
         </span>
       </div>
       {meta && <div className="mt-0.5 text-xs text-muted">{meta}</div>}
       {server.error && <div className="mt-1 line-clamp-3 text-xs text-danger">{server.error}</div>}
-      {server.status === "needs-auth" && !server.auth && <div className="mt-1 text-xs text-muted">이 서버는 VS Code나 터미널의 /mcp에서 인증하세요</div>}
+      {server.status === "needs-auth" && !server.auth && <div className="mt-1 text-xs text-muted">{t("이 서버는 VS Code나 터미널의 /mcp에서 인증하세요")}</div>}
       <div className="mt-2 flex items-center gap-2">
         {signIn && (
           <SmallButton onClick={props.onAuth} disabled={locked} tone="text-accent">
-            인증
+            {t("인증")}
           </SmallButton>
         )}
         <SmallButton onClick={props.onToggle} disabled={locked}>
-          {off ? "켜기" : "끄기"}
+          {off ? t("켜기") : t("끄기")}
         </SmallButton>
         {!off && (
           <SmallButton onClick={props.onReconnect} disabled={locked}>
-            다시 연결
+            {t("다시 연결")}
           </SmallButton>
         )}
         {working && <Spinner className="size-4 text-muted" />}
@@ -247,7 +253,7 @@ export function McpSheet({ sessionId, onClose }: SheetProps) {
   };
 
   return (
-    <Sheet title="MCP 서버" onClose={onClose}>
+    <Sheet title={t("MCP 서버")} onClose={onClose}>
       {servers && servers.length > 0 && (
         <>
           <div className="overflow-hidden rounded-xl border border-line">
@@ -268,16 +274,16 @@ export function McpSheet({ sessionId, onClose }: SheetProps) {
               </ServerRow>
             ))}
           </div>
-          <div className="mt-2 px-1 text-xs text-muted">켜고 끈 상태는 이 프로젝트 설정에 저장됩니다</div>
+          <div className="mt-2 px-1 text-xs text-muted">{t("켜고 끈 상태는 이 프로젝트 설정에 저장됩니다")}</div>
         </>
       )}
-      {servers?.length === 0 && !loading && <div className="px-1 py-3 text-sm text-muted">설정된 MCP 서버가 없습니다</div>}
-      {loading && <Waiting text="서버 상태를 불러오는 중입니다" />}
+      {servers?.length === 0 && !loading && <div className="px-1 py-3 text-sm text-muted">{t("설정된 MCP 서버가 없습니다")}</div>}
+      {loading && <Waiting text={t("서버 상태를 불러오는 중입니다")} />}
       {error && !loading && <Failed text={error} onRetry={() => setRound((r) => r + 1)} />}
       {servers && !loading && (
         <div className="mt-3 flex justify-end">
           <SmallButton onClick={() => setRound((r) => r + 1)} disabled={working !== undefined}>
-            새로고침
+            {t("새로고침")}
           </SmallButton>
         </div>
       )}

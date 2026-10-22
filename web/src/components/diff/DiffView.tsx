@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { Hunk } from "../../../../broker/src/protocol.ts";
+import { t } from "../../i18n/index.ts";
 import { Icon } from "../ui.tsx";
 import { numbered, patchStats, type DiffLine } from "./hunks.ts";
 
@@ -48,7 +49,7 @@ function Row({ line, width, picked, onPick }: RowProps) {
   const className = `flex min-w-full text-left ${TONE[line.kind]} ${picked ? "ring-1 ring-accent ring-inset" : ""}`;
   const body =
     line.kind === "note" ? (
-      <span className="px-2 font-sans text-[11px] text-muted italic">{line.text === NO_NEWLINE ? "파일 끝에 줄바꿈 없음" : line.text}</span>
+      <span className="px-2 font-sans text-[11px] text-muted italic">{line.text === NO_NEWLINE ? t("파일 끝에 줄바꿈 없음") : line.text}</span>
     ) : (
       <>
         {width && (
@@ -123,10 +124,10 @@ export function DiffView({ hunks, cut = 0, numbers = true, title, full = false, 
           </div>
           {!all && total > PREVIEW_LINES && (
             <button onClick={() => setAll(true)} className="w-full border-t border-line py-1.5 text-xs text-muted">
-              {total - PREVIEW_LINES}줄 더 보기
+              {t("{n}줄 더 보기", { n: total - PREVIEW_LINES })}
             </button>
           )}
-          {cut > 0 && (all || total <= PREVIEW_LINES) && <div className="border-t border-line px-2.5 py-1.5 text-xs text-muted">길어서 {cut}줄은 생략했습니다</div>}
+          {cut > 0 && (all || total <= PREVIEW_LINES) && <div className="border-t border-line px-2.5 py-1.5 text-xs text-muted">{t("길어서 {n}줄은 생략했습니다", { n: cut })}</div>}
         </>
       )}
     </div>

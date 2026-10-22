@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FileView, SentRef } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
+import { k, t } from "../../i18n/index.ts";
 import { shortPath, sizeText } from "../../labels.ts";
 import { FileImages, FileLinks } from "../fileLinks.ts";
 import { Markdown } from "../Markdown.tsx";
@@ -19,17 +20,22 @@ export interface FileTarget {
 type Loaded = { view: FileView } | { error: string; path?: string };
 
 const ERROR_TEXT: Record<string, string> = {
-  not_found: "파일을 찾을 수 없습니다.",
-  denied: "작업 폴더 밖이거나 읽기가 허용되지 않은 파일이라 열 수 없습니다.",
-  too_large: "파일이 너무 커서(10MB 초과) 열 수 없습니다.",
-  invalid: "파일 링크가 아닙니다.",
-  unknown_session: "세션을 찾을 수 없습니다.",
+  not_found: k("파일을 찾을 수 없습니다."),
+  denied: k("작업 폴더 밖이거나 읽기가 허용되지 않은 파일이라 열 수 없습니다."),
+  too_large: k("파일이 너무 커서(10MB 초과) 열 수 없습니다."),
+  invalid: k("파일 링크가 아닙니다."),
+  unknown_session: k("세션을 찾을 수 없습니다."),
 };
 
 const FALLBACK_TEXT: Record<string, string> = {
-  parent: "링크 경로에서 앞쪽 ../ 를 빼고 찾은 파일입니다.",
-  suffix: "링크 경로에 파일이 없어, 끝부분 경로가 같은 파일을 찾아 열었습니다.",
+  parent: k("링크 경로에서 앞쪽 ../ 를 빼고 찾은 파일입니다."),
+  suffix: k("링크 경로에 파일이 없어, 끝부분 경로가 같은 파일을 찾아 열었습니다."),
 };
+
+function loadErrorText(error: string, sent: boolean): string {
+  if (sent && Object.hasOwn(SENT_ERROR_TEXT, error)) return `${t(SENT_ERROR_TEXT[error])}.`;
+  return Object.hasOwn(ERROR_TEXT, error) ? t(ERROR_TEXT[error]) : t("파일을 읽지 못했습니다.");
+}
 
 function dirName(p: string): string {
   const i = p.lastIndexOf("/");
@@ -166,7 +172,7 @@ function Table({ text, sep }: { text: string; sep: string }) {
           ))}
         </tbody>
       </table>
-      {more && <div className="mt-2 text-xs text-muted">처음 1000행만 표로 보입니다. 나머지는 원문에서 보세요.</div>}
+      {more && <div className="mt-2 text-xs text-muted">{t("처음 1000행만 표로 보입니다. 나머지는 원문에서 보세요.")}</div>}
     </div>
   );
 }
@@ -198,8 +204,8 @@ function Body({ view, raw, big, url, openUrl, onOpen, onLink, image }: BodyProps
     return (
       <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-muted" data-sent-big>
         <Icon.file className="size-10" />
-        <div>파일이 커서(10MB 초과) 미리 보지 않습니다 · {sizeText(view.size)}</div>
-        <div>위의 내려받기로 받으세요.</div>
+        <div>{t("파일이 커서(10MB 초과) 미리 보지 않습니다 · {size}", { size: sizeText(view.size) })}</div>
+        <div>{t("위의 내려받기로 받으세요.")}</div>
       </div>
     );
   }
@@ -214,9 +220,9 @@ function Body({ view, raw, big, url, openUrl, onOpen, onLink, image }: BodyProps
     return (
       <div className="flex flex-col items-center gap-3 px-4 py-10 text-center">
         <Icon.file className="size-10 text-muted" />
-        <div className="text-sm text-muted">PDF 문서 · {sizeText(view.size)}</div>
+        <div className="text-sm text-muted">{t("PDF 문서 · {size}", { size: sizeText(view.size) })}</div>
         <a href={openUrl} onClick={onOpen} target="_blank" rel="noopener" className="rounded-xl bg-accent px-5 py-2.5 font-medium text-white">
-          열기
+          {t("열기")}
         </a>
       </div>
     );
@@ -225,8 +231,8 @@ function Body({ view, raw, big, url, openUrl, onOpen, onLink, image }: BodyProps
     return (
       <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-muted">
         <Icon.file className="size-10" />
-        <div>미리 볼 수 없는 파일입니다 · {sizeText(view.size)}</div>
-        <div>위의 내려받기로 받으세요.</div>
+        <div>{t("미리 볼 수 없는 파일입니다 · {size}", { size: sizeText(view.size) })}</div>
+        <div>{t("위의 내려받기로 받으세요.")}</div>
       </div>
     );
   }
@@ -336,11 +342,11 @@ export default function FileViewer({
   const title = view?.name ?? current.href.split(/[?#]/)[0].split("/").pop() ?? current.href;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-bg" role="dialog" aria-label="파일 보기">
+    <div className="fixed inset-0 z-50 flex flex-col bg-bg" role="dialog" aria-label={t("파일 보기")}>
       <header className="screen-header pt-safe border-b border-line bg-surface">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           {stack.length > 1 ? (
-            <button onClick={() => setStack((s) => s.slice(0, -1))} aria-label="이전 파일" className="rounded-lg p-2">
+            <button onClick={() => setStack((s) => s.slice(0, -1))} aria-label={t("이전 파일")} className="rounded-lg p-2">
               <Icon.back />
             </button>
           ) : null}
@@ -352,7 +358,7 @@ export default function FileViewer({
               </div>
             )}
           </div>
-          <button onClick={onClose} aria-label="닫기" className="rounded-lg p-2">
+          <button onClick={onClose} aria-label={t("닫기")} className="rounded-lg p-2">
             <Icon.x />
           </button>
         </div>
@@ -362,10 +368,10 @@ export default function FileViewer({
             {toggles && (
               <span className="flex overflow-hidden rounded-lg border border-line">
                 <button onClick={() => setRaw(false)} className={`px-2.5 py-1 ${!raw ? "bg-accent-soft text-fg" : ""}`}>
-                  {view.kind === "markdown" ? "보기" : view.kind === "json" ? "정리" : "표"}
+                  {view.kind === "markdown" ? t("보기") : view.kind === "json" ? t("정리") : t("표")}
                 </button>
                 <button onClick={() => setRaw(true)} className={`px-2.5 py-1 ${raw ? "bg-accent-soft text-fg" : ""}`}>
-                  원문
+                  {t("원문")}
                 </button>
               </span>
             )}
@@ -375,18 +381,18 @@ export default function FileViewer({
               download={view.name}
               className="ml-auto font-medium text-accent"
             >
-              내려받기
+              {t("내려받기")}
             </a>
           </div>
         )}
-        {view?.fallback && <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn">{FALLBACK_TEXT[view.fallback]}</div>}
+        {view?.fallback && <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn">{t(FALLBACK_TEXT[view.fallback])}</div>}
         {view?.sent?.changed && (
           <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn" data-sent-changed>
-            보낸 뒤 바뀐 파일입니다. 지금의 내용이 보입니다.
+            {t("보낸 뒤 바뀐 파일입니다. 지금의 내용이 보입니다.")}
           </div>
         )}
         {view?.truncated && (
-          <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn">파일이 커서 앞 1MB만 보입니다. 전체는 내려받아 보세요.</div>
+          <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn">{t("파일이 커서 앞 1MB만 보입니다. 전체는 내려받아 보세요.")}</div>
         )}
       </header>
       <div ref={scroller} className="pb-safe flex-1 overflow-auto overscroll-contain px-safe-0">
@@ -397,7 +403,7 @@ export default function FileViewer({
         )}
         {loaded && "error" in loaded && (
           <div className="m-4 rounded-xl bg-surface-2 px-3 py-3 text-sm">
-            <div className="text-danger">{(sent && SENT_ERROR_TEXT[loaded.error] ? `${SENT_ERROR_TEXT[loaded.error]}.` : ERROR_TEXT[loaded.error]) ?? "파일을 읽지 못했습니다."}</div>
+            <div className="text-danger">{loadErrorText(loaded.error, Boolean(sent))}</div>
             <div className="mt-1 font-mono text-xs break-all text-muted">{loaded.path ? shown(loaded.path, cwd) : current.href}</div>
           </div>
         )}

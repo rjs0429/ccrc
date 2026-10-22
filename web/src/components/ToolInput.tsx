@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ToolReply } from "../../../broker/src/protocol.ts";
 import { mcpName } from "../../../broker/src/tools.ts";
+import { t } from "../i18n/index.ts";
 import { DiffView } from "./diff/DiffView.tsx";
 import { snippetHunk } from "./diff/hunks.ts";
 import { FileLink, Pre, Rest, str, type Input } from "./tools/parts.tsx";
@@ -71,7 +72,7 @@ function ReadableView({ name, i, reply }: { name: string; i: Input; reply?: Tool
   if (mcp) return <McpView name={mcp} i={i} />;
   const specific = SpecificView({ name, i });
   if (specific) return specific;
-  return Object.keys(i).length ? <Rest input={i} /> : <div className="text-sm text-muted">입력 없음</div>;
+  return Object.keys(i).length ? <Rest input={i} /> : <div className="text-sm text-muted">{t("입력 없음")}</div>;
 }
 
 export function ToolInput({ name, input, reply }: { name: string; input: unknown; reply?: ToolReply }) {
@@ -83,7 +84,7 @@ export function ToolInput({ name, input, reply }: { name: string; input: unknown
     <div className="space-y-1.5" data-tool-view={name}>
       <div className="flex justify-end">
         <button onClick={() => setRaw(!raw)} className="-my-1.5 -mr-2 px-2 py-1.5 text-xs font-medium text-accent" data-raw-toggle>
-          {raw ? "보기" : "원문"}
+          {raw ? t("보기") : t("원문")}
         </button>
       </div>
       {raw ? <Pre>{JSON.stringify(input, null, 2)}</Pre> : <ReadableView name={name} i={i} reply={reply} />}

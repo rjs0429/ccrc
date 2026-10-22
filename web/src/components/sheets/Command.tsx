@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { DisplayItem } from "../../../../broker/src/protocol.ts";
+import { t } from "../../i18n/index.ts";
 import { errorText } from "../../labels.ts";
 import { call } from "../../state.ts";
 import { CommandBody } from "../Items.tsx";
@@ -21,14 +22,16 @@ export function StoppedSheet({ sessionId, title, onClose }: { sessionId: string;
   };
   return (
     <Sheet title={title} onClose={onClose}>
-      <p className="px-1 text-sm text-muted">이 세션은 지금 실행 중이 아닙니다. 보려면 이 세션을 원격에서 이어서 실행해야 합니다. 대화에는 아무것도 보내지 않습니다.</p>
+      <p className="px-1 text-sm text-muted">
+        {t("이 세션은 지금 실행 중이 아닙니다. 보려면 이 세션을 원격에서 이어서 실행해야 합니다. 대화에는 아무것도 보내지 않습니다.")}
+      </p>
       {error && (
         <div className="mt-3">
           <Failed text={error} />
         </div>
       )}
       <Button kind="primary" className="mt-4 w-full" disabled={busy} onClick={resume}>
-        {busy ? "세션을 여는 중…" : "이어서 실행하고 보기"}
+        {busy ? t("세션을 여는 중…") : t("이어서 실행하고 보기")}
       </Button>
     </Sheet>
   );
@@ -45,15 +48,15 @@ export function CommandResultSheet({ title, item, late, onClose }: { title: stri
           {item.usage && item.text && (
             <div className="mt-3 flex justify-end">
               <button onClick={() => setMore(!more)} className="text-xs font-medium text-accent">
-                {more ? "접기" : "원문"}
+                {more ? t("접기") : t("원문")}
               </button>
             </div>
           )}
         </div>
       ) : late ? (
-        <div className="px-1 py-3 text-sm text-muted">표시할 결과가 없습니다</div>
+        <div className="px-1 py-3 text-sm text-muted">{t("표시할 결과가 없습니다")}</div>
       ) : (
-        <Waiting text="실행하는 중입니다" />
+        <Waiting text={t("실행하는 중입니다")} />
       )}
     </Sheet>
   );

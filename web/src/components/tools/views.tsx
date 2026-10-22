@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { ToolReply } from "../../../../broker/src/protocol.ts";
 import { workflowMeta } from "../../../../broker/src/tools.ts";
+import { k, t } from "../../i18n/index.ts";
 import { Icon } from "../ui.tsx";
 import { Chip, Code, Field, FileCard, FileLink, Fields, Folded, PathValue, Pre, Rest, record, str, Value, type Input } from "./parts.tsx";
 
@@ -35,14 +36,14 @@ function Chips({ items }: { items: (string | false | undefined)[] }) {
 
 function duration(ms: number): string {
   const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}초`;
-  if (s < 3600) return `${Math.round(s / 60)}분`;
+  if (s < 60) return t("{s}초", { s });
+  if (s < 3600) return t("{m}분", { m: Math.round(s / 60) });
   const h = Math.floor(s / 3600);
   const m = Math.round((s % 3600) / 60);
-  return m ? `${h}시간 ${m}분` : `${h}시간`;
+  return m ? t("{h}시간 {m}분", { h, m }) : t("{h}시간", { h });
 }
 
-const TASK_STATUS: Record<string, string> = { pending: "대기", in_progress: "진행 중", completed: "완료", deleted: "삭제" };
+const TASK_STATUS: Record<string, string> = { pending: k("대기"), in_progress: k("진행 중"), completed: k("완료"), deleted: k("삭제") };
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
@@ -60,11 +61,11 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
     case "Glob":
       return (
         <Fields>
-          <Field label="패턴">
+          <Field label={t("패턴")}>
             <Mono>{str(i.pattern)}</Mono>
           </Field>
           {str(i.path) && (
-            <Field label="위치">
+            <Field label={t("위치")}>
               <PathValue path={str(i.path)} />
             </Field>
           )}
@@ -74,16 +75,16 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
     case "Grep":
       return (
         <Fields>
-          <Field label="패턴">
+          <Field label={t("패턴")}>
             <Mono>{str(i.pattern)}</Mono>
           </Field>
           {str(i.path) && (
-            <Field label="위치">
+            <Field label={t("위치")}>
               <PathValue path={str(i.path)} />
             </Field>
           )}
           {str(i.glob) && (
-            <Field label="파일">
+            <Field label={t("파일")}>
               <Mono>{str(i.glob)}</Mono>
             </Field>
           )}
@@ -96,16 +97,16 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
           <Field label="URL">
             <WebLink url={str(i.url)} />
           </Field>
-          <Plain label="요청" text={str(i.prompt)} />
+          <Plain label={t("요청")} text={str(i.prompt)} />
           <Rest input={i} skip={["url", "prompt"]} />
         </Fields>
       );
     case "WebSearch":
       return (
         <Fields>
-          <Field label="검색어">{str(i.query)}</Field>
-          {Array.isArray(i.allowed_domains) && i.allowed_domains.length > 0 && <Field label="이 사이트에서만">{i.allowed_domains.join(", ")}</Field>}
-          {Array.isArray(i.blocked_domains) && i.blocked_domains.length > 0 && <Field label="뺄 사이트">{i.blocked_domains.join(", ")}</Field>}
+          <Field label={t("검색어")}>{str(i.query)}</Field>
+          {Array.isArray(i.allowed_domains) && i.allowed_domains.length > 0 && <Field label={t("이 사이트에서만")}>{i.allowed_domains.join(", ")}</Field>}
+          {Array.isArray(i.blocked_domains) && i.blocked_domains.length > 0 && <Field label={t("뺄 사이트")}>{i.blocked_domains.join(", ")}</Field>}
           <Rest input={i} skip={["query", "allowed_domains", "blocked_domains"]} />
         </Fields>
       );
@@ -114,8 +115,8 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
       return (
         <Fields>
           {str(i.description) && <Title>{str(i.description)}</Title>}
-          <Chips items={[str(i.subagent_type), str(i.model), i.run_in_background === true && "백그라운드", str(i.isolation) && `격리: ${str(i.isolation)}`]} />
-          <Plain label="지시" text={str(i.prompt)} />
+          <Chips items={[str(i.subagent_type), str(i.model), i.run_in_background === true && t("백그라운드"), str(i.isolation) && t("격리: {mode}", { mode: str(i.isolation) })]} />
+          <Plain label={t("지시")} text={str(i.prompt)} />
           <Rest input={i} skip={["description", "subagent_type", "model", "run_in_background", "isolation", "prompt"]} />
         </Fields>
       );
@@ -125,7 +126,7 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
           <Title>
             <Mono>{`/${str(i.skill)}`}</Mono>
           </Title>
-          <Plain label="인자" text={str(i.args)} />
+          <Plain label={t("인자")} text={str(i.args)} />
           <Rest input={i} skip={["skill", "args"]} />
         </Fields>
       );
@@ -133,7 +134,7 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
       return (
         <Fields>
           <FileLink path={str(i.notebook_path)} />
-          <Chips items={[str(i.edit_mode), str(i.cell_type), str(i.cell_id) && `셀 ${str(i.cell_id)}`]} />
+          <Chips items={[str(i.edit_mode), str(i.cell_type), str(i.cell_id) && t("셀 {id}", { id: str(i.cell_id) })]} />
           {str(i.new_source) && <Code text={str(i.new_source)} />}
           <Rest input={i} skip={["notebook_path", "edit_mode", "cell_type", "cell_id", "new_source"]} />
         </Fields>
@@ -141,10 +142,10 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
     case "ToolSearch":
       return (
         <Fields>
-          <Field label="찾는 도구">
+          <Field label={t("찾는 도구")}>
             <Mono>{str(i.query)}</Mono>
           </Field>
-          {num(i.max_results) !== undefined && <Field label="최대 개수">{num(i.max_results)}</Field>}
+          {num(i.max_results) !== undefined && <Field label={t("최대 개수")}>{num(i.max_results)}</Field>}
           <Rest input={i} skip={["query", "max_results"]} />
         </Fields>
       );
@@ -152,24 +153,24 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
       return (
         <Fields>
           <Title>{str(i.subject)}</Title>
-          <Plain label="설명" text={str(i.description)} />
-          {str(i.activeForm) && <Field label="진행 중 표시">{str(i.activeForm)}</Field>}
+          <Plain label={t("설명")} text={str(i.description)} />
+          {str(i.activeForm) && <Field label={t("진행 중 표시")}>{str(i.activeForm)}</Field>}
           <Rest input={i} skip={["subject", "description", "activeForm"]} />
         </Fields>
       );
     case "TaskUpdate":
       return (
         <Fields>
-          <Chips items={[str(i.taskId) && `#${str(i.taskId)}`, TASK_STATUS[str(i.status)] ?? str(i.status)]} />
+          <Chips items={[str(i.taskId) && `#${str(i.taskId)}`, Object.hasOwn(TASK_STATUS, str(i.status)) ? t(TASK_STATUS[str(i.status)]) : str(i.status)]} />
           {str(i.subject) && <Title>{str(i.subject)}</Title>}
-          <Plain label="설명" text={str(i.description)} />
+          <Plain label={t("설명")} text={str(i.description)} />
           <Rest input={i} skip={["taskId", "status", "subject", "description"]} />
         </Fields>
       );
     case "TaskStop":
       return (
         <Fields>
-          <Field label="멈출 작업">
+          <Field label={t("멈출 작업")}>
             <Mono>{str(i.task_id) || str(i.shell_id)}</Mono>
           </Field>
           <Rest input={i} skip={["task_id", "shell_id"]} />
@@ -184,17 +185,17 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
           {title && <Title>{title}</Title>}
           {description && <div className="text-sm text-muted">{description}</div>}
           {str(i.scriptPath) && (
-            <Field label="스크립트 파일">
+            <Field label={t("스크립트 파일")}>
               <FileLink path={str(i.scriptPath)} />
             </Field>
           )}
           {i.args !== undefined && (
-            <Field label="인자">
+            <Field label={t("인자")}>
               <Value name="args" value={i.args} />
             </Field>
           )}
           {script && (
-            <Field label="스크립트">
+            <Field label={t("스크립트")}>
               <Code text={script} />
             </Field>
           )}
@@ -225,10 +226,10 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
       const delay = num(i.delaySeconds);
       return (
         <Fields>
-          <Title>{i.stop === true ? "반복 멈춤" : delay !== undefined ? `${duration(delay * 1000)} 뒤 다시 실행` : "다시 실행"}</Title>
+          <Title>{i.stop === true ? t("반복 멈춤") : delay !== undefined ? t("{time} 뒤 다시 실행", { time: duration(delay * 1000) }) : t("다시 실행")}</Title>
           {str(i.reason) && <div className="text-sm text-muted">{str(i.reason)}</div>}
           {str(i.prompt) && (
-            <Field label="실행할 입력">
+            <Field label={t("실행할 입력")}>
               <Code text={str(i.prompt)} />
             </Field>
           )}
@@ -239,11 +240,11 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
     case "CronCreate":
       return (
         <Fields>
-          <Field label="일정">
+          <Field label={t("일정")}>
             <Mono>{str(i.cron)}</Mono>
           </Field>
-          <Chips items={[i.recurring === false ? "한 번" : "반복", i.durable === true && "재시작 뒤에도 유지"]} />
-          <Plain label="실행할 입력" text={str(i.prompt)} />
+          <Chips items={[i.recurring === false ? t("한 번") : t("반복"), i.durable === true && t("재시작 뒤에도 유지")]} />
+          <Plain label={t("실행할 입력")} text={str(i.prompt)} />
           <Rest input={i} skip={["cron", "prompt", "recurring", "durable"]} />
         </Fields>
       );
@@ -259,7 +260,7 @@ export function SpecificView({ name, i }: { name: string; i: Input }): ReactNode
               <WebLink url={str(ws.url)} />
             </Field>
           )}
-          <Chips items={[timeout !== undefined && `제한 ${duration(timeout)}`, i.persistent === true && "계속 지켜봄"]} />
+          <Chips items={[timeout !== undefined && t("제한 {time}", { time: duration(timeout) }), i.persistent === true && t("계속 지켜봄")]} />
           <Rest input={i} skip={["description", "command", "ws", "timeout_ms", "persistent"]} />
         </Fields>
       );
@@ -275,7 +276,7 @@ export function McpView({ name, i }: { name: { server: string; tool: string }; i
         <Chip>{name.server}</Chip>
         <Mono>{name.tool}</Mono>
       </div>
-      {Object.keys(i).length ? <Rest input={i} /> : <div className="text-sm text-muted">인자 없음</div>}
+      {Object.keys(i).length ? <Rest input={i} /> : <div className="text-sm text-muted">{t("인자 없음")}</div>}
     </Fields>
   );
 }
@@ -285,21 +286,21 @@ function PlanOutcome({ reply }: { reply: ToolReply }) {
     return (
       <div className="flex items-center gap-1.5 text-sm" data-status>
         <Icon.check className="size-4 text-ok" />
-        승인됨{reply.plan ? " · 고친 계획으로" : ""}
+        {reply.plan ? t("승인됨 · 고친 계획으로") : t("승인됨")}
       </div>
     );
   }
   if (reply.kind === "kept_planning") {
     return (
       <div className="rounded-lg bg-surface-2 px-2.5 py-1.5 text-sm" data-status>
-        <div className="text-muted">계속 계획하기</div>
-        {reply.feedback && <div className="mt-0.5 whitespace-pre-wrap">고칠 점: {reply.feedback}</div>}
+        <div className="text-muted">{t("계속 계획하기")}</div>
+        {reply.feedback && <div className="mt-0.5 whitespace-pre-wrap">{t("고칠 점: {feedback}", { feedback: reply.feedback })}</div>}
       </div>
     );
   }
   return reply.kind === "interrupted" ? (
     <div className="rounded-lg bg-surface-2 px-2.5 py-1.5 text-sm text-muted" data-status>
-      중단되었습니다
+      {t("중단되었습니다")}
     </div>
   ) : null;
 }
@@ -319,10 +320,10 @@ export function PlanView({ i, reply }: { i: Input; reply?: ToolReply }) {
           <Folded text={plan} />
         </div>
       ) : (
-        <div className="text-sm text-muted">계획 내용 없음</div>
+        <div className="text-sm text-muted">{t("계획 내용 없음")}</div>
       )}
       {prompts.length > 0 && (
-        <Field label="허용을 청한 명령">
+        <Field label={t("허용을 청한 명령")}>
           <ul className="space-y-0.5">
             {prompts.map((p, n) => (
               <li key={n} className="font-mono text-[12.5px]">
