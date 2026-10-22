@@ -141,7 +141,7 @@ export const g2: Record<string, string> = {
   "{host}에서 열림": "Open in {host}",
   "폴더 없음": "Folder missing",
   "읽지 않음": "Unread",
-  "세션 제목·대화 내용 검색": "Search session titles and conversations",
+  "세션 제목·대화 내용 검색": "Search titles and conversations",
   "세션 검색": "Search sessions",
   "검색 지우기": "Clear search",
   폴더: "Folders",
