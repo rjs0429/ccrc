@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ModelOption, TaskInfo, WorkflowAgent, WorkflowAgentState, WorkflowInfo } from "../../../../broker/src/protocol.ts";
+import { k, t } from "../../i18n/index.ts";
 import { duration, errorText, modelLabel, taskKindLabel } from "../../labels.ts";
 import { call, useApp } from "../../state.ts";
 import { withEarlier } from "../../chatItems.ts";
@@ -20,14 +21,14 @@ const PAST_SHOWN = 20;
 const TICK_MS = 1000;
 
 const STATUS_LABEL: Record<NodeStatus, string> = {
-  waiting: "권한 대기",
-  running: "실행 중",
-  completed: "완료",
-  failed: "실패",
-  stopped: "중지됨",
-  unknown: "결과 모름",
+  waiting: k("권한 대기"),
+  running: k("실행 중"),
+  completed: k("완료"),
+  failed: k("실패"),
+  stopped: k("중지됨"),
+  unknown: k("결과 모름"),
 };
-const AGENT_STATE_LABEL: Record<WorkflowAgentState, string> = { queued: "대기", running: "실행 중", done: "완료", failed: "실패" };
+const AGENT_STATE_LABEL: Record<WorkflowAgentState, string> = { queued: k("대기"), running: k("실행 중"), done: k("완료"), failed: k("실패") };
 const agentMark = (a: WorkflowAgent, ended?: boolean): NodeStatus | "queued" =>
   a.state === "done" ? "completed" : a.state === "failed" ? "failed" : ended ? "stopped" : a.state;
 const TASK_STATUS: Record<TaskInfo["status"], NodeStatus> = { running: "running", completed: "completed", failed: "failed", stopped: "stopped" };
@@ -81,22 +82,22 @@ function timeOf(n: { ms?: number }, running: boolean, clock: Clock): string {
 }
 
 function kindText(n: AgentNode): string {
-  return n.workflow ? "워크플로" : (n.agentType ?? "서브에이전트");
+  return n.workflow ? t("워크플로") : (n.agentType ?? t("서브에이전트"));
 }
 
 function workflowLine(n: AgentNode, clock: Clock): string {
   const p = n.progress;
   const parts = [
-    p?.phases.length ? `단계 ${(p.phase ?? 0) + 1}/${p.phases.length}` : "",
-    p?.total ? `에이전트 ${p.done}/${p.total} 끝남` : n.ended?.agents ? `에이전트 ${n.ended.agents}` : "",
+    p?.phases.length ? t("단계 {n}/{total}", { n: (p.phase ?? 0) + 1, total: p.phases.length }) : "",
+    p?.total ? t("에이전트 {done}/{total} 끝남", { done: p.done, total: p.total }) : n.ended?.agents ? t("에이전트 {n}", { n: n.ended.agents }) : "",
     timeOf(n, live(n), clock),
-    n.tokens !== undefined ? `${tokens(n.tokens)} 토큰` : "",
+    n.tokens !== undefined ? t("{n} 토큰", { n: tokens(n.tokens) }) : "",
   ];
   return parts.filter(Boolean).join(" · ");
 }
 
 function agentLine(n: AgentNode): string {
-  return [kindText(n), n.tokens !== undefined ? `${tokens(n.tokens)} 토큰` : "", n.tools ? `도구 ${n.tools}회` : ""].filter(Boolean).join(" · ");
+  return [kindText(n), n.tokens !== undefined ? t("{n} 토큰", { n: tokens(n.tokens) }) : "", n.tools ? t("도구 {n}회", { n: n.tools }) : ""].filter(Boolean).join(" · ");
 }
 
 // A workflow agent's row; one whose id is known opens its transcript.
@@ -105,7 +106,7 @@ function WorkflowAgentRow({ a, onRead }: { a: WorkflowAgent; onRead: (r: Transcr
     <>
       <Mark status={agentMark(a)} small />
       <span className="min-w-0 flex-1 truncate">{a.label}</span>
-      <span className="shrink-0 text-xs text-muted">{[a.tokens ? tokens(a.tokens) : "", a.state === "failed" ? "오류" : a.activity].filter(Boolean).join(" · ")}</span>
+      <span className="shrink-0 text-xs text-muted">{[a.tokens ? tokens(a.tokens) : "", a.state === "failed" ? t("오류") : a.activity].filter(Boolean).join(" · ")}</span>
     </>
   );
   if (!a.id) {
@@ -139,16 +140,16 @@ function NodeRow({ node, level, clock, onOpen, onRead }: { node: AgentNode; leve
           <span className="flex items-baseline gap-2">
             <span className="line-clamp-2 min-w-0 flex-1 text-[15px]">
               {deep && <span className="mr-1 text-xs text-muted">↳{level}</span>}
-              {node.workflow ? `워크플로 · ${node.name ?? node.title}` : node.title}
+              {node.workflow ? t("워크플로 · {name}", { name: node.name ?? node.title }) : node.title}
             </span>
             <span className="shrink-0 text-xs text-muted tabular-nums">{timeOf(node, running, clock)}</span>
           </span>
           <span className="mt-0.5 block text-xs text-muted">{node.workflow ? workflowLine(node, clock) : agentLine(node)}</span>
           {node.status === "waiting" ? (
-            <span className="mt-0.5 block text-xs font-medium text-warn">권한 요청을 기다립니다 ›</span>
+            <span className="mt-0.5 block text-xs font-medium text-warn">{t("권한 요청을 기다립니다 ›")}</span>
           ) : (
             running &&
-            node.activity && <span className="mt-0.5 block truncate text-xs text-muted/80">지금: {node.activity}</span>
+            node.activity && <span className="mt-0.5 block truncate text-xs text-muted/80">{t("지금: {activity}", { activity: node.activity })}</span>
           )}
         </span>
       </button>
@@ -161,7 +162,7 @@ function NodeRow({ node, level, clock, onOpen, onRead }: { node: AgentNode; leve
       )}
       {agents.length > shownAgents.length && (
         <button onClick={() => setAll(true)} className="mb-1 ml-8 min-h-8 px-2 text-xs font-medium text-accent">
-          모두 보기 ›
+          {t("모두 보기 ›")}
         </button>
       )}
       {node.children.length > 0 && (
@@ -193,7 +194,7 @@ function BackgroundRow({
   onOpen: () => void;
 }) {
   const running = task.status === "running";
-  const meta = [taskKindLabel(task.kind ?? task.type), STATUS_LABEL[TASK_STATUS[task.status]], timeOf(task, running, clock)].filter(Boolean).join(" · ");
+  const meta = [taskKindLabel(task.kind ?? task.type), t(STATUS_LABEL[TASK_STATUS[task.status]]), timeOf(task, running, clock)].filter(Boolean).join(" · ");
   return (
     <div className="flex items-start gap-2 border-b border-line px-2 py-2 last:border-0" data-task={task.id}>
       <button onClick={onOpen} className="flex min-w-0 flex-1 items-start gap-2 text-left">
@@ -201,7 +202,7 @@ function BackgroundRow({
           <Mark status={TASK_STATUS[task.status]} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="line-clamp-2 text-[15px]">{task.description || "(설명 없음)"}</span>
+          <span className="line-clamp-2 text-[15px]">{task.description || t("(설명 없음)")}</span>
           <span className="mt-0.5 block text-xs text-muted">
             {meta}
             {parent ? ` · ← ${parent}` : ""}
@@ -211,7 +212,7 @@ function BackgroundRow({
       </button>
       {running && onStop && (
         <SmallButton onClick={onStop} disabled={stopping} tone="text-danger">
-          {stopping ? "중지 중…" : "중지"}
+          {stopping ? t("중지 중…") : t("중지")}
         </SmallButton>
       )}
     </div>
@@ -265,7 +266,7 @@ function useMoveButton(sessionId: string, task: TaskInfo | undefined): { button?
     return {
       note: (
         <div className="mt-3 text-xs break-keep text-muted" data-move-old>
-          {OLD_WRAPPER_NOTE}
+          {t(OLD_WRAPPER_NOTE)}
         </div>
       ),
     };
@@ -274,7 +275,7 @@ function useMoveButton(sessionId: string, task: TaskInfo | undefined): { button?
   return {
     button: (
       <SmallButton tall disabled={moving} onClick={() => move(task.toolUseId!)}>
-        {moving ? "보내는 중…" : "백그라운드로"}
+        {moving ? t("보내는 중…") : t("백그라운드로")}
       </SmallButton>
     ),
   };
@@ -288,12 +289,12 @@ function Actions({ node, canStop, stopping, onStop, onJump, onRead, stopLabel, m
     <div className="mt-4 flex flex-wrap items-center gap-2">
       {readable && (
         <SmallButton tall onClick={() => onRead(transcriptOf(node))}>
-          기록 보기
+          {t("기록 보기")}
         </SmallButton>
       )}
       {node.itemId && (
         <SmallButton tall onClick={() => onJump(node.itemId!)}>
-          대화에서 보기
+          {t("대화에서 보기")}
         </SmallButton>
       )}
       {(stoppable || move) && (
@@ -301,7 +302,7 @@ function Actions({ node, canStop, stopping, onStop, onJump, onRead, stopLabel, m
           {move}
           {stoppable && (
             <SmallButton tall tone="text-danger" disabled={stopping} onClick={() => onStop(node.task!.id)}>
-              {stopping ? "중지 중…" : stopLabel}
+              {stopping ? t("중지 중…") : stopLabel}
             </SmallButton>
           )}
         </span>
@@ -313,7 +314,7 @@ function Actions({ node, canStop, stopping, onStop, onJump, onRead, stopLabel, m
 function Back({ onBack }: { onBack: () => void }) {
   return (
     <button onClick={onBack} className="-ml-1 mb-2 flex min-h-11 items-center gap-1 px-1 text-sm font-medium text-accent sm:hidden" data-map-back>
-      <Icon.back className="size-4" /> 지도
+      <Icon.back className="size-4" /> {t("지도")}
     </button>
   );
 }
@@ -321,7 +322,7 @@ function Back({ onBack }: { onBack: () => void }) {
 // A workflow's phases, each done once all its agents are, and the one it is in now.
 function Phases({ p }: { p: WorkflowInfo }) {
   return (
-    <Field label="단계">
+    <Field label={t("단계")}>
       <ol className="space-y-0.5">
         {p.phases.map((title, i) => {
           const agents = p.agents.filter((a) => a.phase === i);
@@ -343,7 +344,7 @@ function Phases({ p }: { p: WorkflowInfo }) {
 // journal leaves running never finished.
 function WorkflowAgents({ p, ended, onRead }: { p: WorkflowInfo; ended?: boolean; onRead: (r: TranscriptRef) => void }) {
   return (
-    <Field label={`에이전트 ${p.total}`}>
+    <Field label={t("에이전트 {n}", { n: p.total })}>
       {p.agents.map((a, n) => {
         const body = (
           <>
@@ -353,7 +354,13 @@ function WorkflowAgents({ p, ended, onRead }: { p: WorkflowInfo; ended?: boolean
             <span className="min-w-0 flex-1">
               <span className="block truncate">{a.label}</span>
               <span className="block text-xs text-muted">
-                {[ended && a.state === "running" ? "끝나지 않음" : AGENT_STATE_LABEL[a.state], ended && p.phases.length > 1 && a.phase !== undefined ? p.phases[a.phase] : "", a.tokens ? `${tokens(a.tokens)} 토큰` : "", a.tools ? `도구 ${a.tools}회` : "", a.activity]
+                {[
+                  ended && a.state === "running" ? t("끝나지 않음") : t(AGENT_STATE_LABEL[a.state]),
+                  ended && p.phases.length > 1 && a.phase !== undefined ? p.phases[a.phase] : "",
+                  a.tokens ? t("{n} 토큰", { n: tokens(a.tokens) }) : "",
+                  a.tools ? t("도구 {n}회", { n: a.tools }) : "",
+                  a.activity,
+                ]
                   .filter(Boolean)
                   .join(" · ")}
               </span>
@@ -372,7 +379,7 @@ function WorkflowAgents({ p, ended, onRead }: { p: WorkflowInfo; ended?: boolean
           </div>
         );
       })}
-      {p.total > p.agents.length && <div className="text-xs text-muted">외 {p.total - p.agents.length}개</div>}
+      {p.total > p.agents.length && <div className="text-xs text-muted">{t("외 {n}개", { n: p.total - p.agents.length })}</div>}
     </Field>
   );
 }
@@ -392,8 +399,8 @@ function PastWorkflowAgents({ sessionId, runId, ended, onRead }: { sessionId: st
     };
   }, [sessionId, runId]);
   if (error) return <div className="mt-3 text-sm text-danger">{error}</div>;
-  if (!p) return <Waiting text="에이전트 목록을 불러오는 중…" />;
-  if (!p.total) return <div className="mt-3 text-sm text-muted">이 워크플로의 에이전트 기록이 없습니다</div>;
+  if (!p) return <Waiting text={t("에이전트 목록을 불러오는 중…")} />;
+  if (!p.total) return <div className="mt-3 text-sm text-muted">{t("이 워크플로의 에이전트 기록이 없습니다")}</div>;
   return (
     <div data-past-workflow-agents>
       {p.phases.length > 0 && <Phases p={{ ...p, phase: undefined }} />}
@@ -406,11 +413,11 @@ function AgentDetail({ sessionId, node, gone, parent, clock, canStop, stopping, 
   const running = live(node);
   const toBackground = useMoveButton(sessionId, gone || node.workflow ? undefined : node.task);
   const p = node.progress;
-  const head = [STATUS_LABEL[node.status], kindText(node), node.model, node.background === undefined ? "" : node.background ? "백그라운드" : "포그라운드"].filter(Boolean);
+  const head = [t(STATUS_LABEL[node.status]), kindText(node), node.model, node.background === undefined ? "" : node.background ? t("백그라운드") : t("포그라운드")].filter(Boolean);
   const numbers = [
-    timeOf(node, running, clock) && `경과 ${timeOf(node, running, clock)}`,
-    node.tokens !== undefined ? `${tokens(node.tokens)} 토큰` : "",
-    node.tools ? `도구 ${node.tools}회` : "",
+    timeOf(node, running, clock) && t("경과 {time}", { time: timeOf(node, running, clock) }),
+    node.tokens !== undefined ? t("{n} 토큰", { n: tokens(node.tokens) }) : "",
+    node.tools ? t("도구 {n}회", { n: node.tools }) : "",
   ].filter(Boolean);
   const ended = node.status === "failed" || node.status === "stopped";
   return (
@@ -420,35 +427,35 @@ function AgentDetail({ sessionId, node, gone, parent, clock, canStop, stopping, 
         <span className="mt-1">
           <Mark status={node.status} />
         </span>
-        <div className="min-w-0 flex-1 text-[16px] font-semibold break-words">{node.workflow ? `워크플로 · ${node.name ?? node.title}` : node.title}</div>
+        <div className="min-w-0 flex-1 text-[16px] font-semibold break-words">{node.workflow ? t("워크플로 · {name}", { name: node.name ?? node.title }) : node.title}</div>
       </div>
       <div className="mt-1 text-xs text-muted">{head.join(" · ")}</div>
-      {gone && <div className="mt-1 text-xs text-muted">목록에서 빠졌습니다. 마지막 내용입니다.</div>}
-      {!node.workflow && <div className="mt-2 text-sm text-muted">띄운 곳: {parent}</div>}
+      {gone && <div className="mt-1 text-xs text-muted">{t("목록에서 빠졌습니다. 마지막 내용입니다.")}</div>}
+      {!node.workflow && <div className="mt-2 text-sm text-muted">{t("띄운 곳: {parent}", { parent })}</div>}
       {numbers.length > 0 && <div className="mt-1 text-sm tabular-nums">{numbers.join(" · ")}</div>}
       {node.status === "waiting" && node.pending ? (
         <div className="mt-3 rounded-xl bg-warn/10 px-3 py-2.5 text-sm">
-          <div className="text-warn">{node.pending.toolName} 실행 허락을 기다립니다</div>
+          <div className="text-warn">{t("{tool} 실행 허락을 기다립니다", { tool: node.pending.toolName })}</div>
           <button onClick={() => onPending(node.pending!.id)} className="mt-1.5 min-h-8 font-medium text-accent">
-            권한 요청으로 가기 ›
+            {t("권한 요청으로 가기 ›")}
           </button>
         </div>
       ) : (
-        running && node.activity && <Field label="지금 하는 일">{node.activity}</Field>
+        running && node.activity && <Field label={t("지금 하는 일")}>{node.activity}</Field>
       )}
       {ended && (node.error || node.summary) && <div className="mt-3 text-sm text-danger">{node.error ?? node.summary}</div>}
-      {node.status === "completed" && node.summary && !node.workflow && !node.result && <Field label="요약">{node.summary}</Field>}
+      {node.status === "completed" && node.summary && !node.workflow && !node.result && <Field label={t("요약")}>{node.summary}</Field>}
       {node.result && (
-        <Field label="결과">
+        <Field label={t("결과")}>
           <div className="line-clamp-12 whitespace-pre-wrap">{node.result}</div>
         </Field>
       )}
       {p && p.phases.length > 0 && <Phases p={p} />}
       {p && p.agents.length > 0 && <WorkflowAgents p={p} onRead={onRead} />}
       {node.workflow && !p?.agents.length && node.runId && <PastWorkflowAgents key={node.runId} sessionId={sessionId} runId={node.runId} ended={!running} onRead={onRead} />}
-      {node.workflow && <div className="mt-3 text-xs text-muted">워크플로 안의 에이전트는 하나씩 멈출 수 없습니다. 워크플로 전체만 멈춥니다.</div>}
+      {node.workflow && <div className="mt-3 text-xs text-muted">{t("워크플로 안의 에이전트는 하나씩 멈출 수 없습니다. 워크플로 전체만 멈춥니다.")}</div>}
       {node.recent && (
-        <Field label="최근 도구">
+        <Field label={t("최근 도구")}>
           {node.recent.map((r, n) => (
             <div key={n} className="truncate font-mono text-[12px] text-muted">
               <span className="text-fg">{r.name}</span> {r.summary}
@@ -457,13 +464,13 @@ function AgentDetail({ sessionId, node, gone, parent, clock, canStop, stopping, 
         </Field>
       )}
       {node.text && (
-        <Field label="마지막 글">
+        <Field label={t("마지막 글")}>
           <div className="line-clamp-6 whitespace-pre-wrap text-muted">{node.text}</div>
         </Field>
       )}
       {node.prompt && (
         <details className="mt-3">
-          <summary className="min-h-8 cursor-pointer text-xs font-semibold text-muted">지시</summary>
+          <summary className="min-h-8 cursor-pointer text-xs font-semibold text-muted">{t("지시")}</summary>
           <div className="mt-1 max-h-60 overflow-y-auto rounded-lg bg-surface-2 px-3 py-2 text-[13px] whitespace-pre-wrap">{node.prompt}</div>
         </details>
       )}
@@ -474,7 +481,7 @@ function AgentDetail({ sessionId, node, gone, parent, clock, canStop, stopping, 
         onStop={onStop}
         onJump={onJump}
         onRead={onRead}
-        stopLabel={node.workflow ? "워크플로 중지" : "중지"}
+        stopLabel={node.workflow ? t("워크플로 중지") : t("중지")}
         move={toBackground.button}
       />
       {toBackground.note}
@@ -505,21 +512,21 @@ function TaskDetail({
         <span className="mt-1">
           <Mark status={TASK_STATUS[task.status]} />
         </span>
-        <div className="min-w-0 flex-1 text-[16px] font-semibold break-words">{task.description || "(설명 없음)"}</div>
+        <div className="min-w-0 flex-1 text-[16px] font-semibold break-words">{task.description || t("(설명 없음)")}</div>
       </div>
-      <div className="mt-1 text-xs text-muted">{[STATUS_LABEL[TASK_STATUS[task.status]], taskKindLabel(task.kind ?? task.type)].filter(Boolean).join(" · ")}</div>
-      {parent && <div className="mt-2 text-sm text-muted">띄운 곳: {parent}</div>}
-      <div className="mt-1 text-sm tabular-nums">경과 {timeOf(task, running, clock)}</div>
-      {running && task.activity && <Field label="지금 하는 일">{task.activity}</Field>}
+      <div className="mt-1 text-xs text-muted">{[t(STATUS_LABEL[TASK_STATUS[task.status]]), taskKindLabel(task.kind ?? task.type)].filter(Boolean).join(" · ")}</div>
+      {parent && <div className="mt-2 text-sm text-muted">{t("띄운 곳: {parent}", { parent })}</div>}
+      <div className="mt-1 text-sm tabular-nums">{t("경과 {time}", { time: timeOf(task, running, clock) })}</div>
+      {running && task.activity && <Field label={t("지금 하는 일")}>{task.activity}</Field>}
       {(task.error || (task.status !== "completed" && task.summary)) && <div className="mt-3 text-sm text-danger">{task.error ?? task.summary}</div>}
       {SHELL_KINDS.has(task.kind ?? "") && (canRead || task.background === false) && (
-        <ShellOutput key={task.id} sessionId={sessionId} task={task} onAgent={task.parentId ? () => onRead({ agentId: task.parentId, title: parent || "서브에이전트" }) : undefined} />
+        <ShellOutput key={task.id} sessionId={sessionId} task={task} onAgent={task.parentId ? () => onRead({ agentId: task.parentId, title: parent || t("서브에이전트") }) : undefined} />
       )}
       {canStop && running && (
         <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
           {toBackground.button}
           <SmallButton tall tone="text-danger" disabled={stopping} onClick={() => onStop(task.id)}>
-            {stopping ? "중지 중…" : "중지"}
+            {stopping ? t("중지 중…") : t("중지")}
           </SmallButton>
         </div>
       )}
@@ -532,11 +539,11 @@ function TaskDetail({
 function summaryLine(map: AgentMap): string {
   const c = map.counts;
   return [
-    c.running ? `실행 중 ${c.running}` : "",
-    c.waiting ? `권한 대기 ${c.waiting}` : "",
-    c.completed ? `끝남 ${c.completed}` : "",
-    c.failed ? `실패 ${c.failed}` : "",
-    c.stopped ? `중지 ${c.stopped}` : "",
+    c.running ? t("실행 중 {n}", { n: c.running }) : "",
+    c.waiting ? t("권한 대기 {n}", { n: c.waiting }) : "",
+    c.completed ? t("끝남 {n}", { n: c.completed }) : "",
+    c.failed ? t("실패 {n}", { n: c.failed }) : "",
+    c.stopped ? t("중지 {n}", { n: c.stopped }) : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -606,8 +613,8 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
 
   const byTask = new Map((st?.tasks ?? []).map((t) => [t.id, t]));
   const parentName = (id?: string) => {
-    const t = id ? byTask.get(id) : undefined;
-    return t ? t.description || "서브에이전트" : "";
+    const p = id ? byTask.get(id) : undefined;
+    return p ? p.description || t("서브에이전트") : "";
   };
 
   let node: AgentNode | undefined;
@@ -663,7 +670,7 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
     if (detailRef.current) detailRef.current.scrollTop = 0;
     if (p) p.scrollTop = selectedKey ? 0 : listScroll.current;
   }, [selectedKey]);
-  const mainStatus = (chat?.pending ?? []).some((p) => !p.agentId) ? "권한 대기" : busy ? "작업 중" : st?.state === "inactive" ? "꺼져 있음" : "쉬는 중";
+  const mainStatus = (chat?.pending ?? []).some((p) => !p.agentId) ? t("권한 대기") : busy ? t("작업 중") : st?.state === "inactive" ? t("꺼져 있음") : t("쉬는 중");
   const past = map.past.slice(0, pastLimit);
   const detailProps = {
     clock,
@@ -685,7 +692,7 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
   };
 
   return (
-    <Sheet title="에이전트 지도" onClose={onClose} wide tall={Boolean(top)}>
+    <Sheet title={t("에이전트 지도")} onClose={onClose} wide tall={Boolean(top)}>
       <div className="sm:grid sm:grid-cols-12 sm:gap-4" data-agent-map>
         <div className={`${selected || top ? "hidden sm:block" : ""} sm:col-span-5 sm:max-h-[calc(var(--vv-height,100dvh)-7rem)] sm:overflow-y-auto sm:overscroll-contain`} data-map-list>
           {summaryLine(map) && (
@@ -694,7 +701,7 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
             </div>
           )}
           <div className="sticky top-0 z-10 -mx-1 rounded-xl border border-line bg-surface px-3 py-2" data-map-main>
-            <div className="truncate text-[15px] font-medium">메인 · {title}</div>
+            <div className="truncate text-[15px] font-medium">{t("메인 · {title}", { title })}</div>
             <div className="mt-0.5 text-xs text-muted">
               {[mainStatus, st?.model ? modelLabel(models, st.model) : "", st?.context ? `Context ${Math.round(st.context.percent)}%` : ""].filter(Boolean).join(" · ")}
             </div>
@@ -703,10 +710,10 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
             {map.tree.length ? (
               map.tree.map((n) => <NodeRow key={n.key} node={n} level={1} clock={clock} onOpen={open} onRead={read} />)
             ) : (
-              <div className="px-2 py-3 text-sm text-muted">{map.past.length ? "실행 중인 에이전트가 없습니다" : "이 대화에서 쓴 에이전트가 없습니다"}</div>
+              <div className="px-2 py-3 text-sm text-muted">{map.past.length ? t("실행 중인 에이전트가 없습니다") : t("이 대화에서 쓴 에이전트가 없습니다")}</div>
             )}
           </div>
-          <Section title={map.background.length ? `백그라운드 작업 ${map.background.length}` : "백그라운드 작업"}>
+          <Section title={map.background.length ? t("백그라운드 작업 {n}", { n: map.background.length }) : t("백그라운드 작업")}>
             {map.background.length ? (
               <div className="overflow-hidden rounded-xl border border-line" data-map-background>
                 {map.background.map((t) => (
@@ -723,13 +730,13 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
                 ))}
               </div>
             ) : (
-              <div className="px-1 py-1 text-sm text-muted">실행 중인 백그라운드 작업이 없습니다</div>
+              <div className="px-1 py-1 text-sm text-muted">{t("실행 중인 백그라운드 작업이 없습니다")}</div>
             )}
           </Section>
           {map.past.length > 0 && (
             <section className="mt-4" data-map-past>
               <button onClick={() => setShowPast(!showPast)} className="flex min-h-11 w-full items-center gap-1 px-1 text-left text-xs font-semibold text-muted">
-                이 대화의 지난 에이전트 {map.past.length}
+                {t("이 대화의 지난 에이전트 {n}", { n: map.past.length })}
                 <Icon.chevronDown className={`size-4 transition-transform ${showPast ? "" : "-rotate-90"}`} />
               </button>
               {showPast && (
@@ -739,14 +746,14 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
                   ))}
                   {map.past.length > past.length && (
                     <button onClick={() => setPastLimit(pastLimit + PAST_SHOWN)} className="min-h-11 px-2 text-sm font-medium text-accent">
-                      더 보기
+                      {t("더 보기")}
                     </button>
                   )}
                 </div>
               )}
             </section>
           )}
-          {controllable && <div className="mt-4 px-1 text-xs text-muted">입력창의 중지는 지금 턴만 멈춥니다. 백그라운드 에이전트는 여기서 하나씩 멈춥니다.</div>}
+          {controllable && <div className="mt-4 px-1 text-xs text-muted">{t("입력창의 중지는 지금 턴만 멈춥니다. 백그라운드 에이전트는 여기서 하나씩 멈춥니다.")}</div>}
         </div>
         <div className={`${selected || top ? "" : "hidden sm:block"} sm:col-span-7 sm:max-h-[calc(var(--vv-height,100dvh)-7rem)] sm:overflow-y-auto sm:overscroll-contain sm:border-l sm:border-line sm:pl-4`} data-map-detail ref={detailRef}>
           {top ? (
@@ -773,7 +780,7 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
               sessionId={sessionId}
               node={node}
               gone={gone}
-              parent={parentName(node.parentId) || "메인 에이전트"}
+              parent={parentName(node.parentId) || t("메인 에이전트")}
               stopping={Boolean(node.task && stopping.has(node.task.id))}
               error={node.task && failed?.id === node.task.id ? failed.text : undefined}
             />
@@ -789,10 +796,10 @@ export function AgentMapSheet({ sessionId, title, controllable, onClose, onJump,
                 stopping={stopping.has(task.id)}
                 error={failed?.id === task.id ? failed.text : undefined}
               />
-              {gone && <div className="mt-2 text-xs text-muted">목록에서 빠졌습니다. 마지막 내용입니다.</div>}
+              {gone && <div className="mt-2 text-xs text-muted">{t("목록에서 빠졌습니다. 마지막 내용입니다.")}</div>}
             </>
           ) : (
-            <div className="hidden py-6 text-center text-sm text-muted sm:block">에이전트를 누르면 자세히 보입니다</div>
+            <div className="hidden py-6 text-center text-sm text-muted sm:block">{t("에이전트를 누르면 자세히 보입니다")}</div>
           )}
         </div>
       </div>

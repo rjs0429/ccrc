@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { UsageCauses, UsageInfo, UsageLimit, UsageShare, UsageWindowCauses } from "../../../../broker/src/protocol.ts";
 import { num } from "../../i18n/format.ts";
+import { t } from "../../i18n/index.ts";
 import { duration, errorText, usageGroup, usageLimitLabel, usageResetText, usageTrait, type UsageGroup } from "../../labels.ts";
 import { Segmented } from "../../screens/settings/common.tsx";
 import { call, callFolder, toast } from "../../state.ts";
@@ -36,23 +37,23 @@ function SessionLine({ session }: { session: NonNullable<UsageInfo["session"]> }
   const parts = [
     session.costUsd > 0 ? `$${session.costUsd.toFixed(2)}` : "",
     session.durationMs > 0 ? duration(session.durationMs) : "",
-    session.linesAdded || session.linesRemoved ? `+${session.linesAdded} −${session.linesRemoved}줄` : "",
+    session.linesAdded || session.linesRemoved ? t("+{added} −{removed}줄", { added: session.linesAdded, removed: session.linesRemoved }) : "",
   ].filter(Boolean);
   if (!parts.length) return null;
-  return <div className="px-1 text-xs text-muted">이 세션 · {parts.join(" · ")}</div>;
+  return <div className="px-1 text-xs text-muted">{t("이 세션 · {parts}", { parts: parts.join(" · ") })}</div>;
 }
 
 // One bar per plan limit, in the order Claude Code gives them.
 export function UsageView({ usage }: { usage: UsageInfo }) {
   return (
     <div className="space-y-3">
-      {!usage.limits.length && <div className="px-1 text-sm text-muted">요금제 사용 한도 정보가 없습니다</div>}
+      {!usage.limits.length && <div className="px-1 text-sm text-muted">{t("요금제 사용 한도 정보가 없습니다")}</div>}
       {usage.limits.map((l, i) => (
         <div key={`${l.kind}-${l.scope ?? ""}-${i}`} className="px-1" data-usage-limit={l.kind}>
           <div className="flex items-baseline justify-between gap-3">
             <span className="min-w-0 truncate text-[14px]">
               {usageLimitLabel(l.kind, l.scope)}
-              {l.active && <span className="ml-1.5 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">현재 기준</span>}
+              {l.active && <span className="ml-1.5 rounded bg-accent-soft px-1 text-[11px] font-medium text-accent">{t("현재 기준")}</span>}
             </span>
             <span className="shrink-0 text-[14px] font-semibold tabular-nums">{Math.round(l.percent)}%</span>
           </div>
@@ -86,7 +87,7 @@ function ShareTable({ title, items, label }: { title: string; items: UsageShare[
     <div className="px-1" data-usage-table={title}>
       <div className="flex justify-between text-xs text-muted">
         <span className="font-semibold">{title}</span>
-        <span>사용량 비율</span>
+        <span>{t("사용량 비율")}</span>
       </div>
       <div className="mt-1 overflow-hidden rounded-xl border border-line">
         {shown.map((x) => (
@@ -96,7 +97,7 @@ function ShareTable({ title, items, label }: { title: string; items: UsageShare[
           </div>
         ))}
       </div>
-      {items.length > shown.length && <div className="mt-0.5 text-xs text-muted">… {items.length - shown.length}개 더</div>}
+      {items.length > shown.length && <div className="mt-0.5 text-xs text-muted">{t("… {n}개 더", { n: items.length - shown.length })}</div>}
     </div>
   );
 }
@@ -109,7 +110,7 @@ function WindowCauses({ w }: { w: UsageWindowCauses }) {
     return top && top.pct >= TOLD_PCT ? [{ g, top }] : [];
   });
   const attributed = GROUPS.some((g) => w[g].length > 0);
-  if (!traits.length && !attributed) return <div className="px-1 text-sm text-muted">이 기간에는 {TOLD_PCT}%를 넘는 원인이 없습니다. 다른 기간을 보세요.</div>;
+  if (!traits.length && !attributed) return <div className="px-1 text-sm text-muted">{t("이 기간에는 {pct}%를 넘는 원인이 없습니다. 다른 기간을 보세요.", { pct: TOLD_PCT })}</div>;
   return (
     <div className="space-y-3">
       {traits.map((t) => (
@@ -121,7 +122,7 @@ function WindowCauses({ w }: { w: UsageWindowCauses }) {
       {attributed ? (
         GROUPS.map((g) => <ShareTable key={g} title={usageGroup(g).title} items={w[g]} label={usageGroup(g).label} />)
       ) : (
-        <div className="px-1 text-xs text-muted">스킬·서브에이전트·플러그인·MCP 서버별 기록은 아직 없습니다. 쓰는 동안 쌓입니다.</div>
+        <div className="px-1 text-xs text-muted">{t("스킬·서브에이전트·플러그인·MCP 서버별 기록은 아직 없습니다. 쓰는 동안 쌓입니다.")}</div>
       )}
     </div>
   );
@@ -133,16 +134,16 @@ export function UsageCausesView({ causes }: { causes: UsageCauses }) {
   const [span, setSpan] = useState<"day" | "week">(causes.day ? "day" : "week");
   const w = causes[span];
   if (causes.none || (!causes.day && !causes.week)) {
-    return <div className="px-1 text-sm text-muted">원인을 받지 못했습니다. claude.ai 구독으로 로그인한 계정만 볼 수 있고, 기록을 읽지 못한 때도 비어 있습니다.</div>;
+    return <div className="px-1 text-sm text-muted">{t("원인을 받지 못했습니다. claude.ai 구독으로 로그인한 계정만 볼 수 있고, 기록을 읽지 못한 때도 비어 있습니다.")}</div>;
   }
   return (
     <div className="space-y-3" data-usage-span={span}>
       <div className="flex items-center justify-between gap-2 px-1">
-        <span className="min-w-0 text-xs text-muted">{w ? `요청 ${num(w.requests)}개 · 세션 ${num(w.sessions)}개` : ""}</span>
-        <Segmented value={span} options={[["day", "24시간"], ["week", "7일"]]} onChange={setSpan} />
+        <span className="min-w-0 text-xs text-muted">{w ? t("요청 {requests}개 · 세션 {sessions}개", { requests: num(w.requests), sessions: num(w.sessions) }) : ""}</span>
+        <Segmented value={span} options={[["day", t("24시간")], ["week", t("7일")]]} onChange={setSpan} />
       </div>
-      {w ? <WindowCauses w={w} /> : <div className="px-1 text-sm text-muted">이 기간의 기록이 없습니다</div>}
-      <p className="px-1 text-xs text-muted">이 컴퓨터의 세션 기록으로 어림한 값이라 다른 기기와 claude.ai 사용은 빠집니다. 서로 겹치는 특징이라 더해도 100%가 되지 않습니다.</p>
+      {w ? <WindowCauses w={w} /> : <div className="px-1 text-sm text-muted">{t("이 기간의 기록이 없습니다")}</div>}
+      <p className="px-1 text-xs text-muted">{t("이 컴퓨터의 세션 기록으로 어림한 값이라 다른 기기와 claude.ai 사용은 빠집니다. 서로 겹치는 특징이라 더해도 100%가 되지 않습니다.")}</p>
     </div>
   );
 }
@@ -171,9 +172,9 @@ export function UsageCausesSection({ sessionId, cwd, start }: { sessionId?: stri
   if (!start) return null;
   return (
     <section className="mt-5 border-t border-line pt-4" data-usage-causes={causes ? (causes.none ? "none" : "ok") : loading ? "loading" : "failed"}>
-      <div className="mb-2 px-1 text-xs font-semibold text-muted">사용량 원인</div>
+      <div className="mb-2 px-1 text-xs font-semibold text-muted">{t("사용량 원인")}</div>
       {causes && !loading && <UsageCausesView causes={causes} />}
-      {loading && <Waiting text="원인을 찾는 중입니다. 이 컴퓨터의 최근 7일 기록을 읽어 1분 넘게 걸릴 수 있습니다" />}
+      {loading && <Waiting text={t("원인을 찾는 중입니다. 이 컴퓨터의 최근 7일 기록을 읽어 1분 넘게 걸릴 수 있습니다")} />}
       {error && !loading && <Failed text={error} onRetry={() => setRound((r) => r + 1)} />}
     </section>
   );
@@ -194,7 +195,7 @@ export function UsageSheet({ sessionId, cwd, onClose, onFail }: { sessionId?: st
     (sessionId ? call(sessionId, "usage", {}, WAIT_MS) : callFolder(cwd ?? "", "usage", {}, WAIT_MS))
       .then(
         (u) => live && setUsage(u),
-        (e: Error) => live && (usage ? toast("사용량을 새로 불러오지 못했습니다") : onFail ? onFail() : setError(errorText(e.message))),
+        (e: Error) => live && (usage ? toast(t("사용량을 새로 불러오지 못했습니다")) : onFail ? onFail() : setError(errorText(e.message))),
       )
       .finally(() => live && setLoading(false));
     return () => {
@@ -203,13 +204,13 @@ export function UsageSheet({ sessionId, cwd, onClose, onFail }: { sessionId?: st
   }, [sessionId, cwd, round]);
 
   return (
-    <Sheet title="사용량" onClose={onClose}>
+    <Sheet title={t("사용량")} onClose={onClose}>
       {usage && <UsageView usage={usage} />}
-      {loading && <Waiting text="사용량을 불러오는 중입니다" />}
+      {loading && <Waiting text={t("사용량을 불러오는 중입니다")} />}
       {error && !loading && <Failed text={error} onRetry={() => setRound((r) => r + 1)} />}
       {usage && !loading && (
         <div className="mt-4 flex justify-end">
-          <SmallButton onClick={() => setRound((r) => r + 1)}>새로 고침</SmallButton>
+          <SmallButton onClick={() => setRound((r) => r + 1)}>{t("새로 고침")}</SmallButton>
         </div>
       )}
       <UsageCausesSection sessionId={sessionId} cwd={cwd} start={Boolean(usage || error)} />

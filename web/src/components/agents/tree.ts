@@ -1,5 +1,6 @@
 import type { DisplayItem, PendingRequest, SubagentActivity, TaskInfo, WorkflowInfo } from "../../../../broker/src/protocol.ts";
 import { workflowMeta } from "../../../../broker/src/tools.ts";
+import { t } from "../../i18n/index.ts";
 
 export type NodeStatus = "waiting" | "running" | "completed" | "failed" | "stopped" | "unknown";
 export type ChipDot = "waiting" | "running" | "failed" | "done" | "idle";
@@ -64,6 +65,7 @@ const kindOf = (t: TaskInfo) => t.kind ?? t.type;
 const isAgent = (t: TaskInfo) => kindOf(t) === "local_agent";
 const isWorkflow = (t: TaskInfo) => kindOf(t) === "local_workflow" || t.workflow !== undefined;
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
+const untitled = (workflow: boolean) => (workflow ? t("워크플로") : t("서브에이전트"));
 
 function inputOf(item?: ToolItem): Record<string, unknown> {
   return item?.input && typeof item.input === "object" ? (item.input as Record<string, unknown>) : {};
@@ -147,7 +149,7 @@ export function agentMap({ tasks = [], items, pending, busy }: { tasks?: TaskInf
         agentId: workflow ? undefined : t.id,
         runId: known.runId,
         workflow,
-        title: t.description || known.title || (workflow ? "워크플로" : "서브에이전트"),
+        title: t.description || known.title || untitled(workflow),
         name: t.workflow?.name ?? known.name,
         agentType: t.agentType ?? known.agentType,
         model: known.model,
@@ -207,7 +209,7 @@ export function agentMap({ tasks = [], items, pending, busy }: { tasks?: TaskInf
         agentId: known.agentId,
         runId: known.runId,
         workflow,
-        title: known.title || (workflow ? "워크플로" : "서브에이전트"),
+        title: known.title || untitled(workflow),
         name: known.name,
         agentType: known.agentType,
         model: known.model,
