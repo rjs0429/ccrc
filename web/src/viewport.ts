@@ -2,6 +2,8 @@
 const KEYBOARD_MIN_PX = 120;
 // The tiny variant's 15rem, for a visible area the keyboard leaves that short.
 const TINY_PX = 240;
+// Above this scale a pinch zoom shows only part of the page.
+const ZOOMED_SCALE = 1.01;
 
 export function trackViewport(): void {
   const vv = window.visualViewport;
@@ -13,13 +15,15 @@ export function trackViewport(): void {
     const top = `${Math.max(0, Math.round(vv.offsetTop))}px`;
     const keyboard = root.clientHeight - vv.height * vv.scale > KEYBOARD_MIN_PX;
     const tiny = keyboard && vv.height * vv.scale < TINY_PX;
-    const key = `${height} ${top} ${keyboard} ${tiny}`;
+    const zoomed = vv.scale > ZOOMED_SCALE;
+    const key = `${height} ${top} ${keyboard} ${tiny} ${zoomed}`;
     if (key === last) return;
     last = key;
     root.style.setProperty("--vv-height", height);
     root.style.setProperty("--vv-top", top);
     root.toggleAttribute("data-keyboard", keyboard);
     root.toggleAttribute("data-tiny", tiny);
+    root.toggleAttribute("data-zoomed", zoomed);
   };
   vv.addEventListener("resize", update);
   vv.addEventListener("scroll", update);

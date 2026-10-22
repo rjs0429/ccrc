@@ -337,7 +337,7 @@ export default function FileViewer({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-bg" role="dialog" aria-label="파일 보기">
-      <header className="pt-safe border-b border-line bg-surface">
+      <header className="screen-header pt-safe border-b border-line bg-surface">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           {stack.length > 1 ? (
             <button onClick={() => setStack((s) => s.slice(0, -1))} aria-label="이전 파일" className="rounded-lg p-2">

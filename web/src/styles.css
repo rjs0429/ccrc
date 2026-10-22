@@ -80,6 +80,12 @@ body,
   height: 100%;
 }
 
+/* Each screen scrolls inside, never the page, so the page does not stretch either: on iOS a stretched page reports a
+   visual viewport offset the fixed layers do not follow. */
+html {
+  overscroll-behavior-y: none;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -110,24 +116,51 @@ body {
   padding-right: calc(--spacing(--value(number)) + var(--sar));
 }
 
-/* Overlays follow the visual viewport, so a sheet stays above the on-screen keyboard. */
 @layer components {
-  .overlay {
-    inset-inline: 0;
-    top: var(--vv-top, 0px);
-    height: var(--vv-height, 100dvh);
+  /* A sheet dims the page in two parts no drag can pan: iOS colours its status bar from a fixed strip at the top edge,
+     but keeps the colour it had under a dim the size of the screen. */
+  .sheet-dim {
+    position: fixed;
+    inset: 12px 0 0;
+    background-color: rgb(0 0 0 / 0.4);
+    touch-action: none;
+  }
+  .sheet-dim-top {
+    inset: 0 0 auto;
+    height: 12px;
+  }
+  /* The panel's frame fills the page, or the visible part while the keyboard is up or the page is zoomed. Hidden
+     itself, it lets taps and iOS's top-edge check through to the dim. */
+  .sheet-frame {
+    position: fixed;
+    inset: 0;
+    visibility: hidden;
     padding-left: var(--sal);
     padding-right: var(--sar);
+  }
+  .sheet-frame > * {
+    visibility: visible;
+  }
+  :is([data-keyboard], [data-zoomed]) .sheet-frame {
+    top: var(--vv-top, 0px);
+    bottom: auto;
+    height: var(--vv-height, 100dvh);
   }
   /* The keyboard covers the home indicator. */
   [data-keyboard] :is(.overlay, .pb-safe) {
     --sab: 0px;
   }
   @media (min-width: 40rem) {
-    .overlay {
+    .sheet-frame {
       padding-top: max(0.5rem, var(--sat));
       padding-bottom: max(0.5rem, var(--sab));
     }
+  }
+  /* iOS blurs the top of a Home Screen web app unless a fixed or sticky box with a background meets the top edge, and
+     then draws that box's colour instead. The page never scrolls, so a sticky header stays where it is. */
+  .screen-header {
+    position: sticky;
+    top: 0;
   }
 }
 

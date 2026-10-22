@@ -155,7 +155,7 @@ function ImageViewer({ images, start, onClose }: { images: Shown[]; start: numbe
         if (from !== null && to !== undefined && Math.abs(to - from) > SWIPE_PX) go(to < from ? 1 : -1);
       }}
     >
-      <header className="pt-safe flex items-center gap-2 px-safe-2 py-2">
+      <header className="screen-header pt-safe flex items-center gap-2 bg-black px-safe-2 py-2">
         <div className="min-w-0 flex-1 px-2 text-sm text-white/80">
           {images.length > 1 ? `${at + 1} / ${images.length}` : "이미지"}
           {shown.size > 0 && ` · ${sizeText(shown.size)}`}
