@@ -15,6 +15,14 @@ your version and the new one, and the lines under "Breaking" separately.
   text as it comes. A streaming thought now opens and closes on a tap like the others; a box opened or closed by hand
   stays so, after a reload of the page too, and the rest follow the setting.
 
+### Fixed
+
+- On an iPhone the conversation stuttered as it scrolled up or down while Claude worked or subagents reported progress,
+  and as each earlier page came in: the app set the list's position while a finger or a fling moved it. It no longer
+  moves the list while you scroll. Safari 27 and other browsers keep what you read in place themselves; on older iOS the
+  app does it once the list rests. An earlier page that arrives while you scroll goes in when the list rests, so after a
+  fast fling to the top it shows a moment later.
+
 ## [0.8.1] - 2026-10-23
 
 ### Fixed

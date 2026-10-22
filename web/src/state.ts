@@ -5,6 +5,7 @@ import type {
   ClientMsg,
   FolderOp,
   DisplayItem,
+  HistoryPage,
   LiveState,
   PendingRequest,
   ServerMsg,
@@ -640,9 +641,12 @@ const settled = (c: Chat, patch: Partial<Chat> | undefined): Partial<Chat> | und
 
 const HISTORY_CHANGED = "history_changed";
 let snapshots = 0;
+// A loaded part that may not go in yet (canJoin said no): it stays loading until joinParked puts it in.
+let parked: { sessionId: string; snaps?: number; part: "earlier" | "gap"; page: HistoryPage } | undefined;
 
-// Loads the page before the first item the chat holds, or the next part of its gap.
-export async function loadMore(sessionId: string, part: "earlier" | "gap"): Promise<void> {
+// Loads the page before the first item the chat holds, or the next part of its gap. canJoin, asked as the part comes,
+// may keep it out until joinParked.
+export async function loadMore(sessionId: string, part: "earlier" | "gap", canJoin?: () => boolean): Promise<void> {
   const c = state.chat;
   if (!c || c.sessionId !== sessionId || !c.loaded || c.loading) return;
   const gapAt = c.gap ? c.items.findIndex((i) => i.id === c.gap!.before) : -1;
@@ -653,11 +657,24 @@ export async function loadMore(sessionId: string, part: "earlier" | "gap"): Prom
   updateChat(sessionId, () => ({ loading: part, failed: undefined }));
   try {
     const page = await call(sessionId, "history", args);
+    if (state.chat?.sessionId === sessionId && state.chat.snaps === snaps && canJoin && !canJoin()) {
+      parked = { sessionId, snaps, part, page };
+      return;
+    }
     updateChat(sessionId, (c) => (c.snaps !== snaps ? { loading: undefined } : { loading: undefined, ...joined(c, part, page) }));
   } catch (e) {
     updateChat(sessionId, () => ({ loading: undefined, failed: part }));
     if (e instanceof Error && e.message === HISTORY_CHANGED && state.chat?.sessionId === sessionId) send({ t: "view", sessionId });
   }
+}
+
+// Puts in the part loadMore kept out; false when none waits for this chat.
+export function joinParked(sessionId: string): boolean {
+  const p = parked;
+  if (p?.sessionId !== sessionId) return false;
+  parked = undefined;
+  updateChat(sessionId, (c) => (c.snaps === p.snaps && c.loading === p.part ? { loading: undefined, ...joined(c, p.part, p.page) } : undefined));
+  return true;
 }
 
 function onServer(msg: ServerMsg): void {
@@ -686,6 +703,7 @@ function onServer(msg: ServerMsg): void {
       setState({ loggedOutReason: msg.reason });
       return;
     case "snapshot":
+      if (parked?.sessionId === msg.sessionId) parked = undefined;
       for (const item of [...msg.items, ...(msg.state.queued ?? [])]) bindSent(msg.sessionId, item);
       updateChat(msg.sessionId, () => ({
         loaded: true,
