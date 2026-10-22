@@ -18,8 +18,8 @@ started by the broker itself.
 - **Not an Anthropic product.** ccrc is not made, endorsed or supported by Anthropic. It does not include or modify
   Claude Code (see [License and Anthropic's terms](#license-and-anthropics-terms)).
 - **Korean or English screens.** The phone app shows Korean when the phone's first language is Korean and English
-  otherwise, or the language chosen in its settings. English covers part of the screens so far; the rest shows in
-  Korean. The command line is in English; the documentation is in English and Korean.
+  otherwise (Auto), or the language chosen in its settings: 한국어 or English. The command line is in English; the
+  documentation is in English and Korean.
 
 ### Tested with
 
@@ -192,13 +192,14 @@ taken from `--yes`:
 3. Share > Add to Home Screen, then open ccrc from the home screen.
 4. In ccrc's settings, turn on notifications and send a test one (iOS 16.4 or later; iOS allows web push only in
    home screen apps).
-5. Optionally, in 계정과 보안 (account and security), register a passkey: remote logins are then confirmed with Face ID
-   (or the phone's passcode) when they start and every `passkeyHours` (18 by default), and another phone or tablet
-   registers its own at its first login. See [Security model](#security-model).
+5. Optionally, in Account and security, register a passkey: remote logins are then confirmed with Face ID (or the
+   phone's passcode) when they start and every `passkeyHours` (18 by default), and another phone or tablet registers its
+   own at its first login. See [Security model](#security-model).
 
 The app follows the phone's language: Korean when Korean is the phone's first language, English otherwise. Settings >
-Language (언어 / Language) can fix either; the choice is kept on the phone, so the login screen follows it too.
-Notifications to the phone and conversations exported from it are written in the same language.
+Language (언어 / Language on a phone in Korean) offers Auto, 한국어 and English; the choice is kept on the phone, so the
+login screen follows it too. Notifications to the phone, conversations exported from it and the name its messages to
+sessions open elsewhere go by are in the same language.
 
 iOS sometimes opens the app from a notification without going where it points. When the app comes to the front
 within two minutes of a notification about a request that still waits for an answer and no notification's tap reaches
@@ -208,11 +209,11 @@ decides where it goes.
 A notification stays only while the app icon still counts its session: the end of a turn, Claude's notification, files
 sent and a copy's first message until the session is read (opened on the phone, or written to in VS Code), a request
 until it is answered. The phone closes the others when the app comes to the front, opens a session or hears that the
-list changed, and when the next notification arrives; a newer notification of the same session and kind takes the
-place of the older one. While the app is closed nothing else reaches the phone, so a session read in VS Code keeps its
-notification, and the icon its number, until then. 알림 끄기 and logging out in the settings close all of the app's
-notifications. iOS 26.5 and later do not close a notification within 30 seconds of showing it: the app tries again
-once that has passed, while it is in front.
+list changed, and when the next notification arrives; a newer notification of the same session and kind takes the place
+of the older one. While the app is closed nothing else reaches the phone, so a session read in VS Code keeps its
+notification, and the icon its number, until then. Turning notifications off and logging out in the settings close all
+of the app's notifications. iOS 26.5 and later do not close a notification within 30 seconds of showing it: the app
+tries again once that has passed, while it is in front.
 
 Android with Chrome should work the same way, but has not been tested.
 
@@ -250,11 +251,11 @@ broker is down, and the wrapper reconnects when it comes back.
   before. Tabs opened with an older wrapper still get the push, and Claude reads Claude Code's own answer.
 - To turn ccrc off for VS Code, remove the setting, or add `CCRC_WRAPPER=off` to
   `claudeCode.environmentVariables`.
-- With `vscodeArchive` on (on the phone: 설정 > 알림과 입력 > 세션 목록), the sessions the extension archived, by hand
-  or after `claudeCode.archiveInactiveSessions` days without use (14 by default), count as archived in ccrc's list as
-  well, with a "VS Code 보관" badge. ccrc reads the extension's list from VS Code's state database
-  (`~/.config/Code/User/globalStorage/state.vscdb`, default profile only) and never writes it: such a session brought
-  back on the phone stays archived in VS Code.
+- With `vscodeArchive` on (on the phone: Settings > Notifications and input > Session list), the sessions the extension
+  archived, by hand or after `claudeCode.archiveInactiveSessions` days without use (14 by default), count as archived in
+  ccrc's list as well, with an "Archived in VS Code" badge. ccrc reads the extension's list from VS Code's state
+  database (`~/.config/Code/User/globalStorage/state.vscdb`, default profile only) and never writes it: such a session
+  brought back on the phone stays archived in VS Code.
 
 ### Sessions open elsewhere
 
@@ -262,9 +263,9 @@ A session open in a terminal, in the background (`claude --bg`), under `claude -
 Code tab opened before the wrapper was set, is shown on the phone as its transcript grows. Claude Code 2.1.224 and
 later give each such session an inbox socket for messages from your other sessions, and the phone sends text there:
 
-- Claude gets it as a message from another session ("ccrc 휴대폰"), not from you. It acts on it within that session's
-  own permissions and asks there before anything that matters; a "/" command in it is not run, and it never answers a
-  pending prompt.
+- Claude gets it as a message from another session ("ccrc phone", or "ccrc 휴대폰" from a phone in Korean), not from you.
+  It acts on it within that session's own permissions and asks there before anything that matters; a "/" command in it
+  is not run, and it never answers a pending prompt.
 - A session that skips permission prompts holds the message: a terminal asks there, and so does a background session
   once opened from `claude agents` (it lists as waiting on a permission prompt); anywhere else drops it unless the mode
   changes within five minutes. A `crossSessionInbound` setting decides instead when the user's or the project's
@@ -495,8 +496,8 @@ does the file.
   falls back to a shared folder such as `/tmp`.
 - **Secrets.** The API key is passed only to broker sessions' Claude Code as `ANTHROPIC_API_KEY`, and never written to
   logs, the audit log, the screen or API answers. Notifications carry the session title and the kind of request only,
-  besides the ids of the sessions the app icon counts, unless "도구 이름 표시" (show tool names) is on for the device:
-  then also the tool or file name, or the text of a notification Claude sends.
+  besides the ids of the sessions the app icon counts, unless "Show tool names" is on for the device: then also the tool
+  or file name, or the text of a notification Claude sends.
 - **The phone's copy.** So that recent conversations can be read while the machine is off or out of reach, the phone
   keeps the end of the last five it showed in its browser's storage (IndexedDB, 160KB each at most), and the app
   itself in its service worker's cache. The copy holds what was said and tool calls by name and summary; tool input
@@ -508,10 +509,10 @@ does the file.
   It is deleted on logout, when that time runs out (also from a screen showing it), when a passkey has to confirm the
   login, at once when the password is changed (on the phone, or with `ccrc passwd` while the phone is connected), and
   otherwise when the phone next reaches the machine and learns that its login ended (`ccrc logout`, a login
-  elsewhere), that the password was changed or that the device is no longer allowed. The phone's settings
-  (계정과 보안 > "최근 대화를 휴대폰에 저장", on by default) turn it off and delete it. A lost phone that cannot reach the
-  machine shows the copy to whoever unlocks it until the time runs out: run `ccrc logout` on the machine, and rely on
-  the phone's lock.
+  elsewhere), that the password was changed or that the device is no longer allowed. The phone's settings (Account and
+  security > "Save recent conversations on the phone", on by default) turn it off and delete it. A lost phone that
+  cannot reach the machine shows the copy to whoever unlocks it until the time runs out: run `ccrc logout` on the
+  machine, and rely on the phone's lock.
 
 ### What leaves your machine
 
@@ -520,7 +521,7 @@ does the file.
   come from (GitHub by default). GitHub sees the machine's address and the time; ccrc sends no version or identifier.
   `updateCheck: false` turns it off, `updateNotify: false` only the notification.
 - **Notifications** go through the phone's push service (Apple's or Google's), encrypted end to end; they carry the
-  session title and the kind of request (with "도구 이름 표시" on, also the names and Claude's text described above),
+  session title and the kind of request (with "Show tool names" on, also the names and Claude's text described above),
   and the ids of the sessions left unread or waiting for an answer, by which the phone closes the notifications that no
   longer count.
 - **Tailscale** keeps its own connection to its coordination server; the phone's traffic to the broker stays on the
@@ -547,17 +548,18 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
   experiment for it is on, and then the phone's card goes too.
 - Signing in to an MCP server from the phone opens the sign-in page on the phone; its last page is Claude Code's
   redirect to the machine's `localhost`, which the phone cannot open, so its address is pasted back in the MCP sheet.
-- Side questions from the phone, "백그라운드로" (move to background) on cards and in the agent map, the changes sheet's git
-  view as Claude Code sees it, the usage causes from the session's own Claude Code, the latest "/" list for a broker
-  that connects again, MCP sign-ins from the phone, a session moving out of a tab where it rests, and Claude being
-  told that its PushNotification reached the phone need the wrapper of ccrc 0.8 or later: a tab opened before an
-  update keeps its older wrapper until it is opened again. Side questions asked from the phone do not show in VS
-  Code's side panel.
+- Side questions from the phone, "Run in background" on cards and in the agent map, the changes sheet's git view as
+  Claude Code sees it, the usage causes from the session's own Claude Code, the latest "/" list for a broker that
+  connects again, MCP sign-ins from the phone, a session moving out of a tab where it rests, and Claude being told that
+  its PushNotification reached the phone need the wrapper of ccrc 0.8 or later: a tab opened before an update keeps its
+  older wrapper until it is opened again. Side questions asked from the phone do not show in VS Code's side panel.
 - When removing ccrc by hand, remove the VS Code setting before the files (`ccrc uninstall` does this).
 
 ## Limitations
 
-- The phone app's English does not cover every screen yet; what it does not cover shows in Korean.
+- The app's language covers its own screens: what Claude, Claude Code and your sessions write (answers, tool output,
+  Claude Code's messages, session names) shows as written. English notifications give a usage limit's reset time as in
+  the US (4:00 PM), since the broker knows the phone's language but not its region.
 - Linux with systemd only; no macOS, WSL or VS Code Remote-SSH. VS Code's settings are looked for in `~/.config/Code`
   and its extensions in `~/.vscode/extensions`, as Microsoft's build keeps them: not Insiders, VSCodium or Code - OSS
   (Arch's `code` package; use `visual-studio-code-bin` there). With another build, setup skips the `vscode` step.
@@ -599,6 +601,10 @@ for pull requests (`.github/workflows/ci.yml`).
 When a change adds a config key, a state file, an outside tool or a path, update `ccrc setup`, the migrations in
 `broker/src/config.ts`, this README and the CHANGELOG's Unreleased section together. Test data uses example values
 only (`100.64.0.x`, `*.example.ts.net`, `/home/user`).
+
+The phone app's text is written in Korean through `t()` (`web/src/i18n`), the Korean sentence being the key of its
+English in `web/src/i18n/en/`; a place that needs other English for the same sentence uses `tc()`. `npm test` fails on
+Korean left outside them and on a sentence without English, and `node broker/test/i18n-scan.ts` lists them.
 
 When you change `README.md`, `CHANGELOG.md` or `SECURITY.md`, change its Korean version (`README.ko.md`,
 `CHANGELOG.ko.md`, `SECURITY.ko.md`) in the same commit.

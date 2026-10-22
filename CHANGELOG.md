@@ -11,31 +11,31 @@ your version and the new one, and the lines under "Breaking" separately.
 ### Added
 
 - The phone app in English. It shows Korean when the phone's first preferred language is Korean and English otherwise
-  (자동, the default), or the language chosen under Settings > Language (언어 / Language). The choice is kept on the
-  phone, so the login screen follows it as well. Notifications are written in each phone's language: the app tells the
+  (Auto, the default), or the language chosen under Settings > Language (언어 / Language on a phone in Korean): 한국어 or
+  English. The choice is kept on the phone, so the login screen follows it as well. Every screen is translated; what
+  Claude and Claude Code write shows as written. Notifications are written in each phone's language: the app tells the
   broker when it subscribes and whenever its language changes, which the broker keeps as `lang` in that device's
-  notification settings in `~/.config/ccrc/push.json`. A conversation exported from the phone gets the broker's
-  headings and lines in the same language. English covers the settings home, the login screen, the account and input
-  settings, the language setting, error messages, notes and the list's times so far; the rest still shows in Korean.
+  notification settings in `~/.config/ccrc/push.json`. A conversation exported from the phone gets the broker's headings
+  and lines in the same language.
 - `ccrc setup`'s `ssh-keygen` step also checks that it is from OpenSSH 8.2 or newer, which `ccrc update` needs to
   check release signatures: it asks ssh-keygen what git asks it, and one without `-Y find-principals` gets a warning
   that updates will stop at that check, with how to fix it. Setup goes on either way. `ccrc update`, when it stops
   for that reason, now says how to fix it as well.
 - Notifications Claude decides to send: when Claude calls its PushNotification tool (after "tell me when the tests
   finish", say) and Claude Code runs the call, ccrc sends it to the phone at once, unless the phone is showing that
-  session, and leaves out that turn's "작업을 마쳤습니다". A call Claude Code refuses or that fails sends nothing. The
-  device setting "Claude가 보내는 알림" (on by default) turns them off; with "도구 이름 표시" on, the notification
+  session, and leaves out that turn's "Finished". A call Claude Code refuses or that fails sends nothing. The device
+  setting "Notifications from Claude" (on by default) turns them off; with "Show tool names" on, the notification
   carries Claude's text. Claude Code's own call pushes nothing without Remote Control; a PostToolUse hook then makes it
-  read "Mobile push requested." when ccrc sent it, Claude Code's "Not sent — this terminal is active" when the phone
-  was showing the session, and leaves Claude Code's own answer otherwise. Broker sessions register the hook through the
+  read "Mobile push requested." when ccrc sent it, Claude Code's "Not sent — this terminal is active" when the phone was
+  showing the session, and leaves Claude Code's own answer otherwise. Broker sessions register the hook through the
   Agent SDK. In VS Code sessions a wrapper from this version adds it to the extension's `initialize` and answers it
   itself from what the broker last said (`claude_push` in the hello's `caps`); tabs opened with an older wrapper still
   get the notification, but Claude reads Claude Code's "not sent".
 - Unread sessions. A session is unread when a turn ended while the phone was not showing it (any turn of a broker
   session; a VS Code session's turn when the phone sent to, started or answered in it after VS Code's last message,
-  within two hours before the turn started) or when a notification about it went out, until the phone opens it or
-  VS Code writes to it. The list shows a dot and has a "읽지 않음" filter; the session's ⋯ menu (under 더 보기) and a
-  long press in the list offer "읽지 않음으로 표시" (and "읽음으로 표시"). Kept in `~/.local/state/ccrc/unread.json` (0600; session ids
+  within two hours before the turn started) or when a notification about it went out, until the phone opens it or VS
+  Code writes to it. The list shows a dot and has an "Unread" filter; the session's ⋯ menu (under More) and a long press
+  in the list offer "Mark as unread" (and "Mark as read"). Kept in `~/.local/state/ccrc/unread.json` (0600; session ids
   and times, for a month and 500 sessions at most), so it outlasts a broker restart; `ccrc uninstall --purge` removes
   it.
 - Agent map: a subagent's transcript open on the phone now updates as Claude Code writes it. While it is open the
@@ -44,27 +44,27 @@ your version and the new one, and the lines under "Breaking" separately.
   WebSocket; the phone reads it every 2 seconds again only when the broker cannot follow the file. A shell's output is
   read by the broker every second while it changes, every 2 seconds while it does not, and once more when the shell
   ends, and sent only when it changed.
-- "백그라운드로" (move to background) on a Bash or Agent card the turn waits on, once Claude Code lists it as running in
-  the foreground (a subagent after 2 seconds), and on the agent map's card of a subagent or shell running in the
-  foreground: Claude Code moves it to the background, the card says it runs there, and the turn goes on. Broker
-  sessions use the Agent SDK's `backgroundTasks`; VS Code sessions need this release's wrapper (reload the VS Code
-  window), which says so in its hello and passes `background_tasks` on only for a call Claude Code runs in the
-  foreground. With an older wrapper the card shows how to get it instead of the button.
-- The changes sheet has two tabs. "이 세션" adds the files the session's subagents and workflow agents changed (Edit,
-  Write, MultiEdit and NotebookEdit calls in their transcripts), marked as an agent's. "git 전체" shows the folder's git
-  changes the way Claude Code's diff panel does: since the branch left its base branch when it is ahead of it
-  (committed and uncommitted together), else since HEAD, with untracked files the session made. A running session
-  asks its own Claude Code (`get_workspace_diff`, under its read rules); for a session without a process, or when
-  Claude Code cannot answer, the broker works it out with read-only git commands. Either way the lines of key and
-  token files and of files outside the session's folders stay hidden, and the same bounds apply (50 files, 1MB and
-  400 lines a file, 2MB in all). Lines can be picked and commented into the composer as before.
-- Side questions (`/btw` in the composer, or 곁질문 in the ⋯ menu) ask Claude Code beside the conversation, without
-  interrupting a turn or adding to the conversation, and show its progress. The latest 20 questions and answers stay
-  in the phone tab's sessionStorage and go with a follow-up as its thread, the latest first up to 256KB. A question is
-  cancelled after five minutes or by the user. When the phone's connection drops while it waits, it waits again once
+- "Run in background" on a Bash or Agent card the turn waits on, once Claude Code lists it as running in the foreground
+  (a subagent after 2 seconds), and on the agent map's card of a subagent or shell running in the foreground: Claude
+  Code moves it to the background, the card says it runs there, and the turn goes on. Broker sessions use the Agent
+  SDK's `backgroundTasks`; VS Code sessions need this release's wrapper (reload the VS Code window), which says so in
+  its hello and passes `background_tasks` on only for a call Claude Code runs in the foreground. With an older wrapper
+  the card shows how to get it instead of the button.
+- The changes sheet has two tabs. "This session" adds the files the session's subagents and workflow agents changed
+  (Edit, Write, MultiEdit and NotebookEdit calls in their transcripts), marked as an agent's. "All in git" shows the
+  folder's git changes the way Claude Code's diff panel does: since the branch left its base branch when it is ahead of
+  it (committed and uncommitted together), else since HEAD, with untracked files the session made. A running session
+  asks its own Claude Code (`get_workspace_diff`, under its read rules); for a session without a process, or when Claude
+  Code cannot answer, the broker works it out with read-only git commands. Either way the lines of key and token files
+  and of files outside the session's folders stay hidden, and the same bounds apply (50 files, 1MB and 400 lines a file,
+  2MB in all). Lines can be picked and commented into the composer as before.
+- Side questions (`/btw` in the composer, or Side question in the ⋯ menu) ask Claude Code beside the conversation,
+  without interrupting a turn or adding to the conversation, and show its progress. The latest 20 questions and answers
+  stay in the phone tab's sessionStorage and go with a follow-up as its thread, the latest first up to 256KB. A question
+  is cancelled after five minutes or by the user. When the phone's connection drops while it waits, it waits again once
   it is back: the broker keeps how the question ended in memory for ten minutes. A question refused because an earlier
-  one is still being answered elsewhere can give that one up and be asked again. A session without a process is
-  started first, when the user asks.
+  one is still being answered elsewhere can give that one up and be asked again. A session without a process is started
+  first, when the user asks.
 - A fork can run in a worktree of its own: the fork sheet has the new-session screen's worktree switch and name, with
   the same checks. Claude Code makes a new worktree from the HEAD of the original session's folder, and the sheet says
   how many uncommitted files stay behind; a session already in a worktree forks into a new one beside it, from that
@@ -75,41 +75,43 @@ your version and the new one, and the lines under "Breaking" separately.
   not attach, too large, past the composer's ten) are named.
 - Claude's replies can be copied: a long press on a reply, or the ⋯ before its time, shows its Markdown as Claude wrote
   it, to copy whole or to select part of, and `/copy` copies the latest reply, as in VS Code.
-- The conversation can be exported as a Markdown file, from the ⋯ menu (대화 내보내기 under 더 보기), `/export` or a
-  reply's actions: a heading for each turn with its time in the phone's time zone, Claude's text as written and, unless turned
-  off, a line for each tool call. The broker makes it from the transcript, so a stopped session exports too. It copies
-  whole or downloads through a ticket that lasts a minute, as files do; each export is recorded in the audit log
+- The conversation can be exported as a Markdown file, from the ⋯ menu (Export conversation under More), `/export` or a
+  reply's actions: a heading for each turn with its time in the phone's time zone, Claude's text as written and, unless
+  turned off, a line for each tool call. The broker makes it from the transcript, so a stopped session exports too. It
+  copies whole or downloads through a ticket that lasts a minute, as files do; each export is recorded in the audit log
   without its text.
 - The usage sheet (`/usage`) shows, after the plan's limits, what the usage of the last day and week went to, as Claude
-  Code reads it from this machine's transcripts for VS Code's Account & usage: the traits over a tenth of it with what to
-  do about them (named in Korean where Claude Code 2.1.301 names them, by Claude Code's key otherwise), the subagent,
-  skill, plugin and MCP server it came from most, and tables of each. The Context sheet has "사용량 원인 보기". The
-  answer comes from the session's own Claude Code, another running one, or one started for the question, and is kept
-  five minutes. A VS Code session answers it itself once its tab runs the wrapper of this version.
+  Code reads it from this machine's transcripts for VS Code's Account & usage: the traits over a tenth of it with what
+  to do about them (named in the app's language where Claude Code 2.1.301 names them, by Claude Code's key otherwise),
+  the subagent, skill, plugin and MCP server it came from most, and tables of each. The Context sheet has "See what's
+  contributing to usage". The answer comes from the session's own Claude Code, another running one, or one started for
+  the question, and is kept five minutes. A VS Code session answers it itself once its tab runs the wrapper of this
+  version.
 - Beside the Context ring, as in VS Code's prompt box, the minutes the prompt cache has left after the last reply, or
   that it ran out; the Context sheet says how long the session has been idle and how many tokens the next message
   caches again. It follows the time to live Claude Code asked for (`cache_creation`) from the request of the last
   response, and a stopped session's comes from its transcript.
-- A plan's lines take comments: tap a line of the plan to write one, tap it again to change it. "계속 계획하기" sends
-  them after the feedback as `줄 n "<the line>": <comment>`, a code block by its first line of code.
-- Sessions open in a terminal, in the background, under `claude -p` or in a VS Code tab opened before the wrapper
-  take text from the phone through Claude Code's inbox socket for messages from other sessions (Claude Code 2.1.224
-  or later). Claude gets it as a message from another session, "ccrc 휴대폰", and the composer says so before
-  sending: what Claude asks again where the session runs, that "/" commands are not run, and, from the transcript's
-  last permission mode and the `crossSessionInbound` settings ccrc can read, when the message waits for approval in
-  the terminal or in `claude agents` or is not delivered. The message waits under the conversation until its
-  transcript shows it. Such sessions no longer read "보기만" in the list, and a background session reads as open in
-  the background; a session of another inbox format stays view-only.
+- A plan's lines take comments: tap a line of the plan to write one, tap it again to change it. "Keep planning" sends
+  them after the feedback as `Line n "<the line>": <comment>` (`줄 n "<the line>": <comment>` on a phone in Korean), a
+  code block by its first line of code.
+- Sessions open in a terminal, in the background, under `claude -p` or in a VS Code tab opened before the wrapper take
+  text from the phone through Claude Code's inbox socket for messages from other sessions (Claude Code 2.1.224 or
+  later). Claude gets it as a message from another session, "ccrc phone" ("ccrc 휴대폰" from a phone in Korean), and the
+  composer says so before sending: what Claude asks again where the session runs, that "/" commands are not run, and,
+  from the transcript's last permission mode and the `crossSessionInbound` settings ccrc can read, when the message
+  waits for approval in the terminal or in `claude agents` or is not delivered. The message waits under the conversation
+  until its transcript shows it. Such sessions no longer read "View only" in the list, and a background session reads as
+  open in the background; a session of another inbox format stays view-only.
 - On iOS, when the app comes to the front within two minutes of a notification about a request that still waits, it
   goes to that request's card, once per request: iOS can open the app from a notification without going where it
   points. A notification's tap that reaches the app decides instead, and the service worker marks the address it opens
   the app at (`?tap=1`). Other platforms, a new session's draft and answered requests are left alone. The broker says
   which request it was (`GET /api/push/recent`).
-- The config key `vscodeArchive` (default `false`, also switched on the phone in 알림과 입력 > 세션 목록): sessions
-  VS Code's Claude Code extension archived, by hand or after its days without use, count as archived in ccrc's list,
-  marked "VS Code 보관". VS Code's state database is only read. Bringing such a session back on the phone, or sending
-  it a message, keeps it in the list (`<stateDir>/vscode-unarchived.json`) and leaves it archived in VS Code; the mark
-  goes once VS Code shows the session again.
+- The config key `vscodeArchive` (default `false`, also switched on the phone in Notifications and input > Session
+  list): sessions VS Code's Claude Code extension archived, by hand or after its days without use, count as archived in
+  ccrc's list, marked "Archived in VS Code". VS Code's state database is only read. Bringing such a session back on the
+  phone, or sending it a message, keeps it in the list (`<stateDir>/vscode-unarchived.json`) and leaves it archived in
+  VS Code; the mark goes once VS Code shows the session again.
 - Claude Code's dialogs can be answered on the phone. When the model refuses a message and Claude Code asks what to do
   (with `switchModelsOnFlag` off), the card offers going on with the fallback model, editing the message (which comes
   back in the composer) or closing it; auto mode's notice that its classifier now runs billed requests offers going on
@@ -121,47 +123,46 @@ your version and the new one, and the lines under "Breaking" separately.
   `caps`), which passes on only an answer the dialog offers and tells VS Code to close its copy. Fable's usage credits
   consent stays with VS Code: the phone shows what it asks and the credits left, read only. The notification of a
   dialog names what it asks.
-- Signing in to an MCP server from the phone: the MCP sheet offers 인증 for an HTTP or SSE server or a claude.ai
+- Signing in to an MCP server from the phone: the MCP sheet offers Authenticate for an HTTP or SSE server or a claude.ai
   connector that needs it. Claude Code starts the sign-in (`mcp_authenticate`) and the phone opens its page; its last
   page is Claude Code's redirect to the machine's `localhost`, which the phone cannot open, so its address is pasted
   back in the sheet and Claude Code finishes there (`mcp_oauth_callback_url`), then connects the server again. Only a
   redirect to `localhost` with a code goes to Claude Code, and the audit log names the server only. VS Code sessions
   need this version's wrapper (`mcp_auth` in `caps`), which passes on the server's name alone (Claude Code picks the
   redirect) and of its answer only the page and whether a redirect comes back.
-- Passkeys (Face ID) confirm remote logins. In 계정과 보안 a phone registers one, after its password, for the host name
-  it opens ccrc at. From then on every login from a device other than the machine itself is confirmed with a passkey
-  when it starts and again after `passkeyHours` (new config key, 18 by default), as Claude's own Remote Control does
-  for trusted devices; until then the phone shows only the passkey screen. Another allowed device, a second phone or a
-  tablet, registers its own on that screen at its first login, after the password; a device that has registered one
+- Passkeys (Face ID) confirm remote logins. In Account and security a phone registers one, after its password, for the
+  host name it opens ccrc at. From then on every login from a device other than the machine itself is confirmed with a
+  passkey when it starts and again after `passkeyHours` (new config key, 18 by default), as Claude's own Remote Control
+  does for trusted devices; until then the phone shows only the passkey screen. Another allowed device, a second phone
+  or a tablet, registers its own on that screen at its first login, after the password; a device that has registered one
   confirms with it. Removing one asks for the password too; `ccrc passkey [list | remove <id> | reset]` lists and
-  removes them on the machine, for a lost phone. Kept in `~/.config/ccrc/passkeys.json` (0600; public keys and when
-  each was used), which `ccrc uninstall --purge` removes. The broker checks registrations and confirmations itself
-  with Node's crypto; there is no new dependency. `ccrc rollback` to 0.7.x turns the confirmation off: 0.7 does not
-  read `passkeys.json`, so the password alone logs in. The passkeys stay, and updating again brings the confirmation
-  back.
+  removes them on the machine, for a lost phone. Kept in `~/.config/ccrc/passkeys.json` (0600; public keys and when each
+  was used), which `ccrc uninstall --purge` removes. The broker checks registrations and confirmations itself with
+  Node's crypto; there is no new dependency. `ccrc rollback` to 0.7.x turns the confirmation off: 0.7 does not read
+  `passkeys.json`, so the password alone logs in. The passkeys stay, and updating again brings the confirmation back.
 - Recent conversations to read while the machine is off. The phone keeps the end of the last five conversations it
   showed (80 items or 160KB each at most) in the browser's IndexedDB: what was said, tool calls by name and summary,
   file names. Tool input and output, diffs, command output, thinking and pictures stay on the machine. When the broker
-  cannot be reached (the machine off or asleep, Tailscale down, the broker stopped or answering with an error), the
-  app still opens and lists them; a conversation opens read only and says so, and the app goes back to the live ones
-  once the broker answers. The copy belongs to the login: logging out, a new password (on the phone, or with
-  `ccrc passwd`, which a connected phone hears of at once), a login ended at the machine (`ccrc logout`, idle time, a
-  login on another device), the device leaving `allowedDevices`, `leaseIdleMinutes` passing without reaching the
-  broker (also while the copy is on screen) and a passkey confirmation coming due all delete it. "최근 대화를 휴대폰에
-  저장" under 계정과 보안 (on by default) turns it off and deletes it, and shows how much it holds. `/api/me` also gives
-  a logged-in phone `leaseIdleMinutes`, when the password was set (`loginSetAt`) and, with passkeys, how long until the
+  cannot be reached (the machine off or asleep, Tailscale down, the broker stopped or answering with an error), the app
+  still opens and lists them; a conversation opens read only and says so, and the app goes back to the live ones once
+  the broker answers. The copy belongs to the login: logging out, a new password (on the phone, or with `ccrc passwd`,
+  which a connected phone hears of at once), a login ended at the machine (`ccrc logout`, idle time, a login on another
+  device), the device leaving `allowedDevices`, `leaseIdleMinutes` passing without reaching the broker (also while the
+  copy is on screen) and a passkey confirmation coming due all delete it. "Save recent conversations on the phone" under
+  Account and security (on by default) turns it off and deletes it, and shows how much it holds. `/api/me` also gives a
+  logged-in phone `leaseIdleMinutes`, when the password was set (`loginSetAt`) and, with passkeys, how long until the
   next confirmation (`passkeyLeftMs`); a connected phone asks again when one of them changes while the broker runs.
-- A session VS Code opens while another process holds it no longer turns into a copy without a word. When it rests
-  in another VS Code tab (nothing running, waiting or queued there, no background task, no job scheduled with
-  CronCreate or ScheduleWakeup) under this version's wrapper, it moves to the new tab at once: the old tab's Claude Code
-  ends as when the tab closes (input closed, no error), and both tabs say so in a line below the conversation; sending
-  in the old tab moves it back. Otherwise the new tab still opens a copy after up to 9 seconds and says which kind of
-  process keeps the original (another VS Code tab, a terminal, a background session) and that messages sent there do
-  not reach it, and the copy is named "(복사본) <title>" ("(copy) <title>"; a copy of a copy counts on as "(복사본 2)"),
-  which Claude Code writes with the copy's first message. The phone is notified once, when the copy takes its first
-  message, and its activity log tells "VS Code 다른 탭에서 옮김" from "VS Code에서 복사본으로 엶". The lines are in the
-  language of the phone's notifications, or of the laptop's locale when no phone is subscribed. The wrapper says it
-  can in its hello (`hand_over`, `claim_notice`).
+- A session VS Code opens while another process holds it no longer turns into a copy without a word. When it rests in
+  another VS Code tab (nothing running, waiting or queued there, no background task, no job scheduled with CronCreate or
+  ScheduleWakeup) under this version's wrapper, it moves to the new tab at once: the old tab's Claude Code ends as when
+  the tab closes (input closed, no error), and both tabs say so in a line below the conversation; sending in the old tab
+  moves it back. Otherwise the new tab still opens a copy after up to 9 seconds and says which kind of process keeps the
+  original (another VS Code tab, a terminal, a background session) and that messages sent there do not reach it, and the
+  copy is named "(복사본) <title>" ("(copy) <title>"; a copy of a copy counts on as "(복사본 2)"), which Claude Code writes
+  with the copy's first message. The phone is notified once, when the copy takes its first message, and its activity log
+  tells "Moved from another VS Code tab" from "Opened as a copy in VS Code". The lines are in the language of the
+  phone's notifications, or of the laptop's locale when no phone is subscribed. The wrapper says it can in its hello
+  (`hand_over`, `claim_notice`).
 - Korean versions of the README, this changelog and the security policy (`README.ko.md`, `CHANGELOG.ko.md`,
   `SECURITY.ko.md`). Each version links to the other at the top.
 
@@ -178,11 +179,12 @@ your version and the new one, and the lines under "Breaking" separately.
   width. The Context ring moved next to the paperclip: one line reads paperclip, Context, model, Effort, agents …
   permission mode, send; when that does not fit, line 1 holds the agent chip and the permission mode, line 2 the rest.
   The new-session screen has neither the ring nor the agent chip.
-- Claude Code settings on the phone are saved as soon as they are changed: a switch or choice when it is picked, text
-  on Enter or on leaving the field, a rule or folder when it is added or removed. A toast says what was saved and can
-  undo it; the save bar, "변경 취소" and the confirmation sheet are gone. Saves go one at a time in the order made,
-  each against the file the last one left, and a key changed again before its turn is saved once. When the file
-  changed meanwhile, the change still goes through if its own key was left alone; otherwise the file's value is shown.
+- Claude Code settings on the phone are saved as soon as they are changed: a switch or choice when it is picked, text on
+  Enter or on leaving the field, a rule or folder when it is added or removed. A toast says what was saved and can undo
+  it; the save bar, its button that dropped the changes and the confirmation sheet are gone. Saves go one at a time in
+  the order made, each against the file the last one left, and a key changed again before its turn is saved once. When
+  the file changed meanwhile, the change still goes through if its own key was left alone; otherwise the file's value is
+  shown.
 - Backups of Claude Code's settings (`settings.json.ccrc-<time>.bak`) are made once per ten minutes of editing instead
   of once per save, and the one from before ccrc first changed the file is kept besides the last ten.
 - Effort in the Claude Code settings is set per model (`modelSettings.<model>.effortLevel`, where `/effort` saves it),
@@ -191,17 +193,16 @@ your version and the new one, and the lines under "Breaking" separately.
   own, but not the 5.5 ones: it is shown on those models' rows and on a row of its own, where it can only be removed.
 - The app icon's badge counts the sessions waiting for an answer and the unread sessions, the same sessions the list
   marks. It no longer depends on which device was told, and a turn that starts by itself no longer clears it.
-- Notifications that no longer count are closed: the end of a turn, Claude's notification, files sent and a copy's
-  first message once the session is read (opened on the phone or written to in VS Code), a request once it is
-  answered, and any notification once a newer one of the same session and kind shows (iOS keeps both otherwise). The
-  phone does this when the app comes to the front, opens a session or hears that the list changed, closing the
-  notifications of the session it shows as well, and when the next notification arrives: every notification now
-  carries when it was made and the ids of the sessions left unread or waiting for an answer, and the test notification
-  and the update notice carry the badge too. A notification too long with those ids goes without them. While the app
-  is closed nothing else reaches the phone, so a session read in VS Code keeps its notification, and the icon its
-  number, until then. 알림 끄기 and logging out in the settings close all of the app's notifications. iOS 26.5 and later
-  do not close a notification within 30 seconds of showing it; the app tries again once that has passed, while it is
-  in front.
+- Notifications that no longer count are closed: the end of a turn, Claude's notification, files sent and a copy's first
+  message once the session is read (opened on the phone or written to in VS Code), a request once it is answered, and
+  any notification once a newer one of the same session and kind shows (iOS keeps both otherwise). The phone does this
+  when the app comes to the front, opens a session or hears that the list changed, closing the notifications of the
+  session it shows as well, and when the next notification arrives: every notification now carries when it was made and
+  the ids of the sessions left unread or waiting for an answer, and the test notification and the update notice carry
+  the badge too. A notification too long with those ids goes without them. While the app is closed nothing else reaches
+  the phone, so a session read in VS Code keeps its notification, and the icon its number, until then. Turning
+  notifications off and logging out in the settings close all of the app's notifications. iOS 26.5 and later do not
+  close a notification within 30 seconds of showing it; the app tries again once that has passed, while it is in front.
 - Long sessions open faster on the phone. A conversation opens with its latest 40 items or so, and earlier ones load as
   you scroll up, keeping your place; a search hit or a subagent far back opens with the part around it, and the part
   after it loads as it comes into view. The broker keeps a conversation it has built until its transcript changes, reads
@@ -214,10 +215,11 @@ your version and the new one, and the lines under "Breaking" separately.
   broker so in its hello (`workspace_diff`, `side_question`). VS Code tabs opened before the update keep the older
   wrapper until they are opened again: side questions are off there, and git changes are read by the broker.
 - A NotebookEdit call shows the cell's change when Claude Code reports the cell's source from before it.
-- The session's ⋯ menu keeps its four tiles and the rows used most: 곁질문, 되돌리기, 변경 사항, Context와 사용량 and
-  에이전트 지도. MCP 서버, 출력 스타일, 읽지 않음으로 표시, worktree 정리 and 원격 실행 끝내기 moved under its last row,
-  더 보기, which shows them in the same sheet and leads back to the menu where it was; 대화 내보내기 is there too. The
-  menu has the same rows in every session and, with 이번 턴 중지 on top while a turn runs, still fits a 390×844 screen.
+- The session's ⋯ menu keeps its four tiles and the rows used most: Side question, Rewind, Changes, Context and usage
+  and Agent map. MCP servers, Output style, Mark as unread, Clean up worktree and Stop running remotely moved under its
+  last row, More, which shows them in the same sheet and leads back to the menu where it was; Export conversation is
+  there too. The menu has the same rows in every session and, with Stop this turn on top while a turn runs, still fits a
+  390×844 screen.
 - The "/" list follows the commands Claude Code announces during a session (when a command or skill file is written,
   or plugins or skills reload), in sessions the broker runs and in VS Code, and leaves out the commands Claude Code
   binds to its own terminal (such as `/color` and `/focus`). A broker session's list is known from its start instead
@@ -241,7 +243,7 @@ your version and the new one, and the lines under "Breaking" separately.
   images) were listed under a folder with no name and could not be opened: their working folder now comes from the
   transcript, or, when it names none, from the other sessions of the same project folder.
 - Picking "Default (recommended)" in the phone's model sheet saved `"model": "default"`, which Claude Code takes for a
-  model name, so the effort set for the default model did not apply. That entry is now the sheet's "기본값", which
+  model name, so the effort set for the default model did not apply. That entry is now the sheet's "Default", which
   removes the key, and "default" is not saved as a model; one already in the file is shown as it is, with a hint.
 - Turning notifications off and on again on a phone keeps the choices made before (VS Code delay, turn end, tool
   names) instead of going back to the defaults.
@@ -256,11 +258,11 @@ your version and the new one, and the lines under "Breaking" separately.
 - The ⋯ button in a conversation's header took taps on a 36px square; it now takes them on 44px, as the back button
   does.
 - Opening the app while the broker could not be reached showed "Safari cannot open the page" or, from the browser's
-  cache, a spinner that never ended. The service worker now keeps the app's page and its files (`/assets/`, the
-  current and the previous version) and serves them when the network fails, answers with an error or takes more than
-  3.5 seconds; it never handles `/api/`. The app then asks the broker again every few seconds and on "다시 연결".
-- While the connection is down, requests that fail in the network no longer toast "Failed to fetch" every ten seconds
-  on the session list, and the "연결이 끊겼습니다" banner stays up between reconnection attempts.
+  cache, a spinner that never ended. The service worker now keeps the app's page and its files (`/assets/`, the current
+  and the previous version) and serves them when the network fails, answers with an error or takes more than 3.5
+  seconds; it never handles `/api/`. The app then asks the broker again every few seconds and on "Reconnect".
+- While the connection is down, requests that fail in the network no longer toast "Failed to fetch" every ten seconds on
+  the session list, and the "Disconnected" banner stays up between reconnection attempts.
 - On an iPhone, dragging on the dim around an open sheet (the ⋯ menu, say) stretched the page: until the finger
   lifted, a band at the top of the screen was left undimmed, the header went off the screen and the sheet's bottom was
   cut off. The dim now covers the whole page and takes no drags, and the page as a whole no longer stretches past its
@@ -299,12 +301,13 @@ your version and the new one, and the lines under "Breaking" separately.
   when the app is opened; iOS may keep the old one until the app is closed in the app switcher and opened again.
 - After `ccrc update`, reload VS Code windows (Developer: Reload Window): updating from 0.7 does not say so, and a
   Claude tab opened before the update keeps the wrapper of 0.7 until it is opened again. Until then, in that tab's
-  session, the side question sheet and the cards and agent map that would offer "백그라운드로" say to open Claude Code again
-  instead, the changes sheet's git view is read by the broker, the usage sheet's causes come from another Claude Code,
-  a "/" list Claude Code changed while the broker was away shows from its next change, Claude Code's dialogs are
-  answered in VS Code only, the MCP sheet's 인증 says the wrapper does not know it yet, Claude reads Claude Code's
-  "not sent" after a PushNotification call that reached the phone, and the session does not move from that tab when
-  another tab opens it: the other tab opens a copy after up to 9 seconds, named and announced as other copies are.
+  session, the side question sheet and the cards and agent map that would offer "Run in background" say to open Claude
+  Code again instead, the changes sheet's git view is read by the broker, the usage sheet's causes come from another
+  Claude Code, a "/" list Claude Code changed while the broker was away shows from its next change, Claude Code's
+  dialogs are answered in VS Code only, the MCP sheet's Authenticate says the wrapper does not know it yet, Claude reads
+  Claude Code's "not sent" after a PushNotification call that reached the phone, and the session does not move from that
+  tab when another tab opens it: the other tab opens a copy after up to 9 seconds, named and announced as other copies
+  are.
 
 ## [0.7.3] - 2026-10-18
 
