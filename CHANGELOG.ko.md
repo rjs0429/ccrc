@@ -6,6 +6,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-23
+
 ### 고침
 
 - iPhone 에서 시트(세션 ⋯ 메뉴, 입력창 칩, 언어 같은 설정)가 어두운 배경만 깔리고 판 안의 스위치만 떠 보였다. 판을 담는 틀이 iOS 의 위쪽 가장자리 검사를 피하려고 자신을 숨겼고, iOS 가 그 안의 판을 그리지 않았다. 이제 틀은 배경의 맨 위 띠 아래에서 시작한다.
@@ -300,7 +302,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 - 쉬는 브로커 세션 프로세스는 15분 뒤 닫는다. 메시지 내용 없는 감사 로그. 라이트·다크 테마.
 - `ccrc serve | passwd | status | logout` 과 `deploy/install-service.sh`.
 
-[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/rjs0429/ccrc/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/rjs0429/ccrc/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/rjs0429/ccrc/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/rjs0429/ccrc/compare/v0.7.1...v0.7.2
