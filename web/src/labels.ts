@@ -171,6 +171,8 @@ export function closedText(reason?: string): string {
       return t("VS Code에서 다른 대화로 바뀌었습니다.");
     case "handed_off":
       return t("VS Code로 넘겼습니다.");
+    case "moved":
+      return t("VS Code의 다른 탭으로 옮겼습니다.");
     case "idle":
       return t("한동안 쓰지 않아 원격 실행을 끝냈습니다.");
     case "released":

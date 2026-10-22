@@ -17,6 +17,7 @@ const { LineSplitter, parseLine } = await import("../src/link/lines.ts");
 const { LinkServer } = await import("../src/link/server.ts");
 const { SessionManager } = await import("../src/sessions/manager.ts");
 const { projectDirName } = await import("../src/sessions/history.ts");
+const { HOLD_TEXT } = await import("../src/wrapper/hold.ts");
 
 type Msg = Record<string, unknown>;
 const X = "5f0e8a43-6a8b-4a0f-9f6e-2b7d7c1e9a10";
@@ -65,8 +66,10 @@ after(async () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-async function setup(cfg: typeof config & { brokerSessions?: "off" | "apiKey" | "subscription" } = config) {
-  const manager = new SessionManager(cfg, undefined, { handoffTurnMs: 200, handoffOtherMs: 400 });
+async function setup(cfg: typeof config & { brokerSessions?: "off" | "apiKey" | "subscription" } = config, logged?: Msg[]) {
+  const audit = logged && ({ log: (event: string, detail: Msg) => logged.push({ event, ...detail }) } as unknown as import("../src/audit.ts").Audit);
+  const manager = new SessionManager(cfg, audit, { handoffTurnMs: 200, handoffOtherMs: 400 });
+  manager.holdLang = () => "ko";
   const server = new LinkServer(path.join(tempDir("ccrc-link-"), "link.sock"));
   servers.push(server);
   server.on("link", (link) => manager.attachLink(link));
@@ -83,14 +86,25 @@ async function setup(cfg: typeof config & { brokerSessions?: "off" | "apiKey" | 
   return { manager, connect, events };
 }
 
-// Registers this test process as another Claude Code process that holds `sessionId`.
-function holdElsewhere(sessionId: string): () => void {
+// Registers this test process as another Claude Code process that holds `sessionId`, in a terminal unless `more` says
+// otherwise (entrypoint "claude-vscode" for VS Code, a status).
+function holdElsewhere(sessionId: string, more: Msg = {}): () => void {
   const stat = fs.readFileSync(`/proc/${process.pid}/stat`, "utf8");
   const procStart = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
   const file = path.join(sessionsDir, `${process.pid}.json`);
-  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, sessionId, cwd: home, procStart, entrypoint: "cli" }));
+  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, sessionId, cwd: home, procStart, entrypoint: "cli", ...more }));
   return () => fs.rmSync(file, { force: true });
 }
+
+// A transcript whose first message names the session.
+function transcript(sessionId: string, text: string): void {
+  const dir = path.join(home, ".claude", "projects", projectDirName(home));
+  fs.mkdirSync(dir, { recursive: true });
+  const row = { sessionId, cwd: home, type: "user", uuid: `${sessionId.slice(0, 8)}-0000-4000-8000-000000000001`, parentUuid: null, timestamp: "2026-10-14T03:00:00Z" };
+  fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), JSON.stringify({ ...row, message: { role: "user", content: text } }) + "\n");
+}
+
+const CAPS = ["fast_mode", "thinking", "hand_over", "claim_notice"];
 
 const until = async (fn: () => boolean, label: string) => {
   for (let i = 0; i < 100 && !fn(); i++) await new Promise((r) => setTimeout(r, 20));
@@ -122,6 +136,147 @@ test("VS Code takes a session over once the other process has let go", async () 
   const ok = await w.wait((f) => f.t === "claim_ok", "hand-over answer");
   assert.equal(ok.fork, undefined);
   await until(() => manager.isControlled(X), "attached under its own id");
+});
+
+test("a VS Code tab the session rests in hands it over to the tab that opens it, and both tabs are told", async () => {
+  const M = "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d";
+  const logged: Msg[] = [];
+  const { manager, connect, events } = await setup(config, logged);
+  const reasons: unknown[] = [];
+  manager.on("event", (id: string, m: Msg) => id === M && m.t === "state" && reasons.push((m.state as Msg).closedReason));
+  const release = holdElsewhere(M, { entrypoint: "claude-vscode", status: "idle" });
+  try {
+    const old = await connect({ sessionId: M, caps: CAPS });
+    old.send({ t: "spawned", cpid: process.pid });
+    await until(() => events.some(([e, id]) => e === "attached" && id === M), "the first tab attached");
+    const tab = await connect({ sessionId: M, claim: M, caps: CAPS });
+    const ask = await old.wait((f) => f.t === "hand_over", "the resting tab asked to hand over");
+    assert.equal(ask.notice, HOLD_TEXT.ko.stopped);
+    await tab.wait((f) => f.t === "claim_wait", "the new tab waits meanwhile");
+    old.send({ t: "handed_over", id: ask.id });
+    release();
+    old.send({ t: "exit", code: 0, signal: null, hostLeft: false, running: false });
+    const ok = await tab.wait((f) => f.t === "claim_ok", "the new tab's answer");
+    assert.deepEqual([ok.fork, ok.title, ok.notice], [undefined, undefined, HOLD_TEXT.ko.moved]);
+    await until(() => events.filter(([e, id]) => e === "attached" && id === M).length === 2, "the new tab attached under the session's own id");
+    assert.ok(reasons.includes("moved"), JSON.stringify(reasons));
+    assert.deepEqual(
+      logged.filter((e) => e.event === "handoff"),
+      [{ event: "handoff", sessionId: M, to: "VS Code", moved: true, from: "VS Code" }],
+    );
+    tab.sock.destroy();
+  } finally {
+    release();
+  }
+});
+
+test("a tab answering in the session keeps it: the new tab opens a copy named after its title in the list, and is told why", async () => {
+  const N = "7b8c9d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e";
+  transcript(N, "인보이스 내보내기 고치기\n자세한 설명");
+  const logged: Msg[] = [];
+  const { manager, connect } = await setup(config, logged);
+  const release = holdElsewhere(N, { entrypoint: "claude-vscode", status: "busy" });
+  try {
+    const old = await connect({ sessionId: N, caps: CAPS });
+    old.send({ t: "spawned", cpid: process.pid });
+    await until(() => manager.isControlled(N), "the first tab attached");
+    const tab = await connect({ sessionId: N, claim: N, caps: CAPS });
+    const ok = await tab.wait((f) => f.t === "claim_ok", "the new tab's answer");
+    assert.ok(!old.frames.some((f) => f.t === "hand_over"), "a busy tab is not asked");
+    assert.deepEqual(
+      [ok.fork, ok.title, ok.notice],
+      [true, "(복사본) 인보이스 내보내기 고치기 자세한 설명", HOLD_TEXT.ko.copy(HOLD_TEXT.ko.holder.vscode, true)],
+    );
+    assert.deepEqual(
+      logged.filter((e) => e.event === "handoff"),
+      [{ event: "handoff", sessionId: N, to: "VS Code", forked: true, heldBy: "VS Code", busy: true }],
+    );
+    old.sock.destroy();
+    tab.sock.destroy();
+  } finally {
+    release();
+  }
+});
+
+test("a tab is not asked without a wrapper that can hand over, and a refusal or a process that stays leaves a copy", async () => {
+  const O = "8c9d0e1f-2a3b-4c4d-8e5f-6a7b8c9d0e1f";
+  const { manager, connect } = await setup();
+  const opened = async (oldCaps: string[], answer?: (old: InstanceType<typeof FakeWrapper>, id: unknown) => void) => {
+    const old = await connect({ sessionId: O, caps: oldCaps });
+    old.send({ t: "spawned", cpid: process.pid });
+    await until(() => manager.isControlled(O), "the first tab attached");
+    const tab = await connect({ sessionId: O, claim: O, caps: CAPS });
+    if (answer) answer(old, (await old.wait((f) => f.t === "hand_over", "asked")).id);
+    const ok = await tab.wait((f) => f.t === "claim_ok", "the new tab's answer");
+    const asked = old.frames.some((f) => f.t === "hand_over");
+    old.sock.destroy();
+    tab.sock.destroy();
+    await until(() => !manager.isControlled(O), "both tabs gone");
+    return { ok, asked };
+  };
+  const release = holdElsewhere(O, { entrypoint: "claude-vscode", status: "idle" });
+  try {
+    const older = await opened(["fast_mode", "thinking"]);
+    assert.equal(older.asked, false, "an older wrapper is not asked");
+    assert.equal(older.ok.fork, true);
+    assert.equal(older.ok.notice, HOLD_TEXT.ko.copy(HOLD_TEXT.ko.holder.vscode, false));
+    const refused = await opened(CAPS, (old, id) => old.send({ t: "rejected", id, reason: "turn running" }));
+    assert.equal(refused.ok.fork, true);
+    const stays = await opened(CAPS, (old, id) => old.send({ t: "handed_over", id }));
+    assert.equal(stays.ok.fork, true, "a copy when the process holds on all the same");
+  } finally {
+    release();
+  }
+});
+
+test("a copy beside a terminal is told so, a wrapper that cannot show it gets neither name nor notice, and the copy's first message is announced once", async () => {
+  const P = "9d0e1f2a-3b4c-4d5e-8f6a-7b8c9d0e1f2a";
+  const Q = "0e1f2a3b-4c5d-4e6f-8a7b-8c9d0e1f2a3b";
+  transcript(P, "테스트 고치기");
+  const { manager, connect } = await setup();
+  const started: [string, string][] = [];
+  manager.on("copy_started", (id: string, holder: string) => started.push([id, holder]));
+  const release = holdElsewhere(P);
+  try {
+    const old = await connect({ sessionId: P, claim: P, caps: ["fast_mode", "thinking"] });
+    const plain = await old.wait((f) => f.t === "claim_ok", "an older wrapper's answer");
+    assert.deepEqual([plain.fork, plain.title, plain.notice], [true, undefined, undefined]);
+    old.sock.destroy();
+    const tab = await connect({ sessionId: P, claim: P, caps: CAPS });
+    const ok = await tab.wait((f) => f.t === "claim_ok", "the new tab's answer");
+    assert.deepEqual([ok.fork, ok.title, ok.notice], [true, "(복사본) 테스트 고치기", HOLD_TEXT.ko.copy(HOLD_TEXT.ko.holder.terminal, false)]);
+    tab.send({ m: { type: "system", subtype: "session_title_changed", title: ok.title, session_id: Q }, t: "out" });
+    await until(() => manager.isControlled(Q), "the copy attached by its new name");
+    assert.deepEqual(started, [], "opening a copy alone is not announced");
+    const message = (uuid: string) => tab.send({ m: { type: "user", uuid, message: { role: "user", content: [{ type: "text", text: "go on" }] } }, t: "in" });
+    message("u-1");
+    await until(() => started.length === 1, "the first message announced");
+    message("u-2");
+    await new Promise((r) => setTimeout(r, 100));
+    assert.deepEqual(started, [[Q, "Terminal"]]);
+    tab.sock.destroy();
+  } finally {
+    release();
+  }
+});
+
+test("a tab the broker let start on a session holds it before its Claude Code registers: a second launch gets a copy", async () => {
+  const R = "1f2a3b4c-5d6e-4f70-8a1b-2c3d4e5f6a7b";
+  const logged: Msg[] = [];
+  const { manager, connect } = await setup(config, logged);
+  const first = await connect({ sessionId: R, claim: R, caps: CAPS });
+  const second = await connect({ sessionId: R, claim: R, caps: CAPS });
+  const answers = await Promise.all([first, second].map((w) => w.wait((f) => f.t === "claim_ok", "an answer")));
+  const copies = answers.filter((o) => o.fork === true);
+  assert.equal(copies.length, 1, "only one of them starts on the session");
+  assert.equal(copies[0].notice, HOLD_TEXT.ko.copy(HOLD_TEXT.ko.holder.vscode, false));
+  assert.deepEqual(
+    logged.filter((e) => e.event === "handoff"),
+    [{ event: "handoff", sessionId: R, to: "VS Code", forked: true, heldBy: "VS Code" }],
+  );
+  assert.equal(manager.isControlled(R), true);
+  first.sock.destroy();
+  second.sock.destroy();
 });
 
 test("a newer wrapper for the same session replaces the older one quietly", async () => {

@@ -42,6 +42,7 @@ export const g1: Record<string, string> = {
   "VS Code에서 닫혔습니다.": "Closed in VS Code.",
   "VS Code에서 다른 대화로 바뀌었습니다.": "VS Code switched to another conversation.",
   "VS Code로 넘겼습니다.": "Handed off to VS Code.",
+  "VS Code의 다른 탭으로 옮겼습니다.": "Moved to another VS Code tab.",
   "한동안 쓰지 않아 원격 실행을 끝냈습니다.": "Stopped running remotely after a while unused.",
   "원격 실행을 끝냈습니다.": "Stopped running remotely.",
   "Claude Code가 비정상 종료되었습니다.": "Claude Code exited unexpectedly.",
@@ -261,4 +262,10 @@ export const g1: Record<string, string> = {
   "VS Code에서 보관한 세션도 보관으로 보기": "Show sessions archived in VS Code as archived",
   "VS Code의 Claude Code 확장에서 보관한 세션을 이 목록에서도 보관됨으로 보입니다. 확장이 한동안 쓰지 않아 자동으로 보관한 세션(기본 14일)도 들어옵니다. VS Code의 보관은 읽기만 하고 바꾸지 않습니다.":
     "Sessions archived in the Claude Code extension for VS Code show as archived here too, including those the extension archived on its own after a while unused (14 days by default). The VS Code archive is only read, never changed.",
+  "VS Code 다른 탭에서 옮김": "Moved from another VS Code tab",
+  "VS Code에서 복사본으로 엶": "Opened as a copy in VS Code",
+  "원본은 VS Code의 다른 탭": "Original in another VS Code tab",
+  "원본은 터미널": "Original in a terminal",
+  "원본은 백그라운드 세션": "Original in a background session",
+  "원본은 다른 Claude Code 프로세스": "Original in another Claude Code process",
 };

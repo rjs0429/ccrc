@@ -8,7 +8,7 @@ import type { Audit } from "../audit.ts";
 import { ClaudeCli, type CliChoice } from "../claude-cli.ts";
 import { claudeSettingsFile } from "../claude-settings.ts";
 import { brokerSessionsOf, paths, writeFileAtomic, type Config } from "../config.ts";
-import { isLang } from "../lang.ts";
+import { isLang, type Lang } from "../lang.ts";
 import type { Hello } from "../link/protocol.ts";
 import type { Link } from "../link/server.ts";
 import type { ClaudeNotice } from "../push/rules.ts";
@@ -45,10 +45,12 @@ import {
 } from "../protocol.ts";
 import { cleanTitle } from "../titles.ts";
 import { worktreeBranch, worktreeNameProblem, worktreeOf, worktreePath } from "../worktree-names.ts";
+import { HOLD_TEXT, envLang, holderKind } from "../wrapper/hold.ts";
 import { ArchiveStore, transcriptIds } from "./archive-store.ts";
 import { BrokerSession, probeModels, probeUsage, probeUsageCauses, probeWindow, type StartOptions } from "./broker-session.ts";
 import { lastCommands, rememberCommands } from "./commands.ts";
 import { ContextWindows, exactModel, gauge, lastModelId, lastUsage, widened, type ContextWindow } from "./context-gauge.ts";
+import { copyTitle } from "./copies.ts";
 import type { ContentBlock, SessionCore, SideProgress } from "./core.ts";
 import { writeTitle } from "./custom-title.ts";
 import { exportMarkdown, timeZone } from "./export.ts";
@@ -81,9 +83,11 @@ const EXACT_KEEP = 500;
 const SWEEP_MS = 60_000;
 const WATCH_INTERVAL_MS = 2000;
 // Handing a session to VS Code: how long the broker's running turn may go on before it is interrupted,
-// and how long to wait for any other process that still holds the session to end.
+// and how long to wait for any other process that still holds the session to end. A resting tab answers at once
+// whether it hands the session over.
 const HANDOFF_TURN_MS = 10_000;
 const HANDOFF_OTHER_MS = 9_000;
+const HAND_OVER_ASK_MS = 3000;
 const EARLY_LINES_MAX = 500;
 const ENDED_KEEP_MS = 10 * 60_000;
 const CRASHED_KEEP_MS = 24 * 3600_000;
@@ -127,6 +131,15 @@ export interface ForkRequest {
 }
 
 export type Snapshot = SnapshotPart & { pending: PendingRequest[]; state: LiveState };
+
+// How a VS Code launch that resumes a session starts: on the session, or on a copy of it beside `holder` (live.ts's name
+// for the process that kept it), with what its tab is told and the copy's name.
+interface Claim {
+  fork: boolean;
+  holder?: string;
+  title?: string;
+  notice?: string;
+}
 
 function titleOf(info: SDKSessionInfo): string {
   return info.customTitle || info.summary || info.firstPrompt || "";
@@ -188,9 +201,10 @@ const probeDir = (cwd: string): string => (isFolder(cwd) ? cwd : paths.home);
 // answers questions about every session on the machine.
 // Emits "event" (sessionId, ServerMsg) for one session, "changed" when the session list changed, and
 // "attached" / "detached" (sessionId) when a session gains or loses a process the broker can drive;
-// "turn_end" (sessionId, TurnEnd) when a turn of one ends, and "seen" (sessionId) when the remote user opens one.
-// A wrapper that says it can ("claude_push") hears whether Claude's notifications reach a device, and whether the
-// remote user has its session in front of them.
+// "turn_end" (sessionId, TurnEnd) when a turn of one ends, and "seen" (sessionId) when the remote user opens one;
+// "copy_started" (sessionId, holder) when a copy VS Code opened while another process held the session takes its first
+// message. A wrapper that says it can ("claude_push") hears whether Claude's notifications reach a device, and whether
+// the remote user has its session in front of them.
 export class SessionManager extends EventEmitter {
   models: ModelOption[] = loadModels();
   private modelsAsked?: Promise<void>;
@@ -243,6 +257,8 @@ export class SessionManager extends EventEmitter {
   claudeNotice?: (sessionId: string, toolUseId: string, message: string) => ClaudeNotice;
   // The API key of brokerSessions "apiKey", read at each start.
   apiKey: () => string | undefined = () => readApiKey();
+  // The language a VS Code tab is told in that a session moved or opened as a copy, and a copy is named in.
+  holdLang: () => Lang = () => envLang(process.env);
   // The Claude Code each session and probe starts with, picked again for each, and where the pick is told.
   readonly cli: ClaudeCli;
   cliLog: (line: string) => void = (line) => console.log(line);
@@ -1414,6 +1430,9 @@ export class SessionManager extends EventEmitter {
   attachLink(link: Link): void {
     let session: WrappedSession | undefined;
     let claiming = false;
+    // The session a launch claimed and, once it started on a copy instead, who kept the original.
+    let claimed: string | undefined;
+    let copyHolder: string | undefined;
     let early: { from: "out" | "in" | "settled" | "held"; v: unknown; at: string }[] = [];
     const bind = (id: string) => {
       if (session?.id === id || !link.usable) return;
@@ -1422,6 +1441,10 @@ export class SessionManager extends EventEmitter {
       const s = new WrappedSession(link, id, cwd);
       s.reachable = () => this.remoteReachable();
       s.watched = () => this.remoteWatching();
+      if (copyHolder !== undefined && id !== claimed) {
+        s.copyHolder = copyHolder;
+        copyHolder = undefined;
+      }
       session = s;
       const prev = this.wrapped.get(id);
       this.wrapped.set(id, s);
@@ -1458,13 +1481,16 @@ export class SessionManager extends EventEmitter {
       }
       const id = h.claim;
       claiming = true;
+      claimed = id;
       this.claiming.add(id);
       void this.claim(id, link)
-        .catch(() => ({ fork: false }))
-        .then(({ fork }) => {
-          link.send(fork ? { t: "claim_ok", fork: true } : { t: "claim_ok" });
-          if (fork) link.sessionId = undefined;
-          else if (link.sessionId) bind(link.sessionId);
+        .catch((): Claim => ({ fork: false }))
+        .then(({ fork, holder, title, notice }) => {
+          link.send({ t: "claim_ok", ...(fork ? { fork: true } : {}), ...(title ? { title } : {}), ...(notice ? { notice } : {}) });
+          if (fork) {
+            link.sessionId = undefined;
+            copyHolder = holder ?? "";
+          } else if (link.sessionId) bind(link.sessionId);
           claiming = false;
           this.claiming.delete(id);
         });
@@ -1486,9 +1512,10 @@ export class SessionManager extends EventEmitter {
   }
 
   // Lets a VS Code launch that resumes `sessionId` start: the broker's own process for it is closed once
-  // its turn is over, and any other process that holds it gets a moment to end. If one still holds it,
-  // VS Code starts on a copy instead, so two processes never write the same session.
-  private async claim(sessionId: string, link: Link): Promise<{ fork: boolean }> {
+  // its turn is over, a VS Code tab it rests in hands it over at once (handOver), and any other process that holds it
+  // gets a moment to end. If one still holds it, VS Code starts on a copy instead, so two processes never write the
+  // same session. A wrapper that can show it gets told which happened, and names its copy.
+  private async claim(sessionId: string, link: Link): Promise<Claim> {
     await this.starting.get(sessionId)?.catch(() => {});
     const s = this.owned.get(sessionId);
     if (s) {
@@ -1497,19 +1524,60 @@ export class SessionManager extends EventEmitter {
       await s.close("handed_off");
       this.audit?.log("handoff", { sessionId, to: "VS Code" });
     }
+    const moved = await this.handOver(sessionId, link);
     const until = Date.now() + this.timing.handoffOtherMs;
-    let told = false;
+    let told = moved;
     for (;;) {
-      const holder = liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId);
-      if (!holder) return { fork: false };
+      const holder = liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId) ?? this.openedIn(sessionId, link);
+      if (!holder && !moved) return { fork: false };
+      if (!holder) {
+        this.audit?.log("handoff", { sessionId, to: "VS Code", moved: true, from: "VS Code" });
+        return { fork: false, ...(this.notices(link) ? { notice: HOLD_TEXT[this.lang()].moved } : {}) };
+      }
       if (Date.now() >= until) {
-        this.audit?.log("handoff", { sessionId, to: "VS Code", forked: true, heldBy: holder.host });
-        return { fork: true };
+        const answering = holder.status === "busy";
+        this.audit?.log("handoff", { sessionId, to: "VS Code", forked: true, heldBy: holder.host, ...(answering ? { busy: true } : {}) });
+        return { fork: true, holder: holder.host, ...(this.notices(link) ? await this.copyNotice(sessionId, holder.host, answering) : {}) };
       }
       if (!told) link.send({ t: "claim_wait", ms: this.timing.handoffOtherMs + 2000 });
       told = true;
       await sleep(250);
     }
+  }
+
+  // The tab the session rests in, the only process holding it, ends its Claude Code for the new one when its wrapper can.
+  private async handOver(sessionId: string, link: Link): Promise<boolean> {
+    const holders = liveProcesses({ fresh: true }).filter((l) => l.sessionId === sessionId);
+    const w = this.wrapped.get(sessionId);
+    if (holders.length !== 1 || !w?.restsIn(holders[0])) return false;
+    link.send({ t: "claim_wait", ms: HAND_OVER_ASK_MS + this.timing.handoffOtherMs + 2000 });
+    return w.handOver(HOLD_TEXT[this.lang()].stopped, HAND_OVER_ASK_MS);
+  }
+
+  // Another tab the broker let start on the session holds it before its Claude Code shows in the session registry.
+  private openedIn(sessionId: string, link: Link): { host: string; status?: string } | undefined {
+    const w = this.wrapped.get(sessionId);
+    return w && w.link !== link && w.link.usable && !w.closed ? { host: w.host, status: w.busy ? "busy" : undefined } : undefined;
+  }
+
+  private lang(): Lang {
+    try {
+      return this.holdLang();
+    } catch {
+      return envLang(process.env);
+    }
+  }
+
+  private notices(link: Link): boolean {
+    return Array.isArray(link.hello?.caps) && link.hello.caps.includes("claim_notice");
+  }
+
+  private async copyNotice(sessionId: string, host: string, answering: boolean): Promise<{ title?: string; notice: string }> {
+    const lang = this.lang();
+    const words = HOLD_TEXT[lang];
+    const info = await this.info(sessionId).catch(() => undefined);
+    const title = copyTitle((info ? titleOf(info) : "") || this.controlled(sessionId)?.title || "", lang);
+    return { ...(title ? { title } : {}), notice: words.copy(words.holder[holderKind(host)], answering) };
   }
 
   // Closes processes nobody is looking at once they have been idle for a while.
@@ -1550,6 +1618,9 @@ export class SessionManager extends EventEmitter {
     });
     s.on("host_input", (at: number) => {
       if (this.current(s)) this.markRead(s.id, at);
+    });
+    s.on("copy_started", (holder: string) => {
+      if (this.current(s)) this.emit("copy_started", s.id, holder);
     });
     s.on("title", () => {
       this.catalog = undefined;

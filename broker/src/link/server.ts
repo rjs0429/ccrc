@@ -35,6 +35,8 @@ export class Link extends EventEmitter {
   cpid?: number;
   sessionId?: string;
   exited = false;
+  // Set as the wrapper says it ended its Claude Code for another tab (handOver).
+  handedOver = false;
   private sock: net.Socket;
   private waiting = new Map<string, Waiter>();
 
@@ -55,7 +57,7 @@ export class Link extends EventEmitter {
   }
 
   get usable(): boolean {
-    return !this.sock.destroyed && !this.exited;
+    return !this.sock.destroyed && !this.exited && !this.handedOver;
   }
 
   send(frame: BrokerFrame): void {
@@ -84,6 +86,21 @@ export class Link extends EventEmitter {
           }),
         { once: true },
       );
+    });
+  }
+
+  // Asks the wrapper to end its Claude Code, which rests, so the session can move to another tab: true once it closed
+  // Claude Code's input, false when it refuses or does not answer in time.
+  handOver(notice: string, ms: number): Promise<boolean> {
+    if (!this.usable) return Promise.resolve(false);
+    const id = `${REMOTE_PREFIX}${randomUUID()}`;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.waiting.delete(id);
+        resolve(false);
+      }, ms);
+      this.waiting.set(id, { resolve: () => resolve(true), reject: () => resolve(false), timer });
+      this.send({ t: "hand_over", id, notice });
     });
   }
 
@@ -157,6 +174,12 @@ export class Link extends EventEmitter {
       case "rejected":
         this.settleWaiter(f.id, (w) => w.reject(Error(`rejected by the wrapper: ${String(f.reason)}`)));
         this.emit("rejected", f.id, f.reason);
+        return;
+      case "handed_over":
+        this.settleWaiter(f.id, (w) => {
+          this.handedOver = true;
+          w.resolve({});
+        });
         return;
       case "exit":
         this.exited = true;

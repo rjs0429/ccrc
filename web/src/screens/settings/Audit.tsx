@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { AuditEntry, AuditPage } from "../../../../broker/src/admin-protocol.ts";
 import { request } from "../../api.ts";
 import { Spinner } from "../../components/ui.tsx";
+import { k, t } from "../../i18n/index.ts";
 import { EFFORT_LABEL, MODE_LABEL, baseName } from "../../labels.ts";
 import { placeLabel } from "../../worktree.ts";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
@@ -100,6 +101,28 @@ const WORD: Record<string, string> = {
   continue: "계속",
   interrupt: "중지",
 };
+
+// A VS Code tab that opened a session another process held: it moved from a resting tab, or opened as a copy beside
+// the process that kept it (heldBy), which shows on the entry's second line.
+const MOVED = k("VS Code 다른 탭에서 옮김");
+const COPY = k("VS Code에서 복사본으로 엶");
+const COPY_OF: Record<string, string> = {
+  "VS Code": k("원본은 VS Code의 다른 탭"),
+  Terminal: k("원본은 터미널"),
+  Background: k("원본은 백그라운드 세션"),
+};
+const COPY_OF_OTHER = k("원본은 다른 Claude Code 프로세스");
+
+function eventLabel(e: AuditEntry): string {
+  if (e.event === "handoff" && e.moved) return t(MOVED);
+  if (e.event === "handoff" && e.forked) return t(COPY);
+  return named(e.event, EVENT_LABEL);
+}
+
+function original(e: AuditEntry): string {
+  if (e.event !== "handoff" || !e.forked || e.moved) return "";
+  return t(typeof e.heldBy === "string" && Object.hasOwn(COPY_OF, e.heldBy) ? COPY_OF[e.heldBy] : COPY_OF_OTHER);
+}
 
 // The value as a label from the first map that has it, else as it is.
 function named(v: unknown, ...maps: Record<string, string>[]): string {
@@ -202,16 +225,24 @@ function detail(e: AuditEntry): string {
 function Entry({ e }: { e: AuditEntry }) {
   const more = detail(e);
   const who = [e.device === "local" ? "노트북" : named(e.device), named(e.sessionId).slice(0, 8)].filter(Boolean).join(" · ");
+  const origin = original(e);
   return (
     <li className="px-3.5 py-2.5">
       <div className="flex items-baseline gap-2">
         <span className="min-w-0 flex-1 truncate text-[15px]">
-          {named(e.event, EVENT_LABEL)}
+          {eventLabel(e)}
           {more && <span className="text-muted"> · {more}</span>}
         </span>
         <span className="shrink-0 text-xs text-muted">{dateTime(e.ts)}</span>
       </div>
-      {who && <div className="mt-0.5 truncate font-mono text-xs text-muted">{who}</div>}
+      {origin ? (
+        <div className="mt-0.5 truncate text-xs text-muted">
+          <span className="font-mono">{who}</span>
+          {who ? ` · ${origin}` : origin}
+        </div>
+      ) : (
+        who && <div className="mt-0.5 truncate font-mono text-xs text-muted">{who}</div>
+      )}
     </li>
   );
 }

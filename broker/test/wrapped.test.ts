@@ -1655,3 +1655,46 @@ test("an MCP sign-in goes through a wrapper that passes it, by a server Claude C
   old.wrapper.autoReply((r) => (r.subtype === "mcp_status" ? { mcpServers: [{ name: "linear", status: "needs-auth" }] } : {}));
   await assert.rejects(old.s.mcpAuthenticate("linear"), /request not allowed/);
 });
+
+test("a resting tab whose wrapper can hand over is asked, says yes once, and its session then ends as moved", async () => {
+  const { s, link, wrapper, events } = await session({ caps: ["hand_over"] });
+  wrapper.send({ t: "spawned", cpid: 5150 });
+  await new Promise((r) => setTimeout(r, 50));
+  const holder = { pid: 5150, sessionId: SID, cwd: "/tmp/project", host: "VS Code", status: "idle", procStart: "1" };
+  assert.equal(s.restsIn(holder), true);
+  assert.equal(s.restsIn({ ...holder, status: "busy" }), false, "the registry says it answers");
+  assert.equal(s.restsIn({ ...holder, pid: 5151 }), false, "another process of the session");
+  assert.equal(s.restsIn({ ...holder, host: "Terminal" }), false);
+  wrapper.out(ask("p1"));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(s.restsIn(holder), false, "a request waits in the tab");
+  wrapper.send({ t: "settled", id: "p1", by: "host" });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(s.restsIn(holder), true);
+
+  const refused = s.handOver("멈췄습니다.", 1000);
+  const first = await wrapper.wait((f) => f.t === "hand_over", "asked");
+  assert.equal(first.notice, "멈췄습니다.");
+  wrapper.send({ t: "rejected", id: first.id, reason: "turn running" });
+  assert.equal(await refused, false);
+  assert.equal(link.usable, true);
+  assert.equal(await s.handOver("멈췄습니다.", 100), false, "no answer in time");
+
+  const asked = s.handOver("멈췄습니다.", 1000);
+  const again = await wrapper.wait((f) => f.t === "hand_over" && f.id !== first.id && wrapper.frames.filter((x) => x.t === "hand_over").length === 3, "asked again");
+  wrapper.send({ t: "handed_over", id: again.id });
+  wrapper.send({ t: "exit", code: 0, signal: null, hostLeft: false, running: false });
+  assert.equal(await asked, true);
+  assert.equal(link.usable, false);
+  assert.equal(s.restsIn(holder), false);
+  assert.throws(() => s.send("늦은 메시지"), /session is opening in VS Code/, "the phone sends to the tab it moves to");
+  s.exited(0, null, false, false);
+  assert.deepEqual(events.filter(([ev]) => ev === "closed").map(([, a]) => a[0]), ["moved"]);
+});
+
+test("a tab under a wrapper that cannot hand over is never asked", async () => {
+  const { s, wrapper } = await session({ caps: ["fast_mode", "thinking"] });
+  wrapper.send({ t: "spawned", cpid: 5152 });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(s.restsIn({ pid: 5152, sessionId: SID, cwd: "/tmp/project", host: "VS Code", status: "idle", procStart: "1" }), false);
+});

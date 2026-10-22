@@ -20,7 +20,8 @@
 // get_settings reports a --model starting with "claude-" as the model; one naming "no-ultracode" does not offer Ultracode, which
 // --settings {"ultracode":true} asks for. get_task_output answers with a coloured line naming the task.
 // "FGBASH" starts a Bash call (toolu_fg) that runs in the foreground until background_tasks names it, which moves it to the
-// background as Claude Code does.
+// background as Claude Code does. "BGIDLE" ends its turn with a background task still running; "CRON" ends one that
+// scheduled a job with CronCreate.
 // side_question sends a control_request_progress line and answers with the question and the size of its history; "SLOW"
 // waits until a control_cancel_request for it. get_workspace_diff answers with one changed file.
 // "DIALOG <kind>" asks the host to draw a dialog of that kind (request_user_dialog, dialog-1, dialog-2, ...) with a payload
@@ -269,6 +270,16 @@ function handle(m) {
       out({ type: "assistant", session_id: sid, uuid: randomUUID(), message: { content: [{ type: "tool_use", id: "toolu_fg", name: "Bash", input: { command: "npm test" } }] } });
       out({ type: "system", subtype: "task_started", task_id: "bfg", task_type: "local_bash", tool_use_id: "toolu_fg", description: "npm test", is_backgrounded: false, session_id: sid });
       holding = true;
+      return;
+    }
+    if (text === "BGIDLE" || text === "CRON") {
+      if (text === "BGIDLE") out({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "b3", task_type: "local_bash", description: "npm run watch" }], session_id: sid });
+      else {
+        out({ type: "assistant", session_id: sid, uuid: randomUUID(), message: { content: [{ type: "tool_use", id: "toolu_cron", name: "CronCreate", input: { cron: "*/5 * * * *", prompt: "check" } }] } });
+        out({ type: "user", session_id: sid, uuid: randomUUID(), parent_tool_use_id: null, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_cron", content: "Scheduled job-1" }] } });
+      }
+      out({ type: "assistant", session_id: sid, uuid: randomUUID(), message: { content: [{ type: "text", text: `echo: ${text}` }] } });
+      out({ type: "result", subtype: "success", session_id: sid, is_error: false, total_cost_usd: 0.001 });
       return;
     }
     if (text === "BGTASKS") {

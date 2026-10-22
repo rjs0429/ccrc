@@ -492,7 +492,7 @@ test("the broker may also turn fast mode on or off for the session, and set Thin
 test("Thinking changes from either side reach Claude Code, and a reconnecting broker gets the latest; the hello names what passes", async () => {
   const t = await setup();
   const hello = await t.broker.frames.wait((f) => f.t === "hello", "hello");
-  assert.deepEqual(hello.caps, ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question", "usage_causes", "user_dialogs", "mcp_auth"]);
+  assert.deepEqual(hello.caps, ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question", "usage_causes", "user_dialogs", "mcp_auth", "hand_over", "claim_notice"]);
   const request = (id: string, r: Msg) => t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: id, request: r } });
   const replied = (id: string) => (f: Msg) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === id;
   const thinking = (f: Msg) => f.t === "in" && ((f.m as Msg).request as Msg)?.subtype === "set_max_thinking_tokens";
@@ -870,6 +870,75 @@ test("claim: a session still held elsewhere starts as a copy", async () => {
   assert.notEqual(m.session_id, "eeee");
 });
 
+const initialize = (t: { write: (m: Msg) => void }) => t.write({ type: "control_request", request_id: "init-1", request: { subtype: "initialize" } });
+const isNotice = (m: Msg) => m.type === "system" && m.subtype === "informational";
+const asked = (file: string) =>
+  fs
+    .readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Msg);
+
+test("claim: a copy is renamed as the broker says once VS Code's initialize reached Claude Code, and VS Code shows the broker's notice after the answer", async () => {
+  const requests = path.join(tempDir(), "requests.jsonl");
+  const t = await setup({ args: ["--resume", "eeef"], env: { FAKE_REQUESTS: requests } });
+  t.broker.answerClaims = false;
+  await t.broker.frames.wait((f) => f.t === "hello" && f.claim === "eeef", "hello with claim");
+  initialize(t);
+  t.broker.send({ t: "claim_ok", fork: true, title: "(복사본) 인보이스 내보내기", notice: "복사본으로 열었습니다." });
+  const notice = await t.host.wait(isNotice, "the notice in VS Code");
+  assert.deepEqual([notice.level, notice.content], ["warning", "복사본으로 열었습니다."]);
+  assert.notEqual(notice.session_id, "eeef");
+  const answer = t.host.items.findIndex((m) => m.type === "control_response" && (m.response as Msg).request_id === "init-1");
+  assert.ok(answer !== -1 && answer < t.host.items.indexOf(notice), "after Claude Code answered VS Code's initialize");
+  const named = await t.broker.frames.wait(frameOut((m) => m.subtype === "session_title_changed"), "the copy's name announced");
+  assert.equal((named.m as Msg).title, "(복사본) 인보이스 내보내기");
+  await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).subtype === "success", "the rename answered to the broker");
+  const lines = asked(requests);
+  assert.ok((lines[0].args as string[]).includes("--fork-session"));
+  const requested = lines.filter((l) => l.request).map((l) => l.request as Msg);
+  assert.deepEqual(
+    requested.map((r) => r.subtype),
+    ["initialize", "rename_session"],
+  );
+  assert.deepEqual(requested[1], { subtype: "rename_session", title: "(복사본) 인보이스 내보내기", source: "host" }, "the copy, which has no id of its own yet");
+  assert.ok(!t.host.has((m) => m.type === "control_response" && String((m.response as Msg).request_id).startsWith("ccrc-")), "VS Code does not get the rename's answer");
+  t.user("hi");
+  await t.host.wait((m) => m.type === "result", "a turn");
+  assert.equal(t.host.items.filter(isNotice).length, 1, "told once");
+});
+
+test("claim: a launch the session moved to starts on it, with the broker's notice and no new name", async () => {
+  const requests = path.join(tempDir(), "requests.jsonl");
+  const t = await setup({ args: ["--resume", "eeeg"], env: { FAKE_REQUESTS: requests } });
+  t.broker.answerClaims = false;
+  await t.broker.frames.wait((f) => f.t === "hello" && f.claim === "eeeg", "hello with claim");
+  t.broker.send({ t: "claim_ok", notice: "옮겼습니다." });
+  await t.broker.frames.wait((f) => f.t === "spawned", "started");
+  initialize(t);
+  const notice = await t.host.wait(isNotice, "the notice in VS Code");
+  assert.deepEqual([notice.content, notice.session_id], ["옮겼습니다.", "eeeg"]);
+  t.user("hi");
+  await t.host.wait((m) => m.type === "result", "a turn");
+  const lines = asked(requests);
+  assert.ok(!(lines[0].args as string[]).includes("--fork-session"));
+  assert.ok(!lines.some((l) => (l.request as Msg | undefined)?.subtype === "rename_session"));
+});
+
+test("claim: a notice or name that is not text, or too long, is left out", async () => {
+  const requests = path.join(tempDir(), "requests.jsonl");
+  const t = await setup({ args: ["--resume", "eeeh"], env: { FAKE_REQUESTS: requests } });
+  t.broker.answerClaims = false;
+  await t.broker.frames.wait((f) => f.t === "hello" && f.claim === "eeeh", "hello with claim");
+  initialize(t);
+  t.broker.send({ t: "claim_ok", fork: true, title: "x".repeat(1001), notice: { text: "no" } });
+  await t.host.wait((m) => m.type === "control_response", "the initialize answer");
+  t.user("hi");
+  await t.host.wait((m) => m.type === "result", "a turn");
+  assert.ok(!t.host.has(isNotice));
+  assert.ok(!asked(requests).some((l) => (l.request as Msg | undefined)?.subtype === "rename_session"));
+});
+
 test("does not use a socket whose folder others can reach", async () => {
   const t = await setup({ dirMode: 0o755 });
   t.user("hi");
@@ -962,6 +1031,71 @@ test("without the broker's go-ahead a session that stays held starts as a copy",
   t.user("hi");
   const replay = await t.host.wait((m) => m.type === "user" && m.isReplay === true, "replay");
   assert.notEqual(replay.session_id, "jjjj");
+});
+
+test("a copy started without the broker tells VS Code in the environment's language what keeps the original, and is not renamed", async () => {
+  const cases: [string, string | undefined, string][] = [
+    ["ko_KR.UTF-8", "Terminal", "이 대화는 터미널에서 열려 있어 복사본으로 열었습니다."],
+    ["en_US.UTF-8", "VS Code", "This conversation is open in another VS Code tab, so it opened here as a copy."],
+    ["en_US.UTF-8", undefined, "This conversation is open in another Claude Code process, so it opened here as a copy."],
+  ];
+  for (const [lang, host, start] of cases) {
+    const requests = path.join(tempDir(), "requests.jsonl");
+    const t = await setup({
+      broker: false,
+      args: ["--resume", "jjjk"],
+      env: { LANG: lang, LC_ALL: "", LC_MESSAGES: "", FAKE_REQUESTS: requests },
+      relay: { heldElsewhere: () => true, holderHost: () => host, releaseWaitMs: 300 },
+    });
+    await t.started;
+    initialize(t);
+    const notice = await t.host.wait(isNotice, "the notice in VS Code");
+    assert.ok(String(notice.content).startsWith(start), String(notice.content));
+    t.user("hi");
+    await t.host.wait((m) => m.type === "result", "a turn");
+    assert.ok(!asked(requests).some((l) => (l.request as Msg | undefined)?.subtype === "rename_session"));
+    t.hostIn.end();
+    await t.exited;
+  }
+});
+
+test("hand_over: a resting Claude Code is ended as VS Code ends one, after VS Code shows why", async () => {
+  const t = await setup();
+  await t.broker.frames.wait((f) => f.t === "hello", "hello");
+  t.user("hi");
+  await t.host.wait((m) => m.type === "result", "a turn");
+  t.broker.send({ t: "hand_over", id: "ccrc-h1", notice: "다른 탭으로 옮겼습니다." });
+  await t.broker.frames.wait((f) => f.t === "handed_over" && f.id === "ccrc-h1", "handed over");
+  const notice = await t.host.wait(isNotice, "the notice in VS Code");
+  assert.deepEqual([notice.level, notice.content], ["warning", "다른 탭으로 옮겼습니다."]);
+  assert.deepEqual(await t.exited, [0, null]);
+  const exit = await t.broker.frames.wait((f) => f.t === "exit", "exit");
+  assert.deepEqual([exit.code, exit.signal, exit.hostLeft, exit.running], [0, null, false, false]);
+});
+
+test("hand_over is refused while a turn runs, a background task runs or Claude scheduled a job, and Claude Code goes on", async () => {
+  const refused = async (texts: string[], reason: string, done: boolean) => {
+    const t = await setup();
+    await t.broker.frames.wait((f) => f.t === "hello", "hello");
+    for (const text of texts) t.user(text);
+    if (done) await t.host.wait((m) => m.type === "result", "the turn ended");
+    else await t.host.wait((m) => m.type === "user" && m.isReplay === true, "the turn started");
+    t.broker.send({ t: "hand_over", id: "ccrc-h2", notice: "옮겼습니다." });
+    await t.broker.frames.wait((f) => f.t === "rejected" && f.id === "ccrc-h2" && f.reason === reason, reason);
+    t.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-ctx", request: { subtype: "get_context_usage" } } });
+    await t.broker.frames.wait((f) => f.t === "reply" && ((f.m as Msg).response as Msg).request_id === "ccrc-ctx", "Claude Code still answers");
+    assert.ok(!t.host.has(isNotice), "VS Code is told nothing");
+    assert.ok(!t.broker.frames.has((f) => f.t === "exit"));
+    return t;
+  };
+  const turn = await refused(["HOLD"], "turn running", false);
+  turn.broker.send({ t: "to_cli", m: { type: "control_request", request_id: "ccrc-stop", request: { subtype: "interrupt" } } });
+  await turn.host.wait((m) => m.type === "result", "the turn stopped");
+  turn.broker.send({ t: "hand_over", id: "ccrc-h3", notice: "옮겼습니다." });
+  await turn.broker.frames.wait((f) => f.t === "handed_over" && f.id === "ccrc-h3", "handed over once the turn ended");
+  await refused(["ASK"], "turn running", false);
+  await refused(["BGIDLE"], "background task running", true);
+  await refused(["CRON"], "job scheduled", true);
 });
 
 // A notes folder that cannot be written to, as on a full disk.

@@ -8,6 +8,7 @@ import { DIALOG_CHOICES, dialogAnswer } from "../dialogs.ts";
 import { LineSplitter, parseLine } from "../link/lines.ts";
 import { LINK_VERSION, REMOTE_PREFIX, isPrivateDir, type BrokerFrame, type Hello, type Party, type WrapperFrame } from "../link/protocol.ts";
 import { liveProcesses } from "../sessions/live.ts";
+import { HOLD_TEXT, envLang, holderKind } from "./hold.ts";
 import { sendFilesEnv } from "./send-files.ts";
 import type { TurnStore } from "./turns.ts";
 
@@ -28,6 +29,8 @@ const LIFECYCLE = Buffer.from('"command_lifecycle"');
 const REPLAY = Buffer.from('"isReplay":true');
 const TASK_EVENT = Buffer.from('"subtype":"task_');
 const COMMANDS = Buffer.from('"subtype":"commands_changed"');
+const CRON = Buffer.from('"CronCreate"');
+const WAKEUP = Buffer.from('"ScheduleWakeup"');
 // The broker sees the conversation, these requests from Claude Code (can_use_tool, and an elicitation the
 // broker took, may be answered remotely), the answer to VS Code's initialize, the applied part of its get_settings answers, and these
 // settings changes from VS Code; other control traffic between VS Code and Claude Code stays between them.
@@ -61,7 +64,7 @@ const REMOTE_REQUESTS = new Set([
 ]);
 // Told to the broker in the hello, so it offers what this wrapper passes on. `ccrc update` compares this list between
 // the old and the new version to say when VS Code tabs opened before need the new wrapper.
-const CAPS = ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question", "usage_causes", "user_dialogs", "mcp_auth"];
+const CAPS = ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question", "usage_causes", "user_dialogs", "mcp_auth", "hand_over", "claim_notice"];
 // The id of the hook this wrapper adds to VS Code's initialize and answers itself.
 export const PUSH_HOOK = "ccrc_push_notification";
 // Broker requests after which VS Code is told to read the applied settings again.
@@ -85,6 +88,9 @@ const WAITING_KEEP = 100;
 const ASKED_KEEP = 100;
 const LINK_BUFFER_MAX = 16 * 1024 * 1024;
 const RELEASE_WAIT_MS = 9000;
+const NOTICE_MAX = 2000;
+// Tools whose jobs live in the Claude Code process that ran them, so ending it would drop them.
+const SCHEDULING = new Set<unknown>(["CronCreate", "ScheduleWakeup"]);
 // How long an MCP input request waits for the broker to take it before VS Code gets it.
 const ELICIT_TAKE_MS = 5000;
 const ELICIT_ACTIONS = new Set<unknown>(["accept", "decline", "cancel"]);
@@ -111,8 +117,10 @@ export interface RelayOptions {
   // next launch of the session can continue it.
   hostPid?: number;
   turns?: TurnStore;
-  // Whether another process holds a session, and how long a resuming launch waits for it to let go.
+  // Whether another process holds a session, and how long a resuming launch waits for it to let go; which kind of process
+  // it is (as live.ts names it), for the notice of a copy started without the broker.
   heldElsewhere?: (sessionId: string) => boolean;
+  holderHost?: (sessionId: string) => string | undefined;
   releaseWaitMs?: number;
   elicitTakeMs?: number;
 }
@@ -336,6 +344,18 @@ export function pushHookAnswer(input: unknown, notice?: string): Record<string, 
   return { hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: { message: out.message, ...told } } };
 }
 
+// A notice in the shape Claude Code writes its own, which VS Code adds below the conversation (any level but "info").
+export function informational(content: string, sessionId?: string): Buffer {
+  return Buffer.from(JSON.stringify({ type: "system", subtype: "informational", level: "warning", content, uuid: randomUUID(), ...(sessionId ? { session_id: sessionId } : {}) }));
+}
+
+// The background tasks a background_tasks_changed line lists as running, counted as VS Code counts them: ambient ones
+// aside, and a list it cannot read as one.
+export function backgroundCount(m: Record<string, unknown>): number {
+  if (!Array.isArray(m.tasks)) return 1;
+  return m.tasks.filter((t) => t === null || typeof t !== "object" || (t as Record<string, unknown>).ambient !== true).length;
+}
+
 // get_workspace_diff takes nothing; Claude Code reads the changes under its own read rules.
 export function allowedWorkspaceDiff(req: Record<string, unknown>): boolean {
   return Object.keys(req).every((k) => k === "subtype");
@@ -552,6 +572,15 @@ export class Relay extends EventEmitter {
   // The broker sends Claude's notifications to a device, but not while the remote user has the session in front of them.
   private claudePush = false;
   private watching = false;
+  // What VS Code is told once Claude Code has answered its initialize: why the session opened as it did. A copy the
+  // broker named is renamed once VS Code's initialize has reached Claude Code, which writes the name with the copy's
+  // first message.
+  private notice?: string;
+  private copyName?: string;
+  private initialized = false;
+  // What a hand-over would cut short besides a turn, a request or a message: background tasks, and jobs Claude scheduled.
+  private backgroundTasks = 0;
+  private scheduled = false;
 
   constructor(o: RelayOptions) {
     super();
@@ -635,6 +664,9 @@ export class Relay extends EventEmitter {
     }
     this.fork = true;
     this.sessionId = undefined;
+    const host = this.o.holderHost ? this.o.holderHost(sessionId) : this.o.heldElsewhere ? undefined : liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId)?.host;
+    const words = HOLD_TEXT[envLang(this.o.env)];
+    this.notice = words.copy(words.holder[holderKind(host)], false);
   }
 
   private spawnChild(env: NodeJS.ProcessEnv): void {
@@ -664,7 +696,42 @@ export class Relay extends EventEmitter {
       this.send({ t: "spawned", cpid: child.pid });
     }
     for (const line of this.queued.splice(0)) this.toChild(line);
+    this.nameCopy();
     if (this.hostEnded) child.stdin!.end();
+  }
+
+  private nameCopy(): void {
+    if (!this.copyName || !this.initialized) return;
+    const title = this.copyName;
+    this.copyName = undefined;
+    this.o.log("naming the copy as the broker said");
+    this.toChild(Buffer.from(JSON.stringify({ type: "control_request", request_id: `${REMOTE_PREFIX}${randomUUID()}`, request: { subtype: "rename_session", title, source: "host" } })));
+  }
+
+  // Ends Claude Code so the session can move to another tab, only while nothing here would be cut short. VS Code shows
+  // the notice first and then sees Claude Code end as when it closes a tab: input closed, exit code 0, no error.
+  private handOver(id: unknown, notice: unknown): void {
+    if (typeof id !== "string") return;
+    const busy = this.busyWith();
+    if (busy) {
+      this.o.log(`not handing the session over: ${busy}`);
+      return this.send({ t: "rejected", id, reason: busy });
+    }
+    if (typeof notice === "string" && notice && notice.length <= NOTICE_MAX) this.toHost(informational(notice, this.sessionId));
+    this.o.log("handing the session over to another tab: closing Claude Code's input");
+    this.child!.stdin!.end();
+    this.send({ t: "handed_over", id });
+  }
+
+  private busyWith(): string | undefined {
+    if (!this.child?.stdin?.writable || this.finished || this.hostEnded) return "closed";
+    if (this.running) return "turn running";
+    if (this.open.size || this.held.size) return "request open";
+    if (this.waiting.size) return "message waiting";
+    if (this.foreground.size) return "call running";
+    if (this.backgroundTasks) return "background task running";
+    if (this.scheduled) return "job scheduled";
+    return undefined;
   }
 
   private fromHost(line: Buffer): void {
@@ -695,6 +762,8 @@ export class Relay extends EventEmitter {
         this.copy("in", line);
       } else if (subtype === "initialize") {
         this.toChild(withPushHook(msg) ?? line);
+        this.initialized = true;
+        this.nameCopy();
         return;
       }
     }
@@ -762,11 +831,16 @@ export class Relay extends EventEmitter {
       }
     }
     if (!held && !withdrawn) this.toHost(line);
+    if (this.notice && this.hostReady) {
+      this.toHost(informational(this.notice, this.sessionId));
+      this.notice = undefined;
+    }
     this.noteTurn(line, msg);
     if (line.includes(TASK_EVENT)) {
       const m = msg ?? parseLine(line);
       if (m) noteForeground(this.foreground, m);
     }
+    if (line.includes(TASKS) || line.includes(CRON) || line.includes(WAKEUP)) this.noteJobs(line, msg);
     if (line.includes(STATUS)) this.noteStatus(line, msg);
     if (this.waiting.size && (line.includes(LIFECYCLE) || line.includes(REPLAY))) this.noteTakenIn(line, msg);
     if (!shared) return;
@@ -842,6 +916,15 @@ export class Relay extends EventEmitter {
     const m = parsed ?? parseLine(line);
     if (m?.type === "command_lifecycle" && m.state !== "queued" && typeof m.command_uuid === "string") this.waiting.delete(m.command_uuid);
     else if (m?.type === "user" && m.isReplay === true && typeof m.uuid === "string") this.waiting.delete(m.uuid);
+  }
+
+  private noteJobs(line: Buffer, parsed?: Record<string, unknown>): void {
+    const m = parsed ?? parseLine(line);
+    if (m?.type === "system" && m.subtype === "background_tasks_changed") this.backgroundTasks = backgroundCount(m);
+    else if (m?.type === "assistant") {
+      const content = plainObj(m.message).content;
+      if (Array.isArray(content) && content.some((b) => plainObj(b).type === "tool_use" && SCHEDULING.has(plainObj(b).name))) this.scheduled = true;
+    }
   }
 
   private noteStatus(line: Buffer, parsed?: Record<string, unknown>): void {
@@ -1095,10 +1178,13 @@ export class Relay extends EventEmitter {
           if (f.fork) {
             this.fork = true;
             this.sessionId = undefined;
+            if (typeof f.title === "string" && f.title.trim() && f.title.length <= RENAME_TITLE_MAX) this.copyName = f.title;
           }
+          if (typeof f.notice === "string" && f.notice && f.notice.length <= NOTICE_MAX) this.notice = f.notice;
         }
         this.gate?.open();
       } else if (f.t === "claim_wait") this.gate?.wait(Math.max(0, Number(f.ms) || 0));
+      else if (f.t === "hand_over") this.handOver(f.id, f.notice);
       else if (f.t === "to_cli" && f.m && typeof f.m === "object") this.inject(f.m);
       else if (f.t === "take" || f.t === "pass") this.decide(f.t, f.id);
       else if (f.t === "claude_push") {

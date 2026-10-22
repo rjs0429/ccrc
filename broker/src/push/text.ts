@@ -18,6 +18,9 @@ export interface PushText {
   claude: string;
   test: string;
   update: (tag: string) => string;
+  // A copy VS Code opened while another process held the session took its first message, and where the original is.
+  copied: string;
+  original: (holder: string) => string;
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -43,6 +46,8 @@ const KO: PushText = {
   claude: "Claude의 알림",
   test: "테스트 알림입니다",
   update: (tag) => `새 버전 ${tag}: 노트북에서 ccrc update 로 적용합니다`,
+  copied: "복사본에서 대화를 시작했습니다",
+  original: (holder) => `원본은 ${holder}에 그대로 있습니다`,
 };
 
 const EN: PushText = {
@@ -72,6 +77,8 @@ const EN: PushText = {
   claude: "Notification from Claude",
   test: "This is a test notification",
   update: (tag) => `New version ${tag}: run ccrc update on the laptop`,
+  copied: "A copy of a conversation started",
+  original: (holder) => `the original is still open in ${holder}`,
 };
 
 export const PUSH_TEXT: Record<Lang, PushText> = { ko: KO, en: EN };
