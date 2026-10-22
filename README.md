@@ -545,11 +545,12 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
   experiment for it is on, and then the phone's card goes too.
 - Signing in to an MCP server from the phone opens the sign-in page on the phone; its last page is Claude Code's
   redirect to the machine's `localhost`, which the phone cannot open, so its address is pasted back in the MCP sheet.
-- Side questions from the phone, "백그라운드로" (move to background) on cards and in the agent map, the changes sheet's
-  git view as Claude Code sees it, the usage causes from the session's own Claude Code, the latest "/" list for a
-  broker that connects again, MCP sign-ins from the phone, and Claude being told that its PushNotification reached the
-  phone need the wrapper of ccrc 0.8 or later: a tab opened before an update keeps its older wrapper until it is opened
-  again. Side questions asked from the phone do not show in VS Code's side panel.
+- Side questions from the phone, "백그라운드로" (move to background) on cards and in the agent map, the changes sheet's git
+  view as Claude Code sees it, the usage causes from the session's own Claude Code, the latest "/" list for a broker
+  that connects again, MCP sign-ins from the phone, a session moving out of a tab where it rests, and Claude being
+  told that its PushNotification reached the phone need the wrapper of ccrc 0.8 or later: a tab opened before an
+  update keeps its older wrapper until it is opened again. Side questions asked from the phone do not show in VS
+  Code's side panel.
 - When removing ccrc by hand, remove the VS Code setting before the files (`ccrc uninstall` does this).
 
 ## Limitations
