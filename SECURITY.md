@@ -1,5 +1,7 @@
 # Security policy
 
+English | [한국어](SECURITY.ko.md)
+
 ## Supported versions
 
 Security fixes go into the newest release. Before 1.0, only the latest minor version is supported; update with
