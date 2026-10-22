@@ -910,7 +910,7 @@ test("claim: a copy is renamed as the broker says once VS Code's initialize reac
 
 test("claim: a launch the session moved to starts on it, with the broker's notice and no new name", async () => {
   const requests = path.join(tempDir(), "requests.jsonl");
-  const t = await setup({ args: ["--resume", "eeeg"], env: { FAKE_REQUESTS: requests } });
+  const t = await setup({ args: ["--resume", "eeeg"], env: { FAKE_REQUESTS: requests, FAKE_INIT_AT_TURN: "1" } });
   t.broker.answerClaims = false;
   await t.broker.frames.wait((f) => f.t === "hello" && f.claim === "eeeg", "hello with claim");
   t.broker.send({ t: "claim_ok", notice: "옮겼습니다." });
@@ -920,9 +920,48 @@ test("claim: a launch the session moved to starts on it, with the broker's notic
   assert.deepEqual([notice.content, notice.session_id], ["옮겼습니다.", "eeeg"]);
   t.user("hi");
   await t.host.wait((m) => m.type === "result", "a turn");
+  assert.equal(t.host.items.filter(isNotice).length, 1, "told once: the session keeps its id");
   const lines = asked(requests);
   assert.ok(!(lines[0].args as string[]).includes("--fork-session"));
   assert.ok(!lines.some((l) => (l.request as Msg | undefined)?.subtype === "rename_session"));
+});
+
+const isInit = (m: Msg) => m.type === "system" && m.subtype === "init";
+
+test("claim: a copy tells VS Code its notice again below the first message after the copy's init, with which VS Code starts the conversation over", async () => {
+  const viaBroker = await setup({ args: ["--resume", "eeej"], env: { FAKE_INIT_AT_TURN: "1" } });
+  viaBroker.broker.answerClaims = false;
+  await viaBroker.broker.frames.wait((f) => f.t === "hello" && f.claim === "eeej", "hello with claim");
+  initialize(viaBroker);
+  viaBroker.broker.send({ t: "claim_ok", fork: true, title: "(복사본) 인보이스", notice: "복사본으로 열었습니다." });
+  const alone = await setup({
+    broker: false,
+    args: ["--resume", "eeek"],
+    env: { FAKE_INIT_AT_TURN: "1", LANG: "ko_KR.UTF-8", LC_ALL: "", LC_MESSAGES: "" },
+    relay: { heldElsewhere: () => true, holderHost: () => "VS Code", releaseWaitMs: 300 },
+  });
+  await alone.started;
+  initialize(alone);
+  for (const [t, claim] of [
+    [viaBroker, "eeej"],
+    [alone, "eeek"],
+  ] as const) {
+    const first = await t.host.wait(isNotice, `${claim}: the notice in VS Code`);
+    assert.ok(!t.host.has(isInit), `${claim}: told before the copy's first init`);
+    t.user("hi");
+    await t.host.wait((m) => m.type === "result", `${claim}: a turn`);
+    const items = t.host.items;
+    const init = items.findIndex(isInit);
+    const shown = items.findIndex((m, i) => i > init && (m.type === "user" || m.type === "assistant"));
+    const notices = items.filter(isNotice);
+    assert.notEqual(items[init].session_id, claim, `${claim}: the init brings the copy's id`);
+    assert.equal(notices.length, 2, `${claim}: told again`);
+    assert.equal(items.indexOf(notices[1]), shown + 1, `${claim}: right below the first message after the init`);
+    assert.deepEqual([notices[1].level, notices[1].content, notices[1].session_id], ["warning", first.content, items[init].session_id], claim);
+    t.user("again");
+    await t.host.wait((m) => m.type === "result" && t.host.items.filter(isInit).length === 2, `${claim}: another turn`);
+    assert.equal(t.host.items.filter(isNotice).length, 2, `${claim}: told again only once`);
+  }
 });
 
 test("claim: a notice or name that is not text, or too long, is left out", async () => {

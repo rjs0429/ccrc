@@ -66,7 +66,9 @@ const CALL_LABEL: Record<string, string | Placed> = {
   stop_task: k("작업 중지"),
   resume: kc("audit", "이어서 실행"),
   set_output_style: k("출력 스타일 바꿈"),
+  unqueue: k("대기 메시지 되돌림"),
   rename: k("이름 바꿈"),
+  background: k("백그라운드로 보냄"),
   mcp_authenticate: k("MCP 인증 시작"),
   mcp_oauth_callback: k("MCP 인증 마침"),
 };
