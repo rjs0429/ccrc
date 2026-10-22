@@ -80,6 +80,13 @@ export function t(ko: string, vars?: Vars): string {
   return fill(translate(ko), vars);
 }
 
+// t() for a sentence that one place shows with another English than the rest (a toast's "Undo" where the rewind sheet
+// says "Rewind", both 되돌리기). The dictionary keeps it as "place|sentence".
+export function tc(place: string, ko: string, vars?: Vars): string {
+  const key = `${place}|${ko}`;
+  return fill(current === "en" && Object.hasOwn(en, key) ? en[key] : translate(ko), vars);
+}
+
 export function k(ko: string): string {
   return ko;
 }

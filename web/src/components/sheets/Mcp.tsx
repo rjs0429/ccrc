@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { McpAuthStart, McpServerInfo } from "../../../../broker/src/protocol.ts";
-import { k, t } from "../../i18n/index.ts";
+import { k, t, tc } from "../../i18n/index.ts";
 import { errorText } from "../../labels.ts";
 import { call } from "../../state.ts";
 import { Sheet, Spinner } from "../ui.tsx";
@@ -253,7 +253,7 @@ export function McpSheet({ sessionId, onClose }: SheetProps) {
   };
 
   return (
-    <Sheet title={t("MCP 서버")} onClose={onClose}>
+    <Sheet title={tc("server list", "MCP 서버")} onClose={onClose}>
       {servers && servers.length > 0 && (
         <>
           <div className="overflow-hidden rounded-xl border border-line">

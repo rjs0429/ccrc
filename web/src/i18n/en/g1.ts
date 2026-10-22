@@ -481,7 +481,6 @@ export const g1: Record<string, string> = {
   "MCP 인증 마침": "MCP authentication finished",
   앞부분만: "Truncated",
   거부됨: "Denied",
-  없음: "None",
   "너무 큼": "Too large",
   "잘못된 링크": "Invalid link",
   실패: "Failed",
@@ -527,4 +526,5 @@ export const g1: Record<string, string> = {
   "Claude Code가 읽음": "Read by Claude Code",
   "ccrc가 읽음": "Read by ccrc",
   "이어서 묻기 · 앞선 질문 {n}개": "Follow-up · {n|# earlier question|# earlier questions}",
+  "file read|없음": "Not found",
 };

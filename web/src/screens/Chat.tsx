@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, ModelOption, QueuedMessage } from "../../../broker/src/protocol.ts";
 import { DateLine, ItemView, QueuedItem, StreamPreview, shownItems } from "../components/Items.tsx";
-import { t } from "../i18n/index.ts";
+import { t, tc } from "../i18n/index.ts";
 import { Composer } from "../components/Composer.tsx";
 import { reattach } from "../components/composer/attachments.ts";
 import { afterKeyboard } from "../components/composer/picker.ts";
@@ -818,7 +818,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               </button>
               {controllable && (
                 <>
-                  <Choice label={t("MCP 서버")} onClick={() => (setSheet("mcp"), setMenu(false))} />
+                  <Choice label={tc("server list", "MCP 서버")} onClick={() => (setSheet("mcp"), setMenu(false))} />
                   <Choice label={t("출력 스타일")} value={st?.outputStyle && outputStyleLabel(st.outputStyle)} onClick={() => (setSheet("outputStyle"), setMenu(false))} />
                 </>
               )}
@@ -889,7 +889,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               <Choice label={t("변경 사항")} onClick={() => (setSheet("changes"), setMenu(false))} />
               <Choice label={t("Context와 사용량")} onClick={() => (setSheet("contextUsage"), setMenu(false))} />
               <Choice label={t("에이전트 지도")} onClick={() => (setSheet("agents"), setMenu(false))} />
-              <Choice ref={menuMore} label={t("더 보기")} next onClick={() => showMore(true)} />
+              <Choice ref={menuMore} label={tc("session menu", "더 보기")} next onClick={() => showMore(true)} />
             </Fragment>
           )}
         </Sheet>

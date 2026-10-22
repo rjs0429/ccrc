@@ -7,7 +7,7 @@ import { NEW_SESSION_SCOPE, takeAttachments } from "../components/composer/attac
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { WorktreeOption, worktreeBlocked, worktreeChoice, type FolderGit, type WorktreeDraft } from "../components/WorktreeOption.tsx";
-import { k, t } from "../i18n/index.ts";
+import { k, t, tc } from "../i18n/index.ts";
 import { brokerSessionsBlocked, errorText, shortPath } from "../labels.ts";
 import { rememberSent } from "../sentPreviews.ts";
 import { offeredFolder, placeLabel } from "../worktree.ts";
@@ -280,7 +280,7 @@ export function NewSession() {
                 {cwd === f && <WorktreeOption info={git} draft={worktree} onChange={setWorktree} error={worktreeError} disabled={starting} />}
               </Fragment>
             ))}
-            {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">{t("폴더가 없습니다")}</div>}
+            {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">{tc("folder list", "폴더가 없습니다")}</div>}
           </div>
         </div>
       </main>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fieldProblem, type FieldProblem } from "../../../broker/src/elicit.ts";
 import type { Answer, DialogInfo, ElicitField, ElicitInfo, ElicitValue, PendingRequest } from "../../../broker/src/protocol.ts";
-import { k, t } from "../i18n/index.ts";
+import { k, t, tc } from "../i18n/index.ts";
 import { allowAlwaysLabel, creditsText, dialogLabel, modelLabel, refusalText } from "../labels.ts";
 import { useApp } from "../state.ts";
 import { Switch } from "../screens/settings/common.tsx";
@@ -520,7 +520,7 @@ function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
           )}
           <div className="grid grid-cols-2 gap-2">
             <Button disabled={!web} onClick={() => answer("accept")}>
-              {t("완료")}
+              {tc("url request", "완료")}
             </Button>
             <Button kind="danger" onClick={() => answer("cancel")}>
               {t("취소")}

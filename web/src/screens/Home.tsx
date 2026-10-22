@@ -7,7 +7,7 @@ import { Icon, Spinner } from "../components/ui.tsx";
 import { UpdateBanner } from "../components/UpdateBanner.tsx";
 import { TitleText } from "../components/TitleText.tsx";
 import { useLongPress } from "../components/useLongPress.ts";
-import { t } from "../i18n/index.ts";
+import { t, tc } from "../i18n/index.ts";
 import { baseName, brokerSessionsBlocked, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
 import { loggedOut, navigate, openAt, refreshSessions, useApp } from "../state.ts";
 import { groupFolder, placeLabel, shownBranch } from "../worktree.ts";
@@ -284,7 +284,7 @@ export function Home() {
                 onClick={() => setTab(name)}
                 className={`relative rounded-lg px-3 py-1.5 text-sm after:absolute after:inset-x-0 after:-inset-y-1.5 ${tab === name ? "bg-surface-2 font-semibold" : "text-muted"}`}
               >
-                {name === "sessions" ? t("세션") : t("폴더")}
+                {name === "sessions" ? tc("list tab", "세션") : t("폴더")}
               </button>
             ))}
           </div>

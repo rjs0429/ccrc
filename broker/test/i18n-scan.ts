@@ -1,4 +1,4 @@
-// The phone app's text as the screens hold it: sentences handed to t()/k()/tNode() and Korean left outside them.
+// The phone app's text as the screens hold it: sentences handed to t()/k()/tNode()/tc() and Korean left outside them.
 // Run it to list what is left: node broker/test/i18n-scan.ts [path ...] (paths under web/src; all files by default).
 import fs from "node:fs";
 import path from "node:path";
@@ -11,8 +11,8 @@ export const WEB = path.resolve(import.meta.dirname, "../../web/src");
 const I18N = path.join(WEB, "i18n");
 const HANGUL = /[ㄱ-ㆎ가-힣]/;
 const KEYED = new Set(["t", "k", "tNode"]);
-// t() and tNode() give the text of the current language, so they run where it is shown, never at module level.
-const SHOWN = new Set(["t", "tNode"]);
+// t(), tNode() and tc() give the text of the current language, so they run where it is shown, never at module level.
+const SHOWN = new Set(["t", "tNode", "tc"]);
 
 export interface Found {
   file: string;
@@ -62,13 +62,16 @@ export function scanFiles(files = webFiles()): Scan {
     const at = (node: ts.Node, t: string): Found => ({ file: rel, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, text: t });
     const keyed = new Set<ts.Node>();
     const visit = (node: ts.Node) => {
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && KEYED.has(node.expression.text)) {
-        const arg = node.arguments[0];
-        if (arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))) {
-          keyed.add(arg);
-          const list = scan.keys.get(arg.text) ?? [];
-          list.push(at(arg, arg.text));
-          scan.keys.set(arg.text, list);
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && (KEYED.has(node.expression.text) || node.expression.text === "tc")) {
+        // tc(place, sentence) keeps its sentence under "place|sentence".
+        const args = node.expression.text === "tc" ? node.arguments.slice(0, 2) : node.arguments.slice(0, 1);
+        if (args.length && args.every((a) => ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a))) {
+          const parts = args as (ts.StringLiteral | ts.NoSubstitutionTemplateLiteral)[];
+          const key = parts.map((a) => a.text).join("|");
+          for (const a of parts) keyed.add(a);
+          const list = scan.keys.get(key) ?? [];
+          list.push(at(parts[parts.length - 1], key));
+          scan.keys.set(key, list);
         }
         if (SHOWN.has(node.expression.text) && !inFunction(node)) scan.moduleLevel.push(at(node, node.getText(sf)));
       }

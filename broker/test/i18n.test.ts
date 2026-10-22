@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { clock, dateTime, dayLabel, fullTime, monthDay, num, shortDateTime } from "../../web/src/i18n/format.ts";
-import { deviceLang, fill, k, lang, langKey, locale, localeOf, onLang, resolveLang, setLang, t } from "../../web/src/i18n/index.ts";
+import { deviceLang, fill, k, lang, langKey, locale, localeOf, onLang, resolveLang, setLang, t, tc } from "../../web/src/i18n/index.ts";
 import { allowAlwaysLabel, duration, errorText, fastReasonText, hostLabel, idleText, noteText, relTime, sessionTitle, usageResetText } from "../../web/src/labels.ts";
 
 // Some ICU versions put a narrow no-break space before AM/PM.
@@ -41,6 +41,16 @@ test("the screens read Korean until English is chosen; a sentence without Englis
     assert.equal(t("constructor"), "constructor");
   });
   assert.equal(t("로그아웃"), "로그아웃");
+});
+
+test("a place with its own English for a sentence reads that one, and Korean stays the sentence", () => {
+  assert.equal(tc("settings toast", "되돌리기"), "되돌리기");
+  english(() => {
+    assert.equal(t("되돌리기"), "Rewind");
+    assert.equal(tc("settings toast", "되돌리기"), "Undo");
+    assert.equal(tc("no such place", "되돌리기"), "Rewind", "a place without its own English takes the sentence's");
+    assert.equal(tc("no such place", "아직 영어가 없는 문장 {n}", { n: 2 }), "아직 영어가 없는 문장 2");
+  });
 });
 
 test("auto takes Korean only when the device's first language is Korean", () => {

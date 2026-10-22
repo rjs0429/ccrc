@@ -8,11 +8,10 @@ import { g4 } from "../../web/src/i18n/en/g4.ts";
 import { g5 } from "../../web/src/i18n/en/g5.ts";
 import { byFile, missing, placeholders, scanFiles } from "./i18n-scan.ts";
 
-// Where the screens stood when all their features had come in. LIMIT holds them there, so new Korean goes through t()
-// with its English; translating the screens brings both to 0 (a limit left out is counted and reported only).
-// node broker/test/i18n-scan.ts lists each one.
-const BASELINE = { outside: 1462, missing: 0 };
-const LIMIT: { outside?: number; missing?: number } = { outside: 1462, missing: 0 };
+// Every screen is in English too: LIMIT holds both at 0, so new Korean goes through t() with its English (a limit left
+// out is counted and reported only). node broker/test/i18n-scan.ts lists each one.
+const BASELINE = { outside: 0, missing: 0 };
+const LIMIT: { outside?: number; missing?: number } = { outside: 0, missing: 0 };
 
 const scan = scanFiles();
 
@@ -50,7 +49,7 @@ test("the dictionary holds only sentences the screens hand to t()", () => {
   );
 });
 
-test("the scan finds Korean in strings, templates and JSX, and keys in t(), k() and tNode()", async () => {
+test("the scan finds Korean in strings, templates and JSX, and keys in t(), k(), tNode() and tc()", async () => {
   const fs = await import("node:fs");
   const os = await import("node:os");
   const path = await import("node:path");
@@ -65,13 +64,13 @@ test("the scan finds Korean in strings, templates and JSX, and keys in t(), k() 
       "// 주석의 한글은 세지 않는다",
       'export function A({ n }: { n: number }) {',
       '  const s = `${n}개 남음`;',
-      '  return <div title="제목">본문 {t("열쇠 {n}", { n })} {tNode("요소 {x}", { x: <b /> })}</div>;',
+      '  return <div title="제목">본문 {t("열쇠 {n}", { n })} {tNode("요소 {x}", { x: <b /> })} {tc("자리", "같은 문장")}</div>;',
       "}",
     ].join("\n"),
   );
   try {
     const s = scanFiles([file]);
-    assert.deepEqual([...s.keys.keys()].sort(), ["모듈에서 부른 문장", "열쇠 {n}", "요소 {x}", "표의 문장"].sort());
+    assert.deepEqual([...s.keys.keys()].sort(), ["모듈에서 부른 문장", "열쇠 {n}", "요소 {x}", "자리|같은 문장", "표의 문장"].sort());
     assert.deepEqual(
       s.outside.map((f) => f.text),
       ["`${n}개 남음`", "제목", "본문"],

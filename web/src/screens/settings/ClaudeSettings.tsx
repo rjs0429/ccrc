@@ -14,7 +14,7 @@ import {
 import type { ModelOption } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
 import { Button, Choice, Icon, Sheet, Spinner } from "../../components/ui.tsx";
-import { k, t } from "../../i18n/index.ts";
+import { k, t, tc } from "../../i18n/index.ts";
 import { EFFORT_LABEL, modeHints, shortPath } from "../../labels.ts";
 import { loggedOut, toast, useApp, type SettingsPart } from "../../state.ts";
 import { ERRORS, PROBLEM, choiceLabels, effortModels, failureText, inheritedEffort, isDefaultModel, modelName, valueText } from "./claudeLabels.ts";
@@ -87,7 +87,7 @@ function report(saver: SettingsSaver, r: SaveResult): void {
   const label = labelOf(r.key);
   if (r.t === "saved") {
     if (r.undo) return toast(t("되돌렸습니다 · {label}", { label }));
-    return toast(t("저장했습니다 · {label}", { label }), { label: t("되돌리기"), run: () => saver.set(r.key, r.before, true) });
+    return toast(t("저장했습니다 · {label}", { label }), { label: tc("settings toast", "되돌리기"), run: () => saver.set(r.key, r.before, true) });
   }
   if (r.t === "changed") return toast(t("그사이 설정 파일에서 바뀐 값을 보입니다 · {label}", { label }));
   if (r.error instanceof ApiError && r.error.status === 401) return loggedOut("expired");

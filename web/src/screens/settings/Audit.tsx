@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { AuditEntry, AuditPage } from "../../../../broker/src/admin-protocol.ts";
 import { request } from "../../api.ts";
 import { Spinner } from "../../components/ui.tsx";
-import { k, t } from "../../i18n/index.ts";
+import { k, t, tc } from "../../i18n/index.ts";
 import { EFFORT_LABEL, MODE_LABEL, baseName } from "../../labels.ts";
 import { placeLabel } from "../../worktree.ts";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
@@ -74,7 +74,6 @@ const READ_OUTCOME: Record<string, string> = {
   ok: "",
   truncated: k("앞부분만"),
   denied: k("거부됨"),
-  not_found: k("없음"),
   too_large: k("너무 큼"),
   invalid: k("잘못된 링크"),
   failed: k("실패"),
@@ -167,7 +166,7 @@ function detail(e: AuditEntry): string {
     case "export":
       return [typeof e.messages === "number" ? t("메시지 {n}개", { n: e.messages }) : "", e.ticket ? t("내려받기") : "", e.outcome === "failed" ? t("실패") : ""].filter(Boolean).join(" · ");
     case "file_read":
-      return [typeof e.path === "string" ? baseName(e.path) : "", e.ticket && e.outcome === "ok" ? t("임시 링크") : "", named(e.outcome, READ_OUTCOME)].filter(Boolean).join(" · ");
+      return [typeof e.path === "string" ? baseName(e.path) : "", e.ticket && e.outcome === "ok" ? t("임시 링크") : "", e.outcome === "not_found" ? tc("file read", "없음") : named(e.outcome, READ_OUTCOME)].filter(Boolean).join(" · ");
     case "new_session":
       return [
         typeof e.cwd === "string" ? placeLabel(e.cwd) : "",

@@ -1,5 +1,5 @@
 import type { Ref } from "react";
-import { t } from "../../i18n/index.ts";
+import { t, tc } from "../../i18n/index.ts";
 import { Icon } from "../ui.tsx";
 import type { AgentMap, ChipDot } from "./tree.ts";
 
@@ -47,7 +47,7 @@ export function AgentChip({ chip, word, onClick, ref, className = "" }: { chip?:
         <Icon.agents className="size-[18px]" />
         {chip && chip.dot !== "idle" && <span className={`absolute -top-0.5 -right-0.5 size-1.5 rounded-full ring-2 ring-surface ${DOT[chip.dot]}`} />}
       </span>
-      <span className={`whitespace-nowrap ${word ? "" : "invisible absolute left-0"}`}>{t("에이전트")}</span>
+      <span className={`whitespace-nowrap ${word ? "" : "invisible absolute left-0"}`}>{tc("agent chip", "에이전트")}</span>
       <span className="grid font-medium text-fg tabular-nums">
         <span className="invisible col-start-1 row-start-1">00</span>
         <span className="col-start-1 row-start-1">{chip?.running || ""}</span>

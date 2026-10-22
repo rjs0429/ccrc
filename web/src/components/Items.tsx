@@ -1,7 +1,7 @@
 import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { hideDialogCommands } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, QueuedMessage, SubagentActivity, TaskInfo } from "../../../broker/src/protocol.ts";
-import { k, t } from "../i18n/index.ts";
+import { k, t, tc } from "../i18n/index.ts";
 import { clock, noteText } from "../labels.ts";
 import { useApp } from "../state.ts";
 import { DiffView, PatchStats } from "./diff/DiffView.tsx";
@@ -137,7 +137,7 @@ export function QueuedItem({ message, host, onTakeBack, taking, note }: { messag
         </div>
       </div>
       <div className="mt-1 text-[11px] text-muted">
-        {taking ? t("되돌리는 중…") : note ? note : message.from === "host" && host ? t("대기 중 · {host}에서 보냄", { host }) : t("대기 중")}
+        {taking ? tc("queued message", "되돌리는 중…") : note ? note : message.from === "host" && host ? t("대기 중 · {host}에서 보냄", { host }) : t("대기 중")}
       </div>
     </div>
   );
@@ -422,7 +422,7 @@ function TaskNote({ item }: { item: Extract<DisplayItem, { kind: "task" }> }) {
     <>
       {icon}
       <span className={`min-w-0 flex-1 ${open ? "whitespace-pre-wrap" : "truncate"}`}>
-        {item.status ? t(TASK_STATUS[item.status]) : t("알림")}
+        {item.status ? t(TASK_STATUS[item.status]) : tc("task note", "알림")}
         {item.summary && ` · ${item.summary}`}
       </span>
     </>
