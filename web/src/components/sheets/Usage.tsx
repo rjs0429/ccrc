@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { UsageCauses, UsageInfo, UsageLimit, UsageShare, UsageWindowCauses } from "../../../../broker/src/protocol.ts";
-import { USAGE_GROUP, USAGE_TRAIT, duration, errorText, usageLimitLabel, usageResetText, type UsageGroup } from "../../labels.ts";
+import { num } from "../../i18n/format.ts";
+import { duration, errorText, usageGroup, usageLimitLabel, usageResetText, usageTrait, type UsageGroup } from "../../labels.ts";
 import { Segmented } from "../../screens/settings/common.tsx";
 import { call, callFolder, toast } from "../../state.ts";
 import { Sheet } from "../ui.tsx";
@@ -112,13 +113,13 @@ function WindowCauses({ w }: { w: UsageWindowCauses }) {
   return (
     <div className="space-y-3">
       {traits.map((t) => (
-        <CauseRow key={t.key} data-cause={t.key} name={USAGE_TRAIT[t.key]?.name ?? t.key} pct={t.pct} advice={USAGE_TRAIT[t.key]?.advice} />
+        <CauseRow key={t.key} data-cause={t.key} name={usageTrait(t.key)?.name ?? t.key} pct={t.pct} advice={usageTrait(t.key)?.advice} />
       ))}
       {tops.map(({ g, top }) => (
-        <CauseRow key={g} data-cause={g} name={`${USAGE_GROUP[g].title} ${USAGE_GROUP[g].label?.(top.name) ?? top.name}`} pct={top.pct} advice={USAGE_GROUP[g].advice} />
+        <CauseRow key={g} data-cause={g} name={`${usageGroup(g).title} ${usageGroup(g).label?.(top.name) ?? top.name}`} pct={top.pct} advice={usageGroup(g).advice} />
       ))}
       {attributed ? (
-        GROUPS.map((g) => <ShareTable key={g} title={USAGE_GROUP[g].title} items={w[g]} label={USAGE_GROUP[g].label} />)
+        GROUPS.map((g) => <ShareTable key={g} title={usageGroup(g).title} items={w[g]} label={usageGroup(g).label} />)
       ) : (
         <div className="px-1 text-xs text-muted">스킬·서브에이전트·플러그인·MCP 서버별 기록은 아직 없습니다. 쓰는 동안 쌓입니다.</div>
       )}
@@ -137,7 +138,7 @@ export function UsageCausesView({ causes }: { causes: UsageCauses }) {
   return (
     <div className="space-y-3" data-usage-span={span}>
       <div className="flex items-center justify-between gap-2 px-1">
-        <span className="min-w-0 text-xs text-muted">{w ? `요청 ${w.requests.toLocaleString()}개 · 세션 ${w.sessions.toLocaleString()}개` : ""}</span>
+        <span className="min-w-0 text-xs text-muted">{w ? `요청 ${num(w.requests)}개 · 세션 ${num(w.sessions)}개` : ""}</span>
         <Segmented value={span} options={[["day", "24시간"], ["week", "7일"]]} onChange={setSpan} />
       </div>
       {w ? <WindowCauses w={w} /> : <div className="px-1 text-sm text-muted">이 기간의 기록이 없습니다</div>}

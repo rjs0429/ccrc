@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ContextDetail, ContextGauge, LiveState, SessionState } from "../../../../broker/src/protocol.ts";
+import { num } from "../../i18n/format.ts";
 import { errorText, modelLabel, shortPath } from "../../labels.ts";
 import { call, useApp } from "../../state.ts";
 import { compactLeft } from "../ContextRing.tsx";
@@ -80,7 +81,7 @@ export function ContextView({ detail, full }: { detail: ContextDetail; full?: bo
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-2xl font-semibold tabular-nums">{Math.round(detail.percentage)}%</span>
           <span className="text-xs text-muted tabular-nums">
-            {detail.totalTokens.toLocaleString()} / {detail.maxTokens.toLocaleString()} 토큰
+            {num(detail.totalTokens)} / {num(detail.maxTokens)} 토큰
           </span>
         </div>
         <div className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-surface-2">

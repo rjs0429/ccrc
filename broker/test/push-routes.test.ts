@@ -106,7 +106,7 @@ test("settings, status and unsubscribing work on this device's endpoint", async 
   const endpoint = APPLE;
   await post("/api/push/subscribe", { subscription: { endpoint, keys: newBrowser().keys } });
   const prefs = await post("/api/push/prefs", { endpoint, prefs: { vscodeDelaySec: 120, turnEnd: "all", extra: 1 } });
-  assert.deepEqual(prefs.json(), { prefs: { vscodeDelaySec: 120, turnEnd: "all", details: false, claude: true } });
+  assert.deepEqual(prefs.json(), { prefs: { vscodeDelaySec: 120, turnEnd: "all", details: false, claude: true, lang: "ko" } });
   assert.equal(audited.at(-1)?.event, "push_subscribe");
   const status = await app.inject({ method: "GET", url: `/api/push/status?endpoint=${encodeURIComponent(endpoint)}`, headers: AUTHED });
   assert.deepEqual(status.json().prefs, prefs.json().prefs);
@@ -149,19 +149,35 @@ test("settings saved before the turn-end choice load as its values and are saved
     JSON.stringify({ subscriptions: [sub(1, { vscodeDelaySec: 0, turnDone: true, details: true }), sub(2, { vscodeDelaySec: 120, turnDone: false, details: false }), sub(3, {})] }),
   );
   const push = new Push(dir, { log: () => {} });
-  assert.deepEqual(push.status(`${APPLE}1`).prefs, { vscodeDelaySec: 0, turnEnd: "remote", details: true, claude: true });
-  assert.deepEqual(push.status(`${APPLE}2`).prefs, { vscodeDelaySec: 120, turnEnd: "off", details: false, claude: true });
+  assert.deepEqual(push.status(`${APPLE}1`).prefs, { vscodeDelaySec: 0, turnEnd: "remote", details: true, claude: true, lang: "ko" });
+  assert.deepEqual(push.status(`${APPLE}2`).prefs, { vscodeDelaySec: 120, turnEnd: "off", details: false, claude: true, lang: "ko" });
   assert.deepEqual(push.status(`${APPLE}3`).prefs, DEFAULT_PREFS);
   push.setPrefs(`${APPLE}3`, { details: true });
   const saved = JSON.parse(fs.readFileSync(path.join(dir, "push.json"), "utf8")).subscriptions;
   assert.deepEqual(
     saved.map((s: { prefs: unknown }) => s.prefs),
     [
-      { vscodeDelaySec: 0, turnEnd: "remote", details: true, claude: true },
-      { vscodeDelaySec: 120, turnEnd: "off", details: false, claude: true },
+      { vscodeDelaySec: 0, turnEnd: "remote", details: true, claude: true, lang: "ko" },
+      { vscodeDelaySec: 120, turnEnd: "off", details: false, claude: true, lang: "ko" },
       { ...DEFAULT_PREFS, details: true },
     ],
   );
+});
+
+test("a device names its language when it subscribes and when it changes; one saved before languages is written to in Korean", async () => {
+  const { post } = await setup();
+  const keys = newBrowser().keys;
+  const on = await post("/api/push/subscribe", { subscription: { endpoint: APPLE, keys }, prefs: { lang: "en" } });
+  assert.equal(on.json().prefs.lang, "en");
+  assert.equal((await post("/api/push/prefs", { endpoint: APPLE, prefs: { lang: "ko" } })).json().prefs.lang, "ko");
+  for (const bad of ["fr", "EN", 1, null]) assert.equal((await post("/api/push/prefs", { endpoint: APPLE, prefs: { lang: bad } })).json().error, "invalid_prefs", String(bad));
+  assert.equal((await post("/api/push/subscribe", { subscription: { endpoint: APPLE, keys }, prefs: { lang: "de" } })).statusCode, 400);
+
+  const dir = tempDir();
+  const sub = (n: number, prefs: Record<string, unknown>) => ({ endpoint: `${APPLE}${n}`, keys, device: "phone", createdAt: n, prefs });
+  fs.writeFileSync(path.join(dir, "push.json"), JSON.stringify({ subscriptions: [sub(1, { claude: false }), sub(2, { lang: "en" }), sub(3, { lang: "xx" })] }));
+  const push = new Push(dir, { log: () => {} });
+  assert.deepEqual([1, 2, 3].map((n) => push.status(`${APPLE}${n}`).prefs?.lang), ["ko", "en", "ko"]);
 });
 
 test("the badge is asked for by endpoint; an unknown one counts nothing", async () => {

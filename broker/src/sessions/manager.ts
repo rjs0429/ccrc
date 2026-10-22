@@ -8,6 +8,7 @@ import type { Audit } from "../audit.ts";
 import { ClaudeCli, type CliChoice } from "../claude-cli.ts";
 import { claudeSettingsFile } from "../claude-settings.ts";
 import { brokerSessionsOf, paths, writeFileAtomic, type Config } from "../config.ts";
+import { isLang } from "../lang.ts";
 import type { Hello } from "../link/protocol.ts";
 import type { Link } from "../link/server.ts";
 import type { ClaudeNotice } from "../push/rules.ts";
@@ -1301,7 +1302,7 @@ export class SessionManager extends EventEmitter {
     if (!items.length) throw Error("nothing to export");
     const info = await this.info(sessionId).catch(() => undefined);
     const title = this.controlled(sessionId)?.title || (info ? titleOf(info) : "");
-    return exportMarkdown(items, { title, cwd, sessionId, at: new Date(), tz: timeZone(args.tz), tools: args.tools !== false });
+    return exportMarkdown(items, { title, cwd, sessionId, at: new Date(), tz: timeZone(args.tz), tools: args.tools !== false, ...(isLang(args.lang) ? { lang: args.lang } : {}) });
   }
 
   // What reading a linked file needs: the folder the session started in, the one it last worked in,

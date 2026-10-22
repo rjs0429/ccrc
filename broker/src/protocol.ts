@@ -1,3 +1,5 @@
+import type { Lang } from "./lang.ts";
+
 // Messages and shapes shared by the broker and the web client.
 
 export type PermissionModeName = "default" | "acceptEdits" | "plan" | "auto";
@@ -678,10 +680,11 @@ export interface CallMap {
 CALL_OPS.push("fork_git", "reattach");
 
 // The conversation as a Markdown file, made from the transcript. tools: with a line per tool call; tz: the phone's time
-// zone, which the times are written in.
+// zone, which the times are written in; lang: the phone's language, which the broker's own words are written in.
 export type ExportArgs = {
   tools?: boolean;
   tz?: string;
+  lang?: Lang;
 };
 
 export interface ExportInfo {

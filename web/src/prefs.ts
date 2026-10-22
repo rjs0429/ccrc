@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import type { LangPref } from "./i18n/index.ts";
 
 // Preferences of this browser, kept in localStorage.
 export interface Prefs {
@@ -6,10 +7,12 @@ export interface Prefs {
   enterToSend: boolean;
   // The end of the last conversations shown stays on this browser, to read while the laptop cannot be reached.
   keepCopies: boolean;
+  // The language of the app, here and on the login screen.
+  lang: LangPref;
 }
 
 const KEY = "ccrc.prefs";
-const DEFAULTS: Prefs = { enterToSend: false, keepCopies: true };
+const DEFAULTS: Prefs = { enterToSend: false, keepCopies: true, lang: "auto" };
 const listeners = new Set<() => void>();
 
 function load(): Prefs {

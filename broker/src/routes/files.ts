@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { claudeSettingsFile } from "../claude-settings.ts";
+import { isLang } from "../lang.ts";
 import type { ExportArgs, FileView, SentRef } from "../protocol.ts";
 import type { SessionCore } from "../sessions/core.ts";
 import {
@@ -48,9 +49,10 @@ interface Ticket {
 
 function exportArgs(v: unknown): ExportArgs | undefined {
   if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined;
-  const { tools, tz, ...rest } = v as Record<string, unknown>;
+  const { tools, tz, lang, ...rest } = v as Record<string, unknown>;
   if (Object.keys(rest).length || (tools !== undefined && typeof tools !== "boolean") || (tz !== undefined && (typeof tz !== "string" || tz.length > 64))) return undefined;
-  return { ...(tools !== undefined ? { tools } : {}), ...(tz !== undefined ? { tz } : {}) };
+  if (lang !== undefined && !isLang(lang)) return undefined;
+  return { ...(tools !== undefined ? { tools } : {}), ...(tz !== undefined ? { tz } : {}), ...(lang !== undefined ? { lang } : {}) };
 }
 
 interface Access {

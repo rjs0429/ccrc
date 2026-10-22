@@ -40,7 +40,7 @@ async function server() {
 test("an export ticket downloads the conversation's Markdown, made when fetched, only from the same device and login", async (t) => {
   const { named, asked, lease, mint, fetch } = await server();
   assert.equal((await mint("s1", { export: {} }, "no")).statusCode, 401);
-  for (const bad of [{ export: "yes" }, { export: { tools: "yes" } }, { export: { tz: 3 } }, { export: { tz: "x".repeat(65) } }, { export: { tools: true, path: "/etc/hostname" } }, { export: null }]) {
+  for (const bad of [{ export: "yes" }, { export: { tools: "yes" } }, { export: { tz: 3 } }, { export: { tz: "x".repeat(65) } }, { export: { tools: true, path: "/etc/hostname" } }, { export: null }, { export: { lang: "fr" } }]) {
     assert.equal((await mint("s1", bad)).statusCode, 400, JSON.stringify(bad));
   }
   assert.equal((await mint("nope", { export: {} })).statusCode, 404);
@@ -64,6 +64,9 @@ test("an export ticket downloads the conversation's Markdown, made when fetched,
   const empty = (await mint("s2", { export: {} })).json() as { url: string };
   assert.equal((await fetch(empty.url)).statusCode, 404, "a session with nothing to export");
   assert.ok(named.some(([e, d]) => e === "export" && d.sessionId === "s2" && d.outcome === "failed"));
+  const english = (await mint("s1", { export: { lang: "en" } })).json() as { url: string };
+  assert.equal((await fetch(english.url)).statusCode, 200);
+  assert.deepEqual(asked.at(-1), ["s1", { lang: "en" }], "the phone's language goes along");
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() + 61_000 });
   assert.equal((await fetch(url)).statusCode, 401, "expired");
   t.mock.timers.reset();

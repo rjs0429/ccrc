@@ -105,8 +105,10 @@ test("a stopped session exports from its transcript; the export is recorded with
   const rec = logged.filter(([e]) => e === "export").map(([, d]) => d);
   assert.deepEqual(rec, [{ device: "phone", sessionId: SID, messages: 2, chars: x.text.length }]);
   assert.ok(!JSON.stringify(logged).includes("고쳤습니다"));
-  for (const bad of [{ tools: "yes" }, { tz: 9 }]) assert.deepEqual([(await call({ sessionId: SID }, "export", bad)).error], ["invalid request"], JSON.stringify(bad));
+  for (const bad of [{ tools: "yes" }, { tz: 9 }, { lang: "fr" }]) assert.deepEqual([(await call({ sessionId: SID }, "export", bad)).error], ["invalid request"], JSON.stringify(bad));
   assert.deepEqual([(await call({ sessionId: EMPTY }, "export")).error], ["nothing to export"]);
+  const en = (await call({ sessionId: SID }, "export", { tz: "UTC", lang: "en" })).data as { text: string };
+  assert.ok(en.text.includes(`### User · ${iso(T0).slice(0, 10)} ${iso(T0).slice(11, 16)}\n\n파서를 고쳐 줘`), en.text);
 });
 
 test("a stopped session's state carries the prompt cache its transcript left", async (t) => {

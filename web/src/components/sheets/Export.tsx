@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { ExportInfo } from "../../../../broker/src/protocol.ts";
 import { request } from "../../api.ts";
+import { num } from "../../i18n/format.ts";
+import { lang } from "../../i18n/index.ts";
 import { errorText, sizeText } from "../../labels.ts";
 import { Switch } from "../../screens/settings/common.tsx";
 import { call, toast } from "../../state.ts";
@@ -35,7 +37,7 @@ export function ExportSheet({ sessionId, onClose }: { sessionId: string; onClose
   // The file the sheet shows, counted up whenever it is made again: a ticket asked for an earlier file is dropped.
   const made = useRef(0);
   const tz = zone();
-  const args = { tools, ...(tz ? { tz } : {}) };
+  const args = { tools, lang: lang(), ...(tz ? { tz } : {}) };
 
   useEffect(() => {
     let live = true;
@@ -107,7 +109,7 @@ export function ExportSheet({ sessionId, onClose }: { sessionId: string; onClose
         <div className="mt-1 rounded-xl bg-surface-2 px-3 py-2.5" data-export-summary>
           <div className="truncate text-[14px] font-medium">{info.name}</div>
           <div className="text-xs text-muted">
-            메시지 {info.messages.toLocaleString()}개 · {sizeText(new Blob([info.text]).size)}
+            메시지 {num(info.messages)}개 · {sizeText(new Blob([info.text]).size)}
           </div>
           {info.cut ? <div className="mt-0.5 text-xs text-warn">파일이 너무 커서 마지막 항목 {info.cut}개는 뺐습니다</div> : null}
         </div>

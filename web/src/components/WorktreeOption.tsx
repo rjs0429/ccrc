@@ -1,7 +1,7 @@
 import { useId } from "react";
 import type { GitFolderInfo, WorktreeChoice } from "../../../broker/src/protocol.ts";
 import { worktreeBranch, worktreeFolder, worktreeNameProblem } from "../../../broker/src/worktree-names.ts";
-import { FORK_WORKTREE_EXISTS, FORK_WORKTREE_SUBFOLDER, errorText } from "../labels.ts";
+import { errorText, forkWorktreeText } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
 import { NAME_PROBLEM } from "../worktree.ts";
 
@@ -18,7 +18,7 @@ export type FolderGit = GitFolderInfo | "loading" | { failed: string };
 export function worktreeBlocked(info: FolderGit): string | undefined {
   if (info === "loading") return "확인하는 중…";
   if ("failed" in info) return `확인하지 못했습니다: ${errorText(info.failed)}`;
-  if (info.subfolder) return FORK_WORKTREE_SUBFOLDER;
+  if (info.subfolder) return forkWorktreeText("subfolder");
   if (info.hook) return undefined;
   if (!info.repo) return "git 저장소가 아니라 worktree를 만들 수 없습니다";
   if (!info.head) return "커밋이 없는 저장소라 worktree를 만들 수 없습니다";
@@ -31,7 +31,7 @@ export function worktreeChoice(info: GitFolderInfo, draft: WorktreeDraft, fork?:
   const problem = worktreeNameProblem(name);
   if (problem) return { problem: NAME_PROBLEM[problem] };
   if (!info.hook && info.blocked.includes(name)) return { problem: `이미 있는 브랜치(${worktreeBranch(name)})라 이 이름은 쓸 수 없습니다` };
-  if (fork && !info.hook && info.existing.includes(name)) return { problem: FORK_WORKTREE_EXISTS };
+  if (fork && !info.hook && info.existing.includes(name)) return { problem: forkWorktreeText("exists") };
   return { choice: { name, base: draft.base } };
 }
 

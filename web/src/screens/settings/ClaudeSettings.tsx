@@ -14,7 +14,7 @@ import {
 import type { ModelOption } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
 import { Button, Choice, Icon, Sheet, Spinner } from "../../components/ui.tsx";
-import { EFFORT_LABEL, MODE_HINT, shortPath } from "../../labels.ts";
+import { EFFORT_LABEL, modeHints, shortPath } from "../../labels.ts";
 import { loggedOut, toast, useApp, type SettingsPart } from "../../state.ts";
 import { CHOICE_LABEL, ERRORS, PROBLEM, effortModels, failureText, inheritedEffort, isDefaultModel, modelName, valueText } from "./claudeLabels.ts";
 import { SettingsSaver, same, type SaveResult } from "./claudeSaver.ts";
@@ -476,7 +476,7 @@ export function ClaudeSettingsSection({ part }: { part?: SettingsPart }) {
           title={LABEL[open.key]}
           values={open.values}
           labels={CHOICE_LABEL[open.key] ?? {}}
-          hints={open.key === "permissions.defaultMode" ? MODE_HINT : undefined}
+          hints={open.key === "permissions.defaultMode" ? modeHints() : undefined}
           value={value(open.key)}
           onPick={pick(open.key)}
           onClose={() => setSheet(null)}

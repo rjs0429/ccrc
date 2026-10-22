@@ -28,6 +28,7 @@ import { LinkServer } from "./link/server.ts";
 import { migrateConfigFile } from "./migrate.ts";
 import { DEFAULT_HOURS, Passkeys } from "./passkeys.ts";
 import { Push } from "./push/index.ts";
+import { PUSH_TEXT } from "./push/text.ts";
 import { RemoteActivity } from "./remote-activity.ts";
 import { buildServer } from "./server.ts";
 import { retagTranscripts } from "./sessions/entrypoint.ts";
@@ -95,7 +96,7 @@ async function serve(): Promise<void> {
   const updates = new UpdateCheck({
     config,
     version: () => doctor.brokerVersion(),
-    notify: (tag) => push.announce({ title: "ccrc", body: `새 버전 ${tag}: 노트북에서 ccrc update 로 적용합니다`, tag: "ccrc-update", data: { url: "/#/settings/status" } }),
+    notify: (tag) => push.announce((lang) => ({ title: "ccrc", body: PUSH_TEXT[lang].update(tag), tag: "ccrc-update", data: { url: "/#/settings/status" } })),
   });
   updates.start();
   const links = new LinkServer(linkSocketPath());

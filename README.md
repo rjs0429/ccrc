@@ -15,7 +15,9 @@ started by the broker itself.
   [Security model](#security-model)). Claude Code itself talks to Anthropic's API as it always does.
 - **Not an Anthropic product.** ccrc is not made, endorsed or supported by Anthropic. It does not include or modify
   Claude Code (see [License and Anthropic's terms](#license-and-anthropics-terms)).
-- **Korean screens.** The phone app is in Korean only for now; the command line and documentation are in English.
+- **Korean or English screens.** The phone app shows Korean when the phone's first language is Korean and English
+  otherwise, or the language chosen in its settings. English covers part of the screens so far; the rest shows in
+  Korean. The command line and documentation are in English.
 
 ### Tested with
 
@@ -191,6 +193,10 @@ taken from `--yes`:
 5. Optionally, in 계정과 보안 (account and security), register a passkey: remote logins are then confirmed with Face ID
    (or the phone's passcode) when they start and every `passkeyHours` (18 by default), and another phone or tablet
    registers its own at its first login. See [Security model](#security-model).
+
+The app follows the phone's language: Korean when Korean is the phone's first language, English otherwise. Settings >
+Language (언어 / Language) can fix either; the choice is kept on the phone, so the login screen follows it too.
+Notifications to the phone and conversations exported from it are written in the same language.
 
 iOS sometimes opens the app from a notification without going where it points. When the app comes to the front
 within two minutes of a notification about a request that still waits for an answer and no notification's tap reaches
@@ -370,8 +376,8 @@ column, and unknown keys are only warned about. A running broker takes in change
 | `vscodeArchive` | `false` | Sessions VS Code's Claude Code extension archived count as archived in ccrc's list too (see [VS Code](#vs-code)). The phone switches it too |
 | `passkeyHours` | `18` | Once a phone has registered a passkey, a remote login is confirmed with one when it starts and again after this many hours. Logins on the machine itself are never asked |
 
-Other settings (notifications, Enter to send, the phone's copy of recent conversations, Claude Code's own settings) are
-changed in the phone's settings screen.
+Other settings (notifications, Enter to send, the app's language, the phone's copy of recent conversations, Claude
+Code's own settings) are changed in the phone's settings screen.
 
 ### Environment variables
 
@@ -525,7 +531,7 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Limitations
 
-- The phone app is in Korean only.
+- The phone app's English does not cover every screen yet; what it does not cover shows in Korean.
 - Linux with systemd only; no macOS, WSL or VS Code Remote-SSH. VS Code's settings are looked for in `~/.config/Code`
   and its extensions in `~/.vscode/extensions`, as Microsoft's build keeps them: not Insiders, VSCodium or Code - OSS
   (Arch's `code` package; use `visual-studio-code-bin` there). With another build, setup skips the `vscode` step.

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DisplayItem, RewindConversationResult, RewindResult } from "../../../../broker/src/protocol.ts";
+import { dateTime } from "../../i18n/format.ts";
 import { clock, errorText, hostLabel, shortPath } from "../../labels.ts";
 import { call, composerInsert, navigate, toast, useApp } from "../../state.ts";
 import { openNewSession } from "../../screens/NewSession.tsx";
@@ -22,7 +23,7 @@ const FILES_NOTE = "Claude가 편집 도구로 바꾼 파일만 되돌립니다.
 function when(ts?: string): string {
   const d = ts ? new Date(ts) : undefined;
   if (!d || Number.isNaN(d.getTime())) return "";
-  return d.toDateString() === new Date().toDateString() ? clock(ts) : `${d.getMonth() + 1}월 ${d.getDate()}일 ${clock(ts)}`;
+  return d.toDateString() === new Date().toDateString() ? clock(ts) : dateTime(d);
 }
 
 function relative(file: string, cwd?: string): string {

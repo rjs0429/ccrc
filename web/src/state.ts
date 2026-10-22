@@ -12,7 +12,7 @@ import type {
   SnapshotGap,
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, onPasskeyDue, type Me, type Options } from "./api.ts";
-import { isIos, lastTap, recentRequest, syncBadge } from "./push.ts";
+import { isIos, lastTap, recentRequest, syncBadge, syncPushLang } from "./push.ts";
 import { joined, placed } from "./chatItems.ts";
 import { copyLoggedOut, copyLogin, copySignedIn, flushContact, keepCopy, noteHeard, noteLost, noteSent } from "./offline.ts";
 import { bindSent } from "./sentPreviews.ts";
@@ -341,6 +341,7 @@ export function startSession(): void {
   void refreshSessions();
   void refreshOptions();
   void toNotifiedRequest(started);
+  void syncPushLang().catch(() => {});
   if (!copySignedIn()) void api.me().then(meAgain, () => {});
 }
 

@@ -87,6 +87,26 @@ test("a notification reaches the push service encrypted for the subscription and
   assert.deepEqual(logs, []);
 });
 
+test("the test notification and an announcement are written in each device's language", async () => {
+  const service = await pushService();
+  const { push } = setup();
+  const devices = [newBrowser(), newBrowser()];
+  const english = `${service.origin}/push/english`;
+  const korean = `${service.origin}/push/korean`;
+  push.subscribe({ endpoint: english, keys: devices[0].keys }, { lang: "en" }, { device: "phone", origin: APP });
+  push.subscribe({ endpoint: korean, keys: devices[1].keys }, undefined, { device: "tablet", origin: APP });
+  const body = (url: string, n = 0) => {
+    const r = service.received.filter((x) => x.url === url)[n];
+    return JSON.parse(decrypt(r.body, devices[url === "/push/english" ? 0 : 1].privateKey, devices[url === "/push/english" ? 0 : 1].auth).toString()).body;
+  };
+  await push.test(english);
+  assert.equal(body("/push/english"), "This is a test notification");
+  assert.equal(push.announce((lang) => ({ title: "ccrc", body: lang === "en" ? "hello" : "안녕", tag: "t", data: { url: "/" } })), true);
+  await until(() => service.received.length === 3, "the announcements");
+  assert.equal(body("/push/english", 1), "hello");
+  assert.equal(body("/push/korean"), "안녕");
+});
+
 test("a request on a session nobody watches goes out with high urgency", async () => {
   const service = await pushService();
   const { push } = setup();

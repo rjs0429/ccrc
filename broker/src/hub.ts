@@ -1,5 +1,6 @@
 import type { WebSocket } from "ws";
 import type { Audit } from "./audit.ts";
+import { isLang } from "./lang.ts";
 import type { Leases } from "./lease.ts";
 import { PASSKEY_CLOSE } from "./passkeys.ts";
 import {
@@ -481,6 +482,7 @@ export class Hub {
       if (msg.op === "archive" && typeof args.archived !== "boolean") throw Error("invalid request");
       if (msg.op === "mark_unread" && typeof args.unread !== "boolean") throw Error("invalid request");
       if (msg.op === "export" && ((args.tools !== undefined && typeof args.tools !== "boolean") || (args.tz !== undefined && typeof args.tz !== "string"))) throw Error("invalid request");
+      if (msg.op === "export" && args.lang !== undefined && !isLang(args.lang)) throw Error("invalid request");
       if (msg.op === "fork") {
         reply({ ok: true, data: await this.fork(sessionId, args) });
         return;

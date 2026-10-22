@@ -54,6 +54,46 @@ test("without tools only the talk stays: questions, plans, commands and messages
   assert.ok(t.includes("```\n\n고쳤습니다."), "Claude's texts of one turn stay under one heading");
 });
 
+test("in English the broker's own words are English; what Claude and the user wrote stays as written", () => {
+  const x = exportMarkdown(items, { ...base, lang: "en" });
+  const t = x.text;
+  assert.ok(t.startsWith("# 파서 고치기\n\n- Working folder: `/home/user/app`\n- Session ID: `9a1b2c3d-1111-4111-8111-111111111111`\n- Exported: 2026-10-18 10:40 (Asia/Seoul)\n\n---\n"), t.slice(0, 200));
+  assert.ok(t.includes("### User · 2026-10-17 23:59\n\n파서를 고쳐 줘\n\n*Attached: 1 image, spec.pdf*"));
+  assert.ok(t.includes("- Tool `Read` · src/parse.ts\n- Tool `Bash` · npm test (error)"));
+  assert.ok(t.includes("- Question: 테스트도 고칠까요? → Answer: 네"));
+  assert.ok(t.includes("**Plan**\n\n> 1. 파서\n> 2. 테스트\n\n*Kept planning: 줄 2: 빼 주세요*"));
+  assert.ok(t.includes("\n*Conversation compacted*\n"));
+  assert.ok(t.includes("### Command output · /usage · 00:05"));
+  assert.ok(t.includes("### Agent report · @Explore · 00:06"));
+  assert.ok(t.includes("### Message from another session · @other · 00:06"));
+  assert.ok(t.includes("- Background task completed · Listed the folders"));
+  assert.doesNotMatch(t.replace(/파서[^\n]*|테스트[^\n]*|줄 2[^\n]*|먼저 읽겠습니다\.|고쳤습니다\.|끝|네/g, ""), /[가-힣]/, "no Korean of the broker's own");
+  assert.equal(x.name, "파서 고치기-20261018-1040.md");
+  assert.equal(exportName("", at, "UTC", "en"), "conversation-20261018-0140.md");
+  const more = exportMarkdown(
+    [
+      { kind: "user", id: "u1", text: "x".repeat(EXPORT_MAX / 2 + 10) },
+      { kind: "assistant", id: "a1", text: "x".repeat(EXPORT_MAX / 2 + 10) },
+      { kind: "tool", id: "t1", name: "TodoWrite", summary: "3", input: {} },
+      { kind: "note", id: "n1", code: "fast", text: "credits" },
+    ],
+    { ...base, title: "", lang: "en" },
+  );
+  assert.ok(more.text.startsWith("# Conversation\n"));
+  assert.ok(more.text.trimEnd().endsWith("*The file was too large, so the last 3 items were left out*"));
+  const short = exportMarkdown(
+    [
+      { kind: "user", id: "u1", text: "hi" },
+      { kind: "tool", id: "t1", name: "TodoWrite", summary: "1", input: {} },
+      { kind: "tool", id: "t2", name: "Agent", summary: "look", input: {}, sub: { tools: 1 } } as DisplayItem,
+      { kind: "note", id: "n1", code: "fast", text: "credits" },
+    ],
+    { ...base, lang: "en" },
+  ).text;
+  assert.ok(short.includes("- To-do list · 1 item\n- Subagent · look (1 tool call)"), short);
+  assert.ok(short.includes("*Fast mode: usage credits ran out*"));
+});
+
 test("a file over the limit leaves out the last items and says how many", () => {
   const big = "x".repeat(EXPORT_MAX / 2 + 10);
   const x = exportMarkdown(
