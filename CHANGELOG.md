@@ -276,8 +276,8 @@ your version and the new one, and the lines under "Breaking" separately.
   instead, the changes sheet's git view is read by the broker, the usage sheet's causes come from another Claude Code,
   a "/" list Claude Code changed while the broker was away shows from its next change, Claude Code's dialogs are
   answered in VS Code only, the MCP sheet's 인증 says the wrapper does not know it yet, Claude reads Claude Code's
-  "not sent" after a PushNotification call that reached the phone, and a session resting in that tab is copied, unnamed
-  and without a word, when another tab opens it, rather than moving there.
+  "not sent" after a PushNotification call that reached the phone, and the session does not move from that tab when
+  another tab opens it: the other tab opens a copy after up to 9 seconds, named and announced as other copies are.
 
 ## [0.7.3] - 2026-10-18
 

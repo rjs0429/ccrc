@@ -1692,6 +1692,22 @@ test("a resting tab whose wrapper can hand over is asked, says yes once, and its
   assert.deepEqual(events.filter(([ev]) => ev === "closed").map(([, a]) => a[0]), ["moved"]);
 });
 
+test("a tab that hands over after the broker stopped waiting has let go all the same", async () => {
+  const { s, link, wrapper, events } = await session({ caps: ["hand_over"] });
+  wrapper.send({ t: "spawned", cpid: 5153 });
+  await new Promise((r) => setTimeout(r, 50));
+  const late = s.handOver("멈췄습니다.", 50);
+  const asked = await wrapper.wait((f) => f.t === "hand_over", "asked");
+  assert.equal(await late, false, "no answer in time");
+  assert.equal(link.usable, true);
+  wrapper.send({ t: "handed_over", id: asked.id });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(link.usable, false);
+  assert.throws(() => s.send("늦은 메시지"), /session is opening in VS Code/, "the phone sends to the tab it moves to");
+  s.exited(0, null, false, false);
+  assert.deepEqual(events.filter(([ev]) => ev === "closed").map(([, a]) => a[0]), ["moved"]);
+});
+
 test("a tab under a wrapper that cannot hand over is never asked", async () => {
   const { s, wrapper } = await session({ caps: ["fast_mode", "thinking"] });
   wrapper.send({ t: "spawned", cpid: 5152 });

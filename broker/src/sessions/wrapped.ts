@@ -231,8 +231,8 @@ export class WrappedSession extends SessionCore {
     );
   }
 
-  // Asks the wrapper to end Claude Code for another tab, VS Code being told why first; false when it refused. From then
-  // on the session takes nothing more here: the tab it moves to has it.
+  // Asks the wrapper to end Claude Code for another tab, VS Code being told why first; false when it refused or did not
+  // answer in time. Once the wrapper says it did, the session takes nothing more here: the tab it moves to has it.
   handOver(notice: string, ms: number): Promise<boolean> {
     return this.link.handOver(notice, ms);
   }

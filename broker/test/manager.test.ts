@@ -66,9 +66,13 @@ after(async () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-async function setup(cfg: typeof config & { brokerSessions?: "off" | "apiKey" | "subscription" } = config, logged?: Msg[]) {
+async function setup(
+  cfg: typeof config & { brokerSessions?: "off" | "apiKey" | "subscription" } = config,
+  logged?: Msg[],
+  timing: { handoffOtherMs?: number; handOverAskMs?: number } = {},
+) {
   const audit = logged && ({ log: (event: string, detail: Msg) => logged.push({ event, ...detail }) } as unknown as import("../src/audit.ts").Audit);
-  const manager = new SessionManager(cfg, audit, { handoffTurnMs: 200, handoffOtherMs: 400 });
+  const manager = new SessionManager(cfg, audit, { handoffTurnMs: 200, handoffOtherMs: 400, ...timing });
   manager.holdLang = () => "ko";
   const server = new LinkServer(path.join(tempDir("ccrc-link-"), "link.sock"));
   servers.push(server);
@@ -163,6 +167,38 @@ test("a VS Code tab the session rests in hands it over to the tab that opens it,
     assert.deepEqual(
       logged.filter((e) => e.event === "handoff"),
       [{ event: "handoff", sessionId: M, to: "VS Code", moved: true, from: "VS Code" }],
+    );
+    tab.sock.destroy();
+  } finally {
+    release();
+  }
+});
+
+test("a resting tab that hands over after the broker stopped waiting still lets the new tab open the session, told it moved", async () => {
+  const L = "2a3b4c5d-6e7f-4a80-8b1c-2d3e4f5a6b7c";
+  const logged: Msg[] = [];
+  const { manager, connect, events } = await setup(config, logged, { handOverAskMs: 50, handoffOtherMs: 2000 });
+  const reasons: unknown[] = [];
+  manager.on("event", (id: string, m: Msg) => id === L && m.t === "state" && reasons.push((m.state as Msg).closedReason));
+  const release = holdElsewhere(L, { entrypoint: "claude-vscode", status: "idle" });
+  try {
+    const old = await connect({ sessionId: L, caps: CAPS });
+    old.send({ t: "spawned", cpid: process.pid });
+    await until(() => events.some(([e, id]) => e === "attached" && id === L), "the first tab attached");
+    const tab = await connect({ sessionId: L, claim: L, caps: CAPS });
+    const ask = await old.wait((f) => f.t === "hand_over", "the resting tab asked to hand over");
+    await tab.wait((f) => f.t === "claim_wait" && f.ms === 2000 + 2000, "the broker no longer waits for the answer");
+    old.send({ t: "handed_over", id: ask.id });
+    await new Promise((r) => setTimeout(r, 50));
+    await assert.rejects(manager.send(L, "늦은 메시지"), /session is opening in VS Code/);
+    release();
+    old.send({ t: "exit", code: 0, signal: null, hostLeft: false, running: false });
+    const ok = await tab.wait((f) => f.t === "claim_ok", "the new tab's answer");
+    assert.deepEqual([ok.fork, ok.title, ok.notice], [undefined, undefined, HOLD_TEXT.ko.moved]);
+    await until(() => reasons.includes("moved"), "the old tab's session ended as moved");
+    assert.deepEqual(
+      logged.filter((e) => e.event === "handoff"),
+      [{ event: "handoff", sessionId: L, to: "VS Code", moved: true, from: "VS Code" }],
     );
     tab.sock.destroy();
   } finally {

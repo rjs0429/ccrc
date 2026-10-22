@@ -35,7 +35,7 @@ export class Link extends EventEmitter {
   cpid?: number;
   sessionId?: string;
   exited = false;
-  // Set as the wrapper says it ended its Claude Code for another tab (handOver).
+  // Set as the wrapper says it ended its Claude Code for another tab (handOver), whether or not the broker still waited.
   handedOver = false;
   private sock: net.Socket;
   private waiting = new Map<string, Waiter>();
@@ -176,10 +176,8 @@ export class Link extends EventEmitter {
         this.emit("rejected", f.id, f.reason);
         return;
       case "handed_over":
-        this.settleWaiter(f.id, (w) => {
-          this.handedOver = true;
-          w.resolve({});
-        });
+        this.handedOver = true;
+        this.settleWaiter(f.id, (w) => w.resolve({}));
         return;
       case "exit":
         this.exited = true;

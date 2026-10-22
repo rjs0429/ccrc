@@ -116,6 +116,7 @@ const UNSUPPORTED = /^Unsupported control request subtype/;
 export interface ManagerTiming {
   handoffTurnMs: number;
   handoffOtherMs: number;
+  handOverAskMs: number;
   probeRetryMs: number;
   worktreeStartMs: number;
 }
@@ -267,7 +268,7 @@ export class SessionManager extends EventEmitter {
     super();
     this.cfg = cfg;
     this.audit = audit;
-    this.timing = { handoffTurnMs: HANDOFF_TURN_MS, handoffOtherMs: HANDOFF_OTHER_MS, probeRetryMs: PROBE_RETRY_MS, worktreeStartMs: WORKTREE_START_MS, ...timing };
+    this.timing = { handoffTurnMs: HANDOFF_TURN_MS, handoffOtherMs: HANDOFF_OTHER_MS, handOverAskMs: HAND_OVER_ASK_MS, probeRetryMs: PROBE_RETRY_MS, worktreeStartMs: WORKTREE_START_MS, ...timing };
     this.cli = new ClaudeCli({ setting: cfg.claudePath });
     this.sweeper = setInterval(() => void this.sweep(), SWEEP_MS);
     this.sweeper.unref();
@@ -1524,10 +1525,11 @@ export class SessionManager extends EventEmitter {
       await s.close("handed_off");
       this.audit?.log("handoff", { sessionId, to: "VS Code" });
     }
-    const moved = await this.handOver(sessionId, link);
+    const asked = await this.handOver(sessionId, link);
     const until = Date.now() + this.timing.handoffOtherMs;
-    let told = moved;
+    let told = asked?.handedOver === true;
     for (;;) {
+      const moved = asked?.handedOver === true;
       const holder = liveProcesses({ fresh: true }).find((l) => l.sessionId === sessionId) ?? this.openedIn(sessionId, link);
       if (!holder && !moved) return { fork: false };
       if (!holder) {
@@ -1546,12 +1548,14 @@ export class SessionManager extends EventEmitter {
   }
 
   // The tab the session rests in, the only process holding it, ends its Claude Code for the new one when its wrapper can.
-  private async handOver(sessionId: string, link: Link): Promise<boolean> {
+  // Gives the asked tab's link: its handedOver tells whether the tab did, even when it answered after the wait.
+  private async handOver(sessionId: string, link: Link): Promise<Link | undefined> {
     const holders = liveProcesses({ fresh: true }).filter((l) => l.sessionId === sessionId);
     const w = this.wrapped.get(sessionId);
-    if (holders.length !== 1 || !w?.restsIn(holders[0])) return false;
-    link.send({ t: "claim_wait", ms: HAND_OVER_ASK_MS + this.timing.handoffOtherMs + 2000 });
-    return w.handOver(HOLD_TEXT[this.lang()].stopped, HAND_OVER_ASK_MS);
+    if (holders.length !== 1 || !w?.restsIn(holders[0])) return undefined;
+    link.send({ t: "claim_wait", ms: this.timing.handOverAskMs + this.timing.handoffOtherMs + 2000 });
+    await w.handOver(HOLD_TEXT[this.lang()].stopped, this.timing.handOverAskMs);
+    return w.link;
   }
 
   // Another tab the broker let start on the session holds it before its Claude Code shows in the session registry.
