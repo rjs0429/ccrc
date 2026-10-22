@@ -149,11 +149,12 @@ export function QueuedItem({ message, host, onTakeBack, taking, note }: { messag
 // a thought still streaming has none.
 function Thinking({ id, text }: { id?: string; text: string }) {
   const { thinkingOpen } = usePrefs();
-  const [mine, setMine] = useState(() => thoughtChoice(id, text));
+  const session = useApp((s) => s.chat?.sessionId);
+  const [mine, setMine] = useState(() => thoughtChoice(id, text, session));
   const live = id === undefined;
   useEffect(() => {
-    if (live) liveThought(text, mine);
-  }, [live, text, mine]);
+    if (live && session) liveThought(session, text, mine);
+  }, [live, session, text, mine]);
   if (live && !text) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted" data-thinking="live">
