@@ -174,7 +174,29 @@ function Thinking({ id, text }: { id?: string; text: string }) {
         <span>{live ? t("생각하는 중…") : "Thinking"}</span>
         <Icon.chevronDown className={`size-4 transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
-      {open && <div className="mt-1.5 border-l-2 border-line pl-3 text-sm text-muted whitespace-pre-wrap">{text}</div>}
+      {open && (live ? <StreamingThought text={text} /> : <ThoughtText text={text} />)}
+    </div>
+  );
+}
+
+const THOUGHT_TEXT = "mt-1.5 border-l-2 border-line pl-3 text-sm text-muted whitespace-pre-wrap";
+
+// A thought still streaming keeps text selected in it as a streaming reply does, and its item selects that text again.
+function StreamingThought({ text }: { text: string }) {
+  const [ref, shown] = useHeld(text);
+  return (
+    <div ref={ref} className={THOUGHT_TEXT}>
+      {shown}
+    </div>
+  );
+}
+
+function ThoughtText({ text }: { text: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => takeOver(ref.current, text), []);
+  return (
+    <div ref={ref} className={THOUGHT_TEXT}>
+      {text}
     </div>
   );
 }

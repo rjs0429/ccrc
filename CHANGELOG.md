@@ -19,10 +19,12 @@ your version and the new one, and the lines under "Breaking" separately.
 
 - A long press on Claude's reply (one still streaming too) or on a message you sent (one still queued too) selects its
   text, with the magnifier and the menu to copy it, as text does elsewhere on the phone; on a computer a right click
-  shows the browser's own menu. A reply still streaming holds still while text in it is selected and catches up once
-  it is not; a long press on a file link in a reply shows no link menu (a tap still opens it in the viewer). The actions
-  of replies and messages (Copy as Markdown, Export conversation, Fork from here, Redo from here) open from the ⋯ before
-  the time only, and its 44px target no longer reaches into a message's bubble.
+  shows the browser's own menu. While text in the conversation is selected, the conversation does not scroll to what
+  comes (the jump button marks it) and follows again once nothing is selected; a reply or a thought still streaming
+  holds still while text in it is selected and catches up once it is not. A long press on a file link in a reply shows
+  no link menu (a tap still opens it in the viewer). The actions of replies and messages (Copy as Markdown, Export
+  conversation, Fork from here, Redo from here) open from the ⋯ before the time only, and its 44px target no longer
+  reaches into a message's bubble.
 
 ### Fixed
 

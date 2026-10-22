@@ -1,15 +1,15 @@
 import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 
-// How long a reply still being written stays as drawn after a finger or the mouse comes off it: the selection a long
-// press makes can come after the page has lost the touch.
+// How long text still being written (a reply or a thought) stays as drawn after a finger or the mouse comes off it: the
+// selection a long press makes can come after the page has lost the touch.
 const LIFT_MS = 400;
-// How soon the reply it becomes must come to take over its selection.
+// How soon the item it becomes must come to take over its selection.
 const HANDOVER_MS = 5000;
 
 let handover: { text: string; start: number; end: number; picked: string; at: number } | undefined;
 
 // The selected range, when it lies in el or reaches into it.
-function selectedIn(el: Element | null): Range | undefined {
+export function selectedIn(el: Element | null): Range | undefined {
   const s = document.getSelection();
   if (!el || !s || s.isCollapsed || !s.rangeCount) return;
   const r = s.getRangeAt(0);
@@ -41,9 +41,9 @@ function rangeOf(el: Element, start: number, end: number): Range | undefined {
   }
 }
 
-// A reply still being written stays as drawn while a finger or the mouse is on it and while text in it is selected,
-// since drawing more of it rewrites the text the selection is in and drops it; it catches up after. When it ends with
-// text in it selected, the reply it becomes selects the same text (takeOver).
+// Text still being written (a reply or a thought) stays as drawn while a finger or the mouse is on it and while text in
+// it is selected, since drawing more of it rewrites the text the selection is in and drops it; it catches up after.
+// When it ends with text in it selected, the item it becomes selects the same text (takeOver).
 export function useHeld(text: string): [RefObject<HTMLDivElement | null>, string] {
   const ref = useRef<HTMLDivElement>(null);
   const [held, setHeld] = useState<string>();
@@ -92,7 +92,7 @@ export function useHeld(text: string): [RefObject<HTMLDivElement | null>, string
   return [ref, held ?? text];
 }
 
-// Selects in el, a reply just drawn from text, what was selected in the reply still being written that it replaces.
+// Selects in el, just drawn from text, what was selected in the text still being written that it replaces.
 export function takeOver(el: HTMLElement | null, text: string): void {
   const h = handover;
   if (!h || !el || !text.startsWith(h.text)) return;

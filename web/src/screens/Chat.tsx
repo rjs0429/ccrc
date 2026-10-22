@@ -34,6 +34,7 @@ import { WorktreeSheet } from "../components/sheets/Worktree.tsx";
 import { Choice, Icon, Sheet, Spinner, Tile, Tiles } from "../components/ui.tsx";
 import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import { dayLines, streamLine } from "../components/stamps.ts";
+import { selectedIn } from "../components/streamSelection.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { brokerSessionsBlocked, closedText, errorText, hostLabel, inboxNotes, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
@@ -194,6 +195,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const owed = useRef<{ follow?: boolean; hold?: boolean }>({});
   const restTimer = useRef<number | undefined>(undefined);
   const frame = useRef(0);
+  // While text in the list is selected the list follows nothing and keeps what is in view in place, as for a scroll;
+  // it follows once nothing there is selected.
+  const reading = useRef(false);
   const [away, setAway] = useState(false);
   const [unseen, setUnseen] = useState(false);
 
@@ -202,6 +206,14 @@ export function Chat({ sessionId }: { sessionId: string }) {
     stick.current = on;
     setAway(!on);
     if (on) setUnseen(false);
+  };
+
+  // New content the list does not follow shows on the jump button; while text is selected it waits there to be followed.
+  const unfollowed = () => {
+    setUnseen(true);
+    if (!stick.current) return;
+    owed.current.follow = true;
+    setAway(true);
   };
 
   const browserAnchors = () => {
@@ -265,20 +277,27 @@ export function Chat({ sessionId }: { sessionId: string }) {
       return;
     }
     const tapped = performance.now() - touched.current <= TOUCH_MS;
-    if (glide.current || (pinned.current && !tapped)) toBottom();
+    if (glide.current || (pinned.current && !tapped && !reading.current)) toBottom();
     else {
       keepAnchor(force || tapped);
-      pinned.current = gapBelow(el) < PIN_PX;
+      if (!reading.current) pinned.current = gapBelow(el) < PIN_PX;
     }
   };
 
-  // What the user asks from elsewhere (the jump button, a search hit, the agent map) takes over from their scroll and
-  // touch on the list. A part loaded for that scroll is dropped; it loads again if the new place nears it.
+  // A message the user sends unselects text in the list, so the list follows it.
+  const unread = () => {
+    if (selectedIn(contentRef.current)) document.getSelection()?.removeAllRanges();
+    reading.current = false;
+  };
+
+  // What the user asks from elsewhere (the jump button, a search hit, the agent map) takes over from their scroll,
+  // touch and selection on the list. A part loaded for that scroll is dropped; it loads again if the new place nears it.
   const stopScroll = () => {
     clearTimeout(restTimer.current);
     scrolling.current = false;
     owed.current = {};
     touched.current = 0;
+    unread();
     dropParked(sessionId);
   };
 
@@ -333,7 +352,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
     pinned.current = gap < PIN_PX || (pinned.current && !up);
     const near = gap < NEAR_BOTTOM_PX || (stick.current && !up);
     if (near !== stick.current && (near || !glide.current)) follow(near);
-    if (!scrolling.current && !pinned.current) takeAnchor();
+    else if (reading.current && gap < PIN_PX) follow(true);
+    if (!scrolling.current && (!pinned.current || reading.current)) takeAnchor();
     loadParts(true);
   };
 
@@ -351,12 +371,32 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (scrolled.current) takeAnchor();
     const { follow: news, hold: held } = owed.current;
     owed.current = {};
-    if (news && (stick.current || glide.current)) toBottom();
-    else {
-      if (news) setUnseen(true);
+    if (news && (glide.current || (stick.current && !reading.current))) {
+      toBottom();
+      follow(true);
+    } else {
+      if (news) unfollowed();
       if (held) hold();
     }
     if (!joinParked(sessionId)) loadParts(false);
+  };
+
+  // Text selected in the list holds it from where it is. Once nothing there is selected, the list follows what came
+  // meanwhile or goes back to the bottom it was at, ahead of the tap that unselected it; during the user's scroll, that
+  // waits for the rest.
+  const selected = () => {
+    const now = Boolean(selectedIn(contentRef.current));
+    if (now === reading.current) return;
+    reading.current = now;
+    if (scrolling.current) return;
+    if (now) return takeAnchor();
+    const news = owed.current.follow;
+    owed.current = {};
+    if (stick.current && (news || pinned.current)) {
+      touched.current = 0;
+      toBottom();
+      follow(true);
+    }
   };
 
   const restSoon = (ms = REST_MS) => {
@@ -495,6 +535,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (conn !== "ready") return false;
     const id = `peer-${Date.now()}-${peerSent.length}`;
     setPeerSent((list) => [...list, { id, ts: new Date().toISOString(), text, from: "remote", since: newest(chat?.items ?? []) }]);
+    unread();
     follow(true);
     call(sessionId, "inbox_send", { text, lang: lang() }).then(
       ({ msgId }) => {
@@ -528,7 +569,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
     }
     const before = new Set((chat?.items ?? []).filter((i) => i.kind === "command").map((i) => i.id));
     const ok = send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
-    if (ok) follow(true);
+    if (ok) {
+      unread();
+      follow(true);
+    }
     if (ok && c && isDialogCommand(c.name)) setAwaited({ title: text.trim(), name: commandName(c.name), before, late: false });
     if (ok && deferred) setSentStart(true);
     return ok;
@@ -668,7 +712,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       follow(true);
     } else if (was.snaps !== now.snaps) {
       if (scrolling.current) owed.current.hold = true;
-      else if (pinned.current || glide.current || !keepAnchor(true)) {
+      else if (glide.current || (pinned.current && !reading.current) || !keepAnchor(true)) {
         toBottom();
         follow(true);
       }
@@ -680,11 +724,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
         now.stream > was.stream ||
         now.pending > was.pending ||
         now.queued > was.queued;
-      if (added && (stick.current || glide.current)) {
+      if (added && (glide.current || (stick.current && !reading.current))) {
         if (scrolling.current) owed.current.follow = true;
         else toBottom();
       } else {
-        if (added) setUnseen(true);
+        if (added) unfollowed();
         hold(now.first !== was.first || now.gap !== was.gap);
       }
     }
@@ -703,9 +747,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
       settleNow.current();
     };
     document.addEventListener("visibilitychange", hidden);
+    document.addEventListener("selectionchange", selected);
     return () => {
       resized.disconnect();
       document.removeEventListener("visibilitychange", hidden);
+      document.removeEventListener("selectionchange", selected);
       cancelAnimationFrame(frame.current);
       clearTimeout(restTimer.current);
     };
