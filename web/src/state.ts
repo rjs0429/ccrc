@@ -12,7 +12,7 @@ import type {
   SnapshotGap,
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, onPasskeyDue, type Me, type Options } from "./api.ts";
-import { isIos, lastTap, recentRequest, syncBadge, syncPushLang } from "./push.ts";
+import { isIos, lastTap, recentRequest, syncAttention, syncPushLang } from "./push.ts";
 import { joined, placed } from "./chatItems.ts";
 import { copyLoggedOut, copyLogin, copyPasskeyDue, copySignedIn, flushContact, keepCopy, noteHeard, noteLost, noteSent } from "./offline.ts";
 import { bindSent } from "./sentPreviews.ts";
@@ -252,14 +252,25 @@ function onRoute(): void {
 window.addEventListener("hashchange", onRoute);
 
 // The app icon's number is asked for a moment after something changed, once the broker has taken the new view, which
-// counts as opening that session.
+// counts as opening that session; the notifications that no longer count close with it, and those of the session the
+// app shows. One iOS would not close yet is tried again once it may be, while the app stays in front.
 const BADGE_MS = 500;
 let badgeTimer: number | undefined;
+let againTimer: number | undefined;
 
 function badgeSoon(): void {
   if (!state.me?.loggedIn) return;
   clearTimeout(badgeTimer);
-  badgeTimer = window.setTimeout(() => void syncBadge().catch(() => {}), BADGE_MS);
+  badgeTimer = window.setTimeout(() => void syncBadge(), BADGE_MS);
+}
+
+async function syncBadge(): Promise<void> {
+  clearTimeout(againTimer);
+  if (!state.me?.loggedIn) return;
+  const viewing = document.visibilityState === "visible" && state.conn === "ready" && state.route.name === "chat" ? state.route.sessionId : undefined;
+  const wait = await syncAttention(viewing).catch(() => 0);
+  clearTimeout(againTimer);
+  if (wait > 0 && document.visibilityState === "visible" && state.me?.loggedIn) againTimer = window.setTimeout(() => void syncBadge(), wait);
 }
 
 export async function refreshSessions(): Promise<void> {
@@ -600,7 +611,10 @@ document.addEventListener("visibilitychange", () => {
     badgeSoon();
     void toNotifiedRequest(Date.now());
   }
-  if (document.visibilityState === "hidden") leaving();
+  if (document.visibilityState === "hidden") {
+    clearTimeout(againTimer);
+    leaving();
+  }
 });
 window.addEventListener("pagehide", leaving);
 window.addEventListener("online", reconnect);

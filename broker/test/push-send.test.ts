@@ -7,6 +7,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import type { Hub } from "../src/hub.ts";
 import type { ServerMsg } from "../src/protocol.ts";
+import { MAX_PLAINTEXT } from "../src/push/encrypt.ts";
 import { Push, PushError } from "../src/push/index.ts";
 import { REUSE_MS, VapidTokens, generateVapidKeys } from "../src/push/vapid.ts";
 import type { SessionManager } from "../src/sessions/manager.ts";
@@ -14,6 +15,7 @@ import { tempDir } from "./helpers.ts";
 import { decrypt, newBrowser, readVapid } from "./push-browser.ts";
 
 const A = "11111111-2222-4333-8444-555555555555";
+const B = "22222222-3333-4444-8555-666666666666";
 const APP = "https://laptop.example.ts.net";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -77,12 +79,9 @@ test("a notification reaches the push service encrypted for the subscription and
   assert.equal(vapid.claims.aud, service.origin);
   assert.equal(vapid.claims.sub, APP);
   assert.ok((vapid.claims.exp as number) <= Date.now() / 1000 + 24 * 3600);
-  assert.deepEqual(JSON.parse(decrypt(r.body, browser.privateKey, browser.auth).toString()), {
-    title: "ccrc",
-    body: "테스트 알림입니다",
-    tag: "test",
-    data: { url: "/#/settings/alerts" },
-  });
+  const sent = JSON.parse(decrypt(r.body, browser.privateKey, browser.auth).toString());
+  assert.ok(Math.abs(sent.data.at - Date.now()) < 5000, "it says when it was made");
+  assert.deepEqual(sent, { title: "ccrc", body: "테스트 알림입니다", tag: "test", data: { url: "/#/settings/alerts", at: sent.data.at } });
   assert.equal(push.status(endpoint).lastSent !== undefined, true);
   assert.deepEqual(logs, []);
 });
@@ -132,9 +131,64 @@ test("a request on a session nobody watches goes out with high urgency", async (
   assert.equal(r.headers.urgency, "high");
   assert.equal("sub" in readVapid(String(r.headers.authorization)).claims, false, "an http page origin is not a contact");
   const payload = JSON.parse(decrypt(r.body, browser.privateKey, browser.auth).toString());
-  assert.deepEqual(payload, { title: "Ship the release", body: "권한 요청 · Bash", tag: `${A}:permission`, data: { url: `/#/s/${A}` }, badge: 1 });
-  assert.deepEqual(push.badge(endpoint), { subscribed: true, badge: 1, unseen: [] });
-  assert.deepEqual(push.badge(`${service.origin}/push/unknown`), { subscribed: false, badge: 0, unseen: [] });
+  const at = payload.data.at;
+  assert.deepEqual(payload, { title: "Ship the release", body: "권한 요청 · Bash", tag: `${A}:permission`, data: { url: `/#/s/${A}`, at }, badge: 1, attention: { at, unseen: [], waiting: [A] } });
+  const { at: _, ...counted } = push.badge(endpoint);
+  assert.deepEqual(counted, { subscribed: true, badge: 1, unseen: [], waiting: [A] });
+  const { at: when, ...none } = push.badge(`${service.origin}/push/unknown`);
+  assert.deepEqual(none, { subscribed: false, badge: 0, unseen: [], waiting: [] });
+  assert.equal(typeof when, "number");
+});
+
+// A session manager as the notifier sees it, with the sessions it counts.
+function counting(unseen: string[], waiting: string[] = []) {
+  return Object.assign(new EventEmitter(), {
+    list: async () => [{ id: A, title: "Ship the release", cwd: "/home/u/app", lastModified: 0, state: "owned" }],
+    waitingSessions: () => waiting,
+    unreadSessions: () => unseen,
+    setClaudePush: () => {},
+  });
+}
+
+test("the test notification and an announcement carry the badge and the sessions it counts as well", async () => {
+  const service = await pushService();
+  const { push } = setup();
+  const browser = newBrowser();
+  const endpoint = `${service.origin}/push/counted`;
+  push.subscribe({ endpoint, keys: browser.keys }, undefined, { device: "phone", origin: APP });
+  push.watch(counting([B], [A]) as unknown as SessionManager, { isWatching: () => false, remoteActivity: () => undefined } as unknown as Hub);
+  await push.test(endpoint);
+  push.announce(() => ({ title: "ccrc", body: "0.8.0", tag: "ccrc-update", data: { url: "/#/settings/status" } }));
+  await until(() => service.received.length === 2, "the announcement");
+  for (const r of service.received) {
+    const p = JSON.parse(decrypt(r.body, browser.privateKey, browser.auth).toString());
+    assert.equal(p.badge, 2, p.tag);
+    assert.deepEqual(p.attention, { at: p.data.at, unseen: [B], waiting: [A] }, p.tag);
+  }
+});
+
+test("a notification too long with the sessions it counts goes without them", async () => {
+  const service = await pushService();
+  const { push } = setup();
+  const browser = newBrowser();
+  const endpoint = `${service.origin}/push/many`;
+  push.subscribe({ endpoint, keys: browser.keys }, undefined, { device: "phone", origin: APP });
+  const many = Array.from({ length: 120 }, (_, i) => `${String(i).padStart(8, "0")}-0000-4000-8000-000000000000`);
+  const manager = counting(many, [A]);
+  push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteActivity: () => undefined } as unknown as Hub);
+  const ask = (id: string) =>
+    manager.emit("event", A, { t: "pending_add", sessionId: A, request: { id, kind: "permission", toolName: "Bash", input: {}, allowAlways: false } } satisfies ServerMsg);
+  ask("r1");
+  await until(() => service.received.length === 1, "the notification");
+  const plain = decrypt(service.received[0].body, browser.privateKey, browser.auth);
+  assert.ok(plain.length <= MAX_PLAINTEXT);
+  const p = JSON.parse(plain.toString());
+  assert.equal(p.attention, undefined);
+  assert.deepEqual([p.tag, p.badge, typeof p.data.at], [`${A}:permission`, 121, "number"]);
+  many.length = 20;
+  ask("r2");
+  await until(() => service.received.length === 2, "the second notification");
+  assert.equal(JSON.parse(decrypt(service.received[1].body, browser.privateKey, browser.auth).toString()).attention.unseen.length, 20, "twenty fit");
 });
 
 test("a subscription the push service no longer knows is removed", async () => {

@@ -203,6 +203,14 @@ within two minutes of a notification about a request that still waits for an ans
 it, it goes to that request itself, once per request (not from a new session's draft). A tap that does reach the app
 decides where it goes.
 
+A notification stays only while the app icon still counts its session: the end of a turn, Claude's notification and
+files sent until the session is read (opened on the phone, or written to in VS Code), a request until it is answered.
+The phone closes the others when the app comes to the front, opens a session or hears that the list changed, and when
+the next notification arrives; a newer notification of the same session and kind takes the place of the older one.
+While the app is closed nothing else reaches the phone, so a session read in VS Code keeps its notification, and the
+icon its number, until then. iOS 26.5 and later do not close a notification within 30 seconds of showing it: the app
+tries again once that has passed, while it stays in front.
+
 Android with Chrome should work the same way, but has not been tested.
 
 ### VS Code
@@ -477,8 +485,8 @@ does the file.
   falls back to a shared folder such as `/tmp`.
 - **Secrets.** The API key is passed only to broker sessions' Claude Code as `ANTHROPIC_API_KEY`, and never written to
   logs, the audit log, the screen or API answers. Notifications carry the session title and the kind of request only,
-  unless "도구 이름 표시" (show tool names) is on for the device: then also the tool or file name, or the text of a
-  notification Claude sends.
+  besides the ids of the sessions the app icon counts, unless "도구 이름 표시" (show tool names) is on for the device:
+  then also the tool or file name, or the text of a notification Claude sends.
 - **The phone's copy.** So that recent conversations can be read while the machine is off or out of reach, the phone
   keeps the end of the last five it showed in its browser's storage (IndexedDB, 160KB each at most), and the app
   itself in its service worker's cache. The copy holds what was said and tool calls by name and summary; tool input
@@ -502,7 +510,9 @@ does the file.
   come from (GitHub by default). GitHub sees the machine's address and the time; ccrc sends no version or identifier.
   `updateCheck: false` turns it off, `updateNotify: false` only the notification.
 - **Notifications** go through the phone's push service (Apple's or Google's), encrypted end to end; they carry the
-  session title and the kind of request (with "도구 이름 표시" on, also the names and Claude's text described above).
+  session title and the kind of request (with "도구 이름 표시" on, also the names and Claude's text described above),
+  and the ids of the sessions left unread or waiting for an answer, by which the phone closes the notifications that no
+  longer count.
 - **Tailscale** keeps its own connection to its coordination server; the phone's traffic to the broker stays on the
   tailnet.
 - **The phone** keeps a copy of the end of the conversations it showed last (see "The phone's copy" above).

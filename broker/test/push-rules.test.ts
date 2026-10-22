@@ -16,6 +16,8 @@ const C = "33333333-4444-4555-8666-777777777777";
 const ENDPOINT = "https://web.push.apple.com/device";
 const OTHER = "https://web.push.apple.com/tablet";
 const HOUR = 3600_000;
+// The broker's clock as notifications and the badge state read it.
+const NOW = 1_792_627_200_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 class FakeManager extends EventEmitter {
@@ -86,9 +88,13 @@ function setup(prefs: Partial<PushPrefs> = {}, more: Subscription[] = []) {
     deliver: (sub, payload, urgency) => sent.push({ endpoint: sub.endpoint, payload, urgency }),
     timing: { ownedMs: 10, secondMs: 2, recheckMs: 20, doneMs: 15, retryMs: 10, recentMs: 150 },
     log: () => {},
+    now: () => NOW,
   });
   return { manager, hub, subs, sent, notifier, bodies: () => sent.map((s) => s.payload.body) };
 }
+
+// What the badge counts: the number, and the sessions unread and waiting for an answer.
+const counts = (badge: number, unseen: string[], waiting: string[] = []) => ({ badge, at: NOW, unseen, waiting });
 
 test("a request on a broker-run session is notified almost at once, with a minimal text and the badge", async () => {
   const { manager, sent, notifier } = setup();
@@ -96,7 +102,7 @@ test("a request on a broker-run session is notified almost at once, with a minim
   manager.ask("r1");
   await sleep(50);
   assert.deepEqual(sent, [
-    { endpoint: ENDPOINT, urgency: "high", payload: { title: "Fix the invoice export", body: "권한 요청", tag: `${A}:permission`, data: { url: `/#/s/${A}` }, badge: 1 } },
+    { endpoint: ENDPOINT, urgency: "high", payload: { title: "Fix the invoice export", body: "권한 요청", tag: `${A}:permission`, data: { url: `/#/s/${A}`, at: NOW }, badge: 1, attention: { at: NOW, unseen: [], waiting: [A] } } },
   ]);
   notifier.close();
 });
@@ -258,7 +264,7 @@ test("by default a turn the remote user sent to, started or answered in up to tw
 
   await sleep(50);
   assert.deepEqual(long.sent, [
-    { endpoint: ENDPOINT, urgency: "normal", payload: { title: "Fix the invoice export", body: "작업을 마쳤습니다", tag: `${A}:end`, data: { url: `/#/s/${A}` }, badge: 1 } },
+    { endpoint: ENDPOINT, urgency: "normal", payload: { title: "Fix the invoice export", body: "작업을 마쳤습니다", tag: `${A}:end`, data: { url: `/#/s/${A}`, at: NOW }, badge: 1, attention: { at: NOW, unseen: [A], waiting: [] } } },
   ]);
   assert.equal(answered.sent.length, 1, "an answer during the turn counts");
   assert.equal(stale.sent.length, 0, "sent three hours before the turn started");
@@ -415,7 +421,7 @@ test("the badge counts each session once, as the list shows them: waiting reques
     ],
     "both turns left their sessions unread as they ended",
   );
-  assert.deepEqual(notifier.badge(), { badge: 2, unseen: [A, B] });
+  assert.deepEqual(notifier.attention(), counts(2, [A, B]));
   manager.open(A);
   manager.ask("r1", "permission", "Bash", {}, B);
   manager.ask("r2", "permission", "Bash", {}, C);
@@ -435,15 +441,15 @@ test("the badge counts each session once, as the list shows them: waiting reques
   );
   manager.settle("r1", B);
   manager.state({ busy: true }, B);
-  assert.deepEqual(notifier.badge(), { badge: 2, unseen: [B] }, "a turn that starts by itself leaves B unread");
+  assert.deepEqual(notifier.attention(), counts(2, [B], [C]), "a turn that starts by itself leaves B unread");
   manager.settle("r2", C);
   manager.settle("r3", C);
   manager.state({ busy: false }, B);
   manager.end({}, B);
   await sleep(30);
-  assert.deepEqual(notifier.badge(), { badge: 1, unseen: [B] });
+  assert.deepEqual(notifier.attention(), counts(1, [B]));
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() + 31 * 24 * HOUR });
-  assert.deepEqual(notifier.badge(), { badge: 0, unseen: [] }, "a month later");
+  assert.deepEqual(notifier.attention(), counts(0, []), "a month later");
   t.mock.timers.reset();
   notifier.close();
 });
@@ -478,6 +484,36 @@ function sendFiles(manager: FakeManager, id: string, status: string, files: Part
   manager.emit("event", sessionId, { t: "item", sessionId, item } satisfies ServerMsg);
 }
 
+test("every notification carries when it was made and the sessions the badge then counts, which reading and answering take out", async () => {
+  const { manager, hub, notifier, sent } = setup();
+  manager.sessions.push({ id: B, title: "Second", cwd: "/home/u/b", lastModified: 0, state: "owned" }, { id: C, title: "Third", cwd: "/home/u/c", lastModified: 0, state: "owned" });
+  hub.activity = Date.now();
+  manager.end({}, A);
+  await sleep(30);
+  manager.end({}, B);
+  await sleep(30);
+  manager.ask("r1", "permission", "Bash", {}, C);
+  await sleep(30);
+  assert.deepEqual(
+    sent.map((s) => [s.payload.tag, s.payload.data.at, s.payload.badge, s.payload.attention]),
+    [
+      [`${A}:end`, NOW, 1, { at: NOW, unseen: [A], waiting: [] }],
+      [`${B}:end`, NOW, 2, { at: NOW, unseen: [A, B], waiting: [] }],
+      [`${C}:permission`, NOW, 3, { at: NOW, unseen: [A, B], waiting: [C] }],
+    ],
+  );
+  manager.open(A);
+  assert.deepEqual(notifier.attention(), counts(2, [B], [C]), "opened on the phone");
+  manager.markRead(B, Date.now());
+  assert.deepEqual(notifier.attention(), counts(1, [], [C]), "VS Code wrote to it");
+  manager.settle("r1", C);
+  assert.deepEqual(notifier.attention(), counts(0, []), "answered");
+  manager.ask("r2", "question", "AskUserQuestion");
+  await sleep(30);
+  assert.deepEqual(sent.at(-1)?.payload.attention, { at: NOW, unseen: [], waiting: [A] }, "the next notification tells the phone");
+  notifier.close();
+});
+
 test("a file Claude sends to reach the user is told almost at once, once per call, unless the user is looking", async () => {
   const plain = setup();
   plain.manager.state({ busy: true });
@@ -485,9 +521,9 @@ test("a file Claude sends to reach the user is told almost at once, once per cal
   sendFiles(plain.manager, "toolu_f1", "proactive", [{ name: "report.md" }, { name: "chart.png" }]);
   await sleep(40);
   assert.deepEqual(plain.sent, [
-    { endpoint: ENDPOINT, urgency: "normal", payload: { title: "Fix the invoice export", body: "파일을 보냈습니다", tag: `${A}:file`, data: { url: `/#/s/${A}` }, badge: 1 } },
+    { endpoint: ENDPOINT, urgency: "normal", payload: { title: "Fix the invoice export", body: "파일을 보냈습니다", tag: `${A}:file`, data: { url: `/#/s/${A}`, at: NOW }, badge: 1, attention: { at: NOW, unseen: [A], waiting: [] } } },
   ]);
-  assert.deepEqual(plain.notifier.badge(), { badge: 1, unseen: [A] }, "a file nobody looked at counts on the badge");
+  assert.deepEqual(plain.notifier.attention(), counts(1, [A]), "a file nobody looked at counts on the badge");
 
   const detailed = setup({ details: true });
   sendFiles(detailed.manager, "toolu_f2", "proactive", [{ name: "report.md" }, { name: "chart.png" }, { name: "data.csv" }]);
@@ -563,9 +599,9 @@ test("a notification Claude asks for goes out almost at once, once per call, in 
   plain.manager.push("toolu_c1", "테스트가 모두 통과했습니다");
   await sleep(40);
   assert.deepEqual(plain.sent, [
-    { endpoint: ENDPOINT, urgency: "high", payload: { title: "Fix the invoice export", body: "Claude의 알림", tag: `${A}:claude`, data: { url: `/#/s/${A}` }, badge: 1 } },
+    { endpoint: ENDPOINT, urgency: "high", payload: { title: "Fix the invoice export", body: "Claude의 알림", tag: `${A}:claude`, data: { url: `/#/s/${A}`, at: NOW }, badge: 1, attention: { at: NOW, unseen: [A], waiting: [] } } },
   ]);
-  assert.deepEqual(plain.notifier.badge(), { badge: 1, unseen: [A] }, "the session is unread until opened");
+  assert.deepEqual(plain.notifier.attention(), counts(1, [A]), "the session is unread until opened");
 
   const detailed = setup({ details: true });
   detailed.manager.push("toolu_c2", `빌드 끝\n${"가".repeat(300)}`);
@@ -585,7 +621,7 @@ test("Claude's notification is left out while the user looks at the session, or 
   assert.equal(watching.notifier.claudeCall(A, "toolu_w1", "끝"), "watching");
   await sleep(40);
   assert.equal(watching.sent.length, 0);
-  assert.deepEqual(watching.notifier.badge(), { badge: 0, unseen: [] });
+  assert.deepEqual(watching.notifier.attention(), counts(0, []));
 
   const opened = setup();
   opened.manager.push("toolu_w2", "끝");
