@@ -129,7 +129,7 @@ export function Sheet({ title, onClose, children, wide, tall }: { title?: string
       <div className="sheet-dim" aria-hidden />
       <div className="sheet-frame flex items-end justify-center sm:items-center">
         <div
-          className={`pb-safe ${tall ? "h-[calc(100%-var(--sat)-0.5rem)] sm:h-auto" : "max-h-[85%]"} w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 shadow-xl sm:max-h-full sm:rounded-2xl ${wide ? "sm:max-w-3xl" : ""}`}
+          className={`pb-safe ${tall ? "h-[calc(100%+12px-var(--sat)-0.5rem)] sm:h-auto" : "max-h-[85%]"} w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 shadow-xl sm:max-h-full sm:rounded-2xl ${wide ? "sm:max-w-3xl" : ""}`}
           onClick={(e) => e.stopPropagation()}
           role="dialog"
         >

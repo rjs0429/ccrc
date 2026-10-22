@@ -129,22 +129,23 @@ body {
     inset: 0 0 auto;
     height: 12px;
   }
-  /* The panel's frame fills the page, or the visible part while the keyboard is up or the page is zoomed. Hidden
-     itself, it lets taps and iOS's top-edge check through to the dim. */
+  /* The panel's frame fills the page below the dim's top strip, or the visible part below it while the keyboard is up
+     or the page is zoomed. Off the top edge, it leaves iOS's top-edge check to the strip; taps outside the panel pass
+     through it to the dim. */
   .sheet-frame {
     position: fixed;
-    inset: 0;
-    visibility: hidden;
+    inset: 12px 0 0;
+    pointer-events: none;
     padding-left: var(--sal);
     padding-right: var(--sar);
   }
   .sheet-frame > * {
-    visibility: visible;
+    pointer-events: auto;
   }
   :is([data-keyboard], [data-zoomed]) .sheet-frame {
-    top: var(--vv-top, 0px);
+    top: calc(var(--vv-top, 0px) + 12px);
     bottom: auto;
-    height: var(--vv-height, 100dvh);
+    height: calc(var(--vv-height, 100dvh) - 12px);
   }
   /* The keyboard covers the home indicator. */
   [data-keyboard] :is(.overlay, .pb-safe) {

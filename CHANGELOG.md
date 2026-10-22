@@ -8,6 +8,12 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Fixed
+
+- On an iPhone, sheets (the session menu, the composer's chips, settings such as Language) showed only their dimmed
+  backdrop, with the panel's switches floating alone: the panel's frame hid itself so that iOS's top-edge check would
+  pass through it, and iOS then left the panel undrawn. The frame now starts below the backdrop's top strip instead.
+
 ## [0.8.0] - 2026-10-23
 
 ### Added
