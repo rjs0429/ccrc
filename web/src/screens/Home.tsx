@@ -234,7 +234,7 @@ export function Home() {
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="pt-safe border-b border-line bg-bg">
+      <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-safe-3 pt-2.5 pb-2 short:flex-nowrap short:py-1.5">
           <h1 className="order-1 flex-1 pl-1 text-xl font-semibold short:flex-none short:text-lg">
             ccrc

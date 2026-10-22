@@ -197,6 +197,8 @@ your version and the new one, and the lines under "Breaking" separately.
   binds to its own terminal (such as `/color` and `/focus`). A broker session's list is known from its start instead
   of its first turn. The wrapper hands the latest list again to a broker that connects anew.
 - Sessions run by `claude -p` show as open in "SDK" instead of "sdk-cli".
+- With the keyboard up on an iPhone, the session's ⋯ menu lets the keyboard go down and then opens at its full
+  height.
 - `ccrc status` shows the passkeys, and `ccrc setup` tells about registering one on the phone.
 
 ### Fixed
@@ -233,6 +235,14 @@ your version and the new one, and the lines under "Breaking" separately.
   3.5 seconds; it never handles `/api/`. The app then asks the broker again every few seconds and on "다시 연결".
 - While the connection is down, requests that fail in the network no longer toast "Failed to fetch" every ten seconds
   on the session list, and the "연결이 끊겼습니다" banner stays up between reconnection attempts.
+- On an iPhone, dragging on the dim around an open sheet (the ⋯ menu, say) stretched the page: until the finger
+  lifted, a band at the top of the screen was left undimmed, the header went off the screen and the sheet's bottom was
+  cut off. The dim now covers the whole page and takes no drags, and the page as a whole no longer stretches past its
+  ends (the lists inside still do; in an Android browser tab, pulling down no longer reloads the page). A sheet follows
+  the visible part of the page only while the keyboard is up or the page is zoomed in.
+- iOS 27 blurs the top of a Home Screen web app. The headers of the app's screens and of the file and photo viewers
+  now meet the top edge as sticky boxes with their own background, which iOS draws in the status bar instead; while a
+  sheet is open, the dim's colour.
 
 ### Security
 

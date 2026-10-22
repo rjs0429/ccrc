@@ -44,7 +44,7 @@ export function OfflineHome({ reason }: { reason: "unreachable" | "denied" }) {
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="pt-safe border-b border-line bg-bg">
+      <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center px-safe-3 pt-2.5 pb-2">
           <h1 className="flex-1 pl-1 text-xl font-semibold">
             ccrc
@@ -138,7 +138,7 @@ export function OfflineChat({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="pt-safe border-b border-line bg-bg">
+      <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="-m-1 rounded-lg p-3">
             <Icon.back />

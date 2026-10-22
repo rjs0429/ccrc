@@ -5,6 +5,7 @@ import type { DisplayItem, ModelOption, QueuedMessage } from "../../../broker/sr
 import { DateLine, ItemView, QueuedItem, StreamPreview, shownItems } from "../components/Items.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { reattach } from "../components/composer/attachments.ts";
+import { afterKeyboard } from "../components/composer/picker.ts";
 import { commandSheet } from "../components/commandSheets.ts";
 import { PendingCard } from "../components/Pending.tsx";
 import { ArchivedBadge, SessionActions, renameBlocked, setArchived, setUnread } from "../components/SessionActions.tsx";
@@ -291,6 +292,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
       setMenu(false);
       setRenaming(true);
     });
+  };
+  // A tap on a button leaves the iOS keyboard up; the menu needs none, so it opens once the keyboard has gone down.
+  const openMenu = () => {
+    const open = () => setMenu({ stop: busy && controllable });
+    if (!document.documentElement.hasAttribute("data-keyboard")) return open();
+    (document.activeElement as HTMLElement | null)?.blur();
+    afterKeyboard(open);
   };
   // 더 보기 opens at its top with the focus on 메뉴; 메뉴 brings the menu back scrolled as it was, the focus and the
   // view on 더 보기.
@@ -598,7 +606,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="pt-safe border-b border-line bg-bg">
+      <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="relative -m-1 rounded-lg p-3">
             <Icon.back />
@@ -623,7 +631,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               </span>
             </span>
           </button>
-          <button onClick={() => setMenu({ stop: busy && controllable })} aria-label="메뉴" className="relative -m-1 rounded-lg p-3 text-muted">
+          <button onClick={openMenu} aria-label="메뉴" className="relative -m-1 rounded-lg p-3 text-muted">
             <Icon.dots />
           </button>
         </div>

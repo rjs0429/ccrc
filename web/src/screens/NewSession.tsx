@@ -234,7 +234,7 @@ export function NewSession() {
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="pt-safe border-b border-line bg-bg">
+      <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="-m-1 rounded-lg p-3">
             <Icon.back />
