@@ -1,3 +1,5 @@
+import { t } from "./i18n/index.ts";
+
 // Passkeys through the browser's WebAuthn API. The broker sends the options with binary fields base64url and checks
 // everything that comes back; navigator.credentials is called straight from a tap, as Safari asks.
 
@@ -78,9 +80,9 @@ export async function assertPasskey(options: Options): Promise<Record<string, un
 // What went wrong, as a sentence, for a WebAuthn error or the broker's answer to one.
 export function passkeyError(e: unknown): string {
   const name = e instanceof DOMException ? e.name : "";
-  if (name === "NotAllowedError" || name === "AbortError") return "취소했거나 시간이 지났습니다. 다시 시도하세요";
-  if (name === "InvalidStateError") return "이 기기에는 이미 이 주소의 패스키가 있습니다";
-  if (name === "NotSupportedError") return "이 브라우저는 패스키 등록에 필요한 기능이 없습니다";
-  if (name === "SecurityError") return "이 주소에서는 패스키를 쓸 수 없습니다. tailnet HTTPS 주소로 여세요";
+  if (name === "NotAllowedError" || name === "AbortError") return t("취소했거나 시간이 지났습니다. 다시 시도하세요");
+  if (name === "InvalidStateError") return t("이 기기에는 이미 이 주소의 패스키가 있습니다");
+  if (name === "NotSupportedError") return t("이 브라우저는 패스키 등록에 필요한 기능이 없습니다");
+  if (name === "SecurityError") return t("이 주소에서는 패스키를 쓸 수 없습니다. tailnet HTTPS 주소로 여세요");
   return e instanceof Error ? e.message : String(e);
 }

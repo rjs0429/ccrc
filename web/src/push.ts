@@ -1,7 +1,7 @@
 import { settled } from "../../broker/src/push/attention.ts";
 import type { PushBadge, PushPrefs, PushRecent, PushStatus } from "../../broker/src/push/types.ts";
 import { ApiError, request } from "./api.ts";
-import { lang } from "./i18n/index.ts";
+import { lang, t } from "./i18n/index.ts";
 
 const SW = "/sw.js";
 const READY_MS = 10_000;
@@ -55,7 +55,7 @@ async function ready(): Promise<ServiceWorkerRegistration> {
   await navigator.serviceWorker.register(SW);
   let timer = 0;
   const late = new Promise<never>((_, reject) => {
-    timer = window.setTimeout(() => reject(Error("알림 준비가 끝나지 않았습니다. 앱을 다시 열어 보세요")), READY_MS);
+    timer = window.setTimeout(() => reject(Error(t("알림 준비가 끝나지 않았습니다. 앱을 다시 열어 보세요"))), READY_MS);
   });
   try {
     return await Promise.race([navigator.serviceWorker.ready, late]);
@@ -100,7 +100,7 @@ function lastPrefs(): Partial<PushPrefs> | undefined {
 // broker does not know may be expired or bound to an older key, so a fresh one replaces it.
 export async function turnOn(device: PushDevice, prefs?: Partial<PushPrefs>): Promise<PushDevice> {
   const permission = await Notification.requestPermission();
-  if (permission !== "granted") throw Error(permission === "denied" ? "알림 권한이 거부되었습니다" : "알림을 허용하지 않았습니다");
+  if (permission !== "granted") throw Error(permission === "denied" ? t("알림 권한이 거부되었습니다") : t("알림을 허용하지 않았습니다"));
   await (await device.reg.pushManager.getSubscription())?.unsubscribe();
   const sub = await device.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(device.key) });
   const subscribe = (p?: Partial<PushPrefs>) => request<PushStatus>("POST", "/api/push/subscribe", { subscription: sub.toJSON(), prefs: { ...p, lang: lang() } });
