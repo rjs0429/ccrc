@@ -38,7 +38,7 @@ const MAX_ATTACHMENTS = 10;
 const ELICIT_ACTIONS = new Set<unknown>(["accept", "decline", "cancel"]);
 const DIALOG_CHOICE = /^[a-z_]{1,32}$/;
 // Calls that change something are recorded in the audit log.
-const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "resume", "set_output_style", "unqueue", "rename", "archive"]);
+export const CHANGING_CALLS = new Set<CallOp>(["mcp_toggle", "mcp_reconnect", "rewind", "stop_task", "resume", "set_output_style", "unqueue", "rename", "archive"]);
 CHANGING_CALLS.add("background");
 // Of an MCP sign-in only the server is recorded: the address it ended on carries its authorization code.
 CHANGING_CALLS.add("mcp_authenticate").add("mcp_oauth_callback");

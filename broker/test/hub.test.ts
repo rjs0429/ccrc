@@ -3,8 +3,9 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
+import ts from "typescript";
 import type { Audit } from "../src/audit.ts";
-import { Hub } from "../src/hub.ts";
+import { CHANGING_CALLS, Hub } from "../src/hub.ts";
 import type { Leases } from "../src/lease.ts";
 import type { DisplayItem, ServerMsg } from "../src/protocol.ts";
 import { RemoteActivity } from "../src/remote-activity.ts";
@@ -181,6 +182,15 @@ test("taking back a queued message is written to the audit log", async () => {
   await sleep(50);
   assert.deepEqual(logged, [["call", { device: "phone", sessionId: A, op: "unqueue", messageId: "m-1" }]]);
   hub.close();
+});
+
+test("every call written to the audit log has a name in the phone's activity log", () => {
+  const file = path.resolve(import.meta.dirname, "../../web/src/screens/settings/Audit.tsx");
+  const sf = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const decl = sf.statements.flatMap((s) => (ts.isVariableStatement(s) ? [...s.declarationList.declarations] : [])).find((d) => d.name.getText(sf) === "CALL_LABEL");
+  const names = decl?.initializer && ts.isObjectLiteralExpression(decl.initializer) ? decl.initializer.properties.map((p) => p.name?.getText(sf)) : [];
+  // The screen names an archive call by its archived field.
+  assert.deepEqual([...CHANGING_CALLS].filter((op) => op !== "archive" && !names.includes(op)), []);
 });
 
 test("a focused view keeps its focus while the same session is shown again", async () => {
