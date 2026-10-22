@@ -107,7 +107,7 @@ self.addEventListener("push", (event) => {
 // A session's notification, tagged `<session>:<kind>`, counts while the broker counts the session for its kind: a notice
 // of what went on in it while it is unread, a request while one waits. Any one goes once a newer one of its tag shows.
 // The same rule as settled() in broker/src/push/attention.ts, which the phone app uses.
-const NOTICES = ["end", "claude", "file"];
+const NOTICES = ["end", "claude", "file", "copy"];
 const REQUESTS = ["permission", "question", "plan", "dialog", "elicitation"];
 const madeAt = (n) => (n.data && typeof n.data.at === "number" ? n.data.at : 0);
 

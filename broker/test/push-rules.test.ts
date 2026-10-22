@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import type { Hub } from "../src/hub.ts";
 import type { DisplayItem, LiveState, PendingKind, PendingRequest, SentFile, ServerMsg, SessionSummary, ToolResult } from "../src/protocol.ts";
+import { settled } from "../src/push/attention.ts";
 import { Notifier, endText, type ClaudeNotice, type Urgency } from "../src/push/rules.ts";
 import type { Subscription } from "../src/push/subscriptions.ts";
 import { DEFAULT_PREFS, type PushPayload, type PushPrefs } from "../src/push/types.ts";
@@ -818,6 +819,11 @@ test("a copy's first message is told once to each device in its language, naming
     ],
   );
   assert.deepEqual(manager.unreadSessions(), [B], "unread, as after any notice, until the phone opens it or VS Code writes to it");
+  const shown = { tag: sent[0].payload.tag, data: sent[0].payload.data };
+  assert.deepEqual(sent[0].payload.attention?.unseen, [B], "it carries its own session among the unread");
+  assert.equal(settled(shown, [shown], { ...notifier.attention(), at: NOW + 1 }), false, "the phone keeps it while the copy is unread");
+  manager.markRead(B, Date.now());
+  assert.equal(settled(shown, [shown], { ...notifier.attention(), at: NOW + 1 }), true, "and closes it once the copy is read");
   hub.watching = true;
   manager.emit("copy_started", B, "VS Code");
   await sleep(30);

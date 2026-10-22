@@ -2,10 +2,10 @@ import type { PendingKind } from "../protocol.ts";
 import type { PushAttention } from "./types.ts";
 
 // A session's notification is tagged `<session>:<kind>`. A notice of what went on in the session (its turn's end,
-// Claude's own notification, files sent) counts while the session is unread; a request while one waits for an answer.
-// web/public/sw.js keeps a copy of these kinds and of settled().
-export type NoticeKind = "end" | "claude" | "file";
-const NOTICES: Record<NoticeKind, true> = { end: true, claude: true, file: true };
+// Claude's own notification, files sent, a copy's first message) counts while the session is unread; a request while
+// one waits for an answer. web/public/sw.js keeps a copy of these kinds and of settled().
+export type NoticeKind = "end" | "claude" | "file" | "copy";
+const NOTICES: Record<NoticeKind, true> = { end: true, claude: true, file: true, copy: true };
 const REQUESTS: Record<PendingKind, true> = { permission: true, question: true, plan: true, dialog: true, elicitation: true };
 export const NOTICE_KINDS = Object.keys(NOTICES) as NoticeKind[];
 export const REQUEST_KINDS = Object.keys(REQUESTS) as PendingKind[];

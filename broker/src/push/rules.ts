@@ -267,7 +267,7 @@ export class Notifier {
     for (const sub of this.d.subscriptions()) {
       const lang = sub.prefs.lang;
       const body = `${title} · ${PUSH_TEXT[lang].original(HOLD_TEXT[lang].holder[holderKind(holder)])}`;
-      this.deliver(sub, sessionId, { title: PUSH_TEXT[lang].copied, body, tag: `${sessionId}:copy`, data: { url: `/#/s/${sessionId}` } }, "normal");
+      this.deliver(sub, sessionId, { title: PUSH_TEXT[lang].copied, body, tag: sessionTag(sessionId, "copy"), data: { url: `/#/s/${sessionId}` } }, "normal");
     }
   }
 
