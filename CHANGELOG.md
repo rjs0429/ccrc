@@ -1,5 +1,7 @@
 # Changelog
 
+English | [한국어](CHANGELOG.ko.md)
+
 All notable changes to ccrc are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and ccrc uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `ccrc update` shows the sections between
 your version and the new one, and the lines under "Breaking" separately.
@@ -160,6 +162,8 @@ your version and the new one, and the lines under "Breaking" separately.
   message, and its activity log tells "VS Code 다른 탭에서 옮김" from "VS Code에서 복사본으로 엶". The lines are in the
   language of the phone's notifications, or of the laptop's locale when no phone is subscribed. The wrapper says it
   can in its hello (`hand_over`, `claim_notice`).
+- Korean versions of the README, this changelog and the security policy (`README.ko.md`, `CHANGELOG.ko.md`,
+  `SECURITY.ko.md`). Each version links to the other at the top.
 
 ### Changed
 

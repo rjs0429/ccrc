@@ -1,5 +1,7 @@
 # ccrc
 
+English | [한국어](README.ko.md)
+
 Drive the live Claude Code sessions in VS Code from your phone, without a third-party relay.
 
 ccrc runs a small broker on your own Linux machine and serves a phone web app to your own
@@ -17,7 +19,7 @@ started by the broker itself.
   Claude Code (see [License and Anthropic's terms](#license-and-anthropics-terms)).
 - **Korean or English screens.** The phone app shows Korean when the phone's first language is Korean and English
   otherwise, or the language chosen in its settings. English covers part of the screens so far; the rest shows in
-  Korean. The command line and documentation are in English.
+  Korean. The command line is in English; the documentation is in English and Korean.
 
 ### Tested with
 
@@ -597,6 +599,9 @@ for pull requests (`.github/workflows/ci.yml`).
 When a change adds a config key, a state file, an outside tool or a path, update `ccrc setup`, the migrations in
 `broker/src/config.ts`, this README and the CHANGELOG's Unreleased section together. Test data uses example values
 only (`100.64.0.x`, `*.example.ts.net`, `/home/user`).
+
+When you change `README.md`, `CHANGELOG.md` or `SECURITY.md`, change its Korean version (`README.ko.md`,
+`CHANGELOG.ko.md`, `SECURITY.ko.md`) in the same commit.
 
 ## Versions
 
