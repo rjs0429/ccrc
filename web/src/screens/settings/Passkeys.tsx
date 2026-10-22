@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError, type PasskeyList, type PasskeyView } from "../../api.ts";
 import { Button, Sheet, Spinner } from "../../components/ui.tsx";
 import { createPasskey, passkeyError, passkeysSupported } from "../../passkey.ts";
-import { toast } from "../../state.ts";
+import { meAgain, toast } from "../../state.ts";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
 
 const INPUT = "w-full rounded-xl border border-line bg-surface px-3.5 py-3 text-[16px] outline-none focus:border-accent";
@@ -157,6 +157,11 @@ export function PasskeySection() {
     setRemoving(undefined);
     setRound((r) => r + 1);
   };
+  // A passkey registered or removed changes when the login is confirmed next, which the phone's copy goes by.
+  const changed = () => {
+    reload();
+    void api.me().then(meAgain, () => {});
+  };
   const supported = passkeysSupported();
   const own = list?.passkeys.some((p) => p.mine && p.here);
 
@@ -208,8 +213,8 @@ export function PasskeySection() {
           </p>
         </>
       )}
-      {adding && <AddSheet onClose={() => setAdding(false)} onAdded={reload} />}
-      {removing && <RemoveSheet passkey={removing} onClose={() => setRemoving(undefined)} onRemoved={reload} />}
+      {adding && <AddSheet onClose={() => setAdding(false)} onAdded={changed} />}
+      {removing && <RemoveSheet passkey={removing} onClose={() => setRemoving(undefined)} onRemoved={changed} />}
     </section>
   );
 }
