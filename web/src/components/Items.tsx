@@ -34,7 +34,9 @@ function Stamp({ at, className }: { at: Date; className?: string }) {
 // open only from the ⋯ button under them.
 const SELECTABLE = "select-text [-webkit-touch-callout:default]";
 
-// The room under a message or reply holds the lower part of its ⋯ button's 44px target, which stays off the text.
+// That ⋯ sits on a 16px line 4px under the text; its 44px target reaches up to the text's edge only and down into the
+// room under the item.
+const DOTS = "relative flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-top-1 after:-bottom-6 active:text-fg";
 const ITEM_ROOM = "pb-2";
 
 // A message the conversation can be forked from or rewound to opens its actions from the button before its time.
@@ -55,7 +57,7 @@ function UserItem({ item, onActions }: { item: UserMessage; onActions?: (m: User
             onClick={open}
             aria-label={t("메시지 동작")}
             aria-haspopup="dialog"
-            className="relative flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-top-1 after:-bottom-6 active:text-fg"
+            className={DOTS}
             data-message-actions
           >
             <Icon.dots className="size-4" />
@@ -87,7 +89,7 @@ function AssistantItem({ item, onActions }: { item: AssistantMessage; onActions?
               onClick={open}
               aria-label={t("답 동작")}
               aria-haspopup="dialog"
-              className="relative -ml-1 flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-top-1 after:-bottom-6 active:text-fg"
+              className={`${DOTS} -ml-1`}
               data-reply-actions
             >
               <Icon.dots className="size-4" />
