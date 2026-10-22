@@ -1,4 +1,5 @@
 import type { ContextGauge } from "../../../broker/src/protocol.ts";
+import { t } from "../i18n/index.ts";
 
 const R = 7;
 const ROUND = 2 * Math.PI * R;
@@ -40,7 +41,7 @@ export function Ring({ gauge, className = "size-5" }: { gauge?: ContextGauge; cl
 }
 
 export function ContextRing({ gauge, onClick, className = "" }: { gauge?: ContextGauge; onClick: () => void; className?: string }) {
-  const label = gauge ? `Context ${gauge.percent}%${gauge.last ? " (마지막 기록)" : ""}` : "Context 사용량";
+  const label = gauge ? (gauge.last ? t("Context {percent}% (마지막 기록)", { percent: gauge.percent }) : `Context ${gauge.percent}%`) : t("Context 사용량");
   return (
     <button
       onClick={onClick}

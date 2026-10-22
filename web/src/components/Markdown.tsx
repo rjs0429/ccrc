@@ -2,6 +2,7 @@ import { createContext, createElement, memo, useContext, useState } from "react"
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import { t } from "../i18n/index.ts";
 import { FileImages, FileLinks, isWebLink, urlTransform } from "./fileLinks.ts";
 
 function Link({ href, children }: { href?: string; children?: React.ReactNode }) {
@@ -33,7 +34,7 @@ function Image({ src, alt }: { src?: unknown; alt?: string }) {
   if (!url || failed === url) {
     return (
       <span className="inline-block rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-muted" title={alt || undefined}>
-        이미지를 불러올 수 없습니다
+        {t("이미지를 불러올 수 없습니다")}
       </span>
     );
   }

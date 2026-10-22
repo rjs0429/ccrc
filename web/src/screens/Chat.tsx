@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, ModelOption, QueuedMessage } from "../../../broker/src/protocol.ts";
 import { DateLine, ItemView, QueuedItem, StreamPreview, shownItems } from "../components/Items.tsx";
+import { t } from "../i18n/index.ts";
 import { Composer } from "../components/Composer.tsx";
 import { reattach } from "../components/composer/attachments.ts";
 import { afterKeyboard } from "../components/composer/picker.ts";
@@ -75,14 +76,18 @@ interface Awaited {
 // Where the list holds back part of the conversation: before its first item, or in a gap after a far-back item. The part
 // loads as it nears the view; the button loads it too and tries again after a failure.
 function PartLoader({ part, skipped, loading, failed, onLoad }: { part: "earlier" | "gap"; skipped?: number; loading: boolean; failed: boolean; onLoad: () => void }) {
-  const name = part === "earlier" ? "이전" : "중간";
+  const earlier = part === "earlier";
   const text = loading
-    ? `${name} 대화를 불러오는 중…`
+    ? earlier
+      ? t("이전 대화를 불러오는 중…")
+      : t("중간 대화를 불러오는 중…")
     : failed
-      ? `${name} 대화를 불러오지 못했습니다`
-      : part === "earlier"
-        ? "이전 대화는 생략했습니다"
-        : `중간 대화 ${skipped ?? ""}개 항목은 생략했습니다`;
+      ? earlier
+        ? t("이전 대화를 불러오지 못했습니다")
+        : t("중간 대화를 불러오지 못했습니다")
+      : earlier
+        ? t("이전 대화는 생략했습니다")
+        : t("중간 대화 {n}개 항목은 생략했습니다", { n: skipped ?? "" });
   return (
     <div className="flex items-center gap-3 text-xs text-muted" {...(part === "gap" ? { "data-gap": "" } : { "data-earlier": "" })}>
       <span className="h-px flex-1 bg-line" />
@@ -91,7 +96,7 @@ function PartLoader({ part, skipped, loading, failed, onLoad }: { part: "earlier
         {text}
         {!loading && (
           <button onClick={onLoad} className="min-h-11 shrink-0 px-1 font-medium text-accent">
-            {failed ? "다시 시도" : "불러오기"}
+            {failed ? t("다시 시도") : t("불러오기")}
           </button>
         )}
       </span>
@@ -107,12 +112,12 @@ function JumpButton({ unseen, onClick }: { unseen: boolean; onClick: () => void 
       <button
         onClick={onClick}
         onMouseDown={(e) => e.preventDefault()}
-        aria-label="맨 아래로"
+        aria-label={t("맨 아래로")}
         className="group absolute bottom-2 left-1/2 z-10 flex size-11 -translate-x-1/2 items-center justify-center"
       >
         <span className="relative flex size-9 items-center justify-center rounded-full border border-line bg-surface text-fg shadow-md group-active:bg-surface-2">
           <Icon.arrowDown className="size-[18px]" />
-          {unseen && <span className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-accent ring-2 ring-bg" title="새 내용이 있습니다" data-unseen />}
+          {unseen && <span className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-accent ring-2 ring-bg" title={t("새 내용이 있습니다")} data-unseen />}
         </span>
       </button>
     </div>
@@ -266,7 +271,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const host = hostLabel(st?.host ?? summary?.host);
   const busy = Boolean(st?.busy);
   const cwd = st?.cwd ?? summary?.cwd ?? "";
-  const cannotStart = folderMissing ? `작업 폴더가 없어 이 세션을 시작할 수 없습니다: ${shortPath(cwd)}` : deferred ? brokerOff : undefined;
+  const cannotStart = folderMissing ? t("작업 폴더가 없어 이 세션을 시작할 수 없습니다: {folder}", { folder: shortPath(cwd) }) : deferred ? brokerOff : undefined;
   // The list knows first of a name given anywhere: it reads the transcript.
   const named = summary?.title || st?.title || "";
   const title = sessionTitle({ title: named });
@@ -277,11 +282,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const renameRefused = renameBlocked(renameTarget);
   // Why the menu's greyed actions cannot be used; they point to this line.
   const unable = renameRefused
-    ? `${host}에서 열려 있어 여기서는 이름을 바꿀 수 없습니다`
+    ? t("{host}에서 열려 있어 여기서는 이름을 바꿀 수 없습니다", { host })
     : folderMissing
-      ? "작업 폴더가 없어 갈래를 만들거나 되돌릴 수 없습니다"
+      ? t("작업 폴더가 없어 갈래를 만들거나 되돌릴 수 없습니다")
       : brokerOff
-        ? "원격 세션이 꺼져 있어 갈래를 만들 수 없습니다"
+        ? t("원격 세션이 꺼져 있어 갈래를 만들 수 없습니다")
         : undefined;
   const unableId = useId();
   // The header's title and the line under it are one button to rename, its padding reaching over the header's height
@@ -346,7 +351,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       .then(() => {
         if (q.text) composerInsert(q.text);
         const lost = reattach(sessionId, q.attachments ?? [], takeSent(q.id));
-        if (lost) toast(`첨부 ${lost}개는 다시 골라 주세요`);
+        if (lost) toast(t("첨부 {n}개는 다시 골라 주세요", { n: lost }));
       })
       .catch((e: Error) => toast(errorText(e.message)))
       .finally(() => setTaking(null));
@@ -362,7 +367,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     call(sessionId, "inbox_send", { text }).then(
       ({ msgId }) => {
         setPeerSent((list) => list.map((q) => (q.id === id ? { ...q, msgId } : q)));
-        toast("다른 세션 메시지로 보냈습니다");
+        toast(t("다른 세션 메시지로 보냈습니다"));
       },
       (e: Error) => {
         setPeerSent((list) => list.filter((q) => q.id !== id));
@@ -460,10 +465,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
   // The subagent a permission request comes from, by its task or as an agent of a workflow.
   const askingAgent = (agentId?: string) => {
     if (!agentId) return undefined;
-    const t = st?.tasks?.find((x) => x.id === agentId);
-    if (t) return t.description || t.agentType ? `서브에이전트 · ${t.description || t.agentType}` : "서브에이전트";
+    const task = st?.tasks?.find((x) => x.id === agentId);
+    if (task) return task.description || task.agentType ? `${t("서브에이전트")} · ${task.description || task.agentType}` : t("서브에이전트");
     const w = st?.tasks?.flatMap((x) => x.workflow?.agents ?? []).find((a) => a.id === agentId);
-    return w ? `워크플로 에이전트 · ${w.label}` : "서브에이전트";
+    return w ? `${t("워크플로 에이전트")} · ${w.label}` : t("서브에이전트");
   };
 
   // Shows an element of the list in its middle, which then holds its place.
@@ -501,8 +506,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
   // "/copy" copies Claude's latest reply as VS Code's does, within the tap that sent it.
   const copyLatest = () => {
     const last = (chat?.items ?? []).findLast((i): i is Reply => i.kind === "assistant");
-    if (last) copyText(last.text, "답을 복사했습니다");
-    else toast("복사할 답이 없습니다");
+    if (last) copyText(last.text, t("답을 복사했습니다"));
+    else toast(t("복사할 답이 없습니다"));
   };
   const roots = useMemo(() => (cwd ? [cwd] : []), [cwd]);
 
@@ -558,7 +563,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       follow(true);
       api.thread(sessionId, focus).then(
         (t) => setThread({ ...t, ...(focusEarlier ? { earlier: true } : {}) }),
-        () => toast("찾은 메시지가 지금 대화에 없습니다"),
+        () => toast(t("찾은 메시지가 지금 대화에 없습니다")),
       );
       return;
     }
@@ -590,32 +595,38 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const status =
     kind === "owned"
       ? busy
-        ? "작업 중"
-        : "원격 실행 중"
+        ? t("작업 중")
+        : t("원격 실행 중")
       : kind === "attached"
         ? busy
-          ? `${host}에서 작업 중`
-          : `${host} 연결됨`
+          ? t("{host}에서 작업 중", { host })
+          : t("{host} 연결됨", { host })
         : kind === "live"
-          ? `${host}에서 열림`
+          ? t("{host}에서 열림", { host })
           : folderMissing
-            ? "폴더 없음"
-            : "꺼져 있음";
+            ? t("폴더 없음")
+            : t("꺼져 있음");
   const disabledReason =
-    kind === "live" && !peer ? `${host}에서 열려 있어 지금은 보기만 할 수 있습니다.` : folderMissing ? "작업 폴더가 없어 보기만 할 수 있습니다." : deferred ? brokerOff : undefined;
+    kind === "live" && !peer
+      ? t("{host}에서 열려 있어 지금은 보기만 할 수 있습니다.", { host })
+      : folderMissing
+        ? t("작업 폴더가 없어 보기만 할 수 있습니다.")
+        : deferred
+          ? brokerOff
+          : undefined;
 
   return (
     <div className="flex h-dvh flex-col">
       <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
-          <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="relative -m-1 rounded-lg p-3">
+          <button onClick={() => navigate({ name: "home" })} aria-label={t("뒤로")} className="relative -m-1 rounded-lg p-3">
             <Icon.back />
-            {othersWaiting && <span className="absolute top-2.5 right-2.5 size-2 rounded-full bg-warn" title="다른 세션에서 입력이 필요합니다" />}
+            {othersWaiting && <span className="absolute top-2.5 right-2.5 size-2 rounded-full bg-warn" title={t("다른 세션에서 입력이 필요합니다")} />}
           </button>
           <button
             onClick={rename}
             aria-haspopup="dialog"
-            title="이름 바꾸기"
+            title={t("이름 바꾸기")}
             className="-my-2 flex min-w-0 flex-1 items-center self-stretch py-2 text-left short:-my-1 short:py-1"
           >
             <span className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
@@ -631,7 +642,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               </span>
             </span>
           </button>
-          <button onClick={openMenu} aria-label="메뉴" className="relative -m-1 rounded-lg p-3 text-muted">
+          <button onClick={openMenu} aria-label={t("메뉴")} className="relative -m-1 rounded-lg p-3 text-muted">
             <Icon.dots />
           </button>
         </div>
@@ -695,7 +706,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
               )}
               {busy && !chat?.stream && !chat?.pending.length && (
                 <div className="flex items-center gap-2 text-sm text-muted">
-                  <Spinner className="size-3.5" /> 작업 중…
+                  <Spinner className="size-3.5" /> {t("작업 중…")}
                 </div>
               )}
               {queued.map((q) => (
@@ -707,14 +718,14 @@ export function Chat({ sessionId }: { sessionId: string }) {
                   onTakeBack={q.from === "remote" && controllable ? () => takeBack(q) : undefined}
                 />
               ))}
-              {peer && peerWaiting.map((q) => <QueuedItem key={q.id} message={q} host={host} note="다른 세션 메시지로 보냄 · 받으면 대화에 나타납니다" />)}
+              {peer && peerWaiting.map((q) => <QueuedItem key={q.id} message={q} host={host} note={t("다른 세션 메시지로 보냄 · 받으면 대화에 나타납니다")} />)}
               {chat?.pending.map((p) => (
                 <div key={p.id} data-pending={p.id} className={`rounded-2xl transition-shadow duration-700 ${flash === p.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}>
                   <PendingCard
                     request={p}
                     agent={askingAgent(p.agentId)}
                     reply={(answer) => {
-                      if (!send({ t: "answer", sessionId, requestId: p.id, answer })) return toast("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요");
+                      if (!send({ t: "answer", sessionId, requestId: p.id, answer })) return toast(t("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요"));
                       // Editing the refused message starts from it, as VS Code puts it back in its input.
                       if (answer.kind === "dialog" && answer.choice === "edit_prompt") {
                         const last = chat?.items.findLast((i) => i.kind === "user");
@@ -727,11 +738,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
               {chat?.loaded && archived && (
                 <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-archived-note>
                   <p className="min-w-0 flex-1 break-keep text-balance">
-                    <span className="block">{vscodeArchived ? "VS Code에서 보관한 세션입니다." : "보관된 세션입니다."}</span>
-                    {(kind !== "live" || peer) && !folderMissing && <span className="block">메시지를 보내면 보관이 풀립니다.</span>}
+                    <span className="block">{vscodeArchived ? t("VS Code에서 보관한 세션입니다.") : t("보관된 세션입니다.")}</span>
+                    {(kind !== "live" || peer) && !folderMissing && <span className="block">{t("메시지를 보내면 보관이 풀립니다.")}</span>}
                   </p>
                   <button onClick={() => setArchived(sessionId, false, vscodeArchived)} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent">
-                    보관 해제
+                    {t("보관 해제")}
                   </button>
                 </div>
               )}
@@ -739,25 +750,25 @@ export function Chat({ sessionId }: { sessionId: string }) {
                 <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-stopped-note={folderMissing ? "folder-missing" : ""}>
                   {folderMissing ? (
                     <p className="min-w-0 flex-1 break-keep">
-                      작업 폴더가 없어 이 세션을 시작할 수 없습니다.
+                      {t("작업 폴더가 없어 이 세션을 시작할 수 없습니다.")}
                       <span className="mt-0.5 block text-xs break-all">{shortPath(cwd)}</span>
                     </p>
                   ) : (
                     <>
                       {st?.resumeIn ? (
                         <p className="min-w-0 flex-1 break-keep text-balance" data-resume-in>
-                          <span className="block">worktree가 지워져 원래{"\u00a0"}폴더에서 이어서 실행합니다.</span>
+                          <span className="block">{t("worktree가 지워져 원래\u00a0폴더에서 이어서 실행합니다.")}</span>
                           <span className="mt-0.5 block text-xs break-all">{shortPath(st.resumeIn)}</span>
                         </p>
                       ) : (
                         <p className="min-w-0 flex-1 break-keep text-balance" data-broker-off={brokerOff ? "" : undefined}>
-                          <span className="block">{closedText(st?.closedReason) || "꺼져 있는 세션입니다."}</span>
-                          <span className="block">{brokerOff ? "원격 세션이 꺼져 있어 기록만 볼 수 있습니다." : "메시지를 보내면 이어서 실행합니다."}</span>
+                          <span className="block">{closedText(st?.closedReason) || t("꺼져 있는 세션입니다.")}</span>
+                          <span className="block">{brokerOff ? t("원격 세션이 꺼져 있어 기록만 볼 수 있습니다.") : t("메시지를 보내면 이어서 실행합니다.")}</span>
                         </p>
                       )}
                       {!brokerOff && (
                         <button onClick={startNow} disabled={starting} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent disabled:opacity-50">
-                          {starting ? "시작하는 중…" : "지금 시작"}
+                          {starting ? t("시작하는 중…") : t("지금 시작")}
                         </button>
                       )}
                     </>
@@ -780,7 +791,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
         deferred={deferred}
         starting={starting || sentStart}
         disabledReason={disabledReason}
-        placeholder="Claude에게 메시지"
+        placeholder={t("Claude에게 메시지")}
         onSend={peer ? sendPeer : sendText}
         onCommand={openCommand}
         openSheet={composerSheet}
@@ -803,26 +814,30 @@ export function Chat({ sessionId }: { sessionId: string }) {
           {menu.more ? (
             <Fragment key="more">
               <button ref={menuBack} onClick={() => showMore(false)} className="mb-1 flex min-h-11 items-center gap-1 px-2 text-sm font-medium text-accent" data-menu-back>
-                <Icon.back className="size-4" /> 메뉴
+                <Icon.back className="size-4" /> {t("메뉴")}
               </button>
               {controllable && (
                 <>
-                  <Choice label="MCP 서버" onClick={() => (setSheet("mcp"), setMenu(false))} />
-                  <Choice label="출력 스타일" value={st?.outputStyle && outputStyleLabel(st.outputStyle)} onClick={() => (setSheet("outputStyle"), setMenu(false))} />
+                  <Choice label={t("MCP 서버")} onClick={() => (setSheet("mcp"), setMenu(false))} />
+                  <Choice label={t("출력 스타일")} value={st?.outputStyle && outputStyleLabel(st.outputStyle)} onClick={() => (setSheet("outputStyle"), setMenu(false))} />
                 </>
               )}
-              <Choice label="대화 내보내기" onClick={() => (setSheet("export"), setMenu(false))} />
+              <Choice label={t("대화 내보내기")} onClick={() => (setSheet("export"), setMenu(false))} />
               <Choice
-                label="읽지 않음으로 표시"
+                label={t("읽지 않음으로 표시")}
                 onClick={() => {
                   setMenu(false);
                   void setUnread(sessionId, true).then((ok) => ok && navigate({ name: "home" }));
                 }}
               />
               {(worktree || kind === "owned") && <div className="mx-3 my-1.5 h-px bg-line" />}
-              {worktree && <Choice label="worktree 정리" onClick={() => (setCleaning(true), setMenu(false))} />}
+              {worktree && <Choice label={t("worktree 정리")} onClick={() => (setCleaning(true), setMenu(false))} />}
               {kind === "owned" && (
-                <Choice label="원격 실행 끝내기" hint="Claude Code 프로세스를 닫습니다. 대화 기록은 남습니다." onClick={() => (send({ t: "release", sessionId }), setMenu(false))} />
+                <Choice
+                  label={t("원격 실행 끝내기")}
+                  hint={t("Claude Code 프로세스를 닫습니다. 대화 기록은 남습니다.")}
+                  onClick={() => (send({ t: "release", sessionId }), setMenu(false))}
+                />
               )}
             </Fragment>
           ) : (
@@ -830,11 +845,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
               <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
               {menu.stop && (
                 <Choice
-                  label="이번 턴 중지"
+                  label={t("이번 턴 중지")}
                   hint={
                     <>
-                      <span className="block">입력창에 쓴 글은 그대로 둡니다.</span>
-                      <span className="block">백그라운드 에이전트는 에이전트 지도에서 멈춥니다.</span>
+                      <span className="block">{t("입력창에 쓴 글은 그대로 둡니다.")}</span>
+                      <span className="block">{t("백그라운드 에이전트는 에이전트 지도에서 멈춥니다.")}</span>
                     </>
                   }
                   disabled={!busy || !controllable}
@@ -843,16 +858,16 @@ export function Chat({ sessionId }: { sessionId: string }) {
               )}
               <div className="mt-1 mb-2">
                 <Tiles>
-                  <Tile icon={<Icon.refresh />} label="새로고침" onClick={() => (refreshChat(), setMenu(false))} />
-                  <Tile icon={<Icon.pencil />} label="이름 바꾸기" disabled={Boolean(renameRefused)} describedBy={renameRefused ? unableId : undefined} onClick={rename} />
+                  <Tile icon={<Icon.refresh />} label={t("새로고침")} onClick={() => (refreshChat(), setMenu(false))} />
+                  <Tile icon={<Icon.pencil />} label={t("이름 바꾸기")} disabled={Boolean(renameRefused)} describedBy={renameRefused ? unableId : undefined} onClick={rename} />
                   <Tile
                     icon={archived ? <Icon.unarchive /> : <Icon.archive />}
-                    label={archived ? "보관 해제" : "보관하기"}
+                    label={archived ? t("보관 해제") : t("보관하기")}
                     onClick={() => (!archived && worktree ? setArchiving(true) : setArchived(sessionId, !archived, vscodeArchived), setMenu(false))}
                   />
                   <Tile
                     icon={<Icon.branch />}
-                    label="갈래로 떼기"
+                    label={t("갈래로 떼기")}
                     disabled={folderMissing || Boolean(brokerOff)}
                     describedBy={folderMissing || brokerOff ? unableId : undefined}
                     onClick={() => (setFork({}), setMenu(false))}
@@ -864,17 +879,17 @@ export function Chat({ sessionId }: { sessionId: string }) {
                   </p>
                 )}
               </div>
-              <Choice label="곁질문" onClick={() => (openSide(), setMenu(false))} />
+              <Choice label={t("곁질문")} onClick={() => (openSide(), setMenu(false))} />
               <Choice
-                label="되돌리기"
+                label={t("되돌리기")}
                 disabled={folderMissing}
                 describedBy={folderMissing ? unableId : undefined}
                 onClick={() => (setRewindAt(undefined), setSheet("rewind"), setMenu(false))}
               />
-              <Choice label="변경 사항" onClick={() => (setSheet("changes"), setMenu(false))} />
-              <Choice label="Context와 사용량" onClick={() => (setSheet("contextUsage"), setMenu(false))} />
-              <Choice label="에이전트 지도" onClick={() => (setSheet("agents"), setMenu(false))} />
-              <Choice ref={menuMore} label="더 보기" next onClick={() => showMore(true)} />
+              <Choice label={t("변경 사항")} onClick={() => (setSheet("changes"), setMenu(false))} />
+              <Choice label={t("Context와 사용량")} onClick={() => (setSheet("contextUsage"), setMenu(false))} />
+              <Choice label={t("에이전트 지도")} onClick={() => (setSheet("agents"), setMenu(false))} />
+              <Choice ref={menuMore} label={t("더 보기")} next onClick={() => showMore(true)} />
             </Fragment>
           )}
         </Sheet>
@@ -943,7 +958,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           }
         />
       )}
-      {stopped && <StoppedSheet sessionId={sessionId} title={commandSheet(stopped)?.title ?? `/${stopped}`} onClose={() => setStopped(null)} />}
+      {stopped && <StoppedSheet sessionId={sessionId} title={t(commandSheet(stopped)?.title ?? `/${stopped}`)} onClose={() => setStopped(null)} />}
       {awaited && <CommandResultSheet title={awaited.title} item={result} late={awaited.late && !busy} onClose={() => setAwaited(undefined)} />}
       {sheet === "mcp" && <McpSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
       {sheet === "outputStyle" && <OutputStyleSheet sessionId={sessionId} onClose={() => setSheet(null)} />}
@@ -965,7 +980,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           kind={kind}
           busy={busy}
           host={st?.host ?? summary?.host}
-          cannot={folderMissing ? "작업 폴더가 없어 할 수 없습니다" : undefined}
+          cannot={folderMissing ? t("작업 폴더가 없어 할 수 없습니다") : undefined}
           onFork={() => {
             setMessage(null);
             setFork({ before: message });

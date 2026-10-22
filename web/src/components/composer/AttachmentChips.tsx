@@ -1,3 +1,4 @@
+import { t } from "../../i18n/index.ts";
 import { sizeText } from "../../labels.ts";
 import { Icon, Spinner } from "../ui.tsx";
 import { removeAttachment, type Attachment } from "./attachments.ts";
@@ -29,7 +30,7 @@ export function AttachmentChips({ scope, items, locked }: { scope: string; items
             </span>
           </span>
           {!locked && (
-            <button onClick={() => removeAttachment(scope, a.key)} aria-label="첨부 빼기" className="shrink-0 rounded-md p-1 text-muted">
+            <button onClick={() => removeAttachment(scope, a.key)} aria-label={t("첨부 빼기")} className="shrink-0 rounded-md p-1 text-muted">
               <Icon.x className="size-3.5" />
             </button>
           )}

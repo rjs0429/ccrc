@@ -1,6 +1,7 @@
 import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { hideDialogCommands } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, QueuedMessage, SubagentActivity, TaskInfo } from "../../../broker/src/protocol.ts";
+import { k, t } from "../i18n/index.ts";
 import { clock, noteText } from "../labels.ts";
 import { useApp } from "../state.ts";
 import { DiffView, PatchStats } from "./diff/DiffView.tsx";
@@ -49,7 +50,7 @@ function UserItem({ item, onActions }: { item: UserMessage; onActions?: (m: User
         <div className="-mt-0.5 flex h-4 items-center gap-1 text-[11px] text-muted">
           <button
             onClick={open}
-            aria-label="메시지 동작"
+            aria-label={t("메시지 동작")}
             aria-haspopup="dialog"
             className="relative flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-inset-y-3.5 active:text-fg"
             data-message-actions
@@ -88,7 +89,7 @@ function AssistantItem({ item, onActions }: { item: AssistantMessage; onActions?
           {open && (
             <button
               onClick={open}
-              aria-label="답 동작"
+              aria-label={t("답 동작")}
               aria-haspopup="dialog"
               className="relative -ml-1 flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-top-1 after:-bottom-6 active:text-fg"
               data-reply-actions
@@ -122,7 +123,7 @@ export function QueuedItem({ message, host, onTakeBack, taking, note }: { messag
     <div className="flex flex-col items-end" data-queued={message.id}>
       <div className="flex max-w-[88%] items-end gap-1">
         {onTakeBack && (
-          <button onClick={onTakeBack} disabled={taking} aria-label="보내지 않기" className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted disabled:opacity-40">
+          <button onClick={onTakeBack} disabled={taking} aria-label={t("보내지 않기")} className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted disabled:opacity-40">
             <Icon.x className="size-4" />
           </button>
         )}
@@ -136,7 +137,7 @@ export function QueuedItem({ message, host, onTakeBack, taking, note }: { messag
         </div>
       </div>
       <div className="mt-1 text-[11px] text-muted">
-        {taking ? "되돌리는 중…" : note ? note : message.from === "host" && host ? `대기 중 · ${host}에서 보냄` : "대기 중"}
+        {taking ? t("되돌리는 중…") : note ? note : message.from === "host" && host ? t("대기 중 · {host}에서 보냄", { host }) : t("대기 중")}
       </div>
     </div>
   );
@@ -190,7 +191,7 @@ function SubActivity({ sub, running }: { sub: SubagentActivity; running: boolean
   }, [running]);
   return (
     <div ref={ref} className="space-y-1 border-t border-line px-3 py-2">
-      <div ref={head} className="text-xs text-muted">도구 {sub.tools}회</div>
+      <div ref={head} className="text-xs text-muted">{t("도구 {n}회", { n: sub.tools })}</div>
       {sub.recent.map((r, n) => (
         <div key={n} className="truncate font-mono text-[12px] text-muted">
           <span className="text-fg">{r.name}</span> {r.summary}
@@ -213,21 +214,21 @@ function BackgroundLine({ item, task }: { item: Extract<DisplayItem, { kind: "to
   if (movedOut(sessionId, item.id, task, item.result?.text)) {
     return (
       <div className="flex min-h-11 items-center border-t border-line px-3 text-sm text-muted" data-background-running={item.id}>
-        백그라운드에서 실행 중
+        {t("백그라운드에서 실행 중")}
       </div>
     );
   }
   if (old) {
     return (
       <div className="border-t border-line px-3 py-2.5 text-xs break-keep text-muted" data-background-old={item.id}>
-        {OLD_WRAPPER_NOTE}
+        {t(OLD_WRAPPER_NOTE)}
       </div>
     );
   }
   if (!movable && !moving) return null;
   return (
     <button onClick={() => move(item.id)} disabled={moving} className="flex min-h-11 w-full items-center border-t border-line px-3 text-left text-sm font-medium text-accent disabled:opacity-50" data-background={item.id}>
-      {moving ? "보내는 중…" : "백그라운드로"}
+      {moving ? t("보내는 중…") : t("백그라운드로")}
     </button>
   );
 }
@@ -261,10 +262,10 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
     <div className="rounded-xl border border-line bg-surface">
       <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 px-3 py-2 text-left">
         {status}
-        <span className="shrink-0 text-sm font-medium">{item.name || "도구"}</span>
+        <span className="shrink-0 text-sm font-medium">{item.name || t("도구")}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted">{item.summary}</span>
         {item.patch && <PatchStats hunks={item.patch} />}
-        {sub && !active && !open && <span className="shrink-0 text-xs text-muted">도구 {sub.tools}회</span>}
+        {sub && !active && !open && <span className="shrink-0 text-xs text-muted">{t("도구 {n}회", { n: sub.tools })}</span>}
         <Icon.chevronDown className={`size-4 shrink-0 text-muted transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
       {sub && (active || open) && <SubActivity sub={sub} running={active} />}
@@ -275,7 +276,7 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
           ) : item.input != null ? (
             <ToolInput name={item.name} input={item.input} reply={item.reply} />
           ) : (
-            offline && <p className="text-xs text-muted" data-copy-note>{NOT_KEPT}</p>
+            offline && <p className="text-xs text-muted" data-copy-note>{t(NOT_KEPT)}</p>
           )}
           {item.result && (!item.patch || item.result.isError) && !item.reply && !offline && (
             <ToolOutput text={item.result.text + (item.result.truncated ? "\n…" : "")} isError={item.result.isError} />
@@ -284,11 +285,11 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
       )}
       {openAgent && (item.name === "Agent" || item.name === "Task") && (
         <button
-          onClick={() => openAgent({ ...(item.sub?.agentId ? { agentId: item.sub.agentId } : {}), toolUseId: item.id, title: item.summary || "서브에이전트" })}
+          onClick={() => openAgent({ ...(item.sub?.agentId ? { agentId: item.sub.agentId } : {}), toolUseId: item.id, title: item.summary || t("서브에이전트") })}
           className="flex min-h-11 w-full items-center justify-between border-t border-line px-3 text-left text-sm font-medium text-accent"
           data-open-transcript={item.id}
         >
-          기록 보기
+          {t("기록 보기")}
           <Icon.chevronRight className="size-4" />
         </button>
       )}
@@ -331,21 +332,21 @@ export function CommandBody({ item, more }: { item: CommandResult; more?: boolea
 function CommandCard({ item }: { item: CommandResult }) {
   const [more, setMore] = useState(false);
   const offline = useContext(OfflineView);
-  const head = item.name ? `/${item.name}${item.args ? ` ${item.args}` : ""}` : "명령 출력";
+  const head = item.name ? `/${item.name}${item.args ? ` ${item.args}` : ""}` : t("명령 출력");
   return (
     <div className="rounded-xl border border-line bg-surface" data-command={item.name ?? ""}>
       <div className="flex items-center gap-2 px-3 pt-2 pb-1">
         <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted">{head}</span>
         {(item.context || (item.usage && item.text)) && (
           <button onClick={() => setMore(!more)} className="shrink-0 text-xs font-medium text-accent">
-            {more ? "접기" : item.context ? "자세히" : "원문"}
+            {more ? t("접기") : item.context ? t("자세히") : t("원문")}
           </button>
         )}
       </div>
       <div className="px-3 pb-3 pt-1">
         {offline ? (
           <p className="text-xs text-muted" data-copy-note>
-            {NOT_KEPT}
+            {t(NOT_KEPT)}
           </p>
         ) : (
           <CommandBody item={item} more={more} />
@@ -356,9 +357,9 @@ function CommandCard({ item }: { item: CommandResult }) {
 }
 
 const SENDER_LABEL: Record<Extract<DisplayItem, { kind: "message" }>["from"], string> = {
-  agent: "에이전트 보고",
-  session: "다른 세션 메시지",
-  channel: "채널 메시지",
+  agent: k("에이전트 보고"),
+  session: k("다른 세션 메시지"),
+  channel: k("채널 메시지"),
 };
 
 // The first line of a Markdown text as plain words, for a folded card.
@@ -380,7 +381,7 @@ function MessageCard({ item }: { item: Extract<DisplayItem, { kind: "message" }>
       <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex min-h-11 w-full items-start gap-2 px-3 py-2 text-left">
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-medium text-muted">
-            {SENDER_LABEL[item.from]}
+            {t(SENDER_LABEL[item.from])}
             {item.name && ` · @${item.name}`}
           </span>
           {!open && lead && <span className="mt-0.5 block truncate text-[13px] text-muted">{lead}</span>}
@@ -397,9 +398,9 @@ function MessageCard({ item }: { item: Extract<DisplayItem, { kind: "message" }>
 }
 
 const TASK_STATUS: Record<NonNullable<Extract<DisplayItem, { kind: "task" }>["status"]>, string> = {
-  completed: "완료",
-  failed: "실패",
-  stopped: "중지됨",
+  completed: k("완료"),
+  failed: k("실패"),
+  stopped: k("중지됨"),
 };
 
 // Claude Code's notice about a background task as one line; the result or event it carried opens below, and so
@@ -421,7 +422,7 @@ function TaskNote({ item }: { item: Extract<DisplayItem, { kind: "task" }> }) {
     <>
       {icon}
       <span className={`min-w-0 flex-1 ${open ? "whitespace-pre-wrap" : "truncate"}`}>
-        {item.status ? TASK_STATUS[item.status] : "알림"}
+        {item.status ? t(TASK_STATUS[item.status]) : t("알림")}
         {item.summary && ` · ${item.summary}`}
       </span>
     </>
@@ -449,7 +450,7 @@ function TaskNote({ item }: { item: Extract<DisplayItem, { kind: "task" }> }) {
 function ShellCard({ item }: { item: Extract<DisplayItem, { kind: "shell" }> }) {
   return (
     <div className="rounded-xl border border-line bg-surface" data-shell>
-      <div className="px-3 py-2 font-mono text-[12.5px] break-all whitespace-pre-wrap text-muted">{item.command ? `! ${item.command}` : "명령 출력"}</div>
+      <div className="px-3 py-2 font-mono text-[12.5px] break-all whitespace-pre-wrap text-muted">{item.command ? `! ${item.command}` : t("명령 출력")}</div>
       {item.output && (
         <div className="px-3 pb-3">
           <Folded text={item.output} mono />
@@ -517,7 +518,7 @@ export function StreamPreview({ text, thinking }: { text: string; thinking: bool
     return (
       <div className="flex items-center gap-2 text-sm text-muted">
         <Spinner className="size-3.5" />
-        생각하는 중…
+        {t("생각하는 중…")}
       </div>
     );
   }
