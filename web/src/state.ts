@@ -13,7 +13,7 @@ import type {
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, onPasskeyDue, type Me, type Options } from "./api.ts";
 import { isIos, lastTap, recentRequest, syncAttention, syncPushLang } from "./push.ts";
-import { joined, placed } from "./chatItems.ts";
+import { joined, placed, streamed, type Streamed } from "./chatItems.ts";
 import { copyLoggedOut, copyLogin, copyPasskeyDue, copySignedIn, flushContact, keepCopy, noteHeard, noteLost, noteSent } from "./offline.ts";
 import { bindSent } from "./sentPreviews.ts";
 
@@ -34,7 +34,7 @@ export interface Chat {
   state?: LiveState;
   // When the state arrived, so a running task's time counts on from the broker's measure.
   stateAt?: number;
-  stream?: { text: string; thinking: boolean };
+  stream?: Streamed;
   hasMore: boolean;
   gap?: SnapshotGap;
   // The agent and to-do calls of the parts not loaded, in order, the last `earlierInGap` of them from the gap.
@@ -634,6 +634,10 @@ function updateChat(sessionId: string, fn: (c: Chat) => Partial<Chat> | undefine
   });
 }
 
+// A thought that ended leaves with the next item or state of its session, or after this long.
+const ENDED_THOUGHT_MS = 1000;
+const settled = (c: Chat, patch: Partial<Chat> | undefined): Partial<Chat> | undefined => (c.stream?.ended ? { ...patch, stream: undefined } : patch);
+
 const HISTORY_CHANGED = "history_changed";
 let snapshots = 0;
 
@@ -701,11 +705,14 @@ function onServer(msg: ServerMsg): void {
       return;
     case "item":
       bindSent(msg.sessionId, msg.item);
-      updateChat(msg.sessionId, (c) => placed(c, msg.item, msg.prev));
+      updateChat(msg.sessionId, (c) => settled(c, placed(c, msg.item, msg.prev)));
       return;
-    case "stream":
-      updateChat(msg.sessionId, () => ({ stream: msg.text || msg.thinking ? { text: msg.text, thinking: msg.thinking } : undefined }));
+    case "stream": {
+      const stream = streamed(state.chat?.sessionId === msg.sessionId ? state.chat.stream : undefined, msg.text, msg.thinking);
+      updateChat(msg.sessionId, (c) => (c.stream === stream ? undefined : { stream }));
+      if (stream?.ended) setTimeout(() => updateChat(msg.sessionId, (c) => (c.stream === stream ? { stream: undefined } : undefined)), ENDED_THOUGHT_MS);
       return;
+    }
     case "pending_add":
       updateChat(msg.sessionId, (c) => ({ pending: [...c.pending.filter((p) => p.id !== msg.request.id), msg.request] }));
       return;
@@ -714,7 +721,7 @@ function onServer(msg: ServerMsg): void {
       return;
     case "state":
       for (const q of msg.state.queued ?? []) bindSent(msg.sessionId, q);
-      updateChat(msg.sessionId, (c) => (same(c.state, msg.state) ? undefined : { state: msg.state, stateAt: Date.now() }));
+      updateChat(msg.sessionId, (c) => settled(c, same(c.state, msg.state) ? undefined : { state: msg.state, stateAt: Date.now() }));
       if (!state.options?.models.length) void refreshOptions();
       return;
     case "session_started": {
