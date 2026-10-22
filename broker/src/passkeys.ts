@@ -237,6 +237,17 @@ export class Passkeys {
   }
 }
 
+// Tells, each time it is called, whether a first passkey came or the last one went since the call before: a remote
+// login's next confirmation comes or goes with it.
+export function passkeysWatch(passkeys: Passkeys): () => boolean {
+  let any = passkeys.any();
+  return () => {
+    const was = any;
+    any = passkeys.any();
+    return any !== was;
+  };
+}
+
 function valid(p: unknown): p is StoredPasskey {
   const o = p as Partial<StoredPasskey> | null;
   return (

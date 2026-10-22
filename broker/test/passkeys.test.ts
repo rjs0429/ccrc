@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { PasskeyError, Passkeys } from "../src/passkeys.ts";
+import { PasskeyError, Passkeys, passkeysWatch } from "../src/passkeys.ts";
 import type { StoredLease } from "../src/store.ts";
 import { WebAuthnError, passkeyOrigin, verifyAssertion, verifyRegistration } from "../src/webauthn.ts";
 import { Authenticator, FLAGS, type Alg } from "./authenticator.ts";
@@ -183,6 +183,25 @@ test("the file is read again when another process changes it, and a passkey can 
   assert.equal(other.remove(p.id), true);
   assert.equal(other.remove(p.id), false);
   assert.deepEqual(keys.list(), []);
+});
+
+test("the watch tells when a first passkey comes or the last one goes, also by another process", async () => {
+  const file = fileOf();
+  const keys = new Passkeys(file);
+  const look = passkeysWatch(keys);
+  assert.equal(look(), false);
+  const first = registered(keys);
+  assert.equal(look(), true, "the first passkey");
+  assert.equal(look(), false);
+  registered(keys);
+  assert.equal(look(), false, "a second one");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(new Passkeys(file).remove(first.id), true);
+  assert.equal(look(), false, "one of two removed, as `ccrc passkey remove`");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(new Passkeys(file).reset(), 1);
+  assert.equal(look(), true, "the last one gone, as `ccrc passkey reset`");
+  assert.equal(look(), false);
 });
 
 test("at most ten passkeys are kept", () => {

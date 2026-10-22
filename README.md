@@ -485,6 +485,8 @@ does the file.
   and output, diffs, command output, thinking and pictures are not kept. It shows read only, and only as long as the
   phone's login would last without activity (`leaseIdleMinutes` from the last request or message of the phone's that
   the broker took in, less a minute), and with passkeys no longer than the login goes before the next confirmation.
+  A connected phone hears at once when the machine changes these times (`leaseIdleMinutes`, `passkeyHours`, or the
+  last passkey removed with `ccrc passkey`).
   It is deleted on logout, when that time runs out (also from a screen showing it), when a passkey has to confirm the
   login, at once when the password is changed (on the phone, or with `ccrc passwd` while the phone is connected), and
   otherwise when the phone next reaches the machine and learns that its login ended (`ccrc logout`, a login

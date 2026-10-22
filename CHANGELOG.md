@@ -148,7 +148,7 @@ your version and the new one, and the lines under "Breaking" separately.
   broker (also while the copy is on screen) and a passkey confirmation coming due all delete it. "최근 대화를 휴대폰에
   저장" under 계정과 보안 (on by default) turns it off and deletes it, and shows how much it holds. `/api/me` also gives
   a logged-in phone `leaseIdleMinutes`, when the password was set (`loginSetAt`) and, with passkeys, how long until the
-  next confirmation (`passkeyLeftMs`).
+  next confirmation (`passkeyLeftMs`); a connected phone asks again when one of them changes while the broker runs.
 
 ### Changed
 

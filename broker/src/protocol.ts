@@ -947,7 +947,8 @@ export type ServerMsg =
   | { t: "sessions_changed" }
   // What /api/options gives changed: the folders new sessions may start in, or how broker sessions sign in.
   | { t: "options_changed" }
-  // The password was set again (`ccrc passwd` while the broker runs): /api/me says when.
+  // What /api/me tells of the login changed while the broker runs (`ccrc passwd`, leaseIdleMinutes, passkeyHours, the
+  // first passkey or the last one gone): the window asks it again.
   | { t: "login_changed" }
   | { t: "error"; message: string; sessionId?: string; draftId?: string }
   | { t: "call_result"; id: number; ok: boolean; data?: unknown; error?: string }

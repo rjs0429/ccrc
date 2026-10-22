@@ -26,7 +26,7 @@ import { Leases } from "./lease.ts";
 import { linkSocketPath } from "./link/protocol.ts";
 import { LinkServer } from "./link/server.ts";
 import { migrateConfigFile } from "./migrate.ts";
-import { DEFAULT_HOURS, Passkeys } from "./passkeys.ts";
+import { DEFAULT_HOURS, Passkeys, passkeysWatch } from "./passkeys.ts";
 import { Push } from "./push/index.ts";
 import { PUSH_TEXT } from "./push/text.ts";
 import { RemoteActivity } from "./remote-activity.ts";
@@ -111,6 +111,7 @@ async function serve(): Promise<void> {
       gate.update(c.allowedDevices, c.allowLocal);
       leases.setIdleMinutes(c.leaseIdleMinutes);
       passkeys.setHours(c.passkeyHours ?? DEFAULT_HOURS);
+      if (changed.includes("leaseIdleMinutes") || changed.includes("passkeyHours")) hub.loginChanged();
       if (changed.includes("brokerSessions") || changed.includes("roots") || changed.includes("vscodeArchive")) manager.emit("options_changed");
       if (changed.includes("vscodeArchive")) manager.emit("changed");
       updates.configChanged(changed);
@@ -126,6 +127,11 @@ async function serve(): Promise<void> {
     const { leaseGone, passwordSet } = credentialsChanged();
     if (leaseGone) leases.emit("revoked", "logout");
     if (passwordSet) hub.loginChanged();
+  });
+  // `ccrc passkey remove` and `reset` edit the passkeys file while the broker runs.
+  const passkeysChanged = passkeysWatch(passkeys);
+  fs.watchFile(passkeys.file, { interval: 2000 }, () => {
+    if (passkeysChanged()) hub.loginChanged();
   });
 
   const search = new SessionSearch();

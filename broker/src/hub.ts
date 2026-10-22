@@ -255,7 +255,8 @@ export class Hub {
     }, CHANGED_DEBOUNCE_MS);
   }
 
-  // The password was set again: each window asks /api/me, by which the phone's copy kept under the one before goes.
+  // What /api/me tells of the login changed while the broker runs: its password, how long it lasts idle, or when a
+  // passkey next confirms it. Each window asks again, and the phone's copy goes by the answer.
   loginChanged(): void {
     for (const ws of [this.active, ...this.standby.keys()]) if (ws) send(ws, { t: "login_changed" });
   }
