@@ -6,6 +6,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-23
+
 ### 추가
 
 - 기기 설정 "Thinking 펼쳐 보기"(설정 > 알림과 입력 > 대화, 기본 끔). 켜면 대화와 서브에이전트 기록의 Thinking 이 펼쳐진 채로 시작하고, 아직 흘러오는 생각도 글이 오는 대로 보인다. 흘러오는 생각도 이제 다른 칸처럼 눌러 펴고 접는다. 손으로 펴거나 접은 칸은 페이지를 새로 고쳐도 그대로이고, 나머지는 설정을 따른다.
@@ -315,7 +317,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 - 쉬는 브로커 세션 프로세스는 15분 뒤 닫는다. 메시지 내용 없는 감사 로그. 라이트·다크 테마.
 - `ccrc serve | passwd | status | logout` 과 `deploy/install-service.sh`.
 
-[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/rjs0429/ccrc/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/rjs0429/ccrc/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/rjs0429/ccrc/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/rjs0429/ccrc/compare/v0.7.2...v0.7.3
