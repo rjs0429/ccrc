@@ -2,28 +2,29 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { PushPrefs, TurnEndMode } from "../../../../broker/src/push/types.ts";
 import { ApiError } from "../../api.ts";
 import { Button, Icon, Spinner } from "../../components/ui.tsx";
+import { k, t } from "../../i18n/index.ts";
 import { relTime } from "../../labels.ts";
 import { isIos, loadDevice, pushBlock, pushErrorText, savePrefs, sendTest, turnOff, turnOn, type PushBlock, type PushDevice } from "../../push.ts";
 import { loggedOut, toast } from "../../state.ts";
 
 const BLOCKED: Record<PushBlock, string> = {
-  insecure: "HTTPS 주소로 접속해야 알림을 받을 수 있습니다.",
+  insecure: k("HTTPS 주소로 접속해야 알림을 받을 수 있습니다."),
   ios_install:
-    "iPhone에서는 홈 화면에 추가한 앱에서만 알림을 받을 수 있습니다(iOS 16.4 이상). Safari 공유 버튼의 '홈 화면에 추가'로 앱을 만든 뒤 그 앱에서 켜세요.",
-  ios_update: "알림을 받으려면 iOS 16.4 이상이 필요합니다.",
-  unsupported: "이 브라우저는 푸시 알림을 지원하지 않습니다.",
+    k("iPhone에서는 홈 화면에 추가한 앱에서만 알림을 받을 수 있습니다(iOS 16.4 이상). Safari 공유 버튼의 '홈 화면에 추가'로 앱을 만든 뒤 그 앱에서 켜세요."),
+  ios_update: k("알림을 받으려면 iOS 16.4 이상이 필요합니다."),
+  unsupported: k("이 브라우저는 푸시 알림을 지원하지 않습니다."),
 };
 
 const DELAYS: [number, string][] = [
-  [0, "바로"],
-  [30, "30초 뒤"],
-  [120, "2분 뒤"],
+  [0, k("바로")],
+  [30, k("30초 뒤")],
+  [120, k("2분 뒤")],
 ];
 
 const TURN_ENDS: [TurnEndMode, string, string][] = [
-  ["remote", "휴대폰에서 보낸 세션", "최근 2시간 안에 휴대폰에서 보내거나 답한 세션만 알립니다"],
-  ["all", "모든 세션", "VS Code에서 시킨 작업도 알립니다. 그 작업은 위에서 고른 시간만큼 기다렸다가 알립니다"],
-  ["off", "끔", "작업이 끝나도 알리지 않습니다. 권한 요청과 질문은 그대로 알립니다"],
+  ["remote", k("휴대폰에서 보낸 세션"), k("최근 2시간 안에 휴대폰에서 보내거나 답한 세션만 알립니다")],
+  ["all", k("모든 세션"), k("VS Code에서 시킨 작업도 알립니다. 그 작업은 위에서 고른 시간만큼 기다렸다가 알립니다")],
+  ["off", k("끔"), k("작업이 끝나도 알리지 않습니다. 권한 요청과 질문은 그대로 알립니다")],
 ];
 
 function Note({ children }: { children: ReactNode }) {
@@ -49,26 +50,26 @@ function TurnEndChoice({ value, onChange }: { value: TurnEndMode; onChange: (mod
   return (
     <div className="space-y-2 px-3.5 py-3">
       <div>
-        <div className="text-[15px]">작업 완료 알림</div>
-        <div className="text-xs text-muted">작업을 마치거나 오류로 멈추면 알립니다</div>
+        <div className="text-[15px]">{t("작업 완료 알림")}</div>
+        <div className="text-xs text-muted">{t("작업을 마치거나 오류로 멈추면 알립니다")}</div>
       </div>
-      <div role="radiogroup" aria-label="작업 완료 알림" className="space-y-0.5">
+      <div role="radiogroup" aria-label={t("작업 완료 알림")} className="space-y-0.5">
         {TURN_ENDS.map(([mode, label, hint]) => (
           <button
             key={mode}
             role="radio"
             aria-checked={value === mode}
-            aria-label={mode === "remote" ? `${label} (기본)` : label}
+            aria-label={mode === "remote" ? t("{label} (기본)", { label: t(label) }) : t(label)}
             aria-describedby={`${id}-${mode}`}
             onClick={() => onChange(mode)}
             className={`flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left ${value === mode ? "bg-accent-soft" : "active:bg-surface-2"}`}
           >
             <span className="min-w-0 flex-1">
               <span className="block text-[15px]">
-                {label}
-                {mode === "remote" && <span className="ml-1.5 text-xs text-muted">기본</span>}
+                {t(label)}
+                {mode === "remote" && <span className="ml-1.5 text-xs text-muted">{t("기본")}</span>}
               </span>
-              <span id={`${id}-${mode}`} className="block text-xs break-keep text-pretty text-muted">{hint}</span>
+              <span id={`${id}-${mode}`} className="block text-xs break-keep text-pretty text-muted">{t(hint)}</span>
             </span>
             <Icon.check className={`mt-0.5 size-4 shrink-0 text-accent ${value === mode ? "" : "invisible"}`} />
           </button>
@@ -79,7 +80,7 @@ function TurnEndChoice({ value, onChange }: { value: TurnEndMode; onChange: (mod
 }
 
 function deviceName(device?: string): string {
-  return device === "local" ? "노트북" : (device ?? "");
+  return device === "local" ? t("노트북") : (device ?? "");
 }
 
 export function NotificationsSection() {
@@ -123,8 +124,8 @@ export function NotificationsSection() {
   };
 
   let body: ReactNode;
-  if (block) body = <Note>{BLOCKED[block]}</Note>;
-  else if (failed) body = <Note>알림 상태를 확인하지 못했습니다.</Note>;
+  if (block) body = <Note>{t(BLOCKED[block])}</Note>;
+  else if (failed) body = <Note>{t("알림 상태를 확인하지 못했습니다.")}</Note>;
   else if (!device)
     body = (
       <div className="flex justify-center py-3 text-muted">
@@ -132,13 +133,17 @@ export function NotificationsSection() {
       </div>
     );
   else if (Notification.permission === "denied")
-    body = <Note>알림 권한이 꺼져 있습니다. {isIos() ? "설정 앱 → 알림 → ccrc에서 허용하세요." : "브라우저의 사이트 설정에서 알림을 허용하세요."}</Note>;
+    body = (
+      <Note>
+        {isIos() ? t("알림 권한이 꺼져 있습니다. 설정 앱 → 알림 → ccrc에서 허용하세요.") : t("알림 권한이 꺼져 있습니다. 브라우저의 사이트 설정에서 알림을 허용하세요.")}
+      </Note>
+    );
   else if (!device.status.subscribed || !device.status.prefs)
     body = (
       <>
-        <Note>권한 요청이나 질문이 오거나, 보낸 작업이 끝나거나 멈추면 이 기기로 알립니다.</Note>
+        <Note>{t("권한 요청이나 질문이 오거나, 보낸 작업이 끝나거나 멈추면 이 기기로 알립니다.")}</Note>
         <Button kind="primary" className="w-full" disabled={busy} onClick={() => void run(async () => setDevice(await turnOn(device)))}>
-          알림 켜기
+          {t("알림 켜기")}
         </Button>
       </>
     );
@@ -165,29 +170,29 @@ export function NotificationsSection() {
         );
         setDevice(await loadDevice());
         if (error) throw error;
-        toast("테스트 알림을 보냈습니다");
+        toast(t("테스트 알림을 보냈습니다"));
       });
     body = (
       <>
         <div className="rounded-xl bg-surface p-3.5 text-[15px]">
           <div>
-            알림 켜짐 <span className="text-muted">· {deviceName(device.status.device)}</span>
+            {t("알림 켜짐")} <span className="text-muted">· {deviceName(device.status.device)}</span>
           </div>
           {lastError ? (
             <div className="mt-1 text-xs text-danger">
-              마지막 전송 실패 ({lastError.status || "연결 안 됨"}) · {relTime(lastError.at)}
+              {t("마지막 전송 실패 ({status}) · {when}", { status: lastError.status || t("연결 안 됨"), when: relTime(lastError.at) })}
             </div>
           ) : lastSent ? (
-            <div className="mt-1 text-xs text-muted">마지막 전송 {relTime(lastSent)}</div>
+            <div className="mt-1 text-xs text-muted">{t("마지막 전송 {when}", { when: relTime(lastSent) })}</div>
           ) : null}
         </div>
         <div className="divide-y divide-line rounded-xl bg-surface">
           <div className="space-y-2 px-3.5 py-3">
             <div>
-              <div className="text-[15px]">VS Code 세션 알림</div>
-              <div className="text-xs text-muted">노트북에서 먼저 답하거나 이어 할 수 있게 기다렸다가 알립니다</div>
+              <div className="text-[15px]">{t("VS Code 세션 알림")}</div>
+              <div className="text-xs text-muted">{t("노트북에서 먼저 답하거나 이어 할 수 있게 기다렸다가 알립니다")}</div>
             </div>
-            <div role="radiogroup" aria-label="VS Code 세션 알림" className="flex gap-1 rounded-xl bg-surface-2 p-1">
+            <div role="radiogroup" aria-label={t("VS Code 세션 알림")} className="flex gap-1 rounded-xl bg-surface-2 p-1">
               {DELAYS.map(([sec, label]) => (
                 <button
                   key={sec}
@@ -196,31 +201,31 @@ export function NotificationsSection() {
                   onClick={() => update({ vscodeDelaySec: sec })}
                   className={`flex-1 rounded-lg py-1.5 text-sm ${prefs.vscodeDelaySec === sec ? "bg-surface font-medium shadow-sm" : "text-muted"}`}
                 >
-                  {label}
+                  {t(label)}
                 </button>
               ))}
             </div>
           </div>
           <TurnEndChoice value={prefs.turnEnd} onChange={(turnEnd) => update({ turnEnd })} />
           <Toggle
-            label="Claude가 보내는 알림"
-            hint="'끝나면 알려줘'처럼 Claude가 알릴 일이라고 판단하면 바로 알립니다. 그 작업의 완료 알림은 생략합니다"
+            label={t("Claude가 보내는 알림")}
+            hint={t("'끝나면 알려줘'처럼 Claude가 알릴 일이라고 판단하면 바로 알립니다. 그 작업의 완료 알림은 생략합니다")}
             on={prefs.claude}
             onChange={(on) => update({ claude: on })}
           />
           <Toggle
-            label="도구 이름 표시"
-            hint="권한 요청 알림에 도구 이름을, 입력 요청 알림에 MCP 서버 이름을, 파일 알림에 보낸 파일 이름을, Claude가 보낸 알림에 그 내용을 함께 보여 줍니다. 잠금 화면에도 보입니다"
+            label={t("도구 이름 표시")}
+            hint={t("권한 요청 알림에 도구 이름을, 입력 요청 알림에 MCP 서버 이름을, 파일 알림에 보낸 파일 이름을, Claude가 보낸 알림에 그 내용을 함께 보여 줍니다. 잠금 화면에도 보입니다")}
             on={prefs.details}
             onChange={(on) => update({ details: on })}
           />
         </div>
         <div className="flex gap-2">
           <Button className="flex-1" disabled={busy} onClick={test}>
-            테스트 알림 보내기
+            {t("테스트 알림 보내기")}
           </Button>
           <Button kind="danger" className="flex-1" disabled={busy} onClick={() => void run(async () => setDevice(await turnOff(device)))}>
-            알림 끄기
+            {t("알림 끄기")}
           </Button>
         </div>
       </>
@@ -229,7 +234,7 @@ export function NotificationsSection() {
 
   return (
     <section className="space-y-2">
-      <div className="text-sm font-semibold text-muted">알림</div>
+      <div className="text-sm font-semibold text-muted">{t("알림")}</div>
       {body}
     </section>
   );

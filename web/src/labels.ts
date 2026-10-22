@@ -1,6 +1,6 @@
 import type { BrokerSessionsInfo, EffortName, InboxInfo, ModelOption, NoteCode, SessionSummary } from "../../broker/src/protocol.ts";
-import { clock, monthDay } from "./i18n/format.ts";
-import { k, t } from "./i18n/index.ts";
+import { clock, dateTime, monthDay } from "./i18n/format.ts";
+import { k, locale, t } from "./i18n/index.ts";
 
 export { clock };
 
@@ -132,14 +132,14 @@ export function dialogLabel(kind: string): string {
   return Object.hasOwn(DIALOG_LABEL, kind) ? t(DIALOG_LABEL[kind]) : kind;
 }
 
-const REFUSAL_FIELD: Record<string, string> = { cyber: "정상적인 코딩·보안 작업", bio: "정상적인 생명과학 작업" };
+const REFUSAL_FIELD: Record<string, string> = { cyber: k("정상적인 코딩·보안 작업"), bio: k("정상적인 생명과학 작업") };
 
 // Why a turn stopped at a refusal and what the user can do, as VS Code tells it. A particle after a model's name would
 // depend on how the name ends, so "모델" carries it.
 export function refusalText(model: string, fallback: string, category?: string): string {
-  const field = category && Object.hasOwn(REFUSAL_FIELD, category) ? REFUSAL_FIELD[category] : undefined;
-  const why = field ? `안전장치를 넓게 잡아 ${field}도 가끔 걸립니다.` : "평범한 대화에서도 가끔 일어납니다.";
-  return `${model}의 안전장치가 이 메시지를 막았습니다. ${why} ${fallback} 모델로 계속하거나, 메시지를 고쳐 ${model} 모델로 다시 보내세요.`;
+  const field = category && Object.hasOwn(REFUSAL_FIELD, category) ? t(REFUSAL_FIELD[category]) : undefined;
+  const why = field ? t("안전장치를 넓게 잡아 {field}도 가끔 걸립니다.", { field }) : t("평범한 대화에서도 가끔 일어납니다.");
+  return t("{model}의 안전장치가 이 메시지를 막았습니다. {why} {fallback} 모델로 계속하거나, 메시지를 고쳐 {model} 모델로 다시 보내세요.", { model, why, fallback });
 }
 
 const ZERO_DECIMAL = new Set(["JPY", "KRW", "VND"]);
@@ -148,7 +148,7 @@ function money(cents: number, currency = "USD"): string {
   const code = currency.toUpperCase();
   const amount = ZERO_DECIMAL.has(code) ? cents : cents / 100;
   try {
-    return new Intl.NumberFormat("ko-KR", { style: "currency", currency: code }).format(amount);
+    return new Intl.NumberFormat(locale(), { style: "currency", currency: code }).format(amount);
   } catch {
     return `$${(cents / 100).toFixed(2)}`;
   }
@@ -157,9 +157,10 @@ function money(cents: number, currency = "USD"): string {
 // What the usage credits consent asks, from the dialog's own figures.
 export function creditsText(info: { model?: string; enabled: boolean; balanceCents?: number; currency?: string }): string {
   const model = info.model ?? "Fable";
-  const balance = info.balanceCents !== undefined ? ` 남은 크레딧은 ${money(info.balanceCents, info.currency)}입니다.` : "";
-  const base = `${model} 모델은 요금제와 따로 과금되는 사용 크레딧으로 실행됩니다.`;
-  return info.enabled ? `${base}${balance} 크레딧을 쓸지는 계정의 과금 결정이라 VS Code에서만 답할 수 있습니다.` : `${base} 이 계정에는 아직 사용 크레딧이 없습니다.`;
+  const base = t("{model} 모델은 요금제와 따로 과금되는 사용 크레딧으로 실행됩니다.", { model });
+  if (!info.enabled) return `${base} ${t("이 계정에는 아직 사용 크레딧이 없습니다.")}`;
+  const balance = info.balanceCents !== undefined ? ` ${t("남은 크레딧은 {amount}입니다.", { amount: money(info.balanceCents, info.currency) })}` : "";
+  return `${base}${balance} ${t("크레딧을 쓸지는 계정의 과금 결정이라 VS Code에서만 답할 수 있습니다.")}`;
 }
 
 // Why a session no longer has a process the broker drives, as a sentence.
@@ -335,17 +336,17 @@ ERRORS.push(
 );
 
 ERRORS.push(
-  [/^invalid callback URL$/, "로그인 뒤 넘어간 localhost 주소를 통째로 붙여 넣으세요"],
-  [/^Invalid callback URL: missing authorization code/, "주소에 인증 코드가 없습니다. 주소를 통째로 붙여 넣으세요"],
-  [/^Callback URL not accepted:/, "다른 로그인 시도의 주소입니다. 방금 연 로그인 페이지에서 넘어간 주소를 붙여 넣으세요"],
-  [/^No active OAuth flow for server/, "진행 중인 인증이 없습니다. '인증'을 다시 누르세요"],
-  [/does not support OAuth authentication|does not support authentication/, "이 서버는 여기서 인증할 수 없습니다"],
-  [/^Server not found: /, "MCP 서버를 찾을 수 없습니다"],
-  [/blocked by enterprise managed policy/, "관리자 정책으로 막힌 서버입니다"],
-  [/^Unable to build claude\.ai connector auth URL/, "claude.ai 커넥터의 인증 주소를 만들지 못했습니다"],
-  [/OAuth authentication failed/, "인증하지 못했습니다. '인증'을 다시 누르세요"],
-  [/^invalid answer$/, "이 요청에 맞지 않는 답입니다"],
-  [/^passkey_required$/, "패스키로 확인해야 합니다"],
+  [/^invalid callback URL$/, k("로그인 뒤 넘어간 localhost 주소를 통째로 붙여 넣으세요")],
+  [/^Invalid callback URL: missing authorization code/, k("주소에 인증 코드가 없습니다. 주소를 통째로 붙여 넣으세요")],
+  [/^Callback URL not accepted:/, k("다른 로그인 시도의 주소입니다. 방금 연 로그인 페이지에서 넘어간 주소를 붙여 넣으세요")],
+  [/^No active OAuth flow for server/, k("진행 중인 인증이 없습니다. '인증'을 다시 누르세요")],
+  [/does not support OAuth authentication|does not support authentication/, k("이 서버는 여기서 인증할 수 없습니다")],
+  [/^Server not found: /, k("MCP 서버를 찾을 수 없습니다")],
+  [/blocked by enterprise managed policy/, k("관리자 정책으로 막힌 서버입니다")],
+  [/^Unable to build claude\.ai connector auth URL/, k("claude.ai 커넥터의 인증 주소를 만들지 못했습니다")],
+  [/OAuth authentication failed/, k("인증하지 못했습니다. '인증'을 다시 누르세요")],
+  [/^invalid answer$/, k("이 요청에 맞지 않는 답입니다")],
+  [/^passkey_required$/, k("패스키로 확인해야 합니다")],
 );
 
 export function errorText(message: string): string {
@@ -421,8 +422,8 @@ export function relTime(ms: number, now = Date.now()): string {
 // A span of minutes in words: "45분", "12시간", "1시간 30분".
 export function minutesText(minutes: number): string {
   const m = Math.max(1, Math.round(minutes));
-  if (m < 60) return `${m}분`;
-  return m % 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${m / 60}시간`;
+  if (m < 60) return t("{m}분", { m });
+  return m % 60 ? t("{h}시간 {m}분", { h: Math.floor(m / 60), m: m % 60 }) : t("{h}시간", { h: m / 60 });
 }
 
 // A time to come with its day: "오늘 21:30", "내일 09:10", "10월 20일 09:10".
@@ -430,7 +431,7 @@ export function dayClock(ms: number, now = new Date()): string {
   const d = new Date(ms);
   const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const ahead = Math.round((day(d) - day(now)) / 86_400_000);
-  return `${ahead === 0 ? "오늘" : ahead === 1 ? "내일" : `${d.getMonth() + 1}월 ${d.getDate()}일`} ${clock(d)}`;
+  return ahead === 0 ? t("오늘 {time}", { time: clock(d) }) : ahead === 1 ? t("내일 {time}", { time: clock(d) }) : dateTime(d);
 }
 
 export function usageLimitLabel(kind: string, scope?: string): string {

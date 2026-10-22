@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type PasskeyList, type PasskeyView } from "../../api.ts";
 import { Button, Sheet, Spinner } from "../../components/ui.tsx";
+import { k, t } from "../../i18n/index.ts";
+import { tNode } from "../../i18n/react.ts";
 import { createPasskey, passkeyError, passkeysSupported } from "../../passkey.ts";
 import { meAgain, toast } from "../../state.ts";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
@@ -8,20 +10,20 @@ import { SectionTitle, dateTime, showError } from "./common.tsx";
 const INPUT = "w-full rounded-xl border border-line bg-surface px-3.5 py-3 text-[16px] outline-none focus:border-accent";
 
 const FAILURE: Record<string, string> = {
-  wrong_password: "비밀번호가 맞지 않습니다",
-  locked: "시도가 많아 잠시 잠겼습니다",
-  local: "노트북 화면에서는 패스키를 쓰지 않습니다",
-  insecure_origin: "이 주소에서는 패스키를 쓸 수 없습니다. tailnet HTTPS 주소로 여세요",
-  too_many: "패스키는 10개까지 등록할 수 있습니다",
-  already_registered: "이미 등록된 패스키입니다",
-  challenge_expired: "시간이 지났습니다. 다시 시도하세요",
-  passkey_invalid: "패스키 응답을 확인하지 못했습니다. 다시 시도하세요",
-  not_found: "이미 지워진 패스키입니다",
-  passkey_required: "이 기기의 패스키로 먼저 확인하세요",
+  wrong_password: k("비밀번호가 맞지 않습니다"),
+  locked: k("시도가 많아 잠시 잠겼습니다"),
+  local: k("노트북 화면에서는 패스키를 쓰지 않습니다"),
+  insecure_origin: k("이 주소에서는 패스키를 쓸 수 없습니다. tailnet HTTPS 주소로 여세요"),
+  too_many: k("패스키는 10개까지 등록할 수 있습니다"),
+  already_registered: k("이미 등록된 패스키입니다"),
+  challenge_expired: k("시간이 지났습니다. 다시 시도하세요"),
+  passkey_invalid: k("패스키 응답을 확인하지 못했습니다. 다시 시도하세요"),
+  not_found: k("이미 지워진 패스키입니다"),
+  passkey_required: k("이 기기의 패스키로 먼저 확인하세요"),
 };
 
 function failure(e: unknown): string {
-  if (e instanceof ApiError && typeof e.body.error === "string") return FAILURE[e.body.error] ?? e.message;
+  if (e instanceof ApiError && typeof e.body.error === "string") return Object.hasOwn(FAILURE, e.body.error) ? t(FAILURE[e.body.error]) : e.message;
   return passkeyError(e);
 }
 
@@ -52,7 +54,7 @@ export function AddSheet({ onClose, onAdded }: { onClose: () => void; onAdded: (
     setError(undefined);
     try {
       await api.passkeyRegister(await createPasskey(options!));
-      toast("패스키를 등록했습니다");
+      toast(t("패스키를 등록했습니다"));
       onAdded();
     } catch (e) {
       setError(failure(e));
@@ -63,7 +65,7 @@ export function AddSheet({ onClose, onAdded }: { onClose: () => void; onAdded: (
   };
 
   return (
-    <Sheet title="패스키 등록" onClose={onClose}>
+    <Sheet title={t("패스키 등록")} onClose={onClose}>
       <div className="space-y-3 px-1" data-passkey-add={options ? "create" : "password"}>
         {!options ? (
           <form
@@ -73,19 +75,19 @@ export function AddSheet({ onClose, onAdded }: { onClose: () => void; onAdded: (
               void next();
             }}
           >
-            <p className="text-[15px]">먼저 ccrc 비밀번호를 입력하세요.</p>
-            <input type="password" autoComplete="current-password" placeholder="비밀번호" value={password} onChange={(e) => setPassword(e.target.value)} className={INPUT} />
+            <p className="text-[15px]">{t("먼저 ccrc 비밀번호를 입력하세요.")}</p>
+            <input type="password" autoComplete="current-password" placeholder={t("비밀번호")} value={password} onChange={(e) => setPassword(e.target.value)} className={INPUT} />
             {error && <div className="text-sm text-danger">{error}</div>}
             <Button kind="primary" className="w-full" disabled={busy || !password}>
-              {busy ? "확인 중…" : "다음"}
+              {busy ? t("확인 중…") : t("다음")}
             </Button>
           </form>
         ) : (
           <>
-            <p className="text-[15px]">이 기기에 패스키를 만듭니다. Face ID(또는 이 기기의 암호)로 확인하세요.</p>
+            <p className="text-[15px]">{t("이 기기에 패스키를 만듭니다. Face ID(또는 이 기기의 암호)로 확인하세요.")}</p>
             {error && <div className="text-sm text-danger">{error}</div>}
             <Button kind="primary" className="w-full" disabled={busy} onClick={() => void register()}>
-              {busy ? "등록 중…" : "Face ID로 등록"}
+              {busy ? t("등록 중…") : t("Face ID로 등록")}
             </Button>
           </>
         )}
@@ -103,7 +105,7 @@ function RemoveSheet({ passkey, onClose, onRemoved }: { passkey: PasskeyView; on
     setError(undefined);
     try {
       await api.passkeyRemove(passkey.id, password);
-      toast("패스키를 지웠습니다");
+      toast(t("패스키를 지웠습니다"));
       onRemoved();
     } catch (e) {
       setError(failure(e));
@@ -112,7 +114,7 @@ function RemoveSheet({ passkey, onClose, onRemoved }: { passkey: PasskeyView; on
     }
   };
   return (
-    <Sheet title="패스키 지우기" onClose={onClose}>
+    <Sheet title={t("패스키 지우기")} onClose={onClose}>
       <form
         className="space-y-3 px-1"
         data-passkey-remove
@@ -122,12 +124,12 @@ function RemoveSheet({ passkey, onClose, onRemoved }: { passkey: PasskeyView; on
         }}
       >
         <p className="text-[15px]">
-          {passkey.device}에서 {when(passkey.createdAt)}에 등록한 패스키를 지웁니다. 남은 패스키가 없으면 다시 확인하지 않습니다.
+          {t("{device}에서 {when}에 등록한 패스키를 지웁니다. 남은 패스키가 없으면 다시 확인하지 않습니다.", { device: passkey.device, when: when(passkey.createdAt) })}
         </p>
-        <input type="password" autoComplete="current-password" placeholder="비밀번호" value={password} onChange={(e) => setPassword(e.target.value)} className={INPUT} />
+        <input type="password" autoComplete="current-password" placeholder={t("비밀번호")} value={password} onChange={(e) => setPassword(e.target.value)} className={INPUT} />
         {error && <div className="text-sm text-danger">{error}</div>}
         <Button kind="danger" className="w-full" disabled={busy || !password}>
-          {busy ? "지우는 중…" : "지우기"}
+          {busy ? t("지우는 중…") : t("지우기")}
         </Button>
       </form>
     </Sheet>
@@ -167,15 +169,18 @@ export function PasskeySection() {
 
   return (
     <section className="space-y-2" data-passkeys>
-      <SectionTitle>패스키 (Face ID)</SectionTitle>
+      <SectionTitle>{t("패스키 (Face ID)")}</SectionTitle>
       {!list ? (
         <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted">
-          <Spinner className="size-4" /> 불러오는 중…
+          <Spinner className="size-4" /> {t("불러오는 중…")}
         </div>
       ) : (
         <>
           <p className="px-1 text-sm text-muted">
-            패스키를 등록하면 노트북 밖에서 로그인할 때와 그 뒤 {list.hours}시간마다 패스키로 다시 확인합니다. 다른 기기는 처음 로그인할 때 그 기기의 패스키를 등록합니다. 노트북에서 연 화면은 묻지 않습니다.
+            {t(
+              "패스키를 등록하면 노트북 밖에서 로그인할 때와 그 뒤 {hours}시간마다 패스키로 다시 확인합니다. 다른 기기는 처음 로그인할 때 그 기기의 패스키를 등록합니다. 노트북에서 연 화면은 묻지 않습니다.",
+              { hours: list.hours },
+            )}
           </p>
           {list.passkeys.length > 0 && (
             <div className="overflow-hidden rounded-xl bg-surface">
@@ -184,32 +189,37 @@ export function PasskeySection() {
                   <div className="min-w-0 flex-1">
                     <div className="text-[15px] font-medium">
                       {p.device}
-                      {p.mine && <span className="ml-1.5 text-xs font-normal text-muted">이 기기</span>}
+                      {p.mine && <span className="ml-1.5 text-xs font-normal text-muted">{t("이 기기")}</span>}
                     </div>
                     <div className="text-xs text-muted">
-                      {when(p.createdAt)} 등록{p.lastUsedAt ? ` · 마지막 사용 ${when(p.lastUsedAt)}` : ""}
-                      {p.backedUp ? " · 동기화됨" : ""}
-                      {p.here ? "" : " · 다른 주소용"}
+                      {[
+                        t("{when} 등록", { when: when(p.createdAt) }),
+                        p.lastUsedAt ? t("마지막 사용 {when}", { when: when(p.lastUsedAt) }) : "",
+                        p.backedUp ? t("동기화됨") : "",
+                        p.here ? "" : t("다른 주소용"),
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </div>
                   </div>
                   <button onClick={() => setRemoving(p)} className="min-h-11 shrink-0 rounded-lg px-3 text-sm font-medium text-danger">
-                    지우기
+                    {t("지우기")}
                   </button>
                 </div>
               ))}
             </div>
           )}
           {list.local ? (
-            <p className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm">노트북에서 연 화면에서는 패스키를 등록하지 않습니다. 휴대폰의 ccrc에서 등록하세요.</p>
+            <p className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm">{t("노트북에서 연 화면에서는 패스키를 등록하지 않습니다. 휴대폰의 ccrc에서 등록하세요.")}</p>
           ) : !supported ? (
-            <p className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm">이 브라우저는 패스키를 지원하지 않습니다.</p>
+            <p className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm">{t("이 브라우저는 패스키를 지원하지 않습니다.")}</p>
           ) : own ? null : (
             <Button className="w-full" onClick={() => setAdding(true)}>
-              {list.passkeys.length ? "이 기기에 패스키 등록" : "패스키 등록"}
+              {list.passkeys.length ? t("이 기기에 패스키 등록") : t("패스키 등록")}
             </Button>
           )}
           <p className="px-1 text-xs text-muted">
-            패스키를 잃었다면 노트북 터미널에서 <span className="font-mono">ccrc passkey reset</span> 으로 풉니다.
+            {tNode("패스키를 잃었다면 노트북 터미널에서 {command} 으로 풉니다.", { command: <span className="font-mono">ccrc passkey reset</span> })}
           </p>
         </>
       )}

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api.ts";
 import { Button, Spinner } from "../components/ui.tsx";
+import { t } from "../i18n/index.ts";
+import { tNode } from "../i18n/react.ts";
 import { passkeyError, passkeysSupported, assertPasskey } from "../passkey.ts";
 import { loggedOut, startSession } from "../state.ts";
 import { AddSheet } from "./settings/Passkeys.tsx";
@@ -12,13 +14,13 @@ function failureText(e: unknown): string {
   if (!(e instanceof ApiError)) return passkeyError(e);
   switch (e.body.error) {
     case "none_here":
-      return "이 주소로 등록된 패스키가 없습니다. 패스키를 등록한 주소로 여세요.";
+      return t("이 주소로 등록된 패스키가 없습니다. 패스키를 등록한 주소로 여세요.");
     case "challenge_expired":
-      return "확인 시간이 지났습니다. 다시 시도하세요.";
+      return t("확인 시간이 지났습니다. 다시 시도하세요.");
     case "passkey_invalid":
-      return "패스키로 확인하지 못했습니다. 다시 시도하세요.";
+      return t("패스키로 확인하지 못했습니다. 다시 시도하세요.");
     case "insecure_origin":
-      return "이 주소에서는 패스키를 쓸 수 없습니다. tailnet HTTPS 주소로 여세요.";
+      return t("이 주소에서는 패스키를 쓸 수 없습니다. tailnet HTTPS 주소로 여세요.");
     default:
       return e.message;
   }
@@ -81,33 +83,33 @@ export function Verify() {
       <div className="w-full max-w-sm space-y-3">
         <div className="mb-6 text-center">
           <img src="/icon-192.png" alt="" className="mx-auto mb-3 size-14 rounded-2xl" />
-          <div className="text-xl font-semibold">패스키로 확인</div>
+          <div className="text-xl font-semibold">{t("패스키로 확인")}</div>
           <div className="mt-1 text-sm text-balance text-muted">
-            {enrollOnly ? "로그인을 이어 가려면 이 기기의 패스키를 등록하세요." : "로그인을 이어 가려면 이 기기의 패스키(Face ID)로 확인하세요."}
+            {enrollOnly ? t("로그인을 이어 가려면 이 기기의 패스키를 등록하세요.") : t("로그인을 이어 가려면 이 기기의 패스키(Face ID)로 확인하세요.")}
           </div>
         </div>
-        {!supported && <div className="rounded-xl bg-surface-2 p-3 text-sm">이 브라우저는 패스키를 지원하지 않습니다.</div>}
+        {!supported && <div className="rounded-xl bg-surface-2 p-3 text-sm">{t("이 브라우저는 패스키를 지원하지 않습니다.")}</div>}
         {error && <div className="text-sm text-danger" data-verify-error>{error}</div>}
         {!enrollOnly && (
           <Button kind="primary" className="w-full" disabled={busy || !supported} onClick={() => void confirm()}>
             {busy ? (
               <span className="inline-flex items-center gap-2">
-                <Spinner className="size-4" /> 확인 중…
+                <Spinner className="size-4" /> {t("확인 중…")}
               </span>
             ) : ready ? (
-              "패스키로 확인"
+              t("패스키로 확인")
             ) : error ? (
-              "다시 시도"
+              t("다시 시도")
             ) : (
-              "준비 중…"
+              t("준비 중…")
             )}
           </Button>
         )}
         {ready?.enroll && (
           <div className="space-y-2" data-verify-enroll>
-            {!enrollOnly && <p className="px-1 pt-1 text-sm text-balance text-muted">이 기기의 패스키가 아직 없다면 비밀번호와 Face ID로 등록하세요. 등록하면 바로 이어집니다.</p>}
+            {!enrollOnly && <p className="px-1 pt-1 text-sm text-balance text-muted">{t("이 기기의 패스키가 아직 없다면 비밀번호와 Face ID로 등록하세요. 등록하면 바로 이어집니다.")}</p>}
             <Button kind={enrollOnly ? "primary" : "secondary"} className="w-full" disabled={busy || !supported} onClick={() => setAdding(true)}>
-              이 기기에 패스키 등록
+              {t("이 기기에 패스키 등록")}
             </Button>
           </div>
         )}
@@ -119,10 +121,10 @@ export function Verify() {
             loggedOut("logout");
           }}
         >
-          로그아웃
+          {t("로그아웃")}
         </Button>
         <p className="px-1 pt-2 text-xs text-balance text-muted">
-          패스키를 잃었다면 노트북 터미널에서 <span className="font-mono">ccrc passkey reset</span> 을 실행한 뒤 비밀번호로 다시 로그인하세요.
+          {tNode("패스키를 잃었다면 노트북 터미널에서 {command} 을 실행한 뒤 비밀번호로 다시 로그인하세요.", { command: <span className="font-mono">ccrc passkey reset</span> })}
         </p>
       </div>
       {adding && <AddSheet onClose={() => setAdding(false)} onAdded={() => startSession()} />}
