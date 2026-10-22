@@ -15,7 +15,6 @@ import { OLD_WRAPPER_NOTE, movedOut, useMovable, useMove } from "./agents/backgr
 import { AgentLinks } from "./agents/links.ts";
 import { actionable, type UserMessage } from "./messageActions.ts";
 import { NOT_KEPT, OfflineView } from "./offlineView.ts";
-import { useLongPress } from "./useLongPress.ts";
 import { Folded } from "./tools/parts.tsx";
 import { SentFiles } from "./tools/SentFiles.tsx";
 import { fullTime, stampTime, type Day } from "./stamps.ts";
@@ -31,20 +30,22 @@ function Stamp({ at, className }: { at: Date; className?: string }) {
   );
 }
 
-// A message the conversation can be forked from or rewound to opens its actions from a long press on its bubble or from
-// the button before its time, whose target reaches 44px into the space around the line without making it taller.
+// The text of a message or reply: a long press selects it with the system's magnifier and copy menu, so their actions
+// open only from the ⋯ button under them.
+const SELECTABLE = "select-text [-webkit-touch-callout:default]";
+
+// The room under a message or reply holds the lower part of its ⋯ button's 44px target, which stays off the text.
+const ITEM_ROOM = "pb-2";
+
+// A message the conversation can be forked from or rewound to opens its actions from the button before its time.
 function UserItem({ item, onActions }: { item: UserMessage; onActions?: (m: UserMessage) => void }) {
   const at = stampTime(item);
   const open = onActions && actionable(item) ? () => onActions(item) : undefined;
-  const press = useLongPress(() => open?.());
   return (
-    <div className="flex flex-col items-end gap-1.5">
+    <div className={`flex flex-col items-end gap-1.5 ${onActions ? ITEM_ROOM : ""}`}>
       {item.attachments && <UserAttachments messageId={item.id} list={item.attachments} />}
       {item.text && (
-        <div
-          {...(open ? press : {})}
-          className={`max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap ${open ? "pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none]" : ""}`}
-        >
+        <div className={`max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap ${SELECTABLE}`}>
           {item.text}
         </div>
       )}
@@ -54,7 +55,7 @@ function UserItem({ item, onActions }: { item: UserMessage; onActions?: (m: User
             onClick={open}
             aria-label={t("메시지 동작")}
             aria-haspopup="dialog"
-            className="relative flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-inset-y-3.5 active:text-fg"
+            className="relative flex h-4 w-6 items-center justify-center rounded text-muted after:absolute after:-inset-x-2.5 after:-top-1 after:-bottom-6 active:text-fg"
             data-message-actions
           >
             <Icon.dots className="size-4" />
@@ -69,23 +70,16 @@ function UserItem({ item, onActions }: { item: UserMessage; onActions?: (m: User
 }
 
 // The line under a Claude reply's text that holds its time; while the reply streams, the same line holds the caret.
-// The room under it holds the lower part of the ⋯ button's target, which stays off the reply's text.
 const REPLY_LINE = "mt-1 h-4 leading-4";
-const REPLY_ROOM = "pb-2";
 
 type AssistantMessage = Extract<DisplayItem, { kind: "assistant" }>;
 
-// A reply opens its actions as a message does: by a long press on its text, or from the button before its time. On a
-// touch screen its text is selected in the actions sheet instead.
 function AssistantItem({ item, onActions }: { item: AssistantMessage; onActions?: (m: AssistantMessage) => void }) {
   const at = stampTime(item);
   const open = onActions ? () => onActions(item) : undefined;
-  const press = useLongPress(() => open?.());
   return (
-    <div className={open ? REPLY_ROOM : undefined}>
-      <div {...(open ? press : {})} className={open ? "pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none]" : ""}>
-        <Markdown text={item.text} className="text-[15px]" />
-      </div>
+    <div className={open ? ITEM_ROOM : undefined}>
+      <Markdown text={item.text} className={`text-[15px] ${SELECTABLE}`} />
       {(at || open) && (
         <div className={`${REPLY_LINE} flex items-center gap-1 text-[11px] text-muted`}>
           {open && (
@@ -132,7 +126,7 @@ export function QueuedItem({ message, host, onTakeBack, taking, note }: { messag
         <div className="flex min-w-0 flex-col items-end gap-1.5">
           {message.attachments && <UserAttachments messageId={message.id} list={message.attachments} waiting />}
           {message.text && (
-            <div className="min-w-0 rounded-2xl rounded-br-md border border-dashed border-line bg-surface-2/60 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-muted">
+            <div className={`min-w-0 rounded-2xl rounded-br-md border border-dashed border-line bg-surface-2/60 px-3.5 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-muted ${SELECTABLE}`}>
               {message.text}
             </div>
           )}
@@ -540,8 +534,8 @@ export const ItemView = memo(function ItemView({
 export function StreamPreview({ text, thinking }: { text: string; thinking: boolean }) {
   if (thinking) return <Thinking text={text} />;
   return (
-    <div className={REPLY_ROOM}>
-      <Markdown text={text} className="text-[15px]" />
+    <div className={ITEM_ROOM}>
+      <Markdown text={text} className={`text-[15px] ${SELECTABLE}`} />
       <div className={`${REPLY_LINE} caret text-[15px]`} />
     </div>
   );
