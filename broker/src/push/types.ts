@@ -33,11 +33,18 @@ export interface PushStatus {
   lastError?: { status: number; at: number };
 }
 
-// GET /api/push/badge: the number for the app icon of one device, and the sessions left unread.
-export interface PushBadge {
+// The sessions the app icon's number counts, at `at` on the broker's clock: those left unread and those with a request
+// waiting for an answer. The phone keeps a notification made before `at` only while its session is counted for its kind.
+export interface PushAttention {
+  at: number;
+  unseen: string[];
+  waiting: string[];
+}
+
+// GET /api/push/badge: the number for the app icon of one device, and the sessions it counts.
+export interface PushBadge extends PushAttention {
   subscribed: boolean;
   badge: number;
-  unseen: string[];
 }
 
 // GET /api/push/recent: the request one device was notified of lately that still waits for an answer.
@@ -45,11 +52,13 @@ export interface PushRecent {
   request?: { sessionId: string; requestId: string };
 }
 
-// What the service worker shows. badge: the app icon's number, when the notification carries one.
+// What the service worker shows. data.at: when the broker made it, on its clock. badge: the app icon's number, and
+// attention: the sessions it counts, when the notification carries them.
 export interface PushPayload {
   title: string;
   body: string;
   tag: string;
-  data: { url: string };
+  data: { url: string; at?: number };
   badge?: number;
+  attention?: PushAttention;
 }

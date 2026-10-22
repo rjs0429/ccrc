@@ -1,7 +1,7 @@
 import type { Hub } from "../hub.ts";
 import type { Lang } from "../lang.ts";
 import type { SessionManager } from "../sessions/manager.ts";
-import { encrypt } from "./encrypt.ts";
+import { MAX_PLAINTEXT, encrypt } from "./encrypt.ts";
 import { Notifier, TIMING, type PushTiming, type Urgency } from "./rules.ts";
 import { PushError, PushStore, isPushService, parseEndpoint, parsePrefs, parseSubscription, type Subscription } from "./subscriptions.ts";
 import { PUSH_TEXT } from "./text.ts";
@@ -25,6 +25,15 @@ const test = (lang: Lang): PushPayload => ({ title: "ccrc", body: PUSH_TEXT[lang
 interface Health {
   lastSent?: number;
   lastError?: { status: number; at: number };
+}
+
+// A notification too long for one record goes without the sessions it counts; the phone then closes only older ones of
+// its tag.
+function plaintext(payload: PushPayload): Buffer {
+  const full = Buffer.from(JSON.stringify(payload));
+  if (full.length <= MAX_PLAINTEXT || !payload.attention) return full;
+  const { attention: _, ...rest } = payload;
+  return Buffer.from(JSON.stringify(rest));
 }
 
 // The https origin in an Origin header, if it is one.
@@ -125,22 +134,28 @@ export class Push {
 
   badge(endpoint: unknown): PushBadge {
     const sub = this.store.get(parseEndpoint(endpoint));
-    if (!sub) return { subscribed: false, badge: 0, unseen: [] };
-    return { subscribed: true, ...(this.notifier?.badge() ?? { badge: 0, unseen: [] }) };
+    const none = { badge: 0, at: Date.now(), unseen: [], waiting: [] };
+    if (!sub) return { subscribed: false, ...none };
+    return { subscribed: true, ...(this.notifier?.attention() ?? none) };
   }
 
   async test(endpoint: unknown): Promise<void> {
     const sub = this.store.get(parseEndpoint(endpoint));
     if (!sub) throw new PushError("not_subscribed");
-    const status = await this.deliver(sub, test(sub.prefs.lang), "normal", false);
+    const status = await this.deliver(sub, this.stamp(test(sub.prefs.lang)), "normal", false);
     if (status < 200 || status > 299) throw new PushError("push_failed", status);
   }
 
   // A notification for every subscribed device, in its language; false when there is none.
   announce(payload: (lang: Lang) => PushPayload): boolean {
     const subs = this.store.list();
-    for (const sub of subs) this.send(sub, payload(sub.prefs.lang), "normal", true);
+    for (const sub of subs) this.send(sub, this.stamp(payload(sub.prefs.lang)), "normal", true);
     return subs.length > 0;
+  }
+
+  // Every notification says when it was made, and what the app icon counts once the broker watches the sessions.
+  private stamp(payload: PushPayload): PushPayload {
+    return this.notifier?.stamp(payload) ?? { ...payload, data: { ...payload.data, at: Date.now() } };
   }
 
   watch(manager: SessionManager, hub: Hub): void {
@@ -221,7 +236,7 @@ export class Push {
         "Content-Encoding": "aes128gcm",
         Authorization: token.value,
       },
-      body: encrypt(Buffer.from(JSON.stringify(payload)), sub.keys),
+      body: encrypt(plaintext(payload), sub.keys),
       redirect: "error",
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });

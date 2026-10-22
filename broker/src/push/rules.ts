@@ -5,9 +5,10 @@ import type { DisplayItem, LiveState, PendingRequest, ServerMsg } from "../proto
 import type { SessionManager } from "../sessions/manager.ts";
 import type { TurnEnd } from "../sessions/outcome.ts";
 import { HOLD_TEXT, holderKind } from "../wrapper/hold.ts";
+import { sessionTag } from "./attention.ts";
 import type { Subscription } from "./subscriptions.ts";
 import { PUSH_TEXT } from "./text.ts";
-import type { PushPayload } from "./types.ts";
+import type { PushAttention, PushPayload } from "./types.ts";
 
 export type Urgency = "high" | "normal";
 
@@ -65,6 +66,7 @@ export interface NotifierDeps {
   deliver: (sub: Subscription, payload: PushPayload, urgency: Urgency) => void;
   timing: PushTiming;
   log: (line: string) => void;
+  now?: () => number;
 }
 
 // Turns session events into notifications for the subscribed devices: a request that needs an answer on a session the
@@ -78,6 +80,7 @@ export class Notifier {
   private manager: SessionManager;
   private hub: Hub;
   private d: NotifierDeps;
+  private now: () => number;
   // Timers by `<session> <request id>` for a request, `<session> end` for a turn that ended, `<session> crash`,
   // `<session> file` and `<session> claude`.
   private timers = new Map<string, Set<NodeJS.Timeout>>();
@@ -115,6 +118,7 @@ export class Notifier {
     this.manager = manager;
     this.hub = hub;
     this.d = deps;
+    this.now = deps.now ?? (() => Date.now());
     manager.on("event", this.listener);
     manager.on("turn_end", this.ended);
     manager.on("seen", this.seen);
@@ -132,10 +136,18 @@ export class Notifier {
   }
 
   // The number for the app icon: sessions with a request waiting for an answer and sessions left unread, each counted
-  // once, as the session list shows them.
-  badge(): { badge: number; unseen: string[] } {
+  // once, as the session list shows them; with those sessions as of now.
+  attention(): PushAttention & { badge: number } {
     const unseen = this.manager.unreadSessions();
-    return { badge: new Set([...this.manager.waitingSessions(), ...unseen]).size, unseen };
+    const waiting = this.manager.waitingSessions();
+    return { badge: new Set([...waiting, ...unseen]).size, at: this.now(), unseen, waiting };
+  }
+
+  // A notification as it leaves: when it was made, and the number and sessions by which the phone sets its icon and
+  // closes the notifications that no longer count.
+  stamp(payload: PushPayload): PushPayload {
+    const { badge, ...attention } = this.attention();
+    return { ...payload, data: { ...payload.data, at: attention.at }, badge, attention };
   }
 
   // The request the device's last notification was about, while that is recent and the request still waits.
@@ -146,7 +158,7 @@ export class Notifier {
   }
 
   private deliver(sub: Subscription, sessionId: string, payload: PushPayload, urgency: Urgency, requestId?: string): void {
-    this.d.deliver(sub, { ...payload, badge: this.badge().badge }, urgency);
+    this.d.deliver(sub, this.stamp(payload), urgency);
     this.last.delete(sub.endpoint);
     this.last.set(sub.endpoint, { sessionId, ...(requestId ? { requestId } : {}), at: Date.now() });
     for (const old of [...this.last.keys()].slice(0, -SENT_SESSIONS_KEEP)) this.last.delete(old);
@@ -215,7 +227,7 @@ export class Notifier {
         const words = PUSH_TEXT[now.prefs.lang];
         const named = now.prefs.details ? ` · ${clip(name, TOOL_MAX)}${count > 1 ? words.more(count - 1) : ""}` : "";
         this.manager.markUnread(sessionId);
-        const payload: PushPayload = { title, body: `${words.sent}${named}`, tag: `${sessionId}:file`, data: { url: `/#/s/${sessionId}` } };
+        const payload: PushPayload = { title, body: `${words.sent}${named}`, tag: sessionTag(sessionId, "file"), data: { url: `/#/s/${sessionId}` } };
         this.deliver(now, sessionId, payload, "normal");
       });
     }
@@ -239,7 +251,7 @@ export class Notifier {
         if (!sub?.prefs.claude || this.hub.isWatching(sessionId)) return void told.delete(endpoint);
         const body = sub.prefs.details && message.trim() ? clip(message, CLAUDE_MAX) : PUSH_TEXT[sub.prefs.lang].claude;
         this.manager.markUnread(sessionId);
-        const payload: PushPayload = { title, body, tag: `${sessionId}:claude`, data: { url: `/#/s/${sessionId}` } };
+        const payload: PushPayload = { title, body, tag: sessionTag(sessionId, "claude"), data: { url: `/#/s/${sessionId}` } };
         this.deliver(sub, sessionId, payload, "high");
       });
     }
@@ -365,12 +377,12 @@ export class Notifier {
     const words = PUSH_TEXT[lang];
     const what = request.kind === "dialog" && Object.hasOwn(words.dialogs, request.toolName) ? words.dialogs[request.toolName] : words.request[request.kind];
     const text = request.localOnly ? `${words.localOnly} · ${what}` : what;
-    return { title, body: tool ? `${text} · ${clip(tool, TOOL_MAX)}` : text, tag: `${sessionId}:${request.kind}`, data: { url: `/#/s/${sessionId}` } };
+    return { title, body: tool ? `${text} · ${clip(tool, TOOL_MAX)}` : text, tag: sessionTag(sessionId, request.kind), data: { url: `/#/s/${sessionId}` } };
   }
 
   // files: how many files Claude sent since the last turn end without telling them on their own.
   private endPayload(sessionId: string, end: TurnEnd, title: string, lang: Lang, files = 0): PushPayload {
-    return { title, body: `${endText(end, Date.now(), lang)}${files ? ` · ${PUSH_TEXT[lang].files(files)}` : ""}`, tag: `${sessionId}:end`, data: { url: `/#/s/${sessionId}` } };
+    return { title, body: `${endText(end, Date.now(), lang)}${files ? ` · ${PUSH_TEXT[lang].files(files)}` : ""}`, tag: sessionTag(sessionId, "end"), data: { url: `/#/s/${sessionId}` } };
   }
 
   private arm(key: string, ms: number, fn: () => void): void {

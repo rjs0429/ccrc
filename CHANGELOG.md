@@ -187,6 +187,16 @@ your version and the new one, and the lines under "Breaking" separately.
   own, but not the 5.5 ones: it is shown on those models' rows and on a row of its own, where it can only be removed.
 - The app icon's badge counts the sessions waiting for an answer and the unread sessions, the same sessions the list
   marks. It no longer depends on which device was told, and a turn that starts by itself no longer clears it.
+- Notifications that no longer count are closed: the end of a turn, Claude's notification and files sent once the
+  session is read (opened on the phone or written to in VS Code), a request once it is answered, and any notification
+  once a newer one of the same session and kind shows (iOS keeps both otherwise). The phone does this when the app
+  comes to the front, opens a session or hears that the list changed, closing the notifications of the session it
+  shows as well, and when the next notification arrives: every notification now carries when it was made and the ids
+  of the sessions left unread or waiting for an answer, and the test notification and the update notice carry the
+  badge too. A notification too long with those ids goes without them. While the app is closed nothing else reaches
+  the phone, so a session read in VS Code keeps its notification, and the icon its number, until then. 알림 끄기 and
+  logging out in the settings close all of the app's notifications. iOS 26.5 and later do not close a notification
+  within 30 seconds of showing it; the app tries again once that has passed, while it is in front.
 - Long sessions open faster on the phone. A conversation opens with its latest 40 items or so, and earlier ones load as
   you scroll up, keeping your place; a search hit or a subagent far back opens with the part around it, and the part
   after it loads as it comes into view. The broker keeps a conversation it has built until its transcript changes, reads
@@ -270,6 +280,8 @@ your version and the new one, and the lines under "Breaking" separately.
   choose 한국어 under Settings > Language.
 - Phones that turned notifications on under 0.7 are written to in Korean until the app is opened once after the
   update, when it tells the broker its language.
+- The next notification closes those that no longer count once the phone has the new service worker, which it fetches
+  when the app is opened; iOS may keep the old one until the app is closed in the app switcher and opened again.
 - After `ccrc update`, reload VS Code windows (Developer: Reload Window): updating from 0.7 does not say so, and a
   Claude tab opened before the update keeps the wrapper of 0.7 until it is opened again. Until then, in that tab's
   session, the side question sheet and the cards and agent map that would offer "백그라운드로" say to open Claude Code again

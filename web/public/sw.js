@@ -1,6 +1,8 @@
 // Shows the broker's push notifications. A tap focuses the open app and sends it to the session, or opens it there.
 // Every push shows a notification: Safari may cancel the subscription of a web app whose pushes show nothing, and a
-// badge alone does not count as showing something. A push that carries a number puts it on the app icon.
+// badge alone does not count as showing something. A push that carries a number puts it on the app icon. Once its
+// notification shows, and not before (Chrome leaves out of getNotifications() one shown meanwhile), the notifications
+// that no longer count by the sessions the push carries are closed.
 //
 // It also keeps the app (the page and its files under /assets/), so the app opens while the broker cannot be reached and
 // shows the conversations the phone kept. The page comes from the network whenever it answers in time and is not an
@@ -81,6 +83,8 @@ async function keepPage(res) {
   }
 }
 
+// data.at: when the broker made it, on its clock; data.shown: when it showed, on the phone's, as iOS does not close a
+// notification shown moments ago.
 self.addEventListener("push", (event) => {
   let msg = {};
   try {
@@ -88,15 +92,49 @@ self.addEventListener("push", (event) => {
   } catch {}
   const text = (v) => (typeof v === "string" ? v : "");
   const tag = text(msg.tag);
+  const at = msg.data && typeof msg.data.at === "number" ? { at: msg.data.at } : {};
   const options = {
     body: text(msg.body),
-    data: { url: text(msg.data && msg.data.url) || "/" },
+    data: { url: text(msg.data && msg.data.url) || "/", ...at, shown: Date.now() },
     icon: "/icon-192.png",
     ...(tag ? { tag, renotify: true } : {}),
   };
   const n = typeof msg.badge === "number" && msg.badge >= 0 ? Math.floor(msg.badge) : undefined;
-  event.waitUntil(Promise.all([self.registration.showNotification(text(msg.title) || "ccrc", options), n === undefined ? undefined : setBadge(n)]));
+  const shown = self.registration.showNotification(text(msg.title) || "ccrc", options);
+  event.waitUntil(Promise.all([shown.then(() => tidy({ tag, data: options.data }, attention(msg.attention))), n === undefined ? undefined : setBadge(n)]));
 });
+
+// A session's notification, tagged `<session>:<kind>`, counts while the broker counts the session for its kind: a notice
+// of what went on in it while it is unread, a request while one waits. Any one goes once a newer one of its tag shows.
+// The same rule as settled() in broker/src/push/attention.ts, which the phone app uses.
+const NOTICES = ["end", "claude", "file"];
+const REQUESTS = ["permission", "question", "plan", "dialog", "elicitation"];
+const madeAt = (n) => (n.data && typeof n.data.at === "number" ? n.data.at : 0);
+
+function settled(n, list, state) {
+  if (n.tag && list.some((m) => m.tag === n.tag && madeAt(m) > madeAt(n))) return true;
+  if (!state || madeAt(n) >= state.at) return false;
+  const i = n.tag.indexOf(":");
+  if (i < 1) return false;
+  const session = n.tag.slice(0, i);
+  const kind = n.tag.slice(i + 1);
+  if (NOTICES.includes(kind)) return !state.unseen.includes(session);
+  if (REQUESTS.includes(kind)) return !state.waiting.includes(session);
+  return false;
+}
+
+function attention(v) {
+  const ids = (a) => Array.isArray(a) && a.every((x) => typeof x === "string");
+  return v && typeof v.at === "number" && ids(v.unseen) && ids(v.waiting) ? v : undefined;
+}
+
+// Never rejects: a push event that fails may count as one that showed nothing, which can cost the subscription.
+async function tidy(shown, state) {
+  try {
+    const list = await self.registration.getNotifications();
+    for (const n of list) if (settled(n, [...list, shown], state)) n.close();
+  } catch {}
+}
 
 // Where the Badging API is missing or refuses, the notification still shows.
 async function setBadge(n) {

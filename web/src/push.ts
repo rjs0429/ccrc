@@ -1,3 +1,4 @@
+import { settled } from "../../broker/src/push/attention.ts";
 import type { PushBadge, PushPrefs, PushRecent, PushStatus } from "../../broker/src/push/types.ts";
 import { ApiError, request } from "./api.ts";
 import { lang } from "./i18n/index.ts";
@@ -108,6 +109,8 @@ export async function turnOn(device: PushDevice, prefs?: Partial<PushPrefs>): Pr
     if (kept && e instanceof ApiError && e.body.error === "invalid_prefs") return subscribe();
     throw e;
   });
+  closingAll = undefined;
+  clearTimeout(closeAllTimer);
   return { ...device, sub, status };
 }
 
@@ -122,24 +125,73 @@ export async function turnOff(device: PushDevice): Promise<PushDevice> {
     await device.sub.unsubscribe().catch(() => false);
   }
   await clearBadge();
+  closingAll = device.reg;
+  await closeAll();
   return { ...device, sub: null, status: { subscribed: false } };
 }
 
-// The app icon shows only while notifications reach this browser; without the Badging API or the permission nothing changes.
+// The app icon and the notifications change only while notifications reach this browser; without the permission, or
+// the Badging API for the icon, nothing changes.
+function granted(): boolean {
+  return window.isSecureContext && "serviceWorker" in navigator && "Notification" in window && Notification.permission === "granted";
+}
+
 function badgeable(): boolean {
-  return window.isSecureContext && "setAppBadge" in navigator && "serviceWorker" in navigator && "Notification" in window && Notification.permission === "granted";
+  return granted() && "setAppBadge" in navigator;
 }
 
 async function clearBadge(): Promise<void> {
   if (badgeable()) await navigator.clearAppBadge().catch(() => {});
 }
 
-// Sets the app icon to what the broker counts for this browser's subscription, the same number its notifications carry.
-export async function syncBadge(): Promise<void> {
-  if (!badgeable()) return;
-  const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
-  const n = sub ? (await request<PushBadge>("GET", `/api/push/badge?endpoint=${encodeURIComponent(sub.endpoint)}`)).badge : 0;
-  await (n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge());
+// iOS leaves a notification open when asked to close it within 30 seconds of showing it.
+const CLOSE_AFTER_MS = 31_000;
+
+// Closes this app's notifications that `gone` picks; answers how long until one closed too soon for iOS may be closed,
+// 0 when none.
+async function closeNotifications(reg: ServiceWorkerRegistration | undefined, gone: (n: Notification, list: Notification[]) => boolean): Promise<number> {
+  if (!reg || !granted() || !("getNotifications" in reg)) return 0;
+  const list = await reg.getNotifications();
+  let wait = 0;
+  for (const n of list) {
+    if (!gone(n, list)) continue;
+    n.close();
+    const shown = (n.data as { shown?: unknown } | null)?.shown;
+    const age = Date.now() - (typeof shown === "number" ? shown : 0);
+    if (age < CLOSE_AFTER_MS) wait = Math.max(wait, CLOSE_AFTER_MS - age);
+  }
+  return wait;
+}
+
+// Turning notifications off closes all of them. With no notification to come, those iOS kept are closed once it lets
+// them, while the app is in front, unless notifications are turned on again first.
+let closingAll: ServiceWorkerRegistration | undefined;
+let closeAllTimer: number | undefined;
+
+async function closeAll(): Promise<void> {
+  clearTimeout(closeAllTimer);
+  const reg = closingAll;
+  if (!reg || document.visibilityState !== "visible") return;
+  const wait = await closeNotifications(reg, () => true).catch(() => 0);
+  if (closingAll !== reg) return;
+  clearTimeout(closeAllTimer);
+  if (!wait) closingAll = undefined;
+  else if (document.visibilityState === "visible") closeAllTimer = window.setTimeout(() => void closeAll(), wait);
+}
+
+document.addEventListener("visibilitychange", () => void closeAll());
+
+// Sets the app icon to what the broker counts for this browser's subscription, the same number its notifications carry,
+// and closes the notifications that no longer count by the same state (viewing: the session the app shows). Answers how
+// long until one closed too soon for iOS may be closed, 0 when none.
+export async function syncAttention(viewing?: string): Promise<number> {
+  if (!granted()) return 0;
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = await reg?.pushManager.getSubscription();
+  const state = sub ? await request<PushBadge>("GET", `/api/push/badge?endpoint=${encodeURIComponent(sub.endpoint)}`) : undefined;
+  if (badgeable()) await (state?.badge ? navigator.setAppBadge(state.badge) : navigator.clearAppBadge()).catch(() => {});
+  if (!state?.subscribed) return 0;
+  return closeNotifications(reg, (n, list) => settled(n, list, state, viewing));
 }
 
 // The request this browser was notified of lately that still waits for an answer; none without notifications.

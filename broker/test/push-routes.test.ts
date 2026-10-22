@@ -182,10 +182,14 @@ test("a device names its language when it subscribes and when it changes; one sa
 
 test("the badge is asked for by endpoint; an unknown one counts nothing", async () => {
   const { app, post } = await setup();
-  const get = (endpoint: string) => app.inject({ method: "GET", url: `/api/push/badge?endpoint=${encodeURIComponent(endpoint)}`, headers: AUTHED });
-  assert.deepEqual((await get(APPLE)).json(), { subscribed: false, badge: 0, unseen: [] });
+  const get = async (endpoint: string) => {
+    const { at, ...rest } = (await app.inject({ method: "GET", url: `/api/push/badge?endpoint=${encodeURIComponent(endpoint)}`, headers: AUTHED })).json();
+    assert.ok(Math.abs(at - Date.now()) < 5000, "the broker's time of the count");
+    return rest;
+  };
+  assert.deepEqual(await get(APPLE), { subscribed: false, badge: 0, unseen: [], waiting: [] });
   await post("/api/push/subscribe", { subscription: { endpoint: APPLE, keys: newBrowser().keys } });
-  assert.deepEqual((await get(APPLE)).json(), { subscribed: true, badge: 0, unseen: [] });
+  assert.deepEqual(await get(APPLE), { subscribed: true, badge: 0, unseen: [], waiting: [] });
   const bad = await app.inject({ method: "GET", url: "/api/push/badge", headers: AUTHED });
   assert.equal(bad.statusCode, 400);
   assert.equal(bad.json().error, "invalid_endpoint");
