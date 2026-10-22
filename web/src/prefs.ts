@@ -7,12 +7,14 @@ export interface Prefs {
   enterToSend: boolean;
   // The end of the last conversations shown stays on this browser, to read while the laptop cannot be reached.
   keepCopies: boolean;
+  // Thinking shows open from the start, as it streams too; a box opened or closed by hand keeps that.
+  thinkingOpen: boolean;
   // The language of the app, here and on the login screen.
   lang: LangPref;
 }
 
 const KEY = "ccrc.prefs";
-const DEFAULTS: Prefs = { enterToSend: false, keepCopies: true, lang: "auto" };
+const DEFAULTS: Prefs = { enterToSend: false, keepCopies: true, thinkingOpen: false, lang: "auto" };
 const listeners = new Set<() => void>();
 
 function load(): Prefs {

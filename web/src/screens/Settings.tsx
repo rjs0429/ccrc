@@ -13,7 +13,7 @@ import { HealthSection } from "./settings/Health.tsx";
 import { LanguageRow } from "./settings/Language.tsx";
 import { NotificationsSection } from "./settings/Notifications.tsx";
 import { PasskeySection } from "./settings/Passkeys.tsx";
-import { ListSection, PrefsSection } from "./settings/Prefs.tsx";
+import { ChatSection, ListSection, PrefsSection } from "./settings/Prefs.tsx";
 
 const PAGES: { page: SettingsPage; title: string }[] = [
   { page: "claude", title: "Claude Code" },
@@ -66,6 +66,7 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
             <>
               <NotificationsSection />
               <PrefsSection />
+              <ChatSection />
               <ListSection />
             </>
           )}

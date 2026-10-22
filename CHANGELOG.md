@@ -8,6 +8,13 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Added
+
+- The device setting "Show Thinking expanded" (Settings > Notifications and input > Conversation, off by default). On,
+  Thinking starts expanded in the conversation and in a subagent's transcript, and a thought still streaming shows its
+  text as it comes. A streaming thought now opens and closes on a tap like the others; a box opened or closed by hand
+  stays so, after a reload of the page too, and the rest follow the setting.
+
 ## [0.8.0] - 2026-10-23
 
 ### Added

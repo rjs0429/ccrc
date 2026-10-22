@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../../api.ts";
-import { t } from "../../i18n/index.ts";
+import { t, tc } from "../../i18n/index.ts";
 import { setPrefs, usePrefs } from "../../prefs.ts";
 import { refreshOptions, refreshSessions, useApp } from "../../state.ts";
 import { SectionTitle, Switch, showError } from "./common.tsx";
@@ -21,6 +21,28 @@ export function PrefsSection() {
           <span className="block text-xs text-muted">{t("켜면 Shift+Enter로 줄을 바꿉니다. 끄면 ⌘/Ctrl+Enter로 보냅니다.")}</span>
         </span>
         <Switch on={prefs.enterToSend} />
+      </button>
+    </section>
+  );
+}
+
+export function ChatSection() {
+  const prefs = usePrefs();
+  return (
+    <section className="space-y-2">
+      <SectionTitle>{tc("settings section", "대화")}</SectionTitle>
+      <button
+        role="switch"
+        aria-checked={prefs.thinkingOpen}
+        onClick={() => setPrefs({ thinkingOpen: !prefs.thinkingOpen })}
+        className="flex w-full items-center gap-3 rounded-xl bg-surface p-3.5 text-left"
+        data-setting="thinking-open"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block text-[15px]">{t("Thinking 펼쳐 보기")}</span>
+          <span className="block text-xs break-keep text-pretty text-muted">{t("대화와 에이전트 기록의 Thinking을 처음부터 펼쳐 보여 줍니다.")}</span>
+        </span>
+        <Switch on={prefs.thinkingOpen} />
       </button>
     </section>
   );

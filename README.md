@@ -395,8 +395,8 @@ column, and unknown keys are only warned about. A running broker takes in change
 | `vscodeArchive` | `false` | Sessions VS Code's Claude Code extension archived count as archived in ccrc's list too (see [VS Code](#vs-code)). The phone switches it too |
 | `passkeyHours` | `18` | Once a phone has registered a passkey, a remote login is confirmed with one when it starts and again after this many hours. Logins on the machine itself are never asked |
 
-Other settings (notifications, Enter to send, the app's language, the phone's copy of recent conversations, Claude
-Code's own settings) are changed in the phone's settings screen.
+Other settings (notifications, Enter to send, Thinking shown expanded, the app's language, the phone's copy of recent
+conversations, Claude Code's own settings) are changed in the phone's settings screen.
 
 ### Environment variables
 

@@ -260,7 +260,7 @@ ccrc uninstall [--purge] [--yes] [--dry-run]
 | `vscodeArchive` | `false` | VS Code 의 Claude Code 확장이 보관한 세션을 ccrc 목록에서도 보관으로 센다([VS Code](#vs-code) 참고). 휴대폰에서도 바꿀 수 있다 |
 | `passkeyHours` | `18` | 휴대폰이 패스키를 등록하면, 원격 로그인을 시작할 때와 이 시간이 지날 때마다 패스키로 확인한다. 이 컴퓨터에서 하는 로그인은 묻지 않는다 |
 
-그 밖의 설정(알림, Enter로 보내기, 앱 언어, 휴대폰에 저장하는 최근 대화, Claude Code 자체 설정)은 휴대폰 설정 화면에서 바꾼다.
+그 밖의 설정(알림, Enter로 보내기, Thinking 펼쳐 보기, 앱 언어, 휴대폰에 저장하는 최근 대화, Claude Code 자체 설정)은 휴대폰 설정 화면에서 바꾼다.
 
 ### 환경 변수
 

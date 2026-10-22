@@ -3,6 +3,7 @@ import { hideDialogCommands } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, QueuedMessage, SubagentActivity, TaskInfo } from "../../../broker/src/protocol.ts";
 import { k, t, tc } from "../i18n/index.ts";
 import { clock, noteText } from "../labels.ts";
+import { usePrefs } from "../prefs.ts";
 import { useApp } from "../state.ts";
 import { DiffView, PatchStats } from "./diff/DiffView.tsx";
 import { Markdown } from "./Markdown.tsx";
@@ -18,6 +19,7 @@ import { useLongPress } from "./useLongPress.ts";
 import { Folded } from "./tools/parts.tsx";
 import { SentFiles } from "./tools/SentFiles.tsx";
 import { fullTime, stampTime, type Day } from "./stamps.ts";
+import { chooseThought, liveThought, thoughtChoice } from "./thoughts.ts";
 import { Icon, Spinner } from "./ui.tsx";
 
 // When a message was sent, with the full date and time on hover.
@@ -143,12 +145,33 @@ export function QueuedItem({ message, host, onTakeBack, taking, note }: { messag
   );
 }
 
-function Thinking({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
+// Thinking starts open or closed as the device setting says; a box opened or closed by hand stays so. id: the item's;
+// a thought still streaming has none.
+function Thinking({ id, text }: { id?: string; text: string }) {
+  const { thinkingOpen } = usePrefs();
+  const [mine, setMine] = useState(() => thoughtChoice(id, text));
+  const live = id === undefined;
+  useEffect(() => {
+    if (live) liveThought(text, mine);
+  }, [live, text, mine]);
+  if (live && !text) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted" data-thinking="live">
+        <Spinner className="size-3.5" />
+        {t("생각하는 중…")}
+      </div>
+    );
+  }
+  const open = mine ?? thinkingOpen;
+  const turn = () => {
+    setMine(!open);
+    if (id) chooseThought(id, !open);
+  };
   return (
-    <div>
-      <button onClick={() => setOpen(!open)} className="flex items-center gap-1 text-sm text-muted">
-        <span>Thinking</span>
+    <div data-thinking={live ? "live" : "done"}>
+      <button onClick={turn} aria-expanded={open} className="flex items-center gap-1 text-sm text-muted">
+        {live && <Spinner className="mr-1 size-3.5" />}
+        <span>{live ? t("생각하는 중…") : "Thinking"}</span>
         <Icon.chevronDown className={`size-4 transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
       {open && <div className="mt-1.5 border-l-2 border-line pl-3 text-sm text-muted whitespace-pre-wrap">{text}</div>}
@@ -493,7 +516,7 @@ export const ItemView = memo(function ItemView({
     case "assistant":
       return <AssistantItem item={item} onActions={onReply} />;
     case "thinking":
-      return <Thinking text={item.text} />;
+      return <Thinking id={item.id} text={item.text} />;
     case "tool":
       return item.name === "SendUserFile" ? <SentFiles item={item} running={running} /> : <ToolItem item={item} running={running} />;
     case "command":
@@ -514,14 +537,7 @@ export const ItemView = memo(function ItemView({
 });
 
 export function StreamPreview({ text, thinking }: { text: string; thinking: boolean }) {
-  if (thinking) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted">
-        <Spinner className="size-3.5" />
-        {t("생각하는 중…")}
-      </div>
-    );
-  }
+  if (thinking) return <Thinking text={text} />;
   return (
     <div className={REPLY_ROOM}>
       <Markdown text={text} className="text-[15px]" />
