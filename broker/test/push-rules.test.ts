@@ -229,6 +229,17 @@ test("a request only VS Code can answer says so; one the auto-mode classifier ha
   detailed.notifier.close();
 });
 
+test("a dialog's notification names what it asks in the device's language", async () => {
+  const { manager, notifier, bodies } = setup({ lang: "en", vscodeDelaySec: 0 });
+  manager.state({ state: "attached", busy: true });
+  manager.ask("r1", "dialog", "refusal_fallback_prompt", { localOnly: true });
+  manager.ask("r2", "dialog", "auto_mode_server_fallback");
+  manager.ask("r3", "dialog", "a_kind_ccrc_does_not_know");
+  await sleep(50);
+  assert.deepEqual(bodies().sort(), ["Answer in VS Code · Confirm continuing with another model", "Confirm Auto mode classifier charges", "Waiting for your confirmation"].sort());
+  notifier.close();
+});
+
 test("by default a turn the remote user sent to, started or answered in up to two hours before it started is notified", async () => {
   const long = setup();
   long.hub.activity = Date.now() - 3 * HOUR - 10 * 60_000;
