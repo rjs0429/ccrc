@@ -7,6 +7,7 @@ import { NEW_SESSION_SCOPE, takeAttachments } from "../components/composer/attac
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { WorktreeOption, worktreeBlocked, worktreeChoice, type FolderGit, type WorktreeDraft } from "../components/WorktreeOption.tsx";
+import { k, t } from "../i18n/index.ts";
 import { brokerSessionsBlocked, errorText, shortPath } from "../labels.ts";
 import { rememberSent } from "../sentPreviews.ts";
 import { offeredFolder, placeLabel } from "../worktree.ts";
@@ -16,9 +17,9 @@ const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const NO_MODELS: ModelOption[] = [];
 // Commands whose screen needs a running session, and what to say about them before it starts.
 const AFTER_START: Record<string, string> = {
-  context: "Context는 세션이 시작되면 보입니다.",
-  mcp: "MCP 서버는 세션이 시작된 뒤 보고 켜고 끌 수 있습니다.",
-  outputStyle: "출력 스타일은 세션이 시작된 뒤 고를 수 있습니다.",
+  context: k("Context는 세션이 시작되면 보입니다."),
+  mcp: k("MCP 서버는 세션이 시작된 뒤 보고 켜고 끌 수 있습니다."),
+  outputStyle: k("출력 스타일은 세션이 시작된 뒤 고를 수 있습니다."),
 };
 
 // The folder and start settings chosen here last a visit to the settings page and a reload, like the message the
@@ -142,7 +143,7 @@ export function NewSession() {
   }, []);
   const worktreeOn = worktree.on && !worktreeBlocked(git);
   const picked = worktreeOn ? worktreeChoice(git as Exclude<FolderGit, "loading" | { failed: string }>, worktree) : undefined;
-  const worktreeHold = worktree.on && git === "loading" ? "worktree를 쓸 수 있는지 확인하는 중입니다" : picked && "problem" in picked ? picked.problem : undefined;
+  const worktreeHold = worktree.on && git === "loading" ? t("worktree를 쓸 수 있는지 확인하는 중입니다") : picked && "problem" in picked ? picked.problem : undefined;
 
   const change = (p: StartSettings) => setStart((s) => ({ ...s, ...p }));
   const reset = (key: keyof StartSettings) =>
@@ -162,7 +163,7 @@ export function NewSession() {
       if (n === "model") {
         const m = v.toLowerCase() === "default" ? undefined : modelNamed(models, v);
         if (!m && v.toLowerCase() !== "default") {
-          toast("목록에 없는 모델입니다");
+          toast(t("목록에 없는 모델입니다"));
           return "kept";
         }
         if (m) change({ model: m.value });
@@ -173,14 +174,14 @@ export function NewSession() {
         else if (e === "auto") reset("effort");
         else if (EFFORTS.includes(e as EffortName)) change({ effort: e as EffortName });
         else {
-          toast("알 수 없는 Effort입니다");
+          toast(t("알 수 없는 Effort입니다"));
           return "kept";
         }
       } else if (target) {
-        toast("이 명령은 세션이 시작된 뒤 보내세요");
+        toast(t("이 명령은 세션이 시작된 뒤 보내세요"));
         return "kept";
       } else return false;
-      toast("시작 설정을 바꿨습니다");
+      toast(t("시작 설정을 바꿨습니다"));
       return true;
     }
     if (!target) return false;
@@ -201,10 +202,10 @@ export function NewSession() {
       case "context":
       case "mcp":
       case "outputStyle":
-        setLater({ title: target.title, text: AFTER_START[target.sheet] });
+        setLater({ title: target.title, text: t(AFTER_START[target.sheet]) });
         return true;
       default:
-        toast("세션이 시작된 뒤 쓸 수 있습니다");
+        toast(t("세션이 시작된 뒤 쓸 수 있습니다"));
         return "kept";
     }
   };
@@ -236,17 +237,17 @@ export function NewSession() {
     <div className="flex h-dvh flex-col">
       <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
-          <button onClick={() => navigate({ name: "home" })} aria-label="뒤로" className="-m-1 rounded-lg p-3">
+          <button onClick={() => navigate({ name: "home" })} aria-label={t("뒤로")} className="-m-1 rounded-lg p-3">
             <Icon.back />
           </button>
           <div className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
-            <div className="text-[15px] font-semibold">새 세션</div>
+            <div className="text-[15px] font-semibold">{t("새 세션")}</div>
             <div className="truncate text-xs text-muted" data-new-folder>
-              {cwd ? `${placeLabel(cwd)} · ${shortPath(cwd)}` : "폴더를 고르세요"}
+              {cwd ? `${placeLabel(cwd)} · ${shortPath(cwd)}` : t("폴더를 고르세요")}
             </div>
             {starting && (
               <div className="flex items-center gap-1.5 text-xs text-accent" data-start-note>
-                <Spinner className="size-3" /> {picked && "choice" in picked ? "worktree를 만드는 중…" : "시작하는 중…"}
+                <Spinner className="size-3" /> {picked && "choice" in picked ? t("worktree를 만드는 중…") : t("시작하는 중…")}
               </div>
             )}
           </div>
@@ -255,10 +256,10 @@ export function NewSession() {
 
       <main className="flex-1 overflow-y-auto overscroll-contain px-safe-0">
         <div className="mx-auto max-w-2xl px-4 py-4 short:py-2">
-          <div className="mb-2 text-sm font-semibold text-muted">폴더</div>
+          <div className="mb-2 text-sm font-semibold text-muted">{t("폴더")}</div>
           <div className="mb-2 flex items-center gap-2 rounded-xl border border-line bg-surface px-3">
             <Icon.search className="size-4 text-muted" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="폴더 찾기" className="w-full bg-transparent py-2.5 text-[16px] outline-none" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("폴더 찾기")} className="w-full bg-transparent py-2.5 text-[16px] outline-none" />
           </div>
           <div className="overflow-hidden rounded-xl border border-line bg-surface">
             {folders.map((f) => (
@@ -279,7 +280,7 @@ export function NewSession() {
                 {cwd === f && <WorktreeOption info={git} draft={worktree} onChange={setWorktree} error={worktreeError} disabled={starting} />}
               </Fragment>
             ))}
-            {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">폴더가 없습니다</div>}
+            {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">{t("폴더가 없습니다")}</div>}
           </div>
         </div>
       </main>
@@ -289,8 +290,8 @@ export function NewSession() {
         models={models}
         controllable={false}
         starting={starting}
-        disabledReason={brokerOff ?? (cwd ? undefined : "폴더를 고르세요")}
-        placeholder="무엇을 할까요?"
+        disabledReason={brokerOff ?? (cwd ? undefined : t("폴더를 고르세요"))}
+        placeholder={t("무엇을 할까요?")}
         onSend={sendOrHold}
         onStop={() => {}}
         onMode={(mode) => change({ mode })}

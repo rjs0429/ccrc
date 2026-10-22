@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { WorktreeRemoved, WorktreeStatus } from "../../../../broker/src/protocol.ts";
+import { t } from "../../i18n/index.ts";
 import { errorText, hostLabel, shortPath } from "../../labels.ts";
 import { call, patchSession, toast } from "../../state.ts";
 import { Button, Sheet, Spinner } from "../ui.tsx";
@@ -11,12 +12,16 @@ const REMOVE_WAIT_MS = 120_000;
 
 // Why the worktree cannot be removed now, if it cannot.
 function removeBlocked(st: WorktreeStatus): string | undefined {
-  if (st.running) return `${hostLabel(st.running)}에서 실행 중입니다. 실행을 끝낸 뒤 지울 수 있습니다.`;
-  if (st.lock && !st.lock.claude) return `직접 건 잠금이 있어 지우지 않습니다${st.lock.reason ? ` (${st.lock.reason})` : ""}. git worktree unlock으로 푼 뒤 다시 하세요.`;
-  if (st.lock?.alive) return "다른 Claude Code가 이 worktree에서 실행 중입니다.";
-  if (st.exists && !st.registered) return "git에 등록된 worktree가 아니라 지우지 않습니다.";
-  if (!st.exists && !st.registered) return st.branch ? `worktree는 이미 없습니다. 브랜치는 남아 있습니다 (${st.branch}).` : "worktree는 이미 없습니다.";
-  if (st.stranded) return `detached HEAD에만 있는 커밋 ${st.stranded}개가 있어 지우지 않습니다. 브랜치를 만든 뒤 다시 하세요.`;
+  if (st.running) return t("{host}에서 실행 중입니다. 실행을 끝낸 뒤 지울 수 있습니다.", { host: hostLabel(st.running) });
+  if (st.lock && !st.lock.claude) {
+    return st.lock.reason
+      ? t("직접 건 잠금이 있어 지우지 않습니다 ({reason}). git worktree unlock으로 푼 뒤 다시 하세요.", { reason: st.lock.reason })
+      : t("직접 건 잠금이 있어 지우지 않습니다. git worktree unlock으로 푼 뒤 다시 하세요.");
+  }
+  if (st.lock?.alive) return t("다른 Claude Code가 이 worktree에서 실행 중입니다.");
+  if (st.exists && !st.registered) return t("git에 등록된 worktree가 아니라 지우지 않습니다.");
+  if (!st.exists && !st.registered) return st.branch ? t("worktree는 이미 없습니다. 브랜치는 남아 있습니다 ({branch}).", { branch: st.branch }) : t("worktree는 이미 없습니다.");
+  if (st.stranded) return t("detached HEAD에만 있는 커밋 {n}개가 있어 지우지 않습니다. 브랜치를 만든 뒤 다시 하세요.", { n: st.stranded });
   return undefined;
 }
 
@@ -26,14 +31,19 @@ const removableLater = (st: WorktreeStatus) => Boolean(st.running || st.lock || 
 // What a second confirmation has to say: changed files that go, and commits whose branch stays.
 function atStake(st: WorktreeStatus): string[] {
   return [
-    ...(st.changed ? [`바뀐 파일 ${st.changed}개를 버립니다. 되돌릴 수 없습니다.`] : []),
-    ...(st.commits ? [`커밋 ${st.commits}개는 브랜치 ${st.branch ?? ""}에 남겨 둡니다.`] : []),
+    ...(st.changed ? [t("바뀐 파일 {n}개를 버립니다. 되돌릴 수 없습니다.", { n: st.changed })] : []),
+    ...(st.commits ? [t("커밋 {n}개는 브랜치 {branch}에 남겨 둡니다.", { n: st.commits, branch: st.branch ?? "" })] : []),
   ];
 }
 
+function ownBranchText(r: WorktreeRemoved): string {
+  if (!r.branch) return "";
+  if (r.branchKept) return r.commits ? t("브랜치는 남겨 두었습니다 ({branch}, 커밋 {n}개)", { branch: r.branch, n: r.commits }) : t("브랜치는 남겨 두었습니다 ({branch})", { branch: r.branch });
+  return r.checkedOut ? t("{branch} 브랜치도 지웠습니다", { branch: r.branch }) : t("브랜치도 지웠습니다");
+}
+
 export function removedText(r: WorktreeRemoved): string {
-  const own = r.branch ? (r.branchKept ? `브랜치는 남겨 두었습니다 (${r.branch}${r.commits ? `, 커밋 ${r.commits}개` : ""})` : `${r.checkedOut ? `${r.branch} ` : ""}브랜치도 지웠습니다`) : "";
-  return [own, r.checkedOut ? `${r.checkedOut} 브랜치는 그대로 두었습니다` : ""].filter(Boolean).join(". ");
+  return [ownBranchText(r), r.checkedOut ? t("{branch} 브랜치는 그대로 두었습니다", { branch: r.checkedOut }) : ""].filter(Boolean).join(". ");
 }
 
 function useStatus(sessionId: string): { status?: WorktreeStatus; error?: string; reload: () => void } {
@@ -64,9 +74,9 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function lockText(lock: WorktreeStatus["lock"]): string {
-  if (!lock) return "없음";
-  if (!lock.claude) return "직접 건 잠금";
-  return lock.alive ? "Claude Code가 쓰는 중" : "Claude Code · 끝난 프로세스";
+  if (!lock) return t("없음");
+  if (!lock.claude) return t("직접 건 잠금");
+  return lock.alive ? t("Claude Code가 쓰는 중") : t("Claude Code · 끝난 프로세스");
 }
 
 function Summary({ st }: { st: WorktreeStatus }) {
@@ -75,18 +85,18 @@ function Summary({ st }: { st: WorktreeStatus }) {
       <div className="px-1" data-worktree-place>
         <div className="text-[15px] font-medium break-all">worktree {st.name}</div>
         <div className="mt-0.5 text-xs break-all text-muted">{shortPath(st.path)}</div>
-        {st.branch && <div className="text-xs break-all text-muted">브랜치 {st.branch}</div>}
+        {st.branch && <div className="text-xs break-all text-muted">{t("브랜치 {branch}", { branch: st.branch })}</div>}
         {st.checkedOut && (
           <div className="mt-0.5 text-xs break-words text-muted" data-worktree-checked-out>
-            지금 {st.checkedOut} 브랜치에 있습니다. 그 브랜치는 지우지 않습니다.
+            {t("지금 {branch} 브랜치에 있습니다. 그 브랜치는 지우지 않습니다.", { branch: st.checkedOut })}
           </div>
         )}
       </div>
       {(st.exists || st.registered) && (
         <div className="mt-3 divide-y divide-line rounded-xl bg-bg px-3" data-worktree-status>
-          <Row label="바뀐 파일">{st.changed ? `${st.changed}개` : "없음"}</Row>
-          <Row label="이 브랜치에만 있는 커밋">{st.commits ? `${st.commits}개` : "없음"}</Row>
-          <Row label="잠금">{lockText(st.lock)}</Row>
+          <Row label={t("바뀐 파일")}>{st.changed ? t("{n}개", { n: st.changed }) : t("없음")}</Row>
+          <Row label={t("이 브랜치에만 있는 커밋")}>{st.commits ? t("{n}개", { n: st.commits }) : t("없음")}</Row>
+          <Row label={t("잠금")}>{lockText(st.lock)}</Row>
         </div>
       )}
     </>
@@ -97,7 +107,7 @@ function IgnoreNote({ st }: { st: WorktreeStatus }) {
   if (st.ignored || !(st.exists || st.registered)) return null;
   return (
     <p className="mt-3 px-1 text-xs text-muted" data-worktree-ignore>
-      .claude/worktrees/가 .gitignore에 없어 원래 폴더의 git status에 보입니다.
+      {t(".claude/worktrees/가 .gitignore에 없어 원래 폴더의 git status에 보입니다.")}
     </p>
   );
 }
@@ -106,7 +116,7 @@ function IgnoreNote({ st }: { st: WorktreeStatus }) {
 function Confirm({ lines, label, busy, onCancel, onConfirm }: { lines: string[]; label: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
   return (
     <div className="mt-4 rounded-xl border border-danger/40 px-3 py-3" data-worktree-confirm>
-      <div className="text-[15px] font-medium">정말 지울까요?</div>
+      <div className="text-[15px] font-medium">{t("정말 지울까요?")}</div>
       {lines.map((l) => (
         <p key={l} className="mt-1 text-sm text-muted">
           {l}
@@ -114,7 +124,7 @@ function Confirm({ lines, label, busy, onCancel, onConfirm }: { lines: string[];
       ))}
       <div className="mt-3 grid grid-cols-2 gap-2">
         <Button onClick={onCancel} disabled={busy}>
-          취소
+          {t("취소")}
         </Button>
         <Button kind="danger" onClick={onConfirm} disabled={busy}>
           {busy ? <Spinner className="mx-auto size-5" /> : label}
@@ -152,8 +162,8 @@ export function WorktreeSheet({ sessionId, onClose }: { sessionId: string; onClo
   const blocked = status && removeBlocked(status);
   const stake = status ? atStake(status) : [];
   return (
-    <Sheet title="worktree 정리" onClose={onClose}>
-      {!status && !error && <Waiting text="worktree를 살펴보는 중…" />}
+    <Sheet title={t("worktree 정리")} onClose={onClose}>
+      {!status && !error && <Waiting text={t("worktree를 살펴보는 중…")} />}
       {error && !status && <Failed text={error} onRetry={reload} />}
       {status && !done && (
         <>
@@ -169,37 +179,37 @@ export function WorktreeSheet({ sessionId, onClose }: { sessionId: string; onClo
             </p>
           )}
           {confirming ? (
-            <Confirm lines={stake} label="지우기" busy={busy} onCancel={() => setConfirming(false)} onConfirm={() => remove(true)} />
+            <Confirm lines={stake} label={t("지우기")} busy={busy} onCancel={() => setConfirming(false)} onConfirm={() => remove(true)} />
           ) : (
             !blocked && (
               <Button kind="danger" className="mt-4 w-full" disabled={busy} onClick={() => (stake.length ? setConfirming(true) : remove(false))}>
-                {busy ? <Spinner className="mx-auto size-5" /> : "worktree 지우기"}
+                {busy ? <Spinner className="mx-auto size-5" /> : t("worktree 지우기")}
               </Button>
             )
           )}
           <IgnoreNote st={status} />
-          {!confirming && <p className="mt-2 px-1 text-xs text-muted">ccrc는 worktree를 저절로 지우지 않습니다.</p>}
+          {!confirming && <p className="mt-2 px-1 text-xs text-muted">{t("ccrc는 worktree를 저절로 지우지 않습니다.")}</p>}
         </>
       )}
       {done && (
         <div className="px-1" data-worktree-done>
-          <div className="text-[15px] font-medium">worktree를 지웠습니다</div>
-          {done.discarded > 0 && <p className="mt-1 text-sm text-muted">바뀐 파일 {done.discarded}개를 버렸습니다.</p>}
+          <div className="text-[15px] font-medium">{t("worktree를 지웠습니다")}</div>
+          {done.discarded > 0 && <p className="mt-1 text-sm text-muted">{t("바뀐 파일 {n}개를 버렸습니다.", { n: done.discarded })}</p>}
           {done.branch &&
             (done.branchKept ? (
               <p className="mt-1 text-sm text-muted">
-                브랜치는 남겨 두었습니다.
+                {t("브랜치는 남겨 두었습니다.")}
                 <span className="block break-all">
                   {done.branch}
-                  {done.commits ? ` · 커밋 ${done.commits}개` : ""}
+                  {done.commits ? ` · ${t("커밋 {n}개", { n: done.commits })}` : ""}
                 </span>
               </p>
             ) : (
-              <p className="mt-1 text-sm break-words text-muted">{done.checkedOut ? `${done.branch} 브랜치도 지웠습니다.` : "브랜치도 지웠습니다."}</p>
+              <p className="mt-1 text-sm break-words text-muted">{done.checkedOut ? t("{branch} 브랜치도 지웠습니다.", { branch: done.branch }) : t("브랜치도 지웠습니다.")}</p>
             ))}
-          {done.checkedOut && <p className="mt-1 text-sm break-words text-muted">{done.checkedOut} 브랜치는 그대로 두었습니다.</p>}
+          {done.checkedOut && <p className="mt-1 text-sm break-words text-muted">{t("{branch} 브랜치는 그대로 두었습니다.", { branch: done.checkedOut })}</p>}
           <Button className="mt-4 w-full" onClick={onClose}>
-            닫기
+            {t("닫기")}
           </Button>
         </div>
       )}
@@ -221,7 +231,7 @@ export function ArchiveWorktree({ sessionId, onClose }: { sessionId: string; onC
   const archive = async (removed?: WorktreeRemoved) => {
     await call(sessionId, "archive", { archived: true });
     patchSession(sessionId, { archived: true });
-    toast(removed ? ["보관하고 worktree를 지웠습니다", removedText(removed)].filter(Boolean).join(". ") : "보관했습니다");
+    toast(removed ? [t("보관하고 worktree를 지웠습니다"), removedText(removed)].filter(Boolean).join(". ") : t("보관했습니다"));
     onClose();
   };
   const fail = (e: Error) => {
@@ -252,29 +262,29 @@ export function ArchiveWorktree({ sessionId, onClose }: { sessionId: string; onC
   const clean = !stake.length;
   const keepButton = (kind: "primary" | "secondary") => (
     <Button kind={kind} className="w-full" disabled={Boolean(busy)} onClick={keep}>
-      {busy === "archive" ? <Spinner className="mx-auto size-5" /> : blocked ? "보관하기" : "보관만 하기"}
+      {busy === "archive" ? <Spinner className="mx-auto size-5" /> : blocked ? t("보관하기") : t("보관만 하기")}
     </Button>
   );
   const removeButton = (kind: "primary" | "danger") => (
     <Button kind={kind} className="w-full" disabled={Boolean(busy)} onClick={() => (clean ? remove(false) : setConfirming(true))}>
-      {busy === "remove" ? <Spinner className="mx-auto size-5" /> : "보관하고 worktree 지우기"}
+      {busy === "remove" ? <Spinner className="mx-auto size-5" /> : t("보관하고 worktree 지우기")}
     </Button>
   );
   return (
-    <Sheet title="보관하기" onClose={onClose}>
+    <Sheet title={t("보관하기")} onClose={onClose}>
       <p className="px-1 text-sm text-muted">
-        <span className="block">ccrc 목록에서만 숨깁니다.</span>
-        <span className="block">VS Code와 claude --resume에는 그대로 보입니다.</span>
+        <span className="block">{t("ccrc 목록에서만 숨깁니다.")}</span>
+        <span className="block">{t("VS Code와 claude --resume에는 그대로 보입니다.")}</span>
       </p>
       {(!status && !error) || (gone && !failed) ? (
         <div className="mt-3">
-          <Waiting text={gone ? "보관하는 중…" : "worktree를 살펴보는 중…"} />
+          <Waiting text={gone ? t("보관하는 중…") : t("worktree를 살펴보는 중…")} />
         </div>
       ) : (
         <>
           {!gone && (
             <>
-              <div className="mt-3 px-1 text-[15px] font-medium">이 세션의 worktree도 지울까요?</div>
+              <div className="mt-3 px-1 text-[15px] font-medium">{t("이 세션의 worktree도 지울까요?")}</div>
               {status && (
                 <div className="mt-2">
                   <Summary st={status} />
@@ -283,7 +293,7 @@ export function ArchiveWorktree({ sessionId, onClose }: { sessionId: string; onC
               {blocked && (
                 <p className="mt-3 px-1 text-sm text-warn" data-worktree-blocked>
                   {blocked}
-                  {status && removableLater(status) && <span className="block text-muted">나중에 세션 메뉴의 worktree 정리에서 지울 수 있습니다.</span>}
+                  {status && removableLater(status) && <span className="block text-muted">{t("나중에 세션 메뉴의 worktree 정리에서 지울 수 있습니다.")}</span>}
                 </p>
               )}
             </>
@@ -294,7 +304,7 @@ export function ArchiveWorktree({ sessionId, onClose }: { sessionId: string; onC
             </p>
           )}
           {confirming ? (
-            <Confirm lines={stake} label="지우고 보관" busy={busy === "remove"} onCancel={() => setConfirming(false)} onConfirm={() => remove(true)} />
+            <Confirm lines={stake} label={t("지우고 보관")} busy={busy === "remove"} onCancel={() => setConfirming(false)} onConfirm={() => remove(true)} />
           ) : (
             <div className="mt-4 space-y-2" data-archive-choices>
               {blocked ? (

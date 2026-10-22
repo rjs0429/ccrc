@@ -1,4 +1,5 @@
 import { worktreeBranch, worktreeOf, type WorktreeNameProblem } from "../../broker/src/worktree-names.ts";
+import { k } from "./i18n/index.ts";
 import { baseName } from "./labels.ts";
 
 // A session's folder as a line names it: the repository and the worktree for one in a worktree Claude Code made.
@@ -27,9 +28,9 @@ export function offeredFolder(cwd: string, offered: ReadonlySet<string>): string
 }
 
 export const NAME_PROBLEM: Record<WorktreeNameProblem, string> = {
-  empty: "이름을 입력하세요",
-  long: "64자까지 쓸 수 있습니다",
-  chars: "영문, 숫자, . _ - / 만 쓸 수 있습니다",
-  segment: "/ 앞뒤가 비거나 . .. .git일 수 없습니다",
-  ref: "..이 들어가거나 . 또는 .lock으로 끝날 수 없습니다",
+  empty: k("이름을 입력하세요"),
+  long: k("64자까지 쓸 수 있습니다"),
+  chars: k("영문, 숫자, . _ - / 만 쓸 수 있습니다"),
+  segment: k("/ 앞뒤가 비거나 . .. .git일 수 없습니다"),
+  ref: k("..이 들어가거나 . 또는 .lock으로 끝날 수 없습니다"),
 };
