@@ -112,6 +112,22 @@ export function untilAfter(contact: number, idleMinutes = COPY_IDLE_MINUTES): nu
   return contact + idleMinutes * 60_000 - LAST_SEEN_STEP_MS;
 }
 
+// What /api/me said at `now` of when a passkey has to confirm the login again, by the phone's clock: at once while one
+// is due, else a minute early for the time the answer took on its way.
+const ANSWER_MARGIN_MS = 60_000;
+
+export function confirmByOf(me: { passkey?: string; passkeyLeftMs?: number }, now: number): number | undefined {
+  if (me.passkey) return now;
+  return me.passkeyLeftMs === undefined ? undefined : now + Math.max(0, me.passkeyLeftMs - ANSWER_MARGIN_MS);
+}
+
+// Until when the copy may show: the login's idle time after the last contact, and no later than a passkey's
+// confirmation, which the phone could not give while the laptop is away.
+export function copyUntil(contact: number, idleMinutes: number, confirmBy?: number): number {
+  const until = untilAfter(contact, idleMinutes);
+  return confirmBy === undefined ? until : Math.min(until, confirmBy);
+}
+
 // When the broker last took in something the phone sent, which is what it counts the login's idle time from: a request
 // from when it was made, once answered; what went on the socket, and the socket's opening, once the broker's next
 // message shows that the connection carried it. The broker's own messages say nothing of the phone's activity.

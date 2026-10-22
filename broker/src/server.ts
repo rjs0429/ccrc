@@ -148,18 +148,22 @@ export async function buildServer(d: ServerDeps) {
   const version = d.version ?? (() => d.doctor.brokerVersion());
   app.get("/api/ping", async () => ({ ok: true, version: version() ?? null }));
 
-  // passkey "due": the login holds, and a passkey has to confirm it before anything else answers. While logged in it
-  // also says how long the login lasts without activity and when its password was set: the phone's copy of recent
-  // conversations shows no longer than the login, and goes once the password changes.
+  // passkey "due": the login holds, and a passkey has to confirm it before anything else answers; passkeyLeftMs: how
+  // long until one has to confirm it again. While logged in it also says how long the login lasts without activity and
+  // when its password was set: the phone's copy of recent conversations shows no longer than the login, nor past a
+  // passkey's confirmation, and goes once the password changes.
   app.get("/api/me", async (req) => {
     d.store.reload();
     const user = d.store.state.user;
     const loggedInNow = loggedIn(req);
+    const due = loggedInNow && passkeyDue(req);
+    const confirmAt = loggedInNow && !due && req.device !== "local" ? d.passkeys?.dueAt(d.leases.current()) : undefined;
     return {
       configured: Boolean(user),
       loggedIn: loggedInNow,
       device: req.device,
-      ...(loggedInNow && passkeyDue(req) ? { passkey: "due" } : {}),
+      ...(due ? { passkey: "due" } : {}),
+      ...(confirmAt !== undefined ? { passkeyLeftMs: Math.max(0, confirmAt - Date.now()) } : {}),
       ...(loggedInNow ? { leaseIdleMinutes: d.leases.idleMinutes, ...(user?.changedAt ? { loginSetAt: user.changedAt } : {}) } : {}),
     };
   });

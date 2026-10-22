@@ -1,7 +1,7 @@
 import type { SessionSummary } from "../../broker/src/protocol.ts";
 import type { Me } from "./api.ts";
 import { getPrefs } from "./prefs.ts";
-import { COPY_IDLE_MINUTES, COPY_SESSIONS, Contact, copied, passwordChanged, untilAfter, usable, type CopyLogin, type SavedChat } from "./offlineCopy.ts";
+import { COPY_IDLE_MINUTES, COPY_SESSIONS, Contact, confirmByOf, copied, copyUntil, passwordChanged, usable, type CopyLogin, type SavedChat } from "./offlineCopy.ts";
 import type { Chat } from "./state.ts";
 
 // The phone's copy of recent conversations in IndexedDB, and in localStorage until when it may show. It belongs to the
@@ -75,6 +75,8 @@ let signedIn = false;
 // The items and title last kept, so a chat that changed only in what the copy leaves out is not written again.
 let lastKept: { items: Chat["items"]; title: string } | undefined;
 let idleMinutes = COPY_IDLE_MINUTES;
+// When a passkey has to confirm the login again, by this page's clock.
+let confirmBy: number | undefined;
 let stamp: string | undefined;
 const contact = new Contact();
 let written = 0;
@@ -95,14 +97,14 @@ function writeLogin(): void {
   if (!signedIn || !contact.at) return;
   written = Date.now();
   try {
-    localStorage.setItem(LOGIN_KEY, JSON.stringify({ until: untilAfter(contact.at, idleMinutes), ...(stamp ? { stamp } : {}) }));
+    localStorage.setItem(LOGIN_KEY, JSON.stringify({ until: copyUntil(contact.at, idleMinutes, confirmBy), ...(stamp ? { stamp } : {}) }));
   } catch {}
   checkEnd();
 }
 
 // Until when the copy may show: from this page's contact while it knows its login, else as written down.
 function login(): CopyLogin | undefined {
-  return signedIn && contact.at ? { until: untilAfter(contact.at, idleMinutes) } : readLogin();
+  return signedIn && contact.at ? { until: copyUntil(contact.at, idleMinutes, confirmBy) } : readLogin();
 }
 
 // When the copy stops showing; undefined when there is none to show.
@@ -147,19 +149,29 @@ export function copyLogin(me: Me): void {
   if (passwordChanged(readLogin(), me.loginSetAt)) void forgetCopies();
   idleMinutes = me.leaseIdleMinutes ?? COPY_IDLE_MINUTES;
   stamp = me.loginSetAt;
+  confirmBy = confirmByOf(me, Date.now());
   if (!signedIn) contact.answered(Date.now());
   signedIn = true;
   ended = false;
   writeLogin();
 }
 
+// Whether this page knows its login, and when a passkey has to confirm it next: once one has, /api/me tells again.
 export function copySignedIn(): boolean {
-  return signedIn;
+  return signedIn && (confirmBy === undefined || confirmBy > Date.now());
+}
+
+// The login waits for a passkey: the copy goes, as the phone could not show it otherwise while the laptop is away.
+export function copyPasskeyDue(): void {
+  confirmBy = Date.now();
+  if (signedIn) writeLogin();
+  else void forgetCopies();
 }
 
 export function copyLoggedOut(): void {
   signedIn = false;
   contact.reset();
+  confirmBy = undefined;
   ended = false;
   void forgetCopies();
 }

@@ -2,14 +2,15 @@ import type { SearchResponse, Thread } from "../../broker/src/search-protocol.ts
 import type { BrokerSessionsInfo, ModelOption, PermissionModeName, SessionSummary, UploadInfo } from "../../broker/src/protocol.ts";
 import { noteAnswered } from "./offline.ts";
 
-// passkey "due": the login holds until a passkey confirms it, and nothing else answers before that.
-// leaseIdleMinutes and loginSetAt, while logged in: how long the login lasts without activity, and when its password
-// was set; the phone's copy of recent conversations goes by them.
+// passkey "due": the login holds until a passkey confirms it, and nothing else answers before that; passkeyLeftMs: how
+// long until a passkey has to confirm it again. leaseIdleMinutes and loginSetAt, while logged in: how long the login
+// lasts without activity, and when its password was set. The phone's copy of recent conversations goes by them.
 export interface Me {
   configured: boolean;
   loggedIn: boolean;
   device: string;
   passkey?: "due";
+  passkeyLeftMs?: number;
   leaseIdleMinutes?: number;
   loginSetAt?: string;
 }

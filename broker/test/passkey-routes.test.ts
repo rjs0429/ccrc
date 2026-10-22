@@ -89,6 +89,8 @@ test("a phone registers a passkey with its password, after which every login of 
   assert.equal(made.statusCode, 200);
   assert.equal(made.json().passkey.here, true);
   assert.equal((await t.app.inject({ method: "GET", url: "/api/sessions", headers: h })).statusCode, 200, "registering confirms the login");
+  const registered = (await t.app.inject({ method: "GET", url: "/api/me", headers: h })).json().passkeyLeftMs;
+  assert.ok(registered > 18 * 3600_000 - 10_000 && registered <= 18 * 3600_000, `the phone learns when a passkey confirms the login again: ${registered}`);
 
   const second = await login(t.app);
   assert.equal(second.body.passkey, "due");
@@ -108,7 +110,9 @@ test("a phone registers a passkey with its password, after which every login of 
   const ok = await t.app.inject({ method: "POST", url: "/api/passkeys/verify", headers: h2, payload: { credential: a.get(vo2.json().options, ORIGIN) } });
   assert.equal(ok.statusCode, 200);
   assert.equal((await t.app.inject({ method: "GET", url: "/api/sessions", headers: h2 })).statusCode, 200);
-  assert.deepEqual(meOf((await t.app.inject({ method: "GET", url: "/api/me", headers: h2 })).json()), { configured: true, loggedIn: true, device: "phone" });
+  const { passkeyLeftMs, ...confirmed } = meOf((await t.app.inject({ method: "GET", url: "/api/me", headers: h2 })).json());
+  assert.deepEqual(confirmed, { configured: true, loggedIn: true, device: "phone" });
+  assert.ok(typeof passkeyLeftMs === "number" && passkeyLeftMs > 18 * 3600_000 - 10_000 && passkeyLeftMs <= 18 * 3600_000, String(passkeyLeftMs));
   const done = await t.app.inject({ method: "POST", url: "/api/passkeys/verify/options", headers: h2, payload: {} });
   assert.deepEqual([done.statusCode, done.json().error], [409, "not_due"]);
 
@@ -200,6 +204,7 @@ test("this machine is never asked for a passkey and does not register one", asyn
   await t.app.inject({ method: "POST", url: "/api/passkeys/register", headers: { ...PHONE, cookie: phone.cookie }, payload: { credential: new Authenticator().create(options, ORIGIN) } });
   const local = await login(t.app, LOCAL);
   assert.equal(local.body.passkey, undefined);
+  assert.equal((await t.app.inject({ method: "GET", url: "/api/me", headers: { cookie: local.cookie } })).json().passkeyLeftMs, undefined, "nor told when");
   assert.equal((await t.app.inject({ method: "GET", url: "/api/sessions", headers: { cookie: local.cookie } })).statusCode, 200);
   const list = (await t.app.inject({ method: "GET", url: "/api/passkeys", headers: { cookie: local.cookie } })).json();
   assert.equal(list.local, true);

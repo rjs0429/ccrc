@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DisplayItem } from "../src/protocol.ts";
 import { dayClock, minutesText } from "../../web/src/labels.ts";
-import { COPY_CHARS, COPY_ITEMS, Contact, copied, keptItem, passwordChanged, untilAfter, usable } from "../../web/src/offlineCopy.ts";
+import { COPY_CHARS, COPY_ITEMS, Contact, confirmByOf, copied, copyUntil, keptItem, passwordChanged, untilAfter, usable } from "../../web/src/offlineCopy.ts";
 
 const user = (id: string, text = "물음"): DisplayItem => ({ kind: "user", id, ts: "2026-10-18T01:00:00.000Z", text });
 const reply = (id: string, text = "답"): DisplayItem => ({ kind: "assistant", id, text });
@@ -109,6 +109,17 @@ test("the copy shows until the login would end, and goes with a password set aga
   assert.equal(passwordChanged({ until: 0, stamp: "2026-10-18T00:00:00.000Z" }, "2026-10-18T00:00:00.000Z"), false);
   assert.equal(passwordChanged({ until: 0 }, "2026-10-18T00:00:00.000Z"), false, "nothing to compare with");
   assert.equal(passwordChanged({ until: 0, stamp: "2026-10-18T00:00:00.000Z" }, undefined), false, "a broker that does not say");
+});
+
+test("the copy shows no longer than the login may go on without a passkey's confirmation", () => {
+  const at = Date.UTC(2026, 9, 18, 3);
+  assert.equal(confirmByOf({}, at), undefined, "no passkey asked");
+  assert.equal(confirmByOf({ passkey: "due" }, at), at, "one is due: at once");
+  assert.equal(confirmByOf({ passkeyLeftMs: 3_600_000 }, at), at + 3_600_000 - 60_000, "a minute early for the answer's way");
+  assert.equal(confirmByOf({ passkeyLeftMs: 30_000 }, at), at, "never before the answer");
+  assert.equal(copyUntil(at, 720), untilAfter(at, 720));
+  assert.equal(copyUntil(at, 720, at + 3_600_000), at + 3_600_000, "the confirmation comes first");
+  assert.equal(copyUntil(at, 60, at + 18 * 3_600_000), untilAfter(at, 60), "the login's idle time comes first");
 });
 
 test("the phone's contact is the last thing the broker took in from it, not what the broker sent", () => {
