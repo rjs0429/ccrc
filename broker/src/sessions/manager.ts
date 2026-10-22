@@ -1066,6 +1066,10 @@ export class SessionManager extends EventEmitter {
         return this.get(sessionId).mcpToggle(String(args.server), args.enabled === true);
       case "mcp_reconnect":
         return this.get(sessionId).mcpReconnect(String(args.server));
+      case "mcp_authenticate":
+        return this.get(sessionId).mcpAuthenticate(String(args.server));
+      case "mcp_oauth_callback":
+        return this.get(sessionId).mcpOAuthCallback(String(args.server), String(args.url));
       case "rewind":
         return this.get(sessionId).rewind(String(args.userMessageId), args.dryRun !== false);
       case "fork":

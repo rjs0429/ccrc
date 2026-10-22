@@ -469,3 +469,28 @@ test("a side question may go with an id, be waited for again by it and be cancel
   );
   hub.close();
 });
+
+test("a window whose login a passkey has to confirm again is closed with the code that says so, and answers nothing", async () => {
+  const { hub, ws, manager } = setup();
+  const closed: unknown[] = [];
+  ws.close = (code?: number) => {
+    closed.push(code);
+    ws.readyState = 3;
+  };
+  let due = false;
+  hub.passkeyDue = (device) => due && device === "test";
+  ws.emit("message", JSON.stringify({ t: "view", sessionId: A }));
+  await sleep(20);
+  assert.equal(manager.focuses.length, 1);
+  due = true;
+  ws.emit("message", JSON.stringify({ t: "view", sessionId: A }));
+  await sleep(20);
+  assert.deepEqual(closed, [4003]);
+  assert.equal(manager.focuses.length, 1, "nothing more is answered");
+  const idle = new FakeSocket();
+  const idleClosed: unknown[] = [];
+  idle.close = (code?: number) => void idleClosed.push(code);
+  hub.attach(idle as never, "test", "token");
+  (hub as unknown as { ping(): void }).ping();
+  assert.deepEqual(idleClosed, [4003], "an idle window is closed at the next ping");
+});

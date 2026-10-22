@@ -7,11 +7,13 @@ export interface StoredUser {
   changedAt: string;
 }
 
+// verifiedAt: when a passkey last confirmed the login (passkeys.ts).
 export interface StoredLease {
   tokenHash: string;
   device: string;
   createdAt: number;
   lastSeen: number;
+  verifiedAt?: number;
 }
 
 export interface StoredState {

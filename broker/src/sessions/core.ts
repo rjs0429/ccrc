@@ -7,11 +7,13 @@ import {
   type CommandInfo,
   type ContextDetail,
   type ContextGauge,
+  type DialogInfo,
   type DisplayItem,
   type EffortName,
   type ElicitInfo,
   type ElicitValue,
   type LiveState,
+  type McpAuthStart,
   type McpServerInfo,
   type OutputStyleInfo,
   type PendingKind,
@@ -26,6 +28,7 @@ import {
   type UsageCauses,
   type UsageInfo,
 } from "../protocol.ts";
+import { dialogResult, type DialogResult } from "../dialogs.ts";
 import { elicitResult } from "../elicit.ts";
 import { cleanTitle } from "../titles.ts";
 import { rememberCommands } from "./commands.ts";
@@ -105,6 +108,7 @@ export interface Ask {
   personOnly?: boolean;
   defaultToNo?: boolean;
   elicitation?: ElicitInfo;
+  dialog?: DialogInfo;
   agentId?: unknown;
 }
 
@@ -123,7 +127,12 @@ export function commandInfo(list: unknown): CommandInfo[] {
     }));
 }
 
-// The servers of an mcp_status answer, with the number of tools in place of the tool list.
+// How each transport signs in, as VS Code offers it: HTTP and SSE servers by OAuth, claude.ai connectors on claude.ai.
+const MCP_AUTH: Record<string, McpServerInfo["auth"]> = { http: "oauth", sse: "oauth", "claudeai-proxy": "claudeai" };
+const AUTH_URL_MAX = 8192;
+
+// The servers of an mcp_status answer, with the number of tools in place of the tool list and the way to sign in in
+// place of the config.
 export function mcpServers(list: unknown): McpServerInfo[] {
   if (!Array.isArray(list)) return [];
   return list
@@ -131,14 +140,24 @@ export function mcpServers(list: unknown): McpServerInfo[] {
     .map((s) => {
       const error = clipped(s.error);
       const scope = clipped(s.scope, NAME_MAX) ?? clipped(s.source, NAME_MAX);
+      const type = isObj(s.config) ? s.config.type : undefined;
+      const auth = typeof type === "string" && Object.hasOwn(MCP_AUTH, type) ? MCP_AUTH[type] : undefined;
       return {
         name: s.name as string,
         status: clipped(s.status, NAME_MAX) ?? "unknown",
         ...(error ? { error } : {}),
         ...(scope ? { scope } : {}),
         ...(Array.isArray(s.tools) ? { tools: s.tools.length } : {}),
+        ...(auth ? { auth } : {}),
       };
     });
+}
+
+// Claude Code's mcp_authenticate answer: the sign-in page, whether its redirect is to be pasted back, or nothing to do.
+export function mcpAuthStart(r: unknown): McpAuthStart {
+  const o = isObj(r) ? r : {};
+  const url = typeof o.authUrl === "string" && o.authUrl.length <= AUTH_URL_MAX && /^https?:\/\//i.test(o.authUrl) ? o.authUrl : undefined;
+  return { ...(url ? { url } : {}), callback: Boolean(url) && o.callbackExpected === true, ...(o.requiresUserAction === false ? { done: true } : {}) };
 }
 
 export function rewindResult(r: unknown): RewindResult {
@@ -333,6 +352,16 @@ export abstract class SessionCore extends EventEmitter {
   }
 
   mcpReconnect(_server: string): Promise<McpServerInfo[]> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  // Claude Code waits on the laptop for the sign-in page's redirect, which the phone passes on (mcpOAuthCallback); with
+  // the redirect handed over, Claude Code leaves connecting the server again to the host, as VS Code does.
+  mcpAuthenticate(_server: string): Promise<McpAuthStart> {
+    return Promise.reject(Error("not available for this session"));
+  }
+
+  mcpOAuthCallback(_server: string, _url: string): Promise<McpServerInfo[]> {
     return Promise.reject(Error("not available for this session"));
   }
 
@@ -605,6 +634,14 @@ export abstract class SessionCore extends EventEmitter {
       this.touch();
       return;
     }
+    if (answer.kind === "dialog") {
+      const result = dialogResult(entry.request.toolName, answer.choice);
+      if (!result) throw Error("invalid answer");
+      this.settleDialog(requestId, result);
+      this.unask(requestId);
+      this.touch();
+      return;
+    }
     if (answer.kind === "plan" && !PLAN_DECISIONS.has(answer.decision)) throw Error("invalid answer");
     let decision: Decision;
     if (answer.kind === "permission") {
@@ -639,6 +676,11 @@ export abstract class SessionCore extends EventEmitter {
 
   // Sends the answer to an MCP server's input request; only a process type that asks for input overrides this.
   protected settleElicitation(_requestId: string, _answer: ElicitAnswer): void {
+    throw Error("not available for this session");
+  }
+
+  // Sends the answer to a dialog; only a process type whose dialogs are answered here overrides this.
+  protected settleDialog(_requestId: string, _result: DialogResult): void {
     throw Error("not available for this session");
   }
 
@@ -680,6 +722,7 @@ export abstract class SessionCore extends EventEmitter {
       ...(a.personOnly && kind === "permission" ? { personOnly: true } : {}),
       ...(a.defaultToNo && kind === "permission" ? { defaultToNo: true } : {}),
       ...(kind === "elicitation" && a.elicitation ? { elicitation: a.elicitation } : {}),
+      ...(kind === "dialog" && a.dialog ? { dialog: a.dialog } : {}),
       ...(typeof a.agentId === "string" && a.agentId && a.agentId.length <= NAME_MAX ? { agentId: a.agentId } : {}),
     };
     this.pending.set(request.id, { request, input: a.input, suggestions: a.suggestions });

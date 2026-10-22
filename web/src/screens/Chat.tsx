@@ -706,7 +706,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
                     request={p}
                     agent={askingAgent(p.agentId)}
                     reply={(answer) => {
-                      if (!send({ t: "answer", sessionId, requestId: p.id, answer })) toast("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요");
+                      if (!send({ t: "answer", sessionId, requestId: p.id, answer })) return toast("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요");
+                      // Editing the refused message starts from it, as VS Code puts it back in its input.
+                      if (answer.kind === "dialog" && answer.choice === "edit_prompt") {
+                        const last = chat?.items.findLast((i) => i.kind === "user");
+                        if (last?.kind === "user" && last.text) composerInsert(last.text, true);
+                      }
                     }}
                   />
                 </div>

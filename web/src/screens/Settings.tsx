@@ -7,6 +7,7 @@ import { AuditSection } from "./settings/Audit.tsx";
 import { ClaudeSettingsSection } from "./settings/ClaudeSettings.tsx";
 import { HealthSection } from "./settings/Health.tsx";
 import { NotificationsSection } from "./settings/Notifications.tsx";
+import { PasskeySection } from "./settings/Passkeys.tsx";
 import { ListSection, PrefsSection } from "./settings/Prefs.tsx";
 
 const PAGES: { page: SettingsPage; title: string }[] = [
@@ -67,6 +68,7 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
                 <div className="text-sm font-semibold text-muted">이 기기</div>
                 <div className="rounded-xl bg-surface p-3.5 text-[15px] font-medium">{device}</div>
               </section>
+              <PasskeySection />
               <PasswordSection />
               <AuditSection />
             </>

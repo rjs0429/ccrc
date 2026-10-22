@@ -429,12 +429,22 @@ export interface UsageCauses {
   none?: boolean;
 }
 
+// auth: how the server is signed in to, when it can be from here: OAuth, or a claude.ai connector.
 export interface McpServerInfo {
   name: string;
   status: string;
   error?: string;
   scope?: string;
   tools?: number;
+  auth?: "oauth" | "claudeai";
+}
+
+// How signing in to an MCP server goes on: a page to open, after which the address the browser could not open (on the
+// laptop's localhost) is pasted back when callback is true; done: nothing was left to do.
+export interface McpAuthStart {
+  url?: string;
+  callback: boolean;
+  done?: boolean;
 }
 
 export interface RewindResult {
@@ -616,6 +626,13 @@ export interface CallMap {
 }
 CALL_OPS.push("mark_unread");
 
+export interface CallMap {
+  // Starts signing in to an MCP server, and finishes it with the address the sign-in ended on.
+  mcp_authenticate: { args: { server: string }; data: McpAuthStart };
+  mcp_oauth_callback: { args: { server: string; url: string }; data: McpServerInfo[] };
+}
+CALL_OPS.push("mcp_authenticate", "mcp_oauth_callback");
+
 // Keeps what the phone shows of a subagent's transcript or a shell's output current; id names it in "follow" messages.
 // after: what the phone holds of the transcript, as for agent_transcript.
 export type FollowArgs = { id: string } & ({ kind: "transcript"; agentId?: string; toolUseId?: string; after: TranscriptAfter } | { kind: "output"; taskId: string });
@@ -718,9 +735,17 @@ export interface FileView {
   sent?: { changed: boolean };
 }
 
-// dialog: a confirmation Claude Code asks for outside a tool call; it can only be answered where the session is open.
+// dialog: a confirmation Claude Code asks for outside a tool call (dialog says which and what it shows).
 // elicitation: input an MCP server asks the user for.
 export type PendingKind = "permission" | "question" | "plan" | "dialog" | "elicitation";
+
+// A dialog as the phone draws it. Refusal: the model refused the message; the user goes on with the fallback model or
+// edits the message for another try. Auto fallback: auto mode's classifier now runs billed requests; the user goes on or
+// stops the turn. Credits: a model runs on usage credits, which the phone never agrees to.
+export type DialogInfo =
+  | { kind: "refusal_fallback_prompt"; model: string; fallback: string; category?: string }
+  | { kind: "auto_mode_server_fallback"; title?: string; paragraphs: string[]; helpUrl?: string; gateway?: string }
+  | { kind: "fable_overage_consent_prompt"; model?: string; enabled: boolean; balanceCents?: number; currency?: string };
 
 export type ElicitFormat = "email" | "uri" | "date" | "date-time";
 
@@ -772,15 +797,18 @@ export interface PendingRequest {
   // The answer must not be an approval by a stray tap.
   defaultToNo?: boolean;
   elicitation?: ElicitInfo;
+  dialog?: DialogInfo;
   // The task id of the subagent that asks, when one does.
   agentId?: string;
 }
 
+// choice: one of the dialog's own answers (dialogs.ts), or "cancel" to close it as Claude Code's default.
 export type Answer =
   | { kind: "permission"; decision: "allow" | "allow_always" | "deny"; message?: string }
   | { kind: "question"; answers: Record<string, string> }
   | { kind: "plan"; decision: "auto" | "acceptEdits" | "default" | "keep_planning"; feedback?: string }
-  | { kind: "elicitation"; action: "accept" | "decline" | "cancel"; content?: Record<string, ElicitValue> };
+  | { kind: "elicitation"; action: "accept" | "decline" | "cancel"; content?: Record<string, ElicitValue> }
+  | { kind: "dialog"; choice: string };
 
 export interface ModelOption {
   value: string;

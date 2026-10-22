@@ -1,8 +1,23 @@
 import { randomUUID } from "node:crypto";
+import { answerable, dialogInfo, type DialogResult } from "../dialogs.ts";
 import { elicitInfo } from "../elicit.ts";
 import type { Link } from "../link/server.ts";
-import type { ContextDetail, DisplayItem, ElicitInfo, UsageCauses, UsageInfo, EffortName, LiveState, McpServerInfo, PermissionModeName, RewindResult, SideTurn, TaskOutput } from "../protocol.ts";
-import { argValue } from "../wrapper/relay.ts";
+import type {
+  ContextDetail,
+  DisplayItem,
+  ElicitInfo,
+  UsageCauses,
+  UsageInfo,
+  EffortName,
+  LiveState,
+  McpAuthStart,
+  McpServerInfo,
+  PermissionModeName,
+  RewindResult,
+  SideTurn,
+  TaskOutput,
+} from "../protocol.ts";
+import { allowedOAuthCallback, argValue } from "../wrapper/relay.ts";
 import {
   CAUSES_MS,
   CONTEXT_MS,
@@ -13,6 +28,7 @@ import {
   READ_MS,
   SessionCore,
   THINKING_TOKENS,
+  mcpAuthStart,
   mcpServers,
   rewindResult,
   shellOutput,
@@ -47,8 +63,8 @@ export function thinkingArg(args: readonly unknown[]): boolean {
 }
 
 // A conversation that runs in VS Code and is reached through the wrapper between VS Code and Claude Code.
-// Remote input goes in as the same messages VS Code sends. Permission prompts show on both sides and the
-// wrapper keeps whichever answer comes first; dialogs show remotely but only VS Code answers them. MCP input
+// Remote input goes in as the same messages VS Code sends. Permission prompts and dialogs show on both sides and the
+// wrapper keeps whichever answer comes first; a dialog the phone may not answer (dialogs.ts) stays with VS Code. MCP input
 // requests, which the extension would decline unseen, are answered here: the wrapper holds one back from VS Code
 // and the session takes it while a phone can be reached, or passes it on to VS Code.
 export class WrappedSession extends SessionCore {
@@ -69,6 +85,9 @@ export class WrappedSession extends SessionCore {
   private diffs: boolean;
   // A wrapper that predates them drops the causes of usage from Claude Code's answer.
   readonly causes: boolean;
+  // The wrapper passes on answers to dialogs, and MCP sign-ins.
+  private dialogs: boolean;
+  private mcpAuth: boolean;
 
   // Thinking starts as VS Code launched Claude Code; an older wrapper does not pass on VS Code's later changes.
   constructor(link: Link, id: string, cwd: string, title?: string) {
@@ -81,6 +100,8 @@ export class WrappedSession extends SessionCore {
     this.sideUnknown = !caps.includes("side_question");
     this.diffs = caps.includes("workspace_diff");
     this.causes = caps.includes("usage_causes");
+    this.dialogs = caps.includes("user_dialogs");
+    this.mcpAuth = caps.includes("mcp_auth");
     this.startThinking = thinkingArg(link.hello?.args ?? []);
     this.thinking = this.startThinking;
   }
@@ -304,6 +325,21 @@ export class WrappedSession extends SessionCore {
     return this.mcpStatus();
   }
 
+  async mcpAuthenticate(server: string): Promise<McpAuthStart> {
+    const serverName = await this.knownServer(server);
+    if (!this.mcpAuth) throw Error(OLD_WRAPPER);
+    return mcpAuthStart(await this.link.request({ subtype: "mcp_authenticate", serverName }, MCP_CHANGE_MS));
+  }
+
+  async mcpOAuthCallback(server: string, url: string): Promise<McpServerInfo[]> {
+    if (!allowedOAuthCallback(url)) throw Error("invalid callback URL");
+    const serverName = await this.knownServer(server);
+    if (!this.mcpAuth) throw Error(OLD_WRAPPER);
+    await this.link.request({ subtype: "mcp_oauth_callback_url", serverName, callbackUrl: url }, MCP_CHANGE_MS);
+    await this.link.request({ subtype: "mcp_reconnect", serverName }, MCP_CHANGE_MS).catch(() => {});
+    return this.mcpStatus();
+  }
+
   async rewind(userMessageId: string, dryRun: boolean): Promise<RewindResult> {
     const id = this.rewindPoint(userMessageId, dryRun);
     return rewindResult(await this.link.request({ subtype: "rewind_files", user_message_id: id, dry_run: dryRun }));
@@ -385,6 +421,10 @@ export class WrappedSession extends SessionCore {
     await this.link.request({ subtype: "update_settings", source: "localSettings", settings: { outputStyle: style } });
   }
 
+  protected settleDialog(requestId: string, result: DialogResult): void {
+    this.link.send({ t: "to_cli", m: { type: "control_response", response: { subtype: "success", request_id: requestId, response: result } } });
+  }
+
   protected settleElicitation(requestId: string, answer: ElicitAnswer): void {
     clearTimeout(this.elicitTimers.get(requestId));
     this.elicitTimers.delete(requestId);
@@ -440,7 +480,9 @@ export class WrappedSession extends SessionCore {
     const r = obj(m.request);
     if (typeof id !== "string" || this.pending.has(id)) return;
     if (r.subtype === "request_user_dialog") {
-      this.ask({ requestId: id, kind: "dialog", toolName: String(r.dialog_kind ?? ""), input: obj(r.payload), localOnly: true });
+      const kind = String(r.dialog_kind ?? "");
+      const dialog = dialogInfo(kind, r.payload);
+      this.ask({ requestId: id, kind: "dialog", toolName: kind, input: {}, dialog, localOnly: !this.dialogs || !answerable(kind) || !dialog });
       return;
     }
     if (r.subtype !== "can_use_tool") return;

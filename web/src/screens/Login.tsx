@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, ApiError } from "../api.ts";
 import { Button, Sheet } from "../components/ui.tsx";
 import { loggedOutText, relTime } from "../labels.ts";
-import { startSession, useApp } from "../state.ts";
+import { passkeyNeeded, startSession, useApp } from "../state.ts";
 
 function failureText(e: unknown): string {
   if (!(e instanceof ApiError)) return "서버에 연결할 수 없습니다.";
@@ -31,10 +31,11 @@ export function Login() {
     setBusy(true);
     setError(undefined);
     try {
-      await api.login(id.trim(), password, takeover);
+      const r = await api.login(id.trim(), password, takeover);
       setPassword("");
       setConflict(null);
-      startSession();
+      if (r.passkey === "due") passkeyNeeded();
+      else startSession();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) setConflict({ device: String(e.body.device), lastSeen: Number(e.body.lastSeen) });
       else setError(failureText(e));

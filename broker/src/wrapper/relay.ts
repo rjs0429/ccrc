@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import net from "node:net";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
+import { DIALOG_CHOICES, dialogAnswer } from "../dialogs.ts";
 import { LineSplitter, parseLine } from "../link/lines.ts";
 import { LINK_VERSION, REMOTE_PREFIX, isPrivateDir, type BrokerFrame, type Hello, type Party, type WrapperFrame } from "../link/protocol.ts";
 import { liveProcesses } from "../sessions/live.ts";
@@ -55,10 +56,12 @@ const REMOTE_REQUESTS = new Set([
   "background_tasks",
   "get_workspace_diff",
   "side_question",
+  "mcp_authenticate",
+  "mcp_oauth_callback_url",
 ]);
 // Told to the broker in the hello, so it offers what this wrapper passes on. `ccrc update` compares this list between
 // the old and the new version to say when VS Code tabs opened before need the new wrapper.
-const CAPS = ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question", "usage_causes"];
+const CAPS = ["fast_mode", "thinking", "claude_push", "background_tasks", "workspace_diff", "side_question", "usage_causes", "user_dialogs", "mcp_auth"];
 // The id of the hook this wrapper adds to VS Code's initialize and answers itself.
 export const PUSH_HOOK = "ccrc_push_notification";
 // Broker requests after which VS Code is told to read the applied settings again.
@@ -229,6 +232,51 @@ export function elicitAnswer(r: unknown): { action: string; content?: Record<str
 // get_usage asks for the answer with or without the causes of usage, nothing else.
 export function allowedUsage(req: Record<string, unknown>): boolean {
   return Object.keys(req).every((k) => k === "subtype" || k === "skip_behaviors") && (req.skip_behaviors === undefined || typeof req.skip_behaviors === "boolean");
+}
+
+const MCP_NAME_MAX = 200;
+const CALLBACK_URL_MAX = 4096;
+const CALLBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+const mcpName = (v: unknown): boolean => typeof v === "string" && v.length > 0 && v.length <= MCP_NAME_MAX && !CONTROL_CHARS.test(v);
+
+// mcp_authenticate names a server and nothing else: Claude Code redirects the sign-in to its own page on this machine,
+// never to a redirectUri the broker chose.
+export function allowedMcpAuthenticate(req: Record<string, unknown>): boolean {
+  return Object.keys(req).every((k) => k === "subtype" || k === "serverName") && mcpName(req.serverName);
+}
+
+// The address a sign-in ended on, as Claude Code's own redirect page on this machine gets it: an authorization code or
+// an error for it.
+export function allowedOAuthCallback(url: unknown): url is string {
+  if (typeof url !== "string" || url.length > CALLBACK_URL_MAX || CONTROL_CHARS.test(url)) return false;
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" && CALLBACK_HOSTS.has(u.hostname) && !u.username && !u.password && (u.searchParams.has("code") || u.searchParams.has("error"));
+  } catch {
+    return false;
+  }
+}
+
+const CALLBACK_KEYS = new Set(["subtype", "serverName", "callbackUrl"]);
+
+// mcp_oauth_callback_url hands Claude Code the redirect of the sign-in it started for the server, nothing else.
+export function allowedMcpCallback(req: Record<string, unknown>): boolean {
+  return Object.keys(req).every((k) => CALLBACK_KEYS.has(k)) && mcpName(req.serverName) && allowedOAuthCallback(req.callbackUrl);
+}
+
+// An mcp_authenticate answer reduced to the page to open and whether its redirect comes back by hand.
+export function mcpAuthAnswer(msg: Record<string, unknown>): Buffer {
+  const r = plainObj(msg.response);
+  return reply(r, () => {
+    const a = plainObj(r.response);
+    return {
+      ...(typeof a.authUrl === "string" ? { authUrl: a.authUrl } : {}),
+      ...(typeof a.requiresUserAction === "boolean" ? { requiresUserAction: a.requiresUserAction } : {}),
+      ...(typeof a.callbackExpected === "boolean" ? { callbackExpected: a.callbackExpected } : {}),
+    };
+  });
 }
 
 const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -466,7 +514,7 @@ export class Relay extends EventEmitter {
   private queued: Buffer[] = [];
   private hostEnded = false;
   private hostGone = false;
-  private open = new Map<string, { subtype: string; line: Buffer }>();
+  private open = new Map<string, { subtype: string; line: Buffer; kind?: string }>();
   private held = new Map<string, { line: Buffer; taken: boolean; timer?: NodeJS.Timeout }>();
   private settled = new Map<string, Party>();
   // Requests whose answers go on reduced: VS Code's get_settings to the broker as well, the broker's
@@ -673,11 +721,13 @@ export class Relay extends EventEmitter {
           const out =
             asked === "update_settings"
               ? reply(plainObj(msg.response), () => ({}))
-              : usage
-                ? usageAnswer(msg)
-                : reduced || line.includes(APPLIED)
-                  ? appliedAnswer(msg, this.styles)
-                  : line;
+              : asked === "mcp_authenticate"
+                ? mcpAuthAnswer(msg)
+                : usage
+                  ? usageAnswer(msg)
+                  : reduced || line.includes(APPLIED)
+                    ? appliedAnswer(msg, this.styles)
+                    : line;
           this.copy("reply", out);
           if (asked && SETTINGS_CHANGES.has(asked) && (msg.response as Record<string, unknown> | undefined)?.subtype === "success") this.refreshHost();
           if (thinking && (msg.response as Record<string, unknown> | undefined)?.subtype === "success") this.remember("in:set_max_thinking_tokens", "in", thinking);
@@ -700,7 +750,7 @@ export class Relay extends EventEmitter {
         const subtype = req.subtype;
         if (subtype === "hook_callback" && req.callback_id === PUSH_HOOK && typeof id === "string") return this.answerPushHook(id, req.input);
         shared = typeof id === "string" && typeof subtype === "string" && SHOWN.has(subtype);
-        if (shared) this.open.set(id as string, { subtype: subtype as string, line });
+        if (shared) this.open.set(id as string, { subtype: subtype as string, line, ...(typeof req.dialog_kind === "string" ? { kind: req.dialog_kind } : {}) });
         held = shared && subtype === "elicitation" && this.hold(id as string, line);
       } else if (msg?.type === "control_cancel_request" && typeof id === "string" && this.open.delete(id)) {
         withdrawn = this.unhold(id);
@@ -856,10 +906,12 @@ export class Relay extends EventEmitter {
       if (req.subtype === "set_max_thinking_tokens" && !allowedThinking(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "get_workspace_diff" && !allowedWorkspaceDiff(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "side_question" && !allowedSideQuestion(req)) return reject("invalid request", m.request_id);
+      if (req.subtype === "mcp_authenticate" && !allowedMcpAuthenticate(req)) return reject("invalid request", m.request_id);
+      if (req.subtype === "mcp_oauth_callback_url" && !allowedMcpCallback(req)) return reject("invalid request", m.request_id);
       if (req.subtype === "side_question") ask(this.sideAsked, m.request_id);
       // Only a message the broker sent may be taken back; VS Code shows a cancelled message of its own as sent.
       if (req.subtype === "cancel_async_message" && !this.cancellable(req)) return reject("message not allowed", m.request_id);
-      if (req.subtype === "get_settings" || req.subtype === "get_usage" || req.subtype === "update_settings" || SETTINGS_CHANGES.has(req.subtype)) {
+      if (req.subtype === "get_settings" || req.subtype === "get_usage" || req.subtype === "update_settings" || req.subtype === "mcp_authenticate" || SETTINGS_CHANGES.has(req.subtype)) {
         askFor(this.remoteAsked, m.request_id, req.subtype);
       }
       if (req.subtype === "set_max_thinking_tokens") askFor(this.thinkingAsked, m.request_id, Buffer.from(JSON.stringify(m)));
@@ -875,7 +927,19 @@ export class Relay extends EventEmitter {
         this.send({ t: "dropped", id, from: "remote", by });
         return;
       }
-      const subtype = this.open.get(id)?.subtype;
+      const open = this.open.get(id);
+      const subtype = open?.subtype;
+      // VS Code is told to close its own copy of a dialog answered here, as of a permission prompt.
+      if (subtype === "request_user_dialog") {
+        const kind = open?.kind ?? "";
+        const answer = response?.subtype === "success" ? dialogAnswer(kind, response.response) : undefined;
+        if (!answer) return reject(Object.hasOwn(DIALOG_CHOICES, kind) ? "invalid answer" : "not answerable", id);
+        this.open.delete(id);
+        this.toChild(Buffer.from(JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: id, response: answer } })));
+        this.toHost(Buffer.from(JSON.stringify({ type: "control_cancel_request", request_id: id })));
+        this.settle(id, "remote");
+        return;
+      }
       if (subtype === "elicitation" && this.held.get(id)?.taken) {
         const answer = response?.subtype === "success" ? elicitAnswer(response.response) : undefined;
         if (!answer) return reject("invalid answer", id);

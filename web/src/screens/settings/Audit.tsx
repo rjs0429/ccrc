@@ -50,6 +50,11 @@ const EVENT_LABEL: Record<string, string> = {
   side_question: "곁질문",
   export: "대화 내보내기",
   config: "ccrc 설정 바꿈",
+  passkey_registered: "패스키 등록",
+  passkey_verified: "패스키로 확인",
+  passkey_failed: "패스키 확인 실패",
+  passkey_removed: "패스키 지움",
+  passkey_reset: "패스키 모두 지움",
 };
 
 const CALL_LABEL: Record<string, string> = {
@@ -60,6 +65,8 @@ const CALL_LABEL: Record<string, string> = {
   resume: "이어서 실행",
   set_output_style: "출력 스타일 바꿈",
   rename: "이름 바꿈",
+  mcp_authenticate: "MCP 인증 시작",
+  mcp_oauth_callback: "MCP 인증 마침",
 };
 
 const READ_OUTCOME: Record<string, string> = {
@@ -88,6 +95,10 @@ const WORD: Record<string, string> = {
   accept: "보냄",
   decline: "거절",
   cancel: "취소",
+  retry_fallback: "다른 모델로 계속",
+  edit_prompt: "메시지 고치기",
+  continue: "계속",
+  interrupt: "중지",
 };
 
 // The value as a label from the first map that has it, else as it is.
@@ -121,7 +132,9 @@ function detail(e: AuditEntry): string {
     case "answer":
       return e.kind === "elicitation"
         ? ["입력 요청", named(e.action, WORD), named(e.server)].filter(Boolean).join(" · ")
-        : named(e.decision, WORD, MODE_LABEL);
+        : e.kind === "dialog"
+          ? ["확인 요청", named(e.choice, WORD)].filter(Boolean).join(" · ")
+          : named(e.decision, WORD, MODE_LABEL);
     case "call":
       return [e.op === "archive" ? (e.archived ? "보관" : "보관 해제") : named(e.op, CALL_LABEL), named(e.server), named(e.style)].filter(Boolean).join(" · ");
     case "archive":

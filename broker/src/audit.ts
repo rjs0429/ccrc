@@ -43,7 +43,12 @@ export type AuditEvent =
   | "agent_changes"
   | "side_question"
   | "export"
-  | "config";
+  | "config"
+  | "passkey_registered"
+  | "passkey_verified"
+  | "passkey_failed"
+  | "passkey_removed"
+  | "passkey_reset";
 
 // Records who did what; message text and tool input are not recorded.
 export class Audit {

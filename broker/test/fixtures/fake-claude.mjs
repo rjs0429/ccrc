@@ -23,6 +23,9 @@
 // background as Claude Code does.
 // side_question sends a control_request_progress line and answers with the question and the size of its history; "SLOW"
 // waits until a control_cancel_request for it. get_workspace_diff answers with one changed file.
+// "DIALOG <kind>" asks the host to draw a dialog of that kind (request_user_dialog, dialog-1, dialog-2, ...) with a payload
+// shaped like Claude Code's. mcp_authenticate answers with a sign-in page that redirects to this machine and the parts of
+// the flow a host does not need; mcp_oauth_callback_url accepts only a redirect carrying state=s1 and a code.
 // --version prints a version and exits.
 // rename_session is checked and saved as Claude Code saves a name (custom-title and agent-name rows when the transcript
 // under CLAUDE_CONFIG_DIR exists, the title file beside it) and announced with session_title_changed, which a resume
@@ -284,6 +287,17 @@ function handle(m) {
       }
       return;
     }
+    if (text.startsWith("DIALOG ")) {
+      const dialog_kind = text.slice(7);
+      const payload =
+        dialog_kind === "refusal_fallback_prompt"
+          ? { originalModel: "claude-opus-5-5", fallbackModel: "claude-sonnet-5", apiRefusalCategory: "cyber", retractedMessageUuids: [] }
+          : dialog_kind === "auto_mode_server_fallback"
+            ? { title: "Auto mode classifier is billed", paragraphs: ["Classifier requests are billed."], helpUrl: "https://code.claude.com/docs/en/auto-mode" }
+            : { overagesEnabled: true, modelName: "Fable", balanceCents: 1200, currency: "USD" };
+      out({ type: "control_request", request_id: `dialog-${++asks}`, request: { subtype: "request_user_dialog", dialog_kind, payload } });
+      return;
+    }
     if (text === "ELICIT" || text === "ELICIT_CANCEL") {
       const request_id = `elicit-${++asks}`;
       const requested_schema = { type: "object", properties: { name: { type: "string", title: "Name" } }, required: ["name"] };
@@ -381,6 +395,18 @@ function handle(m) {
       out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { diff } } });
       return;
     }
+    if (m.request.subtype === "mcp_authenticate") {
+      const response = { authUrl: "https://auth.example.com/authorize?state=s1", requiresUserAction: true, callbackExpected: true, redirectScheme: "localhost", state: "s1", callbackPort: 43123 };
+      out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response } });
+      return;
+    }
+    if (m.request.subtype === "mcp_oauth_callback_url") {
+      const u = new URL(m.request.callbackUrl);
+      const ok = u.searchParams.get("state") === "s1" && u.searchParams.has("code");
+      const response = ok ? { subtype: "success", request_id: m.request_id, response: {} } : { subtype: "error", request_id: m.request_id, error: "Callback URL not accepted: it belongs to a different sign-in attempt" };
+      out({ type: "control_response", response });
+      return;
+    }
     if (m.request.subtype === "get_task_output") {
       const output = `\u001b[32m${m.request.task_id}\u001b[0m "applied": {"rate_limits": 1}\n`;
       out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { output, total_bytes: Buffer.byteLength(output), truncated: false } } });
@@ -461,7 +487,14 @@ function handle(m) {
       return wait(m.response.response);
     }
     const r = m.response.response;
-    out({ type: "answered", request_id: m.response.request_id, behavior: r?.behavior, ...(r?.action ? { action: r.action, content: r.content, keys: Object.keys(r) } : {}) });
+    if (String(m.response.request_id).startsWith("dialog-")) record({ dialogAnswer: m.response.request_id, response: r ?? null });
+    out({
+      type: "answered",
+      request_id: m.response.request_id,
+      behavior: r?.behavior,
+      ...(r?.action ? { action: r.action, content: r.content, keys: Object.keys(r) } : {}),
+      ...(r?.result !== undefined ? { result: r.result } : {}),
+    });
   }
 }
 

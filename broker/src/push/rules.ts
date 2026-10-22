@@ -44,6 +44,12 @@ const BODY: Record<PendingKind, string> = {
   dialog: "확인 요청",
   elicitation: "입력 요청",
 };
+// A dialog is named by what it asks, which is never anything Claude Code or the user wrote.
+const DIALOG_BODY: Record<string, string> = {
+  refusal_fallback_prompt: "다른 모델로 계속할지 확인",
+  auto_mode_server_fallback: "Auto 모드 분류기 과금 확인",
+  fable_overage_consent_prompt: "사용 크레딧 동의",
+};
 const LOCAL_ONLY = "VS Code에서 답변하기";
 const ENDED: Record<Exclude<TurnOutcome, "interrupted" | "local">, string> = {
   done: "작업을 마쳤습니다",
@@ -366,7 +372,8 @@ export class Notifier {
 
   // The tag joins the session and the kind, so a newer notification replaces the older one on the device.
   private requestPayload(sessionId: string, request: PendingRequest, title: string, tool?: string): PushPayload {
-    const text = request.localOnly ? `${LOCAL_ONLY} · ${BODY[request.kind]}` : BODY[request.kind];
+    const what = request.kind === "dialog" && Object.hasOwn(DIALOG_BODY, request.toolName) ? DIALOG_BODY[request.toolName] : BODY[request.kind];
+    const text = request.localOnly ? `${LOCAL_ONLY} · ${what}` : what;
     return { title, body: tool ? `${text} · ${clip(tool, TOOL_MAX)}` : text, tag: `${sessionId}:${request.kind}`, data: { url: `/#/s/${sessionId}` } };
   }
 

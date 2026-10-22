@@ -101,6 +101,35 @@ your version and the new one, and the lines under "Breaking" separately.
   marked "VS Code 보관". VS Code's state database is only read. Bringing such a session back on the phone, or sending
   it a message, keeps it in the list (`<stateDir>/vscode-unarchived.json`) and leaves it archived in VS Code; the mark
   goes once VS Code shows the session again.
+- Claude Code's dialogs can be answered on the phone. When the model refuses a message and Claude Code asks what to do
+  (with `switchModelsOnFlag` off), the card offers going on with the fallback model, editing the message (which comes
+  back in the composer) or closing it; auto mode's notice that its classifier now runs billed requests offers going on
+  or stopping the turn. The buttons take a tap only after the card has shown for half a second. Broker sessions declare
+  the refusal dialog to Claude Code, so it asks instead of ending the turn; they leave auto mode's notice undeclared, so
+  there Claude Code goes on in auto mode without asking, as before. A dialog nobody answers is closed by Claude Code
+  after its `dialogExpiry` (5 minutes by default) with the dialog's default: the refusal stands and the turn ends, and
+  auto mode's notice stops the turn. VS Code sessions need this version's wrapper (`user_dialogs` in the hello's
+  `caps`), which passes on only an answer the dialog offers and tells VS Code to close its copy. Fable's usage credits
+  consent stays with VS Code: the phone shows what it asks and the credits left, read only. The notification of a
+  dialog names what it asks.
+- Signing in to an MCP server from the phone: the MCP sheet offers 인증 for an HTTP or SSE server or a claude.ai
+  connector that needs it. Claude Code starts the sign-in (`mcp_authenticate`) and the phone opens its page; its last
+  page is Claude Code's redirect to the machine's `localhost`, which the phone cannot open, so its address is pasted
+  back in the sheet and Claude Code finishes there (`mcp_oauth_callback_url`), then connects the server again. Only a
+  redirect to `localhost` with a code goes to Claude Code, and the audit log names the server only. VS Code sessions
+  need this version's wrapper (`mcp_auth` in `caps`), which passes on the server's name alone (Claude Code picks the
+  redirect) and of its answer only the page and whether a redirect comes back.
+- Passkeys (Face ID) confirm remote logins. In 계정과 보안 a phone registers one, after its password, for the host name
+  it opens ccrc at. From then on every login from a device other than the machine itself is confirmed with a passkey
+  when it starts and again after `passkeyHours` (new config key, 18 by default), as Claude's own Remote Control does
+  for trusted devices; until then the phone shows only the passkey screen. Another allowed device, a second phone or a
+  tablet, registers its own on that screen at its first login, after the password; a device that has registered one
+  confirms with it. Removing one asks for the password too; `ccrc passkey [list | remove <id> | reset]` lists and
+  removes them on the machine, for a lost phone. Kept in `~/.config/ccrc/passkeys.json` (0600; public keys and when
+  each was used), which `ccrc uninstall --purge` removes. The broker checks registrations and confirmations itself
+  with Node's crypto; there is no new dependency. `ccrc rollback` to 0.7.x turns the confirmation off: 0.7 does not
+  read `passkeys.json`, so the password alone logs in. The passkeys stay, and updating again brings the confirmation
+  back.
 
 ### Changed
 
@@ -149,6 +178,7 @@ your version and the new one, and the lines under "Breaking" separately.
   binds to its own terminal (such as `/color` and `/focus`). A broker session's list is known from its start instead
   of its first turn. The wrapper hands the latest list again to a broker that connects anew.
 - Sessions run by `claude -p` show as open in "SDK" instead of "sdk-cli".
+- `ccrc status` shows the passkeys, and `ccrc setup` tells about registering one on the phone.
 
 ### Fixed
 
@@ -204,7 +234,8 @@ your version and the new one, and the lines under "Breaking" separately.
   Claude tab opened before the update keeps the wrapper of 0.7 until it is opened again. Until then, in that tab's
   session, the side question sheet and the cards and agent map that would offer "백그라운드로" say to open Claude Code again
   instead, the changes sheet's git view is read by the broker, the usage sheet's causes come from another Claude Code,
-  a "/" list Claude Code changed while the broker was away shows from its next change, and Claude reads Claude Code's
+  a "/" list Claude Code changed while the broker was away shows from its next change, Claude Code's dialogs are
+  answered in VS Code only, the MCP sheet's 인증 says the wrapper does not know it yet, and Claude reads Claude Code's
   "not sent" after a PushNotification call that reached the phone.
 
 ## [0.7.3] - 2026-10-18

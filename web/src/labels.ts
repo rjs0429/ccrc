@@ -110,13 +110,43 @@ export function inboxNotes(host: string | undefined, inbox: InboxInfo | undefine
 }
 
 const DIALOG_LABEL: Record<string, string> = {
-  refusal_fallback_prompt: "다른 모델로 다시 시도할지 확인",
-  fable_overage_consent_prompt: "Fable 추가 사용량 동의",
+  refusal_fallback_prompt: "다른 모델로 계속할지 확인",
+  fable_overage_consent_prompt: "사용 크레딧 동의",
   auto_mode_server_fallback: "Auto 모드 분류기 과금 확인",
 };
 
 export function dialogLabel(kind: string): string {
   return DIALOG_LABEL[kind] ?? kind;
+}
+
+const REFUSAL_FIELD: Record<string, string> = { cyber: "정상적인 코딩·보안 작업", bio: "정상적인 생명과학 작업" };
+
+// Why a turn stopped at a refusal and what the user can do, as VS Code tells it. A particle after a model's name would
+// depend on how the name ends, so "모델" carries it.
+export function refusalText(model: string, fallback: string, category?: string): string {
+  const field = category && Object.hasOwn(REFUSAL_FIELD, category) ? REFUSAL_FIELD[category] : undefined;
+  const why = field ? `안전장치를 넓게 잡아 ${field}도 가끔 걸립니다.` : "평범한 대화에서도 가끔 일어납니다.";
+  return `${model}의 안전장치가 이 메시지를 막았습니다. ${why} ${fallback} 모델로 계속하거나, 메시지를 고쳐 ${model} 모델로 다시 보내세요.`;
+}
+
+const ZERO_DECIMAL = new Set(["JPY", "KRW", "VND"]);
+
+function money(cents: number, currency = "USD"): string {
+  const code = currency.toUpperCase();
+  const amount = ZERO_DECIMAL.has(code) ? cents : cents / 100;
+  try {
+    return new Intl.NumberFormat("ko-KR", { style: "currency", currency: code }).format(amount);
+  } catch {
+    return `$${(cents / 100).toFixed(2)}`;
+  }
+}
+
+// What the usage credits consent asks, from the dialog's own figures.
+export function creditsText(info: { model?: string; enabled: boolean; balanceCents?: number; currency?: string }): string {
+  const model = info.model ?? "Fable";
+  const balance = info.balanceCents !== undefined ? ` 남은 크레딧은 ${money(info.balanceCents, info.currency)}입니다.` : "";
+  const base = `${model} 모델은 요금제와 따로 과금되는 사용 크레딧으로 실행됩니다.`;
+  return info.enabled ? `${base}${balance} 크레딧을 쓸지는 계정의 과금 결정이라 VS Code에서만 답할 수 있습니다.` : `${base} 이 계정에는 아직 사용 크레딧이 없습니다.`;
 }
 
 // Why a session no longer has a process the broker drives, as a sentence.
@@ -266,6 +296,20 @@ const ERRORS: [RegExp, string | ((m: RegExpMatchArray) => string)][] = [
 ERRORS.push(
   [/^not running in the foreground$/, "이미 끝났거나 백그라운드에서 실행 중입니다"],
   [/^(?:Error: )?Background tasks are disabled in this session\.?$/, "이 세션은 백그라운드 작업이 꺼져 있습니다"],
+);
+
+ERRORS.push(
+  [/^invalid callback URL$/, "로그인 뒤 넘어간 localhost 주소를 통째로 붙여 넣으세요"],
+  [/^Invalid callback URL: missing authorization code/, "주소에 인증 코드가 없습니다. 주소를 통째로 붙여 넣으세요"],
+  [/^Callback URL not accepted:/, "다른 로그인 시도의 주소입니다. 방금 연 로그인 페이지에서 넘어간 주소를 붙여 넣으세요"],
+  [/^No active OAuth flow for server/, "진행 중인 인증이 없습니다. '인증'을 다시 누르세요"],
+  [/does not support OAuth authentication|does not support authentication/, "이 서버는 여기서 인증할 수 없습니다"],
+  [/^Server not found: /, "MCP 서버를 찾을 수 없습니다"],
+  [/blocked by enterprise managed policy/, "관리자 정책으로 막힌 서버입니다"],
+  [/^Unable to build claude\.ai connector auth URL/, "claude.ai 커넥터의 인증 주소를 만들지 못했습니다"],
+  [/OAuth authentication failed/, "인증하지 못했습니다. '인증'을 다시 누르세요"],
+  [/^invalid answer$/, "이 요청에 맞지 않는 답입니다"],
+  [/^passkey_required$/, "패스키로 확인해야 합니다"],
 );
 
 export function errorText(message: string): string {

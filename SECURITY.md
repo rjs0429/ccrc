@@ -23,9 +23,9 @@ as a patch version with a GitHub security advisory.
 ## Scope
 
 In scope: the broker, the phone web app, the VS Code wrapper, `install.sh`, `ccrc setup`, `ccrc update` and
-`ccrc uninstall`. For example: getting past the device allowlist or the login, reading files outside a session's
-folders or secret files, switching a session to `bypassPermissions` remotely, or another local user reaching the
-wrapper socket.
+`ccrc uninstall`. For example: getting past the device allowlist, the login or its passkey confirmation, reading files
+outside a session's folders or secret files, switching a session to `bypassPermissions` remotely, or another local
+user reaching the wrapper socket.
 
 Out of scope: Claude Code, the Claude Agent SDK and the VS Code extension (report those to Anthropic, see
 <https://code.claude.com/docs/en/legal-and-compliance>), Tailscale, and attacks that need someone who is already

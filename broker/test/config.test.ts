@@ -94,7 +94,7 @@ test("broken JSON is reported with its line and column", () => {
   assert.equal(jsonErrorAt('{"a":1,}'), 7);
 });
 
-const base = (): Config => ({ ...OLD, schemaVersion: 1, brokerSessions: "subscription", updateCheck: true, updateChannel: "stable", updateNotify: true, vscodeArchive: false });
+const base = (): Config => ({ ...OLD, schemaVersion: 1, brokerSessions: "subscription", updateCheck: true, updateChannel: "stable", updateNotify: true, vscodeArchive: false, passkeyHours: 18 });
 
 test("live keys change in place and the ones that need a restart are named", () => {
   const current = base();

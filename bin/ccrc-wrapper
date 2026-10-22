@@ -42,7 +42,7 @@ fi
 # The relay built by `npm run build` is used while it is newer than its sources; otherwise the sources run directly.
 SRC=$ROOT/broker/src
 JS=$ROOT/broker/dist/wrapper/main.js
-if [ -f "$JS" ] && [ -z "$(find "$SRC/wrapper" "$SRC/link" "$SRC/sessions/live.ts" "$SRC/paths.ts" -name '*.ts' -newer "$JS" 2>/dev/null | head -n 1)" ]; then
+if [ -f "$JS" ] && [ -z "$(find "$SRC/wrapper" "$SRC/link" "$SRC/sessions/live.ts" "$SRC/paths.ts" "$SRC/dialogs.ts" -name '*.ts' -newer "$JS" 2>/dev/null | head -n 1)" ]; then
   MAIN=$JS
 else
   MAIN=$SRC/wrapper/main.ts
