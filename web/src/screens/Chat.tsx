@@ -81,6 +81,9 @@ const TOUCH_MS = 600;
 const REST_MS = 150;
 const gapBelow = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight;
 const fingersOn = (el: Element | null, touches: TouchList) => [...touches].filter((t) => el?.contains(t.target as Node)).length;
+// A viewer an item opens over the page through a portal (a photo, a sent file) hands its React events up through the
+// item; its touches, wheel and keys are not the list's.
+const inList = (e: React.SyntheticEvent) => e.currentTarget.contains(e.target as Node);
 // An ended session's conversation ends with the notes of messages Claude Code never took in; what its transcript gains
 // later comes in before them.
 const lastSaid = (items: DisplayItem[]) => items.findLast((i) => i.kind !== "note" || i.code !== "unsent")?.id;
@@ -1073,18 +1076,21 @@ export function Chat({ sessionId }: { sessionId: string }) {
             });
           }}
           onPointerDown={(e) => {
+            if (!inList(e)) return;
             endGlide();
             touch(e);
             if (e.pointerType === "touch") startScroll();
           }}
           onTouchStart={(e) => {
+            if (!inList(e)) return;
             fingers.current = fingersOn(e.currentTarget, e.nativeEvent.touches);
             e.target.addEventListener("touchend", lifted);
             e.target.addEventListener("touchcancel", lifted);
             startScroll();
           }}
-          onKeyDown={touch}
-          onWheel={() => {
+          onKeyDown={(e) => inList(e) && touch(e)}
+          onWheel={(e) => {
+            if (!inList(e)) return;
             endGlide();
             startScroll();
           }}

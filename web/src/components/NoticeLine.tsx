@@ -36,7 +36,7 @@ export function NoticeLine({ item }: { item: Extract<DisplayItem, { kind: "notic
         <div className="flex min-h-8 items-center gap-1.5 text-xs text-muted">{line}</div>
       )}
       {open && more && (
-        <div className="mt-1 ml-5 border-l-2 border-line pl-3 text-[13px] break-words whitespace-pre-wrap text-muted" data-notice-more>
+        <div className="selectable mt-1 ml-5 border-l-2 border-line pl-3 text-[13px] break-words whitespace-pre-wrap text-muted" data-notice-more>
           {more}
         </div>
       )}

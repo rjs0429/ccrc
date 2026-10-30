@@ -71,7 +71,7 @@ export function ToolImages({ call, images }: { call: string; images: ToolImage[]
       {shown.map((s, n) => (
         <Thumb key={n} shown={s} index={n} onOpen={() => setOpen(n)} />
       ))}
-      {open !== null && <ImageViewer images={shown} start={open} onClose={() => setOpen(null)} />}
+      {open !== null && <ImageViewer images={shown} start={open} onClose={() => setOpen(null)} label={t("결과 그림")} />}
     </div>
   );
 }
