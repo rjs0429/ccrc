@@ -314,6 +314,7 @@ export abstract class SessionCore extends EventEmitter {
       ...(this.closed ? {} : { host: this.host }),
       busy: this.busy,
       model: this.model,
+      ...this.builder.modelFacts(),
       permissionMode: this.permissionMode,
       effort: this.effort,
       ...(this.ultracodeAvailable !== undefined ? { ultracode: this.ultracode === true, ultracodeAvailable: this.ultracodeAvailable } : {}),
@@ -844,7 +845,9 @@ export abstract class SessionCore extends EventEmitter {
       const queued = typeof m.queued_turn_count === "number" && m.queued_turn_count > 0;
       this.emit("turn_end", this.turnEnd(classify(m, this.facts), typeof m.duration_ms === "number" ? Date.now() - m.duration_ms : undefined, queued));
     }
+    const facts = m.type === "assistant" || m.type === "system" ? JSON.stringify(this.builder.modelFacts()) : undefined;
     for (const item of this.builder.add(m, at)) this.emit("item", item);
+    if (facts !== undefined && JSON.stringify(this.builder.modelFacts()) !== facts) this.emit("state");
     if (m.type === "user" && m.isReplay === true && typeof m.uuid === "string") this.dequeue(m.uuid);
   }
 

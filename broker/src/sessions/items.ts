@@ -1,6 +1,6 @@
-import type { DisplayItem, Hunk, NoteCode, SubagentActivity, ToolResult, UserAttachment } from "../protocol.ts";
+import type { DisplayItem, Hunk, NoteCode, NoticeInfo, SubagentActivity, ToolImage, ToolResult, UserAttachment } from "../protocol.ts";
 import { workflowMeta } from "../tools.ts";
-import { attachmentsOf } from "./attachments.ts";
+import { attachmentsOf, toolImageBlocks, toolImages } from "./attachments.ts";
 import { classify } from "./outcome.ts";
 import { PLAN_LIMIT, toolReply } from "./replies.ts";
 import { contextDetail, usageReport } from "./reports.ts";
@@ -21,7 +21,11 @@ const COMMAND_TEXT_LIMIT = 8000;
 const COMMAND_NAME_LIMIT = 100;
 const MESSAGE_LIMIT = 20000;
 const NOTICE_SUMMARY_LIMIT = 1000;
+const NOTICE_TEXT_LIMIT = 4000;
+const NOTICE_DETAIL_LIMIT = 1000;
+const MODEL_LIMIT = 100;
 const SENDER_LIMIT = 60;
+const LEVELS = new Set<unknown>(["notice", "suggestion", "warning"]);
 const ENDED = new Map<string, NonNullable<SubagentActivity["ended"]>["status"]>([
   ["completed", "completed"],
   ["failed", "failed"],
@@ -45,7 +49,7 @@ export interface RawMessage {
   isSynthetic?: boolean;
   is_meta?: boolean;
   origin?: unknown;
-  message?: { content?: string | Block[] };
+  message?: { content?: string | Block[]; model?: unknown };
   content?: string;
   is_error?: boolean;
   result?: string;
@@ -173,13 +177,16 @@ export function summarizeTool(name: string, input: unknown, cwd: string): string
   }
 }
 
-function resultText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return content == null ? "" : JSON.stringify(content);
-  return blockList(content)
-    .map((b) => (b.type === "text" ? String(b.text ?? "") : b.type === "image" ? "[image]" : ""))
+// A tool result's text, and the pictures in it that ccrc serves; any other picture stays a mark in the text.
+function resultParts(content: unknown): { text: string; images: ToolImage[] } {
+  if (typeof content === "string") return { text: content, images: [] };
+  if (!Array.isArray(content)) return { text: content == null ? "" : JSON.stringify(content), images: [] };
+  const served = toolImageBlocks(content);
+  const text = blockList(content)
+    .map((b) => (b.type === "text" ? String(b.text ?? "") : b.type === "image" && !served.includes(b) ? "[image]" : ""))
     .filter(Boolean)
     .join("\n");
+  return { text, images: toolImages(served) };
 }
 
 function hunks(value: unknown): Hunk[] {
@@ -354,6 +361,72 @@ export function typedContent(content: unknown): { text: string; attachments: Use
   return { text: texts.join("\n\n"), attachments: attachmentsOf(blocks as Record<string, unknown>[]) };
 }
 
+// The model a main-thread reply came from, as the API named it; none for a message Claude Code made itself.
+function answeringModel(m: RawMessage): string | undefined {
+  const v = m.message?.model;
+  return typeof v === "string" && v && v !== "<synthetic>" ? v.slice(0, MODEL_LIMIT) : undefined;
+}
+
+// A system message Claude Code shows in the conversation, as a notice; its fields come by their SDK names live and by
+// the transcript's from a file. A line at level "info" shows only in Claude Code's transcript mode.
+function noticeOf(m: RawMessage): NoticeInfo | undefined {
+  const r = m as unknown as Record<string, unknown>;
+  const field = (live: string, kept: string, limit: number) => {
+    const v = (str(r[live]) ?? str(r[kept]))?.trim();
+    return v ? clipped(v, limit) : undefined;
+  };
+  const text = clipped(str(m.content)?.trim() ?? "", NOTICE_TEXT_LIMIT);
+  const model = field("original_model", "originalModel", MODEL_LIMIT);
+  const category = field("api_refusal_category", "apiRefusalCategory", MODEL_LIMIT);
+  const detail = field("api_refusal_explanation", "apiRefusalExplanation", NOTICE_DETAIL_LIMIT);
+  const refusal = { ...(model ? { model } : {}), ...(category ? { category } : {}), ...(detail ? { detail } : {}) };
+  if (m.subtype === "model_refusal_fallback") {
+    const fallback = field("fallback_model", "fallbackModel", MODEL_LIMIT);
+    return { notice: "fallback", text, ...refusal, ...(fallback ? { fallback } : {}), ...(r.scope === "local" ? { local: true } : {}) };
+  }
+  if (m.subtype === "model_refusal_no_fallback") return { notice: "refusal", text, ...refusal };
+  if (m.subtype !== "informational" || !text || r.level === "info") return undefined;
+  return { notice: "line", text, level: LEVELS.has(r.level) ? (r.level as NonNullable<NoticeInfo["level"]>) : "notice" };
+}
+
+// A notice about a tool call replaces the one before it about the same call.
+function noticeId(m: RawMessage): string | undefined {
+  const r = m as unknown as Record<string, unknown>;
+  const call = str(r.tool_use_id) ?? str(r.toolUseID);
+  return call ? `notice:${call}` : m.uuid;
+}
+
+// Two model ids name the same model, with the [1m] window or a date the API may add or without.
+const modelBase = (id: string) => id.replace(/\[1m\]$/i, "").replace(/-\d{8}$/, "");
+const sameModel = (a: string, b: string): boolean => modelBase(a) === modelBase(b);
+
+export interface ModelFacts {
+  answered?: string;
+  swapped?: { from: string; to: string };
+}
+
+// The model of the latest reply, and the safeguards' latest move of the session to another model while every reply since
+// came from that model.
+export function modelFacts(items: readonly DisplayItem[]): ModelFacts {
+  let answered: string | undefined;
+  let swapped: ModelFacts["swapped"];
+  const since = new Set<string>();
+  for (let i = items.length - 1; i >= 0 && !answered; i--) {
+    const item = items[i];
+    if (item.kind === "assistant" && item.model) answered = item.model;
+  }
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind === "assistant" && item.model) since.add(item.model);
+    else if (item.kind === "notice" && item.notice === "fallback" && !item.local && item.model && item.fallback) {
+      const to = item.fallback;
+      if ([...since].every((m) => sameModel(m, to))) swapped = { from: item.model, to };
+      break;
+    }
+  }
+  return { ...(answered ? { answered } : {}), ...(swapped ? { swapped } : {}) };
+}
+
 function commandResult(id: string, ts: string | undefined, text: string, m: RawMessage): CommandItem {
   const run = record(m.local_command_run);
   const name = typeof run?.command === "string" ? run.command.slice(0, COMMAND_NAME_LIMIT) : "";
@@ -381,6 +454,7 @@ export class ItemBuilder {
   private subCalls = new Map<string, string>();
   private cwd: string;
   private noteCount = 0;
+  private facts?: ModelFacts;
 
   constructor(cwd: string) {
     this.cwd = cwd;
@@ -394,7 +468,12 @@ export class ItemBuilder {
     } else {
       this.items[at] = item;
     }
+    if (item.kind === "assistant" || item.kind === "notice") this.facts = undefined;
     return item;
+  }
+
+  modelFacts(): ModelFacts {
+    return (this.facts ??= modelFacts(this.items));
   }
 
   has(id: string): boolean {
@@ -415,6 +494,7 @@ export class ItemBuilder {
   seed(items: DisplayItem[]): void {
     this.items = [...items];
     this.pos = new Map(this.items.map((item, i) => [item.id, i]));
+    this.facts = undefined;
   }
 
   // Puts earlier items in front of the ones built so far; an item built here wins over the same id from before.
@@ -519,10 +599,11 @@ export class ItemBuilder {
       // The transcript keeps the result under the same uuid, so a reload finds the same item.
       return [this.put(commandResult(m.uuid ?? `note-${++this.noteCount}`, ts, text, m))];
     }
+    const model = answeringModel(m);
     blocks.forEach((b, i) => {
       const id = `${m.uuid}:${i}`;
       if (b.type === "text" && String(b.text ?? "").trim()) {
-        out.push(this.put({ kind: "assistant", id, ts, text: String(b.text) }));
+        out.push(this.put({ kind: "assistant", id, ts, text: String(b.text), ...(model ? { model } : {}) }));
       } else if (b.type === "thinking" && String(b.thinking ?? "").trim()) {
         out.push(this.put({ kind: "thinking", id, ts, text: String(b.thinking) }));
       } else if (b.type === "tool_use") {
@@ -544,9 +625,9 @@ export class ItemBuilder {
 
   private toolResult(b: Block, output: unknown): DisplayItem {
     const id = String(b.tool_use_id);
-    const full = resultText(b.content);
+    const { text: full, images } = resultParts(b.content);
     const text = clipText(full, RESULT_LIMIT);
-    const result: ToolResult = { text: text.text, isError: b.is_error === true, truncated: text.truncated };
+    const result: ToolResult = { text: text.text, isError: b.is_error === true, truncated: text.truncated, ...(images.length ? { images } : {}) };
     const prev: ToolItem = this.tool(id) ?? { kind: "tool", id, name: "", summary: "", input: null };
     const reply = toolReply(prev.name, prev.input, full, result.isError, output);
     const ids = transcriptIds(prev.name, output, full);
@@ -598,9 +679,11 @@ export class ItemBuilder {
     let item: DisplayItem | undefined;
     const content = str(m.content) ?? "";
     const output = m.subtype === "local_command_output" || m.subtype === "local_command" ? (commandOutput(content) ?? content.trim()) : undefined;
+    const notice = noticeOf(m);
     if (m.subtype === "compact_boundary") item = this.note("compacted", undefined, ts, m.uuid);
     else if (output) item = this.put(commandResult(m.uuid ?? `note-${++this.noteCount}`, ts, output, m));
     else if ((m.subtype === "task_progress" || m.subtype === "task_notification") && m.tool_use_id) item = this.taskTools(m.tool_use_id, m.usage?.tool_uses);
+    else if (notice) item = this.put({ kind: "notice", id: noticeId(m) ?? `note-${++this.noteCount}`, ts, ...notice });
     return item ? [item] : [];
   }
 

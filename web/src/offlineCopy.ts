@@ -73,6 +73,8 @@ export function keptItem(item: DisplayItem): DisplayItem | undefined {
     }
     case "note":
       return item.text ? { ...item, text: clip(item.text, TEXT_MAX) } : item;
+    case "notice":
+      return { ...item, text: clip(item.text, MESSAGE_MAX), ...(item.detail ? { detail: clip(item.detail, MESSAGE_MAX) } : {}) };
   }
 }
 

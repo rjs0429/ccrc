@@ -230,4 +230,5 @@ export const g4: Record<string, string> = {
   세션: "Session",
   "url request|완료": "Done",
   백그라운드: "Background",
+  "결과 그림 {n}": "Result image {n}",
 };

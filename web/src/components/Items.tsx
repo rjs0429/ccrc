@@ -7,6 +7,7 @@ import { usePrefs } from "../prefs.ts";
 import { useApp } from "../state.ts";
 import { DiffView, PatchStats } from "./diff/DiffView.tsx";
 import { Markdown } from "./Markdown.tsx";
+import { NoticeLine } from "./NoticeLine.tsx";
 import { ContextView } from "./sheets/Context.tsx";
 import { UsageView } from "./sheets/Usage.tsx";
 import { ToolInput, ToolOutput } from "./ToolInput.tsx";
@@ -17,6 +18,7 @@ import { actionable, type UserMessage } from "./messageActions.ts";
 import { NOT_KEPT, OfflineView } from "./offlineView.ts";
 import { Folded } from "./tools/parts.tsx";
 import { SentFiles } from "./tools/SentFiles.tsx";
+import { ToolImages } from "./tools/ToolImages.tsx";
 import { fullTime, stampTime, type Day } from "./stamps.ts";
 import { takeOver, useHeld } from "./streamSelection.ts";
 import { chooseThought, liveThought, thoughtChoice } from "./thoughts.ts";
@@ -292,16 +294,16 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
   const status =
     item.result && !background ? (
       notice ? (
-        <Icon.bell className="size-4 text-accent" />
+        <Icon.bell className="size-4 shrink-0 text-accent" />
       ) : item.result.isError ? (
-        <Icon.x className="size-4 text-danger" />
+        <Icon.x className="size-4 shrink-0 text-danger" />
       ) : (
-        <Icon.check className="size-4 text-ok" />
+        <Icon.check className="size-4 shrink-0 text-ok" />
       )
     ) : active ? (
-      <Spinner className="size-4 text-muted" />
+      <Spinner className="size-4 shrink-0 text-muted" />
     ) : (
-      <span className="size-4" />
+      <span className="size-4 shrink-0" />
     );
   return (
     <div className="rounded-xl border border-line bg-surface">
@@ -313,6 +315,7 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
         {sub && !active && !open && <span className="shrink-0 text-xs text-muted">{t("도구 {n}회", { n: sub.tools })}</span>}
         <Icon.chevronDown className={`size-4 shrink-0 text-muted transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
+      {item.result?.images && <ToolImages call={item.id} images={item.result.images} />}
       {sub && (active || open) && <SubActivity sub={sub} running={active} />}
       {open && (
         <div className="space-y-2 border-t border-line px-3 py-2.5">
@@ -549,6 +552,8 @@ export const ItemView = memo(function ItemView({
       return <TaskNote item={item} />;
     case "shell":
       return <ShellCard item={item} />;
+    case "notice":
+      return <NoticeLine item={item} />;
     case "note":
       return (
         <div className={`text-center text-xs whitespace-pre-wrap ${item.code === "error" ? "text-danger" : "text-muted"}`}>

@@ -29,6 +29,22 @@ const AFTER_START: Record<string, string> = {
 const KEPT_KEY = "ccrc.newSession";
 type Kept = { cwd: string | null; start: StartSettings; worktree?: WorktreeDraft };
 const NO_WORKTREE: WorktreeDraft = { on: false, base: "fresh" };
+// The folder last picked by hand on this device, where new sessions start until another is picked.
+const FOLDER_KEY = "ccrc.newSession.folder";
+
+function pickedFolder(): string | null {
+  try {
+    return localStorage.getItem(FOLDER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function pickFolder(cwd: string): void {
+  try {
+    localStorage.setItem(FOLDER_KEY, cwd);
+  } catch {}
+}
 
 function loadKept(): Kept {
   try {
@@ -72,6 +88,33 @@ function modelNamed(models: ModelOption[], name: string): ModelOption | undefine
   return models.find((m) => [m.value, m.resolved, m.label].some((v) => v?.toLowerCase() === n));
 }
 
+function FolderRow({ folder, current, disabled, onPick }: { folder: string; current: boolean; disabled: boolean; onPick: () => void }) {
+  return (
+    <button
+      onClick={onPick}
+      disabled={disabled}
+      data-folder={folder}
+      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left ${current ? "bg-accent-soft" : "border-b border-line last:border-0"}`}
+    >
+      <Icon.folder className="size-4 shrink-0 text-muted" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[15px]">{placeLabel(folder)}</span>
+        <span className="block truncate text-xs text-muted">{shortPath(folder)}</span>
+      </span>
+      {current && <Icon.check className="size-4 text-accent" />}
+    </button>
+  );
+}
+
+function FolderSearch({ query, onChange }: { query: string; onChange: (q: string) => void }) {
+  return (
+    <div className="mb-2 flex items-center gap-2 rounded-xl border border-line bg-surface px-3">
+      <Icon.search className="size-4 text-muted" />
+      <input value={query} onChange={(e) => onChange(e.target.value)} placeholder={t("폴더 찾기")} className="w-full bg-transparent py-2.5 text-[16px] outline-none" />
+    </div>
+  );
+}
+
 export function NewSession() {
   const options = useApp((s) => s.options);
   const sessions = useApp((s) => s.sessions);
@@ -101,12 +144,20 @@ export function NewSession() {
     const q = query.trim().toLowerCase();
     return all.filter((f) => !q || f.toLowerCase().includes(q));
   }, [all, query]);
-  // The most recent folder is the default once the sessions are known, and stays it while the screen is open.
+  // The default is the folder last picked here while it is listed, else the most recent one once the sessions are known,
+  // which stays it while the screen is open.
+  const [lastPicked] = useState(pickedFolder);
   const [fallback, setFallback] = useState<string | null>(null);
   useEffect(() => {
     if (!fallback && sessions && all[0]) setFallback(all[0]);
   }, [fallback, sessions, all]);
-  const cwd = chosen ?? fallback ?? all[0] ?? null;
+  const listed = lastPicked && (!options || !sessions || all.includes(lastPicked)) ? lastPicked : null;
+  const cwd = chosen ?? listed ?? fallback ?? all[0] ?? null;
+  const [folderSheet, setFolderSheet] = useState(false);
+  const choose = (f: string) => {
+    setChosen(f);
+    pickFolder(f);
+  };
 
   useEffect(() => {
     kept = { cwd: chosen, start, ...(worktree.on || worktree.base !== "fresh" || worktree.name !== undefined ? { worktree } : {}) };
@@ -243,7 +294,7 @@ export function NewSession() {
             <Icon.back />
           </button>
           <div className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
-            <div className="text-[15px] font-semibold">{t("새 세션")}</div>
+            <div className="shrink-0 text-[15px] font-semibold">{t("새 세션")}</div>
             <div className="truncate text-xs text-muted" data-new-folder>
               {cwd ? `${placeLabel(cwd)} · ${shortPath(cwd)}` : t("폴더를 고르세요")}
             </div>
@@ -259,26 +310,11 @@ export function NewSession() {
       <ScrollArea className="px-safe-0">
         <div className="mx-auto max-w-2xl px-4 py-4 short:py-2">
           <div className="mb-2 text-sm font-semibold text-muted">{t("폴더")}</div>
-          <div className="mb-2 flex items-center gap-2 rounded-xl border border-line bg-surface px-3">
-            <Icon.search className="size-4 text-muted" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("폴더 찾기")} className="w-full bg-transparent py-2.5 text-[16px] outline-none" />
-          </div>
+          <FolderSearch query={query} onChange={setQuery} />
           <div className="overflow-hidden rounded-xl border border-line bg-surface">
             {folders.map((f) => (
               <Fragment key={f}>
-                <button
-                  onClick={() => setChosen(f)}
-                  disabled={starting}
-                  data-folder={f}
-                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left ${cwd === f ? "bg-accent-soft" : "border-b border-line last:border-0"}`}
-                >
-                  <Icon.folder className="size-4 shrink-0 text-muted" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[15px]">{placeLabel(f)}</span>
-                    <span className="block truncate text-xs text-muted">{shortPath(f)}</span>
-                  </span>
-                  {cwd === f && <Icon.check className="size-4 text-accent" />}
-                </button>
+                <FolderRow folder={f} current={cwd === f} disabled={starting} onPick={() => choose(f)} />
                 {cwd === f && <WorktreeOption info={git} draft={worktree} onChange={setWorktree} error={worktreeError} disabled={starting} />}
               </Fragment>
             ))}
@@ -305,8 +341,29 @@ export function NewSession() {
         onReset={reset}
         onCommand={openCommand}
         openSheet={composerSheet}
+        folder={cwd ? { name: placeLabel(cwd), onOpen: () => setFolderSheet(true) } : undefined}
       />
 
+      {folderSheet && (
+        <Sheet title={t("폴더")} onClose={() => setFolderSheet(false)}>
+          <FolderSearch query={query} onChange={setQuery} />
+          <div className="overflow-hidden rounded-xl border border-line" data-folder-sheet>
+            {folders.map((f) => (
+              <FolderRow
+                key={f}
+                folder={f}
+                current={cwd === f}
+                disabled={starting}
+                onPick={() => {
+                  choose(f);
+                  setFolderSheet(false);
+                }}
+              />
+            ))}
+            {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">{tc("folder list", "폴더가 없습니다")}</div>}
+          </div>
+        </Sheet>
+      )}
       {usage && cwd && <UsageSheet cwd={cwd} onClose={() => setUsage(false)} />}
       {later && (
         <Sheet title={t(later.title)} onClose={() => setLater(null)}>
