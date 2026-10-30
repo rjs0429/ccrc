@@ -3,8 +3,9 @@ import { PERMISSION_MODES, type GitFolderInfo, type LiveState, type PermissionMo
 import { t } from "../../i18n/index.ts";
 import { tNode } from "../../i18n/react.ts";
 import { errorText, shortPath } from "../../labels.ts";
+import { nav } from "../../nav.ts";
 import { rememberSent } from "../../sentPreviews.ts";
-import { call, navigate, toast, useApp } from "../../state.ts";
+import { call, toast, useApp } from "../../state.ts";
 import { openNewSession } from "../../screens/NewSession.tsx";
 import { saveDraft } from "../Composer.tsx";
 import { AttachmentChips } from "../composer/AttachmentChips.tsx";
@@ -145,7 +146,7 @@ export function ForkSheet({
           toast(t("첫 메시지라 같은 폴더의 새 세션으로 엽니다"));
         } else if (start) {
           rememberSent(r.sessionId, message, takeAttachments(scope));
-          toast(t("갈래를 시작했습니다"), { label: t("열기"), run: () => navigate({ name: "chat", sessionId: r.sessionId }) });
+          toast(t("갈래를 시작했습니다"), { label: t("열기"), run: () => nav.replace({ name: "chat", sessionId: r.sessionId }) });
         } else {
           // A start asked for earlier in this sheet may have given the fork its first message; the text then stays sent.
           if (r.sent) rememberSent(r.sessionId, message, takeAttachments(scope));
@@ -153,7 +154,7 @@ export function ForkSheet({
             saveDraft(r.sessionId, text);
             moveAttachments(scope, r.sessionId);
           }
-          navigate({ name: "chat", sessionId: r.sessionId });
+          nav.replace({ name: "chat", sessionId: r.sessionId });
         }
         onDone();
       },

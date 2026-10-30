@@ -3,6 +3,7 @@ import type { FileView, SentRef } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
 import { k, t } from "../../i18n/index.ts";
 import { shortPath, sizeText } from "../../labels.ts";
+import { dismissTop, useLayer } from "../../nav.ts";
 import { FileImages, FileLinks } from "../fileLinks.ts";
 import { Markdown } from "../Markdown.tsx";
 import { Icon, Spinner } from "../ui.tsx";
@@ -255,6 +256,12 @@ function Body({ view, raw, big, url, openUrl, onOpen, onLink, image }: BodyProps
   return <CodeLines text={text} lang={view.kind === "markdown" ? "markdown" : languageOf(view.name)} line={view.line} endLine={view.endLine} />;
 }
 
+// A file opened from a link in another stands over it in the history, so the back returns to the file before.
+function LinkedFile({ onClose }: { onClose: () => void }) {
+  useLayer(onClose);
+  return null;
+}
+
 // Full-screen viewer for files that links in the conversation point to. Links inside a Markdown file
 // open on top of it; the back button returns to the file before. onError hears why a file Claude sent did not open.
 export default function FileViewer({
@@ -275,6 +282,7 @@ export default function FileViewer({
   const [raw, setRaw] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const current = stack[stack.length - 1];
+  const dismiss = useLayer(onClose);
 
   useEffect(() => {
     let live = true;
@@ -343,10 +351,13 @@ export default function FileViewer({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-bg" role="dialog" aria-label={t("파일 보기")}>
+      {stack.slice(1).map((_, i) => (
+        <LinkedFile key={i} onClose={() => setStack((s) => s.slice(0, i + 1))} />
+      ))}
       <header className="screen-header pt-safe border-b border-line bg-surface">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           {stack.length > 1 ? (
-            <button onClick={() => setStack((s) => s.slice(0, -1))} aria-label={t("이전 파일")} className="rounded-lg p-2">
+            <button onClick={dismissTop} aria-label={t("이전 파일")} className="rounded-lg p-2">
               <Icon.back />
             </button>
           ) : null}
@@ -358,7 +369,7 @@ export default function FileViewer({
               </div>
             )}
           </div>
-          <button onClick={onClose} aria-label={t("닫기")} className="rounded-lg p-2">
+          <button onClick={dismiss} aria-label={t("닫기")} className="rounded-lg p-2">
             <Icon.x />
           </button>
         </div>

@@ -38,7 +38,8 @@ import { selectedIn } from "../components/streamSelection.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { brokerSessionsBlocked, closedText, errorText, hostLabel, inboxNotes, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
-import { call, composerInsert, dropParked, focusDone, getState, joinParked, loadMore, navigate, openAt, openSettingsFrom, refreshChat, requestShown, send, toast, useApp } from "../state.ts";
+import { nav } from "../nav.ts";
+import { call, composerInsert, dropParked, focusDone, getState, joinParked, loadMore, openAt, openSettingsFrom, refreshChat, requestShown, send, toast, useApp } from "../state.ts";
 import { withEarlier } from "../chatItems.ts";
 import { markShown, newest, type PeerSent } from "../peerSent.ts";
 import { takeSent } from "../sentPreviews.ts";
@@ -824,7 +825,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     <div className="flex h-dvh flex-col">
       <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
-          <button onClick={() => navigate({ name: "home" })} aria-label={t("뒤로")} className="relative -m-1 rounded-lg p-3">
+          <button onClick={nav.back} aria-label={t("뒤로")} className="relative -m-1 rounded-lg p-3">
             <Icon.back />
             {othersWaiting && <span className="absolute top-2.5 right-2.5 size-2 rounded-full bg-warn" title={t("다른 세션에서 입력이 필요합니다")} />}
           </button>
@@ -1041,7 +1042,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
                 label={t("읽지 않음으로 표시")}
                 onClick={() => {
                   setMenu(false);
-                  void setUnread(sessionId, true).then((ok) => ok && navigate({ name: "home" }));
+                  void setUnread(sessionId, true).then((ok) => ok && nav.back());
                 }}
               />
               {(worktree || kind === "owned") && <div className="mx-3 my-1.5 h-px bg-line" />}
