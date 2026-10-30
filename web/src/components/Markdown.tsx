@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { t } from "../i18n/index.ts";
 import { FileImages, FileLinks, isWebLink, urlTransform } from "./fileLinks.ts";
+import { ImageViewer } from "./UserAttachments.tsx";
 
 function Link({ href, children }: { href?: string; children?: React.ReactNode }) {
   const open = useContext(FileLinks);
@@ -29,9 +30,11 @@ function Link({ href, children }: { href?: string; children?: React.ReactNode })
   );
 }
 
+// A tap opens the picture in the large view, unless it is a link's.
 function Image({ src, alt }: { src?: unknown; alt?: string }) {
   const resolve = useContext(FileImages);
   const [failed, setFailed] = useState<string>();
+  const [open, setOpen] = useState(false);
   const url = typeof src === "string" && src ? (resolve ? resolve(src) : src) : "";
   if (!url || failed === url) {
     return (
@@ -40,7 +43,20 @@ function Image({ src, alt }: { src?: unknown; alt?: string }) {
       </span>
     );
   }
-  return <img src={url} alt={alt ?? ""} onError={() => setFailed(url)} className="max-w-full rounded-md" />;
+  return (
+    <>
+      <img
+        src={url}
+        alt={alt ?? ""}
+        onError={() => setFailed(url)}
+        onClick={(e) => {
+          if (!e.currentTarget.closest("a")) setOpen(true);
+        }}
+        className="max-w-full cursor-zoom-in rounded-md [a_&]:cursor-pointer"
+      />
+      {open && <ImageViewer images={[{ remote: url, size: 0 }]} start={0} onClose={() => setOpen(false)} label={t("이미지")} />}
+    </>
+  );
 }
 
 const components: Components = { a: Link, img: Image };

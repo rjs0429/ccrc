@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { FileView, SentRef } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
 import { k, t } from "../../i18n/index.ts";
@@ -7,6 +7,7 @@ import { dismissTop, useLayer } from "../../nav.ts";
 import { FileImages, FileLinks } from "../fileLinks.ts";
 import { Markdown } from "../Markdown.tsx";
 import { Icon, Spinner } from "../ui.tsx";
+import { Zoomable } from "../Zoomable.tsx";
 import { PREVIEW_MAX_BYTES, SENT_ERROR_TEXT, sentUrl } from "./sent.ts";
 import { htmlLines, languageOf, parseTable, slug } from "./text.ts";
 
@@ -197,9 +198,12 @@ interface BodyProps {
   onOpen: (e: React.MouseEvent) => void;
   onLink: (href: string) => void;
   image: (src: string) => string;
+  // A picture dragged down at 1x closes the file, and what dim holds fades as it goes.
+  onDrop: () => void;
+  dim?: readonly RefObject<HTMLElement | null>[];
 }
 
-function Body({ view, raw, big, url, openUrl, onOpen, onLink, image }: BodyProps) {
+function Body({ view, raw, big, url, openUrl, onOpen, onLink, image, onDrop, dim }: BodyProps) {
   const text = view.text ?? "";
   if (big) {
     return (
@@ -212,9 +216,16 @@ function Body({ view, raw, big, url, openUrl, onOpen, onLink, image }: BodyProps
   }
   if (view.kind === "image") {
     return (
-      <div className="flex justify-center p-3">
-        <img src={url} alt={view.name} className="max-w-full rounded-lg bg-surface-2" />
-      </div>
+      <Zoomable
+        key={url}
+        className="absolute inset-0"
+        pad="pb-safe px-safe-3 pt-3"
+        onClose={onDrop}
+        dim={dim}
+        render={() => (
+          <img src={url} alt={view.name} draggable={false} className="max-h-full max-w-full rounded-lg bg-surface-2 object-contain [-webkit-touch-callout:default]" />
+        )}
+      />
     );
   }
   if (view.kind === "pdf") {
@@ -281,6 +292,8 @@ export default function FileViewer({
   const [loaded, setLoaded] = useState<Loaded | undefined>();
   const [raw, setRaw] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const backdrop = useRef<HTMLDivElement>(null);
+  const header = useRef<HTMLElement>(null);
   const current = stack[stack.length - 1];
   const dismiss = useLayer(onClose);
 
@@ -348,13 +361,15 @@ export default function FileViewer({
   };
   const toggles = view && view.text !== undefined && (view.kind === "markdown" || view.kind === "json" || view.kind === "csv" || view.kind === "tsv");
   const title = view?.name ?? current.href.split(/[?#]/)[0].split("/").pop() ?? current.href;
+  const picture = view?.kind === "image" && !big;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-bg" role="dialog" aria-label={t("파일 보기")}>
+    <div className="fixed inset-0 z-50 flex flex-col" role="dialog" aria-label={t("파일 보기")}>
+      <div ref={backdrop} className="absolute inset-0 -z-10 bg-bg" aria-hidden />
       {stack.slice(1).map((_, i) => (
         <LinkedFile key={i} onClose={() => setStack((s) => s.slice(0, i + 1))} />
       ))}
-      <header className="screen-header pt-safe border-b border-line bg-surface">
+      <header ref={header} className="screen-header pt-safe border-b border-line bg-surface">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           {stack.length > 1 ? (
             <button onClick={dismissTop} aria-label={t("이전 파일")} className="rounded-lg p-2">
@@ -406,7 +421,7 @@ export default function FileViewer({
           <div className="border-t border-line bg-surface-2 px-safe-3 py-1.5 text-xs text-warn">{t("파일이 커서 앞 1MB만 보입니다. 전체는 내려받아 보세요.")}</div>
         )}
       </header>
-      <div ref={scroller} className="pb-safe flex-1 overflow-auto overscroll-contain px-safe-0">
+      <div ref={scroller} className={picture ? "relative min-h-0 flex-1" : "pb-safe flex-1 overflow-auto overscroll-contain px-safe-0"}>
         {!loaded && (
           <div className="flex justify-center py-10 text-muted">
             <Spinner className="size-6" />
@@ -418,7 +433,20 @@ export default function FileViewer({
             <div className="mt-1 font-mono text-xs break-all text-muted">{loaded.path ? shown(loaded.path, cwd) : current.href}</div>
           </div>
         )}
-        {view && <Body view={view} raw={raw} big={big} url={url} openUrl={outside} onOpen={onOutside} onLink={onLink} image={image} />}
+        {view && (
+          <Body
+            view={view}
+            raw={raw}
+            big={big}
+            url={url}
+            openUrl={outside}
+            onOpen={onOutside}
+            onLink={onLink}
+            image={image}
+            onDrop={stack.length > 1 ? dismissTop : dismiss}
+            dim={stack.length > 1 ? undefined : [backdrop, header]}
+          />
+        )}
       </div>
     </div>
   );
