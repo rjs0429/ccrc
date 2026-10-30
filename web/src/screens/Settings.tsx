@@ -8,11 +8,11 @@ import { nav } from "../nav.ts";
 import { forgetCopies } from "../offline.ts";
 import { getPrefs } from "../prefs.ts";
 import { loadDevice, turnOff } from "../push.ts";
-import { loggedOut, meAgain, toast, useApp, type SettingsPage, type SettingsPart } from "../state.ts";
+import { loggedOut, meAgain, refreshAll, toast, useApp, type SettingsPage, type SettingsPart } from "../state.ts";
 import { AuditSection } from "./settings/Audit.tsx";
-import { ClaudeSettingsSection } from "./settings/ClaudeSettings.tsx";
+import { ClaudeSettingsSection, reloadClaudeSettings } from "./settings/ClaudeSettings.tsx";
 import { CopySection } from "./settings/Copy.tsx";
-import { HealthSection } from "./settings/Health.tsx";
+import { HealthSection, ReloadSection } from "./settings/Health.tsx";
 import { LanguageRow } from "./settings/Language.tsx";
 import { NotificationsSection } from "./settings/Notifications.tsx";
 import { PasskeySection } from "./settings/Passkeys.tsx";
@@ -30,6 +30,13 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
   const device = me?.device === "local" ? t("노트북") : me?.device;
   const known = PAGES.find((p) => p.page === page)?.title;
   const title = known ? t(known) : t("설정");
+  // A pull reads the laptop's side again: the sections that show it are drawn anew, Claude Code's settings are read
+  // again in place, and what is typed elsewhere stays.
+  const [round, setRound] = useState(0);
+  const refresh = () => {
+    setRound((n) => n + 1);
+    return Promise.all([refreshAll(), page === "claude" ? reloadClaudeSettings() : undefined]);
+  };
 
   return (
     <div className="flex h-dvh flex-col">
@@ -41,7 +48,7 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
           <div className="flex-1 text-[15px] font-semibold">{title}</div>
         </div>
       </header>
-      <ScrollArea className="pb-safe px-safe-0">
+      <ScrollArea className="pb-safe px-safe-0" onRefresh={refresh}>
         <div className="mx-auto max-w-md space-y-6 px-4 py-5">
           {!page && (
             <>
@@ -67,7 +74,7 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
           {page === "claude" && <ClaudeSettingsSection part={part} />}
           {page === "alerts" && (
             <>
-              <NotificationsSection />
+              <NotificationsSection key={round} />
               <PrefsSection />
               <ChatSection />
               <ListSection />
@@ -82,13 +89,18 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
                   {device && <CopyButton text={device} label={t("기기 이름 복사")} done={t("기기 이름을 복사했습니다")} />}
                 </div>
               </section>
-              <PasskeySection />
+              <PasskeySection key={`p${round}`} />
               <PasswordSection />
-              <CopySection />
-              <AuditSection />
+              <CopySection key={`c${round}`} />
+              <AuditSection key={`a${round}`} />
             </>
           )}
-          {page === "status" && <HealthSection />}
+          {page === "status" && (
+            <>
+              <HealthSection key={round} />
+              <ReloadSection />
+            </>
+          )}
         </div>
       </ScrollArea>
     </div>

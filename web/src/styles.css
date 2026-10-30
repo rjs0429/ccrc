@@ -86,6 +86,13 @@ html {
   overscroll-behavior-y: none;
 }
 
+/* In an iOS Home Screen web app the page rests 1px down so that a tap on the status bar has a scroll to take (topTap.ts);
+   only that tap moves it, never the browser's scroll anchoring. */
+:root[data-top-tap] body {
+  height: calc(100% + 1px);
+  overflow-anchor: none;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -212,7 +219,8 @@ body {
     }
   }
   /* iOS blurs the top of a Home Screen web app unless a fixed or sticky box with a background meets the top edge, and
-     then draws that box's colour instead. The page never scrolls, so a sticky header stays where it is. */
+     then draws that box's colour instead. The page scrolls no further than its 1px rest (topTap.ts), so a sticky
+     header stays at the top edge. */
   .screen-header {
     position: sticky;
     top: 0;

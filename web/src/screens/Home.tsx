@@ -11,7 +11,8 @@ import { useLongPress } from "../components/useLongPress.ts";
 import { t, tc } from "../i18n/index.ts";
 import { baseName, brokerSessionsBlocked, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
 import { nav, useKept } from "../nav.ts";
-import { loggedOut, openAt, refreshSessions, useApp } from "../state.ts";
+import { loggedOut, openAt, refreshAll, refreshSessions, useApp } from "../state.ts";
+import { toTop } from "../topTap.ts";
 import { groupFolder, placeLabel, shownBranch } from "../worktree.ts";
 
 // "all" leaves archived sessions out; what runs, waits for input or is unread shows archived or not.
@@ -248,8 +249,10 @@ export function Home() {
       <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-safe-3 pt-2.5 pb-2 short:flex-nowrap short:py-1.5">
           <h1 className="order-1 flex-1 pl-1 text-xl font-semibold short:flex-none short:text-lg">
-            ccrc
-            <span className={`ml-2 inline-block size-2 rounded-full align-middle ${conn === "ready" ? "bg-ok" : "bg-warn"}`} title={conn} />
+            <button onClick={toTop} title={t("맨 위로")} className="-my-1.5 py-1.5 pr-2 text-left">
+              ccrc
+              <span className={`ml-2 inline-block size-2 rounded-full align-middle ${conn === "ready" ? "bg-ok" : "bg-warn"}`} title={conn} />
+            </button>
           </h1>
           <button
             onClick={() => nav.open({ name: "new" })}
@@ -302,7 +305,13 @@ export function Home() {
       </header>
       <UpdateBanner />
 
-      <ScrollArea className="pb-safe px-safe-0">
+      <ScrollArea
+        className="pb-safe px-safe-0"
+        onRefresh={() => {
+          if (searching) retry();
+          return refreshAll();
+        }}
+      >
         {!sessions && (
           <div className="flex justify-center py-12 text-muted">
             <Spinner className="size-6" />

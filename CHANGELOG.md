@@ -23,6 +23,16 @@ your version and the new one, and the lines under "Breaking" separately.
   finger as you swipe, and a drag down closes the viewer. Picture files in the file viewer and pictures in Markdown
   files (tap one to open it large) zoom the same way. On a computer, Ctrl with the wheel or a trackpad pinch zooms and
   the wheel pans.
+- In the iPhone Home Screen app, a tap on the status bar takes the list on screen to its top, as in other apps: the
+  session list, settings, the new-session screen and a conversation, which goes up to the top of the part it has and
+  loads the part before there. On any device a tap on "ccrc" at the top of the home screen does the same.
+- Pull to refresh: pulled down from its top and let go, the session list reads the sessions and options again (and the
+  search), a settings page reads what it shows from the laptop, the new-session screen its folders, a conversation all
+  of itself, and the offline screen tries the laptop again. A conversation that still holds back an earlier part loads
+  that part at its top instead. Lists that take a pull no longer stretch past their ends; a conversation, only at its
+  top.
+- Settings > Status and checks > Reload app loads the whole app again, for when the screen looks wrong or stops
+  responding.
 
 ### Changed
 

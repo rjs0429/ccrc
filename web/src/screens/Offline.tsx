@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { DateLine, ItemView, shownItems } from "../components/Items.tsx";
 import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import { LAPTOP_ONLY, OfflineView } from "../components/offlineView.ts";
+import { Pull } from "../components/Pull.tsx";
 import { ScrollArea } from "../components/ScrollArea.tsx";
 import { ReplySheet, type Reply } from "../components/sheets/Reply.tsx";
 import { dayLines } from "../components/stamps.ts";
@@ -13,7 +14,8 @@ import { nav } from "../nav.ts";
 import { copyEnd, copyEnded, forgetCopies, onCopies, savedCopies, savedCopy } from "../offline.ts";
 import type { SavedChat } from "../offlineCopy.ts";
 import { getPrefs } from "../prefs.ts";
-import { reconnect, toast, useApp } from "../state.ts";
+import { reconnect, refreshAll, toast, useApp } from "../state.ts";
+import { glideTop, toTop, useToTop } from "../topTap.ts";
 import { placeLabel } from "../worktree.ts";
 
 const openNothing = () => toast(t(LAPTOP_ONLY));
@@ -50,12 +52,14 @@ export function OfflineHome({ reason }: { reason: "unreachable" | "denied" }) {
       <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center px-safe-3 pt-2.5 pb-2">
           <h1 className="flex-1 pl-1 text-xl font-semibold">
-            ccrc
-            <span className="ml-2 inline-block size-2 rounded-full bg-warn align-middle" />
+            <button onClick={toTop} title={t("맨 위로")} className="-my-1.5 py-1.5 pr-2 text-left">
+              ccrc
+              <span className="ml-2 inline-block size-2 rounded-full bg-warn align-middle" />
+            </button>
           </h1>
         </div>
       </header>
-      <ScrollArea className="pb-safe px-safe-0">
+      <ScrollArea className="pb-safe px-safe-0" onRefresh={refreshAll}>
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-4">
           <div className="flex items-start gap-3 rounded-xl bg-surface-2 p-3.5 text-sm" data-offline={reason}>
             <p className="min-w-0 flex-1 break-keep text-pretty">
@@ -138,6 +142,7 @@ export function OfflineChat({ sessionId }: { sessionId: string }) {
     const el = listRef.current;
     if (el && chat) el.scrollTop = el.scrollHeight;
   }, [chat]);
+  useToTop(() => glideTop(listRef.current));
 
   return (
     <div className="flex h-dvh flex-col">
@@ -154,43 +159,45 @@ export function OfflineChat({ sessionId }: { sessionId: string }) {
           </div>
         </div>
       </header>
-      <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain px-safe-0" data-scroll-root data-offline-chat>
-        <OfflineView.Provider value>
-          <FileLinks.Provider value={openNothing}>
-            <FileRoots.Provider value={roots}>
-              <div className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:pt-3">
-                {chat === undefined && (
-                  <div className="flex justify-center py-10 text-muted">
-                    <Spinner className="size-6" />
-                  </div>
-                )}
-                {chat === null && (
-                  <p className="py-10 text-center text-sm break-keep text-muted" data-copy-missing data-copy-ended={copyEnded() || undefined}>
-                    {copyEnded()
-                      ? t("볼 수 있는 기한이 지나 휴대폰에서 지웠습니다. 노트북에 연결되면 볼 수 있습니다.")
-                      : t("이 대화는 휴대폰에 저장하지 않았습니다. 노트북에 연결되면 볼 수 있습니다.")}
-                  </p>
-                )}
-                {chat?.cut && (
-                  <div className="flex items-center gap-3 text-xs text-muted" data-copy-cut>
-                    <span className="h-px flex-1 bg-line" />
-                    {t("이전 대화는 휴대폰에 저장하지 않았습니다")}
-                    <span className="h-px flex-1 bg-line" />
-                  </div>
-                )}
-                {items.map((item) => (
-                  <Fragment key={item.id}>
-                    <DateLine day={days.get(item.id)} />
-                    <div data-item={item.id}>
-                      <ItemView item={item} running={false} onReply={setReply} />
+      <Pull box={listRef} refresh={refreshAll} atTop>
+        <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain px-safe-0" data-scroll-root data-offline-chat>
+          <OfflineView.Provider value>
+            <FileLinks.Provider value={openNothing}>
+              <FileRoots.Provider value={roots}>
+                <div className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:pt-3">
+                  {chat === undefined && (
+                    <div className="flex justify-center py-10 text-muted">
+                      <Spinner className="size-6" />
                     </div>
-                  </Fragment>
-                ))}
-              </div>
-            </FileRoots.Provider>
-          </FileLinks.Provider>
-        </OfflineView.Provider>
-      </div>
+                  )}
+                  {chat === null && (
+                    <p className="py-10 text-center text-sm break-keep text-muted" data-copy-missing data-copy-ended={copyEnded() || undefined}>
+                      {copyEnded()
+                        ? t("볼 수 있는 기한이 지나 휴대폰에서 지웠습니다. 노트북에 연결되면 볼 수 있습니다.")
+                        : t("이 대화는 휴대폰에 저장하지 않았습니다. 노트북에 연결되면 볼 수 있습니다.")}
+                    </p>
+                  )}
+                  {chat?.cut && (
+                    <div className="flex items-center gap-3 text-xs text-muted" data-copy-cut>
+                      <span className="h-px flex-1 bg-line" />
+                      {t("이전 대화는 휴대폰에 저장하지 않았습니다")}
+                      <span className="h-px flex-1 bg-line" />
+                    </div>
+                  )}
+                  {items.map((item) => (
+                    <Fragment key={item.id}>
+                      <DateLine day={days.get(item.id)} />
+                      <div data-item={item.id}>
+                        <ItemView item={item} running={false} onReply={setReply} />
+                      </div>
+                    </Fragment>
+                  ))}
+                </div>
+              </FileRoots.Provider>
+            </FileLinks.Provider>
+          </OfflineView.Provider>
+        </div>
+      </Pull>
       <div className="pb-safe flex items-center gap-3 border-t border-line bg-bg px-safe-4 pt-2.5 short:pt-1.5" data-read-only>
         <p className="min-w-0 flex-1 text-sm break-keep text-muted">
           <span className="block font-medium text-fg">{t("읽기 전용")}</span>

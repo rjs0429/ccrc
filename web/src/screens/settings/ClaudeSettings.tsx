@@ -103,6 +103,11 @@ const io = {
 // One for the app's whole run, so a save still going when the screen is left carries on and the next visit sees it.
 let shared: SettingsSaver | undefined;
 
+// Reads the settings file again for the screen on show, which keeps its fields and place.
+export function reloadClaudeSettings(): Promise<void> {
+  return shared ? shared.reload().catch(failed) : Promise.resolve();
+}
+
 function Row({ setting, label, hint, busy, onClick, children }: { setting: string; label: string; hint?: string; busy?: boolean; onClick?: () => void; children: ReactNode }) {
   const body = (
     <>
