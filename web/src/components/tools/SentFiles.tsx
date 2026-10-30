@@ -294,7 +294,7 @@ export function SentFiles({ item, running }: { item: ToolItem; running: boolean 
           </span>
         )}
       </div>
-      {caption && <div className="px-3 pb-2 text-[14px] leading-relaxed whitespace-pre-wrap">{caption}</div>}
+      {caption && <div className="selectable px-3 pb-2 text-[14px] leading-relaxed whitespace-pre-wrap">{caption}</div>}
       {item.result?.isError && (
         <div className="px-3 pb-2.5 text-sm text-muted">
           <Folded text={item.result.text} plain />

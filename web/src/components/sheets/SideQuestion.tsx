@@ -13,7 +13,7 @@ const OLD_WRAPPER = k("VS Code 쪽 래퍼가 곁질문을 넘기지 못합니다
 function Question({ text, at }: { text: string; at?: number }) {
   return (
     <div className="flex flex-col items-end gap-1">
-      <div className="max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap">{text}</div>
+      <div className="selectable max-w-[88%] rounded-2xl rounded-br-md bg-surface-2 px-3.5 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap">{text}</div>
       {at !== undefined && <span className="text-[11px] text-muted">{clock(new Date(at))}</span>}
     </div>
   );
@@ -32,7 +32,7 @@ function Entry({ e, onInstead }: { e: SideEntry; onInstead?: () => void }) {
       )}
       {e.kind === "notice" && <p className="text-sm text-muted">{e.text}</p>}
       {e.kind === "none" && <p className="text-sm text-muted">{t("답이 없습니다. 다시 묻거나 대화에서 물어보세요.")}</p>}
-      {e.kind === "error" && <p className="text-sm text-danger">{e.text}</p>}
+      {e.kind === "error" && <p className="selectable text-sm text-danger">{e.text}</p>}
       {onInstead && (
         <SmallButton tall onClick={onInstead}>
           {t("앞선 곁질문 취소하고 다시 묻기")}

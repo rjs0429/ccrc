@@ -10,7 +10,7 @@ export type Reply = Extract<DisplayItem, { kind: "assistant" }>;
 export function ReplySheet({ reply, onExport, onClose }: { reply: Reply; onExport?: () => void; onClose: () => void }) {
   return (
     <Sheet title={t("Claude 답")} onClose={onClose}>
-      <div className="mb-2 max-h-[40dvh] overflow-y-auto rounded-xl bg-surface-2 px-3 py-2 font-mono text-[12.5px] leading-relaxed break-words whitespace-pre-wrap select-text" data-reply-source>
+      <div className="mb-2 max-h-[40dvh] overflow-y-auto rounded-xl bg-surface-2 px-3 py-2 font-mono text-[12.5px] leading-relaxed break-words whitespace-pre-wrap selectable" data-reply-source>
         {reply.text}
       </div>
       <Choice

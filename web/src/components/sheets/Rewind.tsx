@@ -37,7 +37,7 @@ const folderOf = (file: string) => file.slice(0, file.lastIndexOf("/")) || "/";
 // A failure in a panel of choices, told apart from them.
 function Trouble({ text }: { text: string }) {
   return (
-    <p className="px-1 text-sm text-danger" role="alert">
+    <p className="selectable px-1 text-sm text-danger" role="alert">
       {text}
     </p>
   );

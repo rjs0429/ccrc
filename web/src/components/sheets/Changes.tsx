@@ -166,7 +166,7 @@ function SessionChanges({ sessionId, cwd, onClose }: { sessionId: string; cwd: s
               : t("대화와 이 세션의 에이전트 기록에서 바뀐 파일을 보여 줍니다.")}
           </div>
         )}
-        {agentsFailed && <div className="mb-2 px-1 text-xs text-danger">{t("에이전트 기록을 읽지 못했습니다: {error}", { error: agentsFailed })}</div>}
+        {agentsFailed && <div className="selectable mb-2 px-1 text-xs text-danger">{t("에이전트 기록을 읽지 못했습니다: {error}", { error: agentsFailed })}</div>}
         {files.length === 0 && !waiting && <div className="px-1 py-2 text-sm text-muted">{t("바뀐 파일이 없습니다")}</div>}
         {files.map((f) => (
           <button

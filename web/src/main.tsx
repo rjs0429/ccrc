@@ -6,10 +6,12 @@ import { onLang } from "./i18n/index.ts";
 import { startNav } from "./nav.ts";
 import { registerServiceWorker, syncPushLang } from "./push.ts";
 import { getState, loadMe } from "./state.ts";
+import { blockPageZoom } from "./touch.ts";
 import { trackViewport } from "./viewport.ts";
 
 startNav();
 trackViewport();
+blockPageZoom();
 startLang();
 onLang(() => void (getState().me?.loggedIn && syncPushLang().catch(() => {})));
 createRoot(document.getElementById("root")!).render(<App />);

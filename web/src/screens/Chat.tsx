@@ -25,6 +25,7 @@ import { MessageActionsSheet } from "../components/sheets/MessageActions.tsx";
 import { ExportSheet } from "../components/sheets/Export.tsx";
 import { ReplySheet, type Reply } from "../components/sheets/Reply.tsx";
 import { copyText } from "../components/clipboard.ts";
+import { CopyButton } from "../components/CopyButton.tsx";
 import type { UserMessage } from "../components/messageActions.ts";
 import { AgentMapSheet } from "../components/sheets/AgentMap.tsx";
 import { agentMap } from "../components/agents/tree.ts";
@@ -1226,7 +1227,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
             </Fragment>
           ) : (
             <Fragment key="menu">
-              <div className="mb-2 px-3 text-xs break-all text-muted">{cwd}</div>
+              {cwd && (
+                <div className="mb-1 flex min-h-11 items-center gap-1 pl-3" data-menu-cwd>
+                  <span className="min-w-0 flex-1 text-xs break-all text-muted">{cwd}</span>
+                  <CopyButton text={cwd} label={t("작업 폴더 경로 복사")} done={t("경로를 복사했습니다")} />
+                </div>
+              )}
               {menu.stop && (
                 <Choice
                   label={t("이번 턴 중지")}

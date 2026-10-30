@@ -121,6 +121,55 @@ body {
   padding-right: calc(--spacing(--value(number)) + var(--sar));
 }
 
+/* No pinch zooms the page; a zoom stage zooms its picture itself. WebKit puts touch-action back to auto at each scroll
+   box, so every element carries it. */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    touch-action: pan-x pan-y;
+  }
+  [data-zoom-stage],
+  [data-zoom-stage] * {
+    touch-action: none;
+  }
+}
+
+/* On a touch screen a long press selects only text there to be read or copied (.selectable), never the app around it;
+   fields keep their own selection, and a button inside selectable text stays a button. */
+@layer base {
+  @media (pointer: coarse) {
+    body {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    input,
+    textarea {
+      -webkit-user-select: text;
+      user-select: text;
+      -webkit-touch-callout: default;
+    }
+  }
+}
+
+@layer components {
+  .selectable {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+  .selectable button {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  /* iOS's menu for a web link or a picture stays; a link the app opens itself sets none of its own. */
+  a[target="_blank"],
+  [data-zoom-stage] img {
+    -webkit-touch-callout: default;
+  }
+}
+
 @layer components {
   /* A sheet dims the page in two parts no drag can pan: iOS colours its status bar from a fixed strip at the top edge,
      but keeps the colour it had under a dim the size of the screen. */

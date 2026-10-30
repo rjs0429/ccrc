@@ -443,11 +443,11 @@ function AgentDetail({ sessionId, node, gone, parent, clock, canStop, stopping, 
       ) : (
         running && node.activity && <Field label={t("지금 하는 일")}>{node.activity}</Field>
       )}
-      {ended && (node.error || node.summary) && <div className="mt-3 text-sm text-danger">{node.error ?? node.summary}</div>}
+      {ended && (node.error || node.summary) && <div className="selectable mt-3 text-sm text-danger">{node.error ?? node.summary}</div>}
       {node.status === "completed" && node.summary && !node.workflow && !node.result && <Field label={t("요약")}>{node.summary}</Field>}
       {node.result && (
         <Field label={t("결과")}>
-          <div className="line-clamp-12 whitespace-pre-wrap">{node.result}</div>
+          <div className="selectable line-clamp-12 whitespace-pre-wrap">{node.result}</div>
         </Field>
       )}
       {p && p.phases.length > 0 && <Phases p={p} />}
@@ -465,13 +465,13 @@ function AgentDetail({ sessionId, node, gone, parent, clock, canStop, stopping, 
       )}
       {node.text && (
         <Field label={t("마지막 글")}>
-          <div className="line-clamp-6 whitespace-pre-wrap text-muted">{node.text}</div>
+          <div className="selectable line-clamp-6 whitespace-pre-wrap text-muted">{node.text}</div>
         </Field>
       )}
       {node.prompt && (
         <details className="mt-3">
           <summary className="min-h-8 cursor-pointer text-xs font-semibold text-muted">{t("지시")}</summary>
-          <div className="mt-1 max-h-60 overflow-y-auto rounded-lg bg-surface-2 px-3 py-2 text-[13px] whitespace-pre-wrap">{node.prompt}</div>
+          <div className="selectable mt-1 max-h-60 overflow-y-auto rounded-lg bg-surface-2 px-3 py-2 text-[13px] whitespace-pre-wrap">{node.prompt}</div>
         </details>
       )}
       <Actions

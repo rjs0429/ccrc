@@ -53,7 +53,9 @@ function PermissionCard({ request, reply, agent }: { request: PendingRequest; re
     <Card title={t("권한 요청")} sub={`${agent ? `${agent} · ` : ""}${request.toolName}${request.description ? ` · ${request.description}` : ""}`}>
       {request.title && <div className="text-sm">{request.title}</div>}
       {request.decisionReason && <div className="text-xs text-muted">{request.decisionReason}</div>}
-      <ToolInput name={request.toolName} input={request.input} />
+      <div className="selectable">
+        <ToolInput name={request.toolName} input={request.input} />
+      </div>
       {request.personOnly && <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted">{t("자동 모드가 막은 동작입니다. 직접 정하세요.")}</div>}
       {request.localOnly ? (
         <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted">{t("이 요청은 VS Code에서만 응답할 수 있습니다.")}</div>
@@ -475,7 +477,7 @@ function ElicitHead({ info }: { info: ElicitInfo }) {
     <>
       {info.title && <div className="text-sm font-medium">{info.title}</div>}
       {info.description && <div className="text-xs text-muted">{info.description}</div>}
-      {info.message && <div className="text-[15px] whitespace-pre-wrap">{info.message}</div>}
+      {info.message && <div className="selectable text-[15px] whitespace-pre-wrap">{info.message}</div>}
     </>
   );
 }
@@ -510,7 +512,7 @@ function ElicitationCard({ info, reply }: { info: ElicitInfo; reply: Reply }) {
       <ElicitHead info={info} />
       {info.mode === "url" ? (
         <>
-          {info.url && <div className="rounded-xl bg-surface-2 px-3 py-2 font-mono text-xs break-all">{info.url}</div>}
+          {info.url && <div className="selectable rounded-xl bg-surface-2 px-3 py-2 font-mono text-xs break-all">{info.url}</div>}
           {web ? (
             <a href={web} target="_blank" rel="noopener noreferrer" className="block rounded-xl bg-accent px-3.5 py-2.5 text-center text-[15px] font-medium text-white">
               {t("열기")}

@@ -62,10 +62,11 @@ function lined(tag: (typeof BLOCKS)[number]) {
 
 const lineComponents: Components = { ...components, ...Object.fromEntries(BLOCKS.map((t) => [t, lined(t)])) };
 
-// lines: each block names the lines of the text it was drawn from (data-line, data-end).
+// Markdown is always text to read, so it selects on a touch screen too. lines: each block names the lines of the text it
+// was drawn from (data-line, data-end).
 export const Markdown = memo(function Markdown({ text, className = "", lines }: { text: string; className?: string; lines?: boolean }) {
   return (
-    <div className={`md ${className}`}>
+    <div className={`md selectable ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}

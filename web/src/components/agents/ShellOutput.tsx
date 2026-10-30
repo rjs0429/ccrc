@@ -64,7 +64,7 @@ function Output({ sessionId, task }: { sessionId: string; task: TaskInfo }) {
             const el = e.currentTarget;
             follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
           }}
-          className="mt-1 max-h-[50vh] overflow-auto overscroll-contain rounded-lg bg-code p-2.5 font-mono text-[12px] leading-relaxed whitespace-pre-wrap break-all"
+          className="selectable mt-1 max-h-[50vh] overflow-auto overscroll-contain rounded-lg bg-code p-2.5 font-mono text-[12px] leading-relaxed whitespace-pre-wrap break-all"
         >
           {shown.text}
         </pre>

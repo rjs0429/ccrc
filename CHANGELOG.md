@@ -73,6 +73,14 @@ your version and the new one, and the lines under "Breaking" separately.
   down, the conversation follows Claude again only once you reach the very bottom.
 - The jump-to-bottom button takes no tap while the conversation still moves from your fling, or for a moment after it
   stops: a tap meant to stop the fling no longer pulls the list down.
+- On a phone, a pinch or a double tap no longer zooms the app anywhere, so a stray zoom can no longer leave the
+  screen enlarged and taps landing beside what they aimed at. The phone's own Zoom (Accessibility) still works.
+- On a phone, a long press selects only text there to read or copy: your messages, Claude's replies with their code
+  and tables, thinking, a tool's input and output, a subagent's transcript, side questions, command results, a file in
+  the viewer and error messages. Headers, lists, buttons, menus and card heads no longer get selected, as when the
+  menu a long press opened on a session showed up with its text selected under the finger. Web links keep iOS's link
+  menu. The ⋯ menu's working folder and the account page's device name have a copy button. On a computer, text
+  selects as before.
 
 ### Fixed
 

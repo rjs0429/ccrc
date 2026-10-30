@@ -124,7 +124,7 @@ function CodeLines({ text, lang, line, endLine }: { text: string; lang?: string;
   const last = endLine ?? line;
   const width = String(lines.length).length;
   return (
-    <pre className="min-w-max py-2 font-mono text-[12.5px] leading-[1.55]">
+    <pre className="selectable min-w-max py-2 font-mono text-[12.5px] leading-[1.55]">
       {lines.map((html, i) => {
         const n = i + 1;
         const marked = line !== undefined && last !== undefined && n >= line && n <= last;
@@ -148,7 +148,7 @@ function Table({ text, sep }: { text: string; sep: string }) {
   const { rows, more } = useMemo(() => parseTable(text, sep), [text, sep]);
   const [head, ...body] = rows;
   return (
-    <div className="p-3">
+    <div className="selectable p-3">
       <table className="border-collapse text-[13px]">
         {head && (
           <thead>
@@ -413,7 +413,7 @@ export default function FileViewer({
           </div>
         )}
         {loaded && "error" in loaded && (
-          <div className="m-4 rounded-xl bg-surface-2 px-3 py-3 text-sm">
+          <div className="selectable m-4 rounded-xl bg-surface-2 px-3 py-3 text-sm">
             <div className="text-danger">{loadErrorText(loaded.error, Boolean(sent))}</div>
             <div className="mt-1 font-mono text-xs break-all text-muted">{loaded.path ? shown(loaded.path, cwd) : current.href}</div>
           </div>
