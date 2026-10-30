@@ -13,7 +13,7 @@ import { brokerSessionsBlocked, errorText, shortPath } from "../labels.ts";
 import { nav } from "../nav.ts";
 import { rememberSent } from "../sentPreviews.ts";
 import { offeredFolder, placeLabel } from "../worktree.ts";
-import { callFolder, onDraftFailed, onDraftStarted, openSettingsFrom, startNewSession, toast, useApp } from "../state.ts";
+import { callFolder, onDraftFailed, onDraftStarted, openSettingsFrom, refreshAll, startNewSession, toast, useApp } from "../state.ts";
 
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const NO_MODELS: ModelOption[] = [];
@@ -256,7 +256,13 @@ export function NewSession() {
         </div>
       </header>
 
-      <ScrollArea className="px-safe-0">
+      <ScrollArea
+        className="px-safe-0"
+        onRefresh={() => {
+          setGits({});
+          return refreshAll();
+        }}
+      >
         <div className="mx-auto max-w-2xl px-4 py-4 short:py-2">
           <div className="mb-2 text-sm font-semibold text-muted">{t("폴더")}</div>
           <div className="mb-2 flex items-center gap-2 rounded-xl border border-line bg-surface px-3">

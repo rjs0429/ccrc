@@ -551,4 +551,7 @@ export const g1: Record<string, string> = {
   "새 버전이 설치되었습니다. 새로고침하면 열립니다.": "A new version is installed. Refresh to open it.",
   "다시 시도해도 열리지 않으면 앱을 새로고침하세요.": "If it still doesn't open, refresh the app.",
   "네트워크를 확인하고 다시 시도하세요.": "Check the network and try again.",
+  "놓으면 새로고침": "Release to refresh",
+  "새로고침 중…": "Refreshing…",
+  "맨 위로": "Back to top",
 };

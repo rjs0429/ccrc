@@ -170,8 +170,27 @@ function viewMsg(): ClientMsg {
   return { t: "view", sessionId, ...(chat?.focus ? { focus: chat.focus } : {}), ...(from ? { from } : {}), ...(keep ? { keep } : {}) };
 }
 
-export function refreshChat(): void {
-  send(viewMsg());
+const SNAPSHOT_WAIT_MS = 10_000;
+
+// Asks again for the chat on screen, once connected again when the connection is down; done when its next snapshot has
+// come, or after SNAPSHOT_WAIT_MS.
+export function refreshChat(): Promise<void> {
+  const sessionId = state.chat?.sessionId;
+  const snaps = state.chat?.snaps;
+  if (!send(viewMsg())) reconnect();
+  return new Promise((done) => {
+    const check = () => {
+      if (state.chat?.sessionId === sessionId && state.chat?.snaps === snaps) return;
+      clearTimeout(timer);
+      listeners.delete(check);
+      done();
+    };
+    const timer = window.setTimeout(() => {
+      listeners.delete(check);
+      done();
+    }, SNAPSHOT_WAIT_MS);
+    listeners.add(check);
+  });
 }
 
 // Opens a session at one of its items.
@@ -422,6 +441,18 @@ async function probe(): Promise<void> {
   } finally {
     probing = false;
   }
+}
+
+// What a screen pulled to refresh asks for again: the login while it is unknown, else the connection, the sessions, the
+// options and the app icon's number.
+export function refreshAll(): Promise<void> {
+  if (!state.me) {
+    meTries = 0;
+    return loadMe();
+  }
+  reconnect();
+  badgeSoon();
+  return state.me.loggedIn ? Promise.all([refreshSessions(), refreshOptions()]).then(() => {}) : Promise.resolve();
 }
 
 // Tries the broker again at once: the login while it is unknown, else the connection, or asks whether the one it has

@@ -4,6 +4,7 @@ import { request } from "../../api.ts";
 import { Button, Icon, Spinner } from "../../components/ui.tsx";
 import { k, t } from "../../i18n/index.ts";
 import { brokerSessionsLabel } from "../../labels.ts";
+import { reloadApp } from "../../state.ts";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
 
 const RECHECK_MS = 3000;
@@ -206,6 +207,19 @@ export function HealthSection() {
       <p className="px-1 text-xs leading-relaxed text-muted" data-broker-sessions-note>
         {t("원격 세션 인증은 여기서 새로 시작하는 Claude Code가 로그인하는 방식입니다. 노트북에서 ccrc config set brokerSessions off · apiKey · subscription 으로 바꿉니다.")}
       </p>
+    </section>
+  );
+}
+
+// Loading the whole app again, which a pull on a list does not do.
+export function ReloadSection() {
+  return (
+    <section className="space-y-2">
+      <SectionTitle>{t("이 기기의 앱")}</SectionTitle>
+      <Button className="w-full" onClick={reloadApp}>
+        {t("앱 다시 불러오기")}
+      </Button>
+      <p className="px-1 text-xs leading-relaxed text-muted">{t("화면이 이상하게 보이거나 움직이지 않으면 앱을 처음부터 다시 불러옵니다. 목록은 맨 위에서 아래로 당겨 새로고침합니다.")}</p>
     </section>
   );
 }

@@ -9,6 +9,7 @@ import { reattach } from "../components/composer/attachments.ts";
 import { afterKeyboard } from "../components/composer/picker.ts";
 import { commandSheet } from "../components/commandSheets.ts";
 import { PendingCard } from "../components/Pending.tsx";
+import { Pull } from "../components/Pull.tsx";
 import { ArchivedBadge, SessionActions, renameBlocked, setArchived, setUnread } from "../components/SessionActions.tsx";
 import { TodoPanel } from "../components/TodoPanel.tsx";
 import { TitleText } from "../components/TitleText.tsx";
@@ -43,6 +44,7 @@ import { call, composerInsert, dropParked, focusDone, getState, joinParked, load
 import { withEarlier } from "../chatItems.ts";
 import { markShown, newest, type PeerSent } from "../peerSent.ts";
 import { takeSent } from "../sentPreviews.ts";
+import { glideTop, useToTop } from "../topTap.ts";
 import { worktreeOf } from "../../../broker/src/worktree-names.ts";
 import { placeLabel, shownBranch } from "../worktree.ts";
 import { FileViewer } from "../components/viewer/lazy.ts";
@@ -57,6 +59,8 @@ const RESUME_SHARE = 1 / 3;
 // The jump button takes a press only once the list has not moved under the user's scroll (a drag or its fling) for this
 // long: a tap meant to stop a fling can land on it.
 const JUMP_GUARD_MS = 300;
+// A way up to the top that has not got there by then, its scroll cut short, lets the parts in where it is.
+const RISE_MS = 1500;
 // How many items in view, and above them, a change of the conversation tries to keep in place, the first still there.
 const ANCHORS_IN_VIEW = 4;
 const ANCHORS_ABOVE = 4;
@@ -212,6 +216,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
   // stops it where it is, since browsers do not all cancel a smooth scroll for one. A write to the position would stop
   // it short, so a change on the way sends it on to the new bottom, and no part loads meanwhile.
   const glide = useRef(false);
+  // The way up to the top of what the list holds, for a tap on the status bar: no part goes in on the way, and one that
+  // loaded waits for the top; a touch stops it as it does a glide.
+  const rising = useRef(false);
+  const riseTimer = useRef<number | undefined>(undefined);
   // The items in view and those above them, the top one first, each with how far its top is below the list's top: any
   // other change keeps the first of them still in the list where it was.
   const anchors = useRef<{ id: string; top: number }[]>([]);
@@ -425,6 +433,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     scrolling.current = false;
     owed.current = {};
     touched.current = 0;
+    rising.current = false;
     unread();
     dropParked(sessionId);
   };
@@ -439,10 +448,31 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   const endGlide = () => {
     const el = listRef.current;
-    if (!glide.current || !el) return;
+    if (!(glide.current || rising.current) || !el) return;
     glide.current = false;
+    rising.current = false;
     el.scrollTo({ top: el.scrollTop });
   };
+
+  // At the top, the part that loaded on the way goes in, from the item in view there, or the next part starts to load.
+  const arrived = () => {
+    rising.current = false;
+    clearTimeout(riseTimer.current);
+    if (!joinParked(sessionId)) loadParts(true);
+  };
+
+  const rise = () => {
+    const el = listRef.current;
+    if (!el || el.scrollTop < 1 || scrolling.current) return;
+    glide.current = false;
+    rising.current = true;
+    pinned.current = false;
+    follow(false);
+    clearTimeout(riseTimer.current);
+    riseTimer.current = window.setTimeout(() => rising.current && arrived(), RISE_MS);
+    glideTop(el);
+  };
+  useToTop(rise);
 
   // A touch or key on an item keeps that item in place while what it opens changes the list.
   const touch = (e: React.SyntheticEvent) => {
@@ -452,7 +482,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   // A loaded part goes in only while the list rests, from where the user is reading then.
   const canJoin = () => {
-    if (scrolling.current) return false;
+    if (scrolling.current || rising.current) return false;
     catchUp();
     if (!pinned.current) takeAnchor();
     return true;
@@ -463,7 +493,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const loadParts = (retry: boolean) => {
     const el = listRef.current;
     const c = getState().chat;
-    if (!el || glide.current || c?.sessionId !== sessionId || !c.loaded || c.loading) return;
+    if (!el || glide.current || rising.current || c?.sessionId !== sessionId || !c.loaded || c.loading) return;
     if (c.hasMore && (retry || !c.failed) && el.scrollTop < el.clientHeight * LOAD_SCREENS) void loadMore(sessionId, "earlier", canJoin);
     else if (c.gap && !c.failed) nearGap(el);
   };
@@ -483,7 +513,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (near !== stick.current && (near || !glide.current)) follow(near);
     else if (reading.current && gap < PIN_PX) follow(true);
     if (!scrolling.current && (!pinned.current || reading.current)) takeAnchor();
-    loadParts(true);
+    if (rising.current && el.scrollTop < 1) arrived();
+    else loadParts(true);
   };
 
   // A scroll whose event is still to come is looked at before anything here acts, so nothing undoes it.
@@ -923,6 +954,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       cancelAnimationFrame(frame.current);
       clearTimeout(restTimer.current);
       clearTimeout(turnTimer.current);
+      clearTimeout(riseTimer.current);
     };
   }, []);
 
@@ -1022,147 +1054,150 @@ export function Chat({ sessionId }: { sessionId: string }) {
         </div>
       </header>
 
-      <div
-        ref={listRef}
-        // Reads no layout here: WebKit does not anchor what changes in a layout made inside a scroll event.
-        onScroll={() => {
-          scrolledAt.current = performance.now();
-          if (scrolling.current) {
-            scrolled.current = true;
-            movedAt.current = scrolledAt.current;
-            if (!fingers.current) restSoon();
-          }
-          frame.current ||= requestAnimationFrame(() => {
-            frame.current = 0;
-            seen();
-          });
-        }}
-        onPointerDown={(e) => {
-          endGlide();
-          touch(e);
-          if (e.pointerType === "touch") startScroll();
-        }}
-        onTouchStart={(e) => {
-          fingers.current = fingersOn(e.currentTarget, e.nativeEvent.touches);
-          e.target.addEventListener("touchend", lifted);
-          e.target.addEventListener("touchcancel", lifted);
-          startScroll();
-        }}
-        onKeyDown={touch}
-        onWheel={() => {
-          endGlide();
-          startScroll();
-        }}
-        className="flex-1 overflow-y-auto overscroll-contain px-safe-0"
-        data-scroll-root
-      >
-        <FileLinks.Provider value={openFile}>
-          <FileRoots.Provider value={roots}>
-            {/* The bottom keeps 16px on short screens too: the tap target of the last message's or reply's ⋯ reaches that far. */}
-            <div ref={contentRef} className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:pt-3">
-              {!chat?.loaded && (
-                <div className="flex justify-center py-10 text-muted">
-                  <Spinner className="size-6" />
-                </div>
-              )}
-              {chat?.loaded && chat.hasMore && (
-                <PartLoader part="earlier" loading={chat.loading === "earlier"} failed={chat.failed === "earlier"} onLoad={() => void loadMore(sessionId, "earlier", canJoin)} />
-              )}
-              {items.map((item) => (
-                <Fragment key={item.id}>
-                  {item.id === gapAt && (
-                    <PartLoader part="gap" skipped={chat?.gap?.skipped} loading={chat?.loading === "gap"} failed={chat?.failed === "gap"} onLoad={() => void loadMore(sessionId, "gap", canJoin)} />
-                  )}
-                  <DateLine day={days.get(item.id)} />
-                  <div
-                    data-item={item.id}
-                    className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
-                  >
-                    <ItemView item={item} running={busy} onMessage={openMessage} onReply={openReply} />
+      {/* A pull from the top asks for the conversation again once all of it is here; until then the top loads the part before. */}
+      <Pull box={listRef} refresh={refreshChat} on={Boolean(chat?.loaded && !chat.hasMore)} atTop>
+        <div
+          ref={listRef}
+          // Reads no layout here: WebKit does not anchor what changes in a layout made inside a scroll event.
+          onScroll={() => {
+            scrolledAt.current = performance.now();
+            if (scrolling.current) {
+              scrolled.current = true;
+              movedAt.current = scrolledAt.current;
+              if (!fingers.current) restSoon();
+            }
+            frame.current ||= requestAnimationFrame(() => {
+              frame.current = 0;
+              seen();
+            });
+          }}
+          onPointerDown={(e) => {
+            endGlide();
+            touch(e);
+            if (e.pointerType === "touch") startScroll();
+          }}
+          onTouchStart={(e) => {
+            fingers.current = fingersOn(e.currentTarget, e.nativeEvent.touches);
+            e.target.addEventListener("touchend", lifted);
+            e.target.addEventListener("touchcancel", lifted);
+            startScroll();
+          }}
+          onKeyDown={touch}
+          onWheel={() => {
+            endGlide();
+            startScroll();
+          }}
+          className="flex-1 overflow-y-auto overscroll-contain px-safe-0"
+          data-scroll-root
+        >
+          <FileLinks.Provider value={openFile}>
+            <FileRoots.Provider value={roots}>
+              {/* The bottom keeps 16px on short screens too: the tap target of the last message's or reply's ⋯ reaches that far. */}
+              <div ref={contentRef} className="mx-auto max-w-3xl space-y-4 px-4 py-4 short:pt-3">
+                {!chat?.loaded && (
+                  <div className="flex justify-center py-10 text-muted">
+                    <Spinner className="size-6" />
                   </div>
-                </Fragment>
-              ))}
-              {chat?.stream && (
-                <>
-                  <DateLine day={streamLine(days, chat.stream)} />
-                  <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />
-                </>
-              )}
-              {busy && !chat?.stream && !chat?.pending.length && (
-                <div className="flex items-center gap-2 text-sm text-muted">
-                  <Spinner className="size-3.5" /> {t("작업 중…")}
-                </div>
-              )}
-              {queued.map((q) => (
-                <QueuedItem
-                  key={q.id}
-                  message={q}
-                  host={host}
-                  taking={taking === q.id}
-                  onTakeBack={q.from === "remote" && controllable ? () => takeBack(q) : undefined}
-                />
-              ))}
-              {peer && peerWaiting.map((q) => <QueuedItem key={q.id} message={q} host={host} note={t("다른 세션 메시지로 보냄 · 받으면 대화에 나타납니다")} />)}
-              {chat?.pending.map((p) => (
-                <div key={p.id} data-pending={p.id} className={`rounded-2xl transition-shadow duration-700 ${flash === p.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}>
-                  <PendingCard
-                    request={p}
-                    agent={askingAgent(p.agentId)}
-                    reply={(answer) => {
-                      if (!send({ t: "answer", sessionId, requestId: p.id, answer })) return toast(t("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요"));
-                      // Editing the refused message starts from it, as VS Code puts it back in its input.
-                      if (answer.kind === "dialog" && answer.choice === "edit_prompt") {
-                        const last = chat?.items.findLast((i) => i.kind === "user");
-                        if (last?.kind === "user" && last.text) composerInsert(last.text, true);
-                      }
-                    }}
+                )}
+                {chat?.loaded && chat.hasMore && (
+                  <PartLoader part="earlier" loading={chat.loading === "earlier"} failed={chat.failed === "earlier"} onLoad={() => void loadMore(sessionId, "earlier", canJoin)} />
+                )}
+                {items.map((item) => (
+                  <Fragment key={item.id}>
+                    {item.id === gapAt && (
+                      <PartLoader part="gap" skipped={chat?.gap?.skipped} loading={chat?.loading === "gap"} failed={chat?.failed === "gap"} onLoad={() => void loadMore(sessionId, "gap", canJoin)} />
+                    )}
+                    <DateLine day={days.get(item.id)} />
+                    <div
+                      data-item={item.id}
+                      className={`rounded-xl transition-shadow duration-700 ${flash === item.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}
+                    >
+                      <ItemView item={item} running={busy} onMessage={openMessage} onReply={openReply} />
+                    </div>
+                  </Fragment>
+                ))}
+                {chat?.stream && (
+                  <>
+                    <DateLine day={streamLine(days, chat.stream)} />
+                    <StreamPreview text={chat.stream.text} thinking={chat.stream.thinking} />
+                  </>
+                )}
+                {busy && !chat?.stream && !chat?.pending.length && (
+                  <div className="flex items-center gap-2 text-sm text-muted">
+                    <Spinner className="size-3.5" /> {t("작업 중…")}
+                  </div>
+                )}
+                {queued.map((q) => (
+                  <QueuedItem
+                    key={q.id}
+                    message={q}
+                    host={host}
+                    taking={taking === q.id}
+                    onTakeBack={q.from === "remote" && controllable ? () => takeBack(q) : undefined}
                   />
-                </div>
-              ))}
-              {chat?.loaded && archived && (
-                <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-archived-note>
-                  <p className="min-w-0 flex-1 break-keep text-balance">
-                    <span className="block">{vscodeArchived ? t("VS Code에서 보관한 세션입니다.") : t("보관된 세션입니다.")}</span>
-                    {(kind !== "live" || peer) && !folderMissing && <span className="block">{t("메시지를 보내면 보관이 풀립니다.")}</span>}
-                  </p>
-                  <button onClick={() => setArchived(sessionId, false, vscodeArchived)} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent">
-                    {t("보관 해제")}
-                  </button>
-                </div>
-              )}
-              {chat?.loaded && kind === "inactive" && (
-                <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-stopped-note={folderMissing ? "folder-missing" : ""}>
-                  {folderMissing ? (
-                    <p className="min-w-0 flex-1 break-keep">
-                      {t("작업 폴더가 없어 이 세션을 시작할 수 없습니다.")}
-                      <span className="mt-0.5 block text-xs break-all">{shortPath(cwd)}</span>
+                ))}
+                {peer && peerWaiting.map((q) => <QueuedItem key={q.id} message={q} host={host} note={t("다른 세션 메시지로 보냄 · 받으면 대화에 나타납니다")} />)}
+                {chat?.pending.map((p) => (
+                  <div key={p.id} data-pending={p.id} className={`rounded-2xl transition-shadow duration-700 ${flash === p.id ? "ring-2 ring-accent/70 ring-offset-4 ring-offset-bg" : ""}`}>
+                    <PendingCard
+                      request={p}
+                      agent={askingAgent(p.agentId)}
+                      reply={(answer) => {
+                        if (!send({ t: "answer", sessionId, requestId: p.id, answer })) return toast(t("연결되어 있지 않습니다. 다시 연결된 뒤 답하세요"));
+                        // Editing the refused message starts from it, as VS Code puts it back in its input.
+                        if (answer.kind === "dialog" && answer.choice === "edit_prompt") {
+                          const last = chat?.items.findLast((i) => i.kind === "user");
+                          if (last?.kind === "user" && last.text) composerInsert(last.text, true);
+                        }
+                      }}
+                    />
+                  </div>
+                ))}
+                {chat?.loaded && archived && (
+                  <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-archived-note>
+                    <p className="min-w-0 flex-1 break-keep text-balance">
+                      <span className="block">{vscodeArchived ? t("VS Code에서 보관한 세션입니다.") : t("보관된 세션입니다.")}</span>
+                      {(kind !== "live" || peer) && !folderMissing && <span className="block">{t("메시지를 보내면 보관이 풀립니다.")}</span>}
                     </p>
-                  ) : (
-                    <>
-                      {st?.resumeIn ? (
-                        <p className="min-w-0 flex-1 break-keep text-balance" data-resume-in>
-                          <span className="block">{t("worktree가 지워져 원래\u00a0폴더에서 이어서 실행합니다.")}</span>
-                          <span className="mt-0.5 block text-xs break-all">{shortPath(st.resumeIn)}</span>
-                        </p>
-                      ) : (
-                        <p className="min-w-0 flex-1 break-keep text-balance" data-broker-off={brokerOff ? "" : undefined}>
-                          <span className="block">{closedText(st?.closedReason) || t("꺼져 있는 세션입니다.")}</span>
-                          <span className="block">{brokerOff ? t("원격 세션이 꺼져 있어 기록만 볼 수 있습니다.") : t("메시지를 보내면 이어서 실행합니다.")}</span>
-                        </p>
-                      )}
-                      {!brokerOff && (
-                        <button onClick={startNow} disabled={starting} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent disabled:opacity-50">
-                          {starting ? t("시작하는 중…") : t("지금 시작")}
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </FileRoots.Provider>
-        </FileLinks.Provider>
-      </div>
+                    <button onClick={() => setArchived(sessionId, false, vscodeArchived)} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent">
+                      {t("보관 해제")}
+                    </button>
+                  </div>
+                )}
+                {chat?.loaded && kind === "inactive" && (
+                  <div className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm text-muted" data-stopped-note={folderMissing ? "folder-missing" : ""}>
+                    {folderMissing ? (
+                      <p className="min-w-0 flex-1 break-keep">
+                        {t("작업 폴더가 없어 이 세션을 시작할 수 없습니다.")}
+                        <span className="mt-0.5 block text-xs break-all">{shortPath(cwd)}</span>
+                      </p>
+                    ) : (
+                      <>
+                        {st?.resumeIn ? (
+                          <p className="min-w-0 flex-1 break-keep text-balance" data-resume-in>
+                            <span className="block">{t("worktree가 지워져 원래\u00a0폴더에서 이어서 실행합니다.")}</span>
+                            <span className="mt-0.5 block text-xs break-all">{shortPath(st.resumeIn)}</span>
+                          </p>
+                        ) : (
+                          <p className="min-w-0 flex-1 break-keep text-balance" data-broker-off={brokerOff ? "" : undefined}>
+                            <span className="block">{closedText(st?.closedReason) || t("꺼져 있는 세션입니다.")}</span>
+                            <span className="block">{brokerOff ? t("원격 세션이 꺼져 있어 기록만 볼 수 있습니다.") : t("메시지를 보내면 이어서 실행합니다.")}</span>
+                          </p>
+                        )}
+                        {!brokerOff && (
+                          <button onClick={startNow} disabled={starting} className="min-h-11 shrink-0 rounded-lg bg-surface px-4 font-medium text-accent disabled:opacity-50">
+                            {starting ? t("시작하는 중…") : t("지금 시작")}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </FileRoots.Provider>
+          </FileLinks.Provider>
+        </div>
+      </Pull>
 
       {away && <JumpButton unseen={unseen} onClick={jump} />}
       {chat?.loaded && <TodoPanel items={context} />}

@@ -253,4 +253,8 @@ export const g2: Record<string, string> = {
   "folder list|폴더가 없습니다": "No folders",
   "보관 해제": "Unarchive",
   "worktree 지우기": "Remove worktree",
+  "이 기기의 앱": "App on this device",
+  "앱 다시 불러오기": "Reload app",
+  "화면이 이상하게 보이거나 움직이지 않으면 앱을 처음부터 다시 불러옵니다. 목록은 맨 위에서 아래로 당겨 새로고침합니다.":
+    "If the screen looks wrong or stops responding, this loads the app again from the start. To refresh a list, pull it down from its top.",
 };

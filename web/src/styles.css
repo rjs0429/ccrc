@@ -86,6 +86,13 @@ html {
   overscroll-behavior-y: none;
 }
 
+/* In an iOS Home Screen web app the page rests 1px down so that a tap on the status bar has a scroll to take (topTap.ts);
+   only that tap moves it, never the browser's scroll anchoring. */
+:root[data-top-tap] body {
+  height: calc(100% + 1px);
+  overflow-anchor: none;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
