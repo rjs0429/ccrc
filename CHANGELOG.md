@@ -8,8 +8,22 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Added
+
+- The conversation shows Claude Code's notices: a model's safeguards that flag a message and have another model answer
+  (Opus 4.8 for Opus 5.5, say), from then on or for one subagent's answer; safeguards that stop a response; and lines
+  such as a compaction made while you were away. Each is one line in the app's words that opens to Claude Code's own and
+  the reason the API gave. The model chip of a running session gets a mark when the latest response came from another
+  model than the chip names, or the safeguards moved the session to the model it names; its sheet says which.
+- Pictures in a tool's result, such as a Playwright screenshot or an image Claude read, show as thumbnails on the
+  tool's card, where they read "[image]", and open in the photo viewer. They are read from the transcript when they
+  come into view, a large one once tapped, and the phone's copy of a conversation keeps none.
+
 ### Changed
 
+- A new session starts in the folder you last picked on that phone, while the list still has it, rather than in the
+  folder of whichever session changed last. A chip right above the message names the folder, also with the keyboard
+  up, and opens the list of folders.
 - `ccrc update` and `ccrc rollback` ask before they restart the service while broker sessions are at work (a turn under
   way, a request waiting for an answer, a task running in the background): they list them with their folders, and
   told no, switch nothing and keep the new version in `versions/` for the next run. With `--yes` they list them and go
@@ -84,6 +98,8 @@ your version and the new one, and the lines under "Breaking" separately.
   keeps the line at the top of the screen.
 - Coming back to the app shortly after a request's notification no longer moves a conversation you are reading away
   from its end: a notice, "A request is waiting for your answer" with View, points to the request instead.
+- A tool card with a long name, as an MCP tool's, kept no room for its done or failed mark, and on a short landscape
+  screen the new-session screen's title broke into a letter per line beside a long folder path.
 
 ## [0.8.2] - 2026-10-23
 

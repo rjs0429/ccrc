@@ -41,6 +41,7 @@ export const Icon = {
   ),
   check: svg(<path d="M20 6L9 17l-5-5" />),
   x: svg(<path d="M18 6L6 18M6 6l12 12" />),
+  shield: svg(<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />),
   chevronDown: svg(<path d="M6 9l6 6 6-6" />),
   chevronRight: svg(<path d="M9 18l6-6-6-6" />),
   dots: svg(

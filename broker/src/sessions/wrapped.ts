@@ -163,8 +163,10 @@ export class WrappedSession extends SessionCore {
     }
     if (m.type !== "control_request") return;
     const r = obj(m.request);
-    if (r.subtype === "set_model" && typeof r.model === "string" && r.model !== "default") this.model = r.model;
-    else if (r.subtype === "set_permission_mode" && typeof r.mode === "string") this.permissionMode = r.mode;
+    if (r.subtype === "set_model") {
+      this.modelPicked = true;
+      if (typeof r.model === "string" && r.model !== "default") this.model = r.model;
+    } else if (r.subtype === "set_permission_mode" && typeof r.mode === "string") this.permissionMode = r.mode;
     else if (r.subtype === "apply_flag_settings" && typeof obj(r.settings).effortLevel === "string") this.effort = obj(r.settings).effortLevel as string;
     else if (r.subtype === "set_max_thinking_tokens" && (r.max_thinking_tokens === null || typeof r.max_thinking_tokens === "number")) {
       this.thinking = r.max_thinking_tokens === null ? this.startThinking : r.max_thinking_tokens > 0;
@@ -281,6 +283,7 @@ export class WrappedSession extends SessionCore {
     this.ensureOpen();
     await this.link.request({ subtype: "set_model", model });
     this.model = model;
+    this.modelPicked = true;
     this.touch();
     this.refreshApplied();
   }

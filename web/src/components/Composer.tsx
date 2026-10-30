@@ -16,6 +16,7 @@ import type { AgentMap } from "./agents/tree.ts";
 import { AttachmentChips } from "./composer/AttachmentChips.tsx";
 import { ATTACH_ACCEPT, MAX_MESSAGE_BYTES, NEW_SESSION_SCOPE, addFiles, takeAttachments, useAttachments } from "./composer/attachments.ts";
 import { chipLayout, sameLayout, type ChipLayout } from "./composer/chipLayout.ts";
+import { modelMark } from "./composer/modelMark.ts";
 import { afterKeyboard } from "./composer/picker.ts";
 import { Suggestions, type SuggestRow } from "./composer/Suggestions.tsx";
 import { commandQuery, mentionAt, mentionText, rankCommands, useCommands, useFileSuggestions, type SuggestTarget } from "./composer/suggest.ts";
@@ -220,6 +221,8 @@ interface Props {
   // A session open in another program that takes text from here only as a message from another session: the text,
   // with notes on what becomes of it above, and no attachments, chips, commands or stop button.
   peer?: { notes: PeerNote[] };
+  // The new-session screen's folder, on a chip right above the text, which opens the list of folders.
+  folder?: { name: string; onOpen: () => void };
 }
 
 export function Composer({
@@ -248,6 +251,7 @@ export function Composer({
   agents,
   onAgents,
   peer,
+  folder,
 }: Props) {
   const scope = sessionId ?? (draft ? NEW_SESSION_SCOPE : undefined);
   const [text, setText] = useState(() => loadDraft(scope));
@@ -298,6 +302,7 @@ export function Composer({
           ? state.fastMode
           : undefined;
   const thinkingMark = !thinkingOn && offers.thinkingOff === true;
+  const answeredMark = choosing ? undefined : modelMark(models, state);
   // Claude Code holds such a model at High while Thinking is off.
   const capped = offers.capped && (effort === "xhigh" || effort === "max");
   const uploading = attachments.some((a) => !a.uploaded);
@@ -714,6 +719,19 @@ export function Composer({
               )}
             </div>
           )}
+          {folder && (
+            <button
+              onClick={folder.onOpen}
+              disabled={locked}
+              aria-label={t("폴더: {name}", { name: folder.name })}
+              className="-mt-1 mb-1 -ml-1.5 flex min-h-8 max-w-full min-w-0 items-center gap-1 rounded-lg px-1.5 py-1 text-[13px] text-muted hover:bg-surface-2 disabled:opacity-50 short:-mt-0.5 short:mb-0.5 short:min-h-7"
+              data-folder-chip
+            >
+              <Icon.folder className="size-3.5 shrink-0" />
+              <span className="truncate">{folder.name}</span>
+              <Icon.chevronDown className="size-3 shrink-0" />
+            </button>
+          )}
           {scope && <AttachmentChips scope={scope} items={attachments} locked={locked || Boolean(sending)} />}
           {field}
           {waiting && (
@@ -763,8 +781,15 @@ export function Composer({
                 )}
                 {onContext && <ContextRing gauge={state?.context} onClick={onContext} />}
                 {onContext && <CacheClock cache={state?.cache} onClick={onContext} />}
-                <Chip name="model" className="min-w-0" disabled={!choosable} onClick={() => setSheet("model")}>
+                <Chip
+                  name="model"
+                  label={answeredMark ? t("{model}, 다른 모델이 답했습니다", { model: modelLabel(models, model) }) : undefined}
+                  className="min-w-0"
+                  disabled={!choosable}
+                  onClick={() => setSheet("model")}
+                >
                   <span ref={modelRef} className="truncate">{modelLabel(models, model)}</span>
+                  {answeredMark && <span className="ml-0.5 size-1.5 shrink-0 rounded-full bg-warn" data-answered-mark />}
                   <Icon.chevronDown className="size-3 shrink-0" />
                 </Chip>
                 {(efforts || fastRow || thinkingRow) && (
@@ -816,6 +841,11 @@ export function Composer({
       {sheet === "model" && (
         <Sheet title={t("모델")} onClose={() => setSheet(null)}>
           {choosing && <StartHint draft={Boolean(draft)} />}
+          {answeredMark && (
+            <p className="mb-2 px-3 text-xs break-keep text-warn" data-answered-note>
+              {answeredMark}
+            </p>
+          )}
           {models.length === 0 && <div className="px-3 py-2 text-sm text-muted">{t("모델 목록을 불러오는 중입니다")}</div>}
           {onReset && <Choice label={t("기본값")} hint={t("Claude Code 설정을 따릅니다")} selected={!model} onClick={() => (onReset("model"), setSheet(null))} />}
           {models.map((m) => (

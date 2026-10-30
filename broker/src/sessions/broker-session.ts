@@ -359,6 +359,7 @@ export class BrokerSession extends SessionCore {
   async setModel(model: string): Promise<void> {
     await this.query().setModel(model);
     this.model = model;
+    this.modelPicked = true;
     this.touch();
     this.refreshApplied();
   }

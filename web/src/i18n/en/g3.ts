@@ -229,4 +229,16 @@ export const g3: Record<string, string> = {
   "대화 내보내기": "Export conversation",
   "연결되면 보냅니다": "Sends once connected",
   "보내는 중": "Sending",
+  "폴더: {name}": "Folder: {name}",
+  "{model}, 다른 모델이 답했습니다": "{model}, another model answered",
+  "마지막 답은 {model} 모델이 했습니다.": "The latest response came from {model}.",
+  "{from} 모델의 안전장치가 메시지를 막아 이 세션을 {to} 모델로 바꿨습니다.": "{from}'s safeguards flagged a message and switched this session to {to}.",
+  "다른 모델을 고르면 다음 답부터 바뀝니다.": "Choose another model to switch from the next response.",
+  "{model} 모델의 안전장치에 걸려 이 세션은 {fallback} 모델로 바뀌었습니다": "{model}'s safeguards flagged a message, so this session switched to {fallback}",
+  "{model} 모델의 안전장치에 걸려 서브에이전트나 곁질문의 답 하나를 {fallback} 모델이 했습니다":
+    "{model}'s safeguards flagged a message, so {fallback} answered it for a subagent or side question",
+  "{model} 모델의 안전장치가 응답을 막았습니다": "{model}'s safeguards stopped the response",
+  "{model} 모델의 안전장치가 위 응답을 멈췄습니다 · 이를 알리고 한 번 이어 갑니다": "{model}'s safeguards stopped the response above · continuing once with that noted",
+  '자리를 비운 사이 써 둔 요약으로 대화를 압축했습니다 · 끄려면 settings.json에 "idleCompaction": false':
+    'Compacted using a summary written while you were away · turn off with "idleCompaction": false in settings.json',
 };

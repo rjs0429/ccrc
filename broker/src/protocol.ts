@@ -47,10 +47,18 @@ export interface InboxInfo {
   why?: "mode" | "setting";
 }
 
+// images: the pictures the result holds, in order, without their data; size in bytes. GET
+// /api/sessions/:id/tools/:call/images/:n serves them, from a subagent's transcript with ?agent=.
 export interface ToolResult {
   text: string;
   isError: boolean;
   truncated: boolean;
+  images?: ToolImage[];
+}
+
+export interface ToolImage {
+  mediaType: string;
+  size: number;
 }
 
 // "ultracode": Ultracode was asked for at the start but Claude Code could not turn it on.
@@ -129,9 +137,25 @@ export interface SentRef {
   agent?: string;
 }
 
+// A notice Claude Code showed in the conversation. fallback: a model's safeguards flagged a message and another model
+// answered, from then on in the session, or only in a subagent or side question (local); refusal: they stopped the
+// response and no other model answered; line: any other line, at its level. text: Claude Code's words, in English;
+// model, fallback: model ids; detail: why the API refused, as it put it.
+export interface NoticeInfo {
+  notice: "fallback" | "refusal" | "line";
+  text: string;
+  level?: "notice" | "suggestion" | "warning";
+  model?: string;
+  fallback?: string;
+  local?: boolean;
+  category?: string;
+  detail?: string;
+}
+
 export type DisplayItem =
   | { kind: "user"; id: string; ts?: string; text: string; attachments?: UserAttachment[] }
-  | { kind: "assistant"; id: string; ts?: string; text: string }
+  // model: the model that wrote it, as the API named it.
+  | { kind: "assistant"; id: string; ts?: string; text: string; model?: string }
   | { kind: "thinking"; id: string; ts?: string; text: string }
   // file and patch: the file a tool changed and how, when Claude Code reports it; patchCut: patch lines
   // left out to keep the item small.
@@ -166,7 +190,8 @@ export type DisplayItem =
   // event it carried.
   | { kind: "task"; id: string; ts?: string; status?: "completed" | "failed" | "stopped"; summary: string; text?: string }
   // A shell command run with "!" in the terminal, and its output once it is in.
-  | { kind: "shell"; id: string; ts?: string; command: string; output?: string };
+  | { kind: "shell"; id: string; ts?: string; command: string; output?: string }
+  | ({ kind: "notice"; id: string; ts?: string } & NoticeInfo);
 
 // A task of a session as Claude Code reports it: a subagent, a workflow, a shell, a monitor, ...
 // description: as the task started; activity: what it does now. kind: Claude Code's task_type (local_agent,
@@ -842,6 +867,10 @@ export interface LiveState {
   host?: string;
   busy: boolean;
   model?: string;
+  // The model that wrote the latest reply, as the API named it. swapped: a model's safeguards moved the session from
+  // that model to another, and every reply since came from the other.
+  answered?: string;
+  swapped?: { from: string; to: string };
   permissionMode?: string;
   effort?: string;
   ultracode?: boolean;

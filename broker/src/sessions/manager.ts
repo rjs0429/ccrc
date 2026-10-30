@@ -70,7 +70,7 @@ import { ReadQueue } from "./read-queue.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { SentIndex, sentCall, type SentCall } from "./sent-files.ts";
 import { SessionCwds } from "./session-cwd.ts";
-import { agentChanges, agentItem, agentTranscript, workflowAgents } from "./subagents.ts";
+import { agentChanges, agentItem, agentTranscript, transcriptFile as agentFile, workflowAgents } from "./subagents.ts";
 import { UltracodeModels } from "./ultracode-models.ts";
 import { UnreadStore } from "./unread-store.ts";
 import { VscodeArchive } from "./vscode-archive.ts";
@@ -1351,6 +1351,12 @@ export class SessionManager extends EventEmitter {
   // The transcript of a known session, where the images of its messages are read from.
   async transcriptFile(sessionId: string): Promise<string | undefined> {
     return transcriptPath(sessionId, await this.cwdOf(sessionId));
+  }
+
+  // Where the pictures of a tool call's result are read from: the session's transcript, or that of its subagent `agent`.
+  async toolTranscript(sessionId: string, agent?: string): Promise<string | undefined> {
+    const cwd = await this.cwdOf(sessionId);
+    return agent ? (await agentFile(sessionId, cwd, { agentId: agent }))?.file : transcriptPath(sessionId, cwd);
   }
 
   // A SendUserFile call of the session as Claude Code reported it, found by its id: in the conversation a process here

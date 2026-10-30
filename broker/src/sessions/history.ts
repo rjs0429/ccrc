@@ -55,6 +55,7 @@ interface Row {
   timestamp?: string;
   toolUseResult?: unknown;
   command?: Pick<RawMessage, "subtype" | "content" | "local_command_run" | "usage_report" | "context_usage">;
+  notice?: Pick<RawMessage, "subtype" | "content"> & Record<string, unknown>;
 }
 
 interface FileRow {
@@ -79,6 +80,13 @@ interface FileRow {
   isVisibleInTranscriptOnly?: boolean;
   origin?: { kind?: unknown };
   logicalParentUuid?: string | null;
+  level?: unknown;
+  scope?: unknown;
+  originalModel?: unknown;
+  fallbackModel?: unknown;
+  apiRefusalCategory?: unknown;
+  apiRefusalExplanation?: unknown;
+  toolUseID?: unknown;
 }
 
 // The rows Claude Code counts as the conversation's; one written after a rewind's last-prompt row ends the rewind.
@@ -107,6 +115,15 @@ export function usedOutput(out: unknown): boolean {
 function commandRow(e: FileRow): Row["command"] {
   if (e.type !== "system" || e.subtype !== "local_command" || typeof e.content !== "string") return undefined;
   return { subtype: e.subtype, content: e.content, local_command_run: e.commandRun, usage_report: e.usageReport, context_usage: e.contextUsage };
+}
+
+const NOTICE_ROWS = new Set<unknown>(["model_refusal_fallback", "model_refusal_no_fallback", "informational"]);
+const NOTICE_KEYS = ["level", "scope", "originalModel", "fallbackModel", "apiRefusalCategory", "apiRefusalExplanation", "toolUseID"] as const;
+
+// A notice row the conversation shows, which the SDK's reader also returns bare.
+function noticeRow(e: FileRow): Row["notice"] {
+  if (e.type !== "system" || !NOTICE_ROWS.has(e.subtype) || typeof e.content !== "string") return undefined;
+  return { subtype: e.subtype, content: e.content, ...Object.fromEntries(NOTICE_KEYS.filter((k) => e[k] !== undefined).map((k) => [k, e[k]])) };
 }
 
 interface Rows {
@@ -176,11 +193,12 @@ async function rows(file: string, wanted: Set<string>): Promise<Rows> {
     const output = e.toolUseResult;
     const used = usedOutput(output);
     const command = commandRow(e);
+    const notice = noticeRow(e);
     if (!e.uuid) continue;
     if (counts(e)) out.rewound = undefined;
     out.parents.set(e.uuid, e.parentUuid ?? null);
     if (e.attachment?.type === "queued_command" && typeof e.attachment.source_uuid === "string") out.aliases.set(e.uuid, e.attachment.source_uuid);
-    out.map.set(e.uuid, { timestamp: e.timestamp, ...(used ? { toolUseResult: output } : {}), ...(command ? { command } : {}) });
+    out.map.set(e.uuid, { timestamp: e.timestamp, ...(used ? { toolUseResult: output } : {}), ...(command ? { command } : {}), ...(notice ? { notice } : {}) });
     if (command && e.parentUuid) out.after.set(e.parentUuid, e.uuid);
   }
   return out;
@@ -336,7 +354,7 @@ async function build(sessionId: string, cwd: string): Promise<DisplayItem[]> {
   const builder = new ItemBuilder(cwd);
   for (const m of messages) {
     const row = extra.get(m.uuid);
-    builder.add({ ...(m as unknown as RawMessage), toolUseResult: row?.toolUseResult, ...row?.command }, row?.timestamp);
+    builder.add({ ...(m as unknown as RawMessage), toolUseResult: row?.toolUseResult, ...row?.command, ...row?.notice }, row?.timestamp);
   }
   // The reader's chain ends at the last user or assistant message, before the results of commands run last.
   let tail = messages.at(-1)?.uuid;

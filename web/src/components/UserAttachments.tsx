@@ -22,9 +22,10 @@ const SWIPE_PX = 50;
 
 // Images opened in the large view; their thumbnails show from then on, from the browser's cache.
 const opened = new Set<string>();
+export const openedLarge = (src: string): boolean => opened.has(src);
 
 // local: the preview of an image sent from here, which may have been let go; the broker's copy stands in then.
-interface Shown {
+export interface Shown {
   local?: string;
   remote?: string;
   size: number;
@@ -118,7 +119,7 @@ function DocumentChip({ a }: { a: UserAttachment }) {
   );
 }
 
-function ImageViewer({ images, start, onClose }: { images: Shown[]; start: number; onClose: () => void }) {
+export function ImageViewer({ images, start, onClose }: { images: Shown[]; start: number; onClose: () => void }) {
   const [at, setAt] = useState(start);
   const [state, setState] = useState<"loading" | "loaded" | "failed">("loading");
   const [attempt, setAttempt] = useState(0);
