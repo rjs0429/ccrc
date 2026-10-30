@@ -362,7 +362,7 @@ export function typedContent(content: unknown): { text: string; attachments: Use
 }
 
 // The model a main-thread reply came from, as the API named it; none for a message Claude Code made itself.
-function answeringModel(m: RawMessage): string | undefined {
+export function answeringModel(m: RawMessage): string | undefined {
   const v = m.message?.model;
   return typeof v === "string" && v && v !== "<synthetic>" ? v.slice(0, MODEL_LIMIT) : undefined;
 }

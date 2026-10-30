@@ -288,6 +288,26 @@ test("control requests resolve with Claude Code's reply and fail on errors", asy
   await assert.rejects(s.setMode("bypassPermissions" as never), /not available remotely/);
 });
 
+test("the answering model is left out from a model choice until the next reply", async () => {
+  const { s, wrapper, next } = await session();
+  wrapper.autoReply(() => ({}));
+  const reply = (uuid: string, model: string) => {
+    const st = next("state");
+    wrapper.out({ type: "assistant", uuid, session_id: SID, message: { role: "assistant", model, content: [{ type: "text", text: "ok" }] } });
+    return st;
+  };
+  await reply("9a000000-0000-4000-8000-000000000001", "claude-opus-5-5");
+  assert.equal(s.state().answered, "claude-opus-5-5");
+  await s.setModel("sonnet");
+  assert.equal(s.state().answered, undefined, "a choice made here");
+  await reply("9a000000-0000-4000-8000-000000000002", "claude-sonnet-5");
+  assert.equal(s.state().answered, "claude-sonnet-5");
+  const st = next("state");
+  wrapper.send({ m: { type: "control_request", request_id: "vs-9", request: { subtype: "set_model", model: "default" } }, t: "in" });
+  await st;
+  assert.equal(s.state().answered, undefined, "a choice made in VS Code");
+});
+
 test("model, effort and ultracode follow the applied settings, and effort changes keep ultracode on", async () => {
   const { s, wrapper, next } = await session();
   const seen: Msg[] = [];
