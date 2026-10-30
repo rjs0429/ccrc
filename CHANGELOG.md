@@ -123,6 +123,8 @@ your version and the new one, and the lines under "Breaking" separately.
   from its end: a notice, "A request is waiting for your answer" with View, points to the request instead.
 - A tool card with a long name, as an MCP tool's, kept no room for its done or failed mark, and on a short landscape
   screen the new-session screen's title broke into a letter per line beside a long folder path.
+- Touching a photo or a sent file opened from the conversation while Claude wrote could leave the conversation below
+  no longer following the reply: the viewer's touches counted as touches on the conversation.
 
 ## [0.8.2] - 2026-10-23
 
