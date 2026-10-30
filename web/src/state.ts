@@ -146,12 +146,28 @@ export function openSettingsFrom(page: SettingsPage, part?: SettingsPart): void 
   nav.open({ name: "settings", page, ...(part ? { part } : {}) });
 }
 
-// Asking again for the chat it shows, the phone keeps the part it holds.
+// The items the chat on screen reads, the top one first; none while it shows the end of the conversation.
+let readNow: (() => string[] | undefined) | undefined;
+
+export function onReading(fn: () => string[] | undefined): () => void {
+  readNow = fn;
+  return () => {
+    if (readNow === fn) readNow = undefined;
+  };
+}
+
+function reading(chat?: Chat): string[] | undefined {
+  const ids = chat?.loaded && !chat.focus ? readNow?.() : undefined;
+  return ids?.length ? ids : undefined;
+}
+
+// Asking again for the chat it shows, the phone keeps the part it holds and names the items it reads there.
 function viewMsg(): ClientMsg {
   const sessionId = state.route.name === "chat" ? state.route.sessionId : null;
   const chat = sessionId && state.chat?.sessionId === sessionId ? state.chat : undefined;
   const from = chat?.loaded && !chat.focus ? chat.items[0]?.id : undefined;
-  return { t: "view", sessionId, ...(chat?.focus ? { focus: chat.focus } : {}), ...(from ? { from } : {}) };
+  const keep = reading(chat);
+  return { t: "view", sessionId, ...(chat?.focus ? { focus: chat.focus } : {}), ...(from ? { from } : {}), ...(keep ? { keep } : {}) };
 }
 
 export function refreshChat(): void {
@@ -194,7 +210,8 @@ function shownRequest(): string | null {
 
 // iOS can bring the app to the front from a notification without going where it points. Coming to the front shortly
 // after a request's notification, the app goes to that request itself, once per request, unless a tap took it
-// somewhere else or the user moved meanwhile; never from a new session's draft.
+// somewhere else or the user moved meanwhile; never from a new session's draft. Without a tap, a conversation read away
+// from its end stays and the request is pointed out.
 async function toNotifiedRequest(front: number): Promise<void> {
   if (!isIos() || !state.me?.loggedIn) return;
   const hash = location.hash;
@@ -208,7 +225,9 @@ async function toNotifiedRequest(front: number): Promise<void> {
   try {
     localStorage.setItem(SHOWN_REQUEST_KEY, r.requestId);
   } catch {}
-  if (tapped === undefined || tapped === `#/s/${r.sessionId}`) openRequest(r.sessionId, r.requestId);
+  if (tapped !== undefined && tapped !== `#/s/${r.sessionId}`) return;
+  if (tapped === undefined && reading(state.chat)) toast(t("답할 요청이 있습니다"), { label: t("보기"), run: () => openRequest(r.sessionId, r.requestId) });
+  else openRequest(r.sessionId, r.requestId);
 }
 
 function onRoute(): void {
@@ -808,6 +827,8 @@ const settled = (c: Chat, patch: Partial<Chat> | undefined): Partial<Chat> | und
 
 const HISTORY_CHANGED = "history_changed";
 let snapshots = 0;
+// A snapshot that holds none of the items the phone reads is asked for again with them, once, before it is taken.
+let askedAgain = false;
 // A loaded part that may not go in yet (canJoin said no): it stays loading until joinParked puts it in.
 let parked: { sessionId: string; snaps?: number; part: "earlier" | "gap"; page: HistoryPage } | undefined;
 
@@ -831,7 +852,9 @@ export async function loadMore(sessionId: string, part: "earlier" | "gap", canJo
     updateChat(sessionId, (c) => (c.snaps !== snaps ? { loading: undefined } : { loading: undefined, ...joined(c, part, page) }));
   } catch (e) {
     updateChat(sessionId, () => ({ loading: undefined, failed: part }));
-    if (e instanceof Error && e.message === HISTORY_CHANGED && state.chat?.sessionId === sessionId) send({ t: "view", sessionId });
+    if (!(e instanceof Error && e.message === HISTORY_CHANGED && state.chat?.sessionId === sessionId)) return;
+    const keep = reading(state.chat);
+    send({ t: "view", sessionId, ...(keep ? { keep } : {}) });
   }
 }
 
@@ -858,6 +881,7 @@ function onServer(msg: ServerMsg): void {
       retry = 0;
       clearTimeout(connectTimer);
       caps = new Set(Array.isArray(msg.caps) ? msg.caps : []);
+      askedAgain = false;
       // A new window follows nothing yet.
       endFollows();
       setState({ conn: "ready" });
@@ -883,7 +907,13 @@ function onServer(msg: ServerMsg): void {
     case "lease_revoked":
       setState({ loggedOutReason: msg.reason });
       return;
-    case "snapshot":
+    case "snapshot": {
+      const keep = state.chat?.sessionId === msg.sessionId && !askedAgain ? reading(state.chat) : undefined;
+      if (keep && !msg.items.some((i) => keep.includes(i.id))) {
+        askedAgain = true;
+        if (send(viewMsg())) return;
+      }
+      askedAgain = false;
       if (parked?.sessionId === msg.sessionId) parked = undefined;
       for (const item of [...msg.items, ...(msg.state.queued ?? [])]) bindSent(msg.sessionId, item);
       updateChat(msg.sessionId, () => ({
@@ -902,6 +932,7 @@ function onServer(msg: ServerMsg): void {
         stream: undefined,
       }));
       return;
+    }
     case "item":
       bindSent(msg.sessionId, msg.item);
       updateChat(msg.sessionId, (c) => settled(c, placed(c, msg.item, msg.prev)));

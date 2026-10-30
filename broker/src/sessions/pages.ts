@@ -47,17 +47,19 @@ function withEarlier(before: DisplayItem[], gap: DisplayItem[]): Pick<SnapshotPa
   return a.length || b.length ? { earlier: [...a, ...b], ...(b.length ? { earlierInGap: b.length } : {}) } : {};
 }
 
-// What a snapshot sends: everything from the phone's first item while that part is not too long; else the part around a
-// focused item further back, from the phone's first item when that lies before it, with the latest page and the gap
-// between them; else the latest page.
-export function snapshotPart(items: DisplayItem[], opts: { focus?: string; from?: string } = {}): SnapshotPart {
+// What a snapshot sends: everything from the phone's first item while that part is not too long; else the part around the
+// first item the phone reads (keep) that the conversation still has, or around a focused item further back, from the
+// phone's first item when that lies before it, with the latest page and the gap between them; else the latest page.
+export function snapshotPart(items: DisplayItem[], opts: { focus?: string; from?: string; keep?: readonly string[] } = {}): SnapshotPart {
   const latest = pageStart(items, items.length);
   const index = (id?: string) => (id ? items.findIndex((i) => i.id === id) : -1);
-  const at = index(opts.focus);
   const held = index(opts.from);
   const whole = (from: number): SnapshotPart => ({ items: items.slice(from), hasMore: from > 0, ...withEarlier(items.slice(0, from), []) });
   if (held >= 0 && held < latest && items.length - held <= HELD_MAX) return whole(held);
-  if (at >= 0 && at < latest && held <= at) {
+  const read = (opts.keep ?? []).map(index).find((n) => n >= 0) ?? -1;
+  const focus = index(opts.focus);
+  const at = read >= 0 ? read : held <= focus ? focus : -1;
+  if (at >= 0 && at < latest) {
     const near = Math.max(0, at - FOCUS_BEFORE);
     const to = Math.max(at + 1, pageEnd(items, near, latest));
     const from = held >= 0 && held < near && to - held <= HELD_MAX ? held : near;

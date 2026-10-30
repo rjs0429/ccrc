@@ -880,8 +880,9 @@ export interface LiveState {
 export type ClientMsg =
   | { t: "take_window" }
   // focus: an item to include, when it lies before the latest items a snapshot holds. from: the first item the phone
-  // holds, for a snapshot that keeps holding from there.
-  | { t: "view"; sessionId: string | null; focus?: string; from?: string }
+  // holds, for a snapshot that keeps holding from there. keep: the items the phone reads, the top one first, for this
+  // snapshot to include the first of them the conversation still has.
+  | { t: "view"; sessionId: string | null; focus?: string; from?: string; keep?: string[] }
   // attachments: ids from POST /api/upload, sent before the text as Claude Code content blocks. id: the page's name for
   // the message, which it sends again with it after a reconnect; a broker with the "sent" capability takes it once and
   // answers sent, or an error with sendId.

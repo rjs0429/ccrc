@@ -58,6 +58,8 @@ const QUESTION_MAX = 10_000;
 const ANSWER_MAX = 100_000;
 const THREAD_MAX = 20;
 const ASK_ID = /^[A-Za-z0-9-]{1,64}$/;
+// The most items a view names as the ones the phone reads.
+const KEEP_MAX = 8;
 
 function sideTurns(v: unknown): SideTurn[] {
   if (v === undefined) return [];
@@ -71,6 +73,11 @@ function sideTurns(v: unknown): SideTurn[] {
   const size = turns.reduce((n, t) => n + Buffer.byteLength(t.question) + Buffer.byteLength(t.answer) + Buffer.byteLength(t.notice ?? ""), 0);
   if (size > SIDE_THREAD_BYTES) throw Error("invalid request");
   return turns;
+}
+
+function keepIds(v: unknown): string[] {
+  if (!Array.isArray(v) || v.length > KEEP_MAX) throw Error("invalid request");
+  return v.map((id) => str(id, 128));
 }
 
 function askId(v: unknown, optional = false): { ask?: string } {
@@ -392,11 +399,13 @@ export class Hub {
     const m = this.manager;
     const device = this.device;
     switch (msg.t) {
-      case "view":
+      case "view": {
         if (msg.focus !== undefined) str(msg.focus, 128);
         if (msg.from !== undefined) str(msg.from, 128);
-        await this.setView(msg.sessionId === null ? null : sid(msg.sessionId), msg.focus, msg.from ?? null);
+        const keep = msg.keep === undefined ? undefined : keepIds(msg.keep);
+        await this.setView(msg.sessionId === null ? null : sid(msg.sessionId), msg.focus, msg.from ?? null, keep);
         return;
+      }
       case "visibility":
         this.visible = msg.visible === true;
         this.tellViewed();
@@ -726,8 +735,9 @@ export class Hub {
 
   // Each view change gets a number; work for an older view is dropped when it finishes. A session
   // without a process the broker drives is followed through its transcript. A view of the same session asked for again
-  // keeps the part the phone holds; `from` null asks for the latest part.
-  private async setView(sessionId: string | null, focus?: string, from?: string | null): Promise<void> {
+  // keeps the part the phone holds; `from` null asks for the latest part. `keep` shapes this snapshot only: the phone
+  // names what it reads each time it asks.
+  private async setView(sessionId: string | null, focus?: string, from?: string | null, keep?: string[]): Promise<void> {
     const seq = ++this.viewSeq;
     const same = sessionId === this.viewing;
     if (focus || !same) this.focus = focus;
@@ -741,7 +751,7 @@ export class Hub {
     if (!sessionId) return;
     if (this.active && this.visible) this.manager.markSeen(sessionId);
     const controlled = this.manager.isControlled(sessionId);
-    const snap = await this.manager.snapshot(sessionId, { focus: this.focus, from: this.from });
+    const snap = await this.manager.snapshot(sessionId, { focus: this.focus, from: this.from, ...(keep?.length ? { keep } : {}) });
     if (seq !== this.viewSeq || !this.active) return;
     if (!controlled && this.manager.isControlled(sessionId)) return;
     this.sent(snap);

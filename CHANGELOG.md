@@ -53,6 +53,12 @@ your version and the new one, and the lines under "Breaking" separately.
   conversation opened from a notification has the home screen under it, and settings opened with /config go back to the
   conversation. The home screen comes back as you left it: tab, filter, folder, how much of the list was shown and where
   it was scrolled.
+- Letting go of the conversation no longer sends it down by all that came meanwhile. When a finger or selected text
+  held it at the bottom while Claude wrote, it now glides down only to a short addition (under a third of the screen);
+  after a longer one it stays where you are reading and the jump-to-bottom button shows its dot. Scrolled up and back
+  down, the conversation follows Claude again only once you reach the very bottom.
+- The jump-to-bottom button takes no tap while the conversation still moves from your fling, or for a moment after it
+  stops: a tap meant to stop the fling no longer pulls the list down.
 
 ### Fixed
 
@@ -70,6 +76,14 @@ your version and the new one, and the lines under "Breaking" separately.
   another window". It now takes its place at once; another window or device still asks before it takes over.
 - A file under `/assets/` that the broker does not have answered with the app's page; it is now a 404, and the
   service worker never keeps a page in place of a file.
+- The conversation lost your place when the phone got it again while you read far back (more than 600 items loaded):
+  after a reconnect, when the VS Code tab reloaded, or when an earlier page could not load because the conversation had
+  changed. The phone now names the items it is reading, and the broker sends the part around them with the latest
+  page. If none of them is left (the conversation was compacted or rewound elsewhere), the list stays where it is and
+  says "The conversation changed" instead of jumping to the bottom. Turning the phone in the middle of a long reply
+  keeps the line at the top of the screen.
+- Coming back to the app shortly after a request's notification no longer moves a conversation you are reading away
+  from its end: a notice, "A request is waiting for your answer" with View, points to the request instead.
 
 ## [0.8.2] - 2026-10-23
 
