@@ -6,6 +6,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-10-30
+
 ### 추가
 
 - 대화에 Claude Code 의 알림이 보인다. 모델의 안전장치가 메시지를 막아 다른 모델이 답하게 한 것(예: Opus 5.5 대신 Opus 4.8, 그 뒤로 계속 또는 서브에이전트의 답 하나만), 안전장치가 응답을 멈춘 것, 자리를 비운 사이 압축한 것 같은 줄이다. 알림마다 앱의 말로 한 줄이고, 누르면 Claude Code 가 쓴 원문과 API 가 알려 준 이유가 펼쳐진다. 돌고 있는 세션의 마지막 답을 모델 칩과 다른 모델이 했거나, 안전장치가 세션을 칩의 모델로 바꿨으면 모델 칩에 표시가 붙고, 모델 시트가 무슨 일인지 알려 준다.
@@ -359,7 +361,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 - 쉬는 브로커 세션 프로세스는 15분 뒤 닫는다. 메시지 내용 없는 감사 로그. 라이트·다크 테마.
 - `ccrc serve | passwd | status | logout` 과 `deploy/install-service.sh`.
 
-[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/rjs0429/ccrc/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/rjs0429/ccrc/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/rjs0429/ccrc/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/rjs0429/ccrc/compare/v0.7.3...v0.8.0

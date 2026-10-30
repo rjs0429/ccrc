@@ -8,6 +8,8 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-10-30
+
 ### Added
 
 - The conversation shows Claude Code's notices: a model's safeguards that flag a message and have another model answer
@@ -777,7 +779,8 @@ The first public release: an installer, updates, and the changes needed to run o
 - Idle broker session processes close after 15 minutes; an audit log without message contents; light and dark themes.
 - `ccrc serve | passwd | status | logout` and `deploy/install-service.sh`.
 
-[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/rjs0429/ccrc/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/rjs0429/ccrc/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/rjs0429/ccrc/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/rjs0429/ccrc/compare/v0.7.3...v0.8.0
