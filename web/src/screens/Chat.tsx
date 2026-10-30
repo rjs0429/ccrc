@@ -410,7 +410,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   // its width settles the text read at its top. A list with no height shows nothing to hold.
   const hold = (force = false) => {
     const el = listRef.current;
-    if (!el?.clientHeight) return;
+    if (!el?.clientHeight || turned()) return;
     catchUp();
     if (scrolling.current) {
       owed.current.hold = true;
@@ -506,7 +506,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   // at once per frame of scrolling, after the browser's scroll events.
   const seen = () => {
     const el = listRef.current;
-    if (!el) return;
+    if (!el || turned()) return;
     const gap = gapBelow(el);
     const up = el.scrollTop < lastTop.current - 0.5;
     lastTop.current = el.scrollTop;
@@ -924,15 +924,22 @@ export function Chat({ sessionId }: { sessionId: string }) {
     else if (!keepMark()) keepAnchor(true);
   };
 
+  // A new width is a turn whichever meets it first: the observer, or a render or scroll handled before the observer
+  // reports it, while the places held are still the old width's. True when it was one.
+  const turned = (): boolean => {
+    const w = listRef.current?.clientWidth ?? 0;
+    const was = width.current;
+    width.current = w;
+    if (!(was > 0 && w > 0 && w !== was)) return false;
+    reflowed();
+    return true;
+  };
+
   // A change of the list's size (a taller composer or to-do panel) or of what it holds that no render made (an image
   // that loaded, an item opened) is held the same way.
   useEffect(() => {
     const resized = new ResizeObserver(() => {
-      const w = listRef.current?.clientWidth ?? 0;
-      const turned = width.current > 0 && w > 0 && w !== width.current;
-      width.current = w;
-      if (turned) reflowed();
-      else hold();
+      if (!turned()) hold();
     });
     resized.observe(listRef.current!);
     resized.observe(contentRef.current!);
