@@ -107,13 +107,13 @@ export function Pull({ box, refresh, on = true, atTop = false, children }: { box
       start = null;
       pulling = false;
       px = 0;
-      if (!from) return;
+      if (!from) return show("idle");
       if (go) return void run(from);
       draw(0);
       slide(from);
       show("idle");
     };
-    // Another finger coming down ends a pull under way.
+    // Another finger coming down, or a sheet the same touch opened (a long press), ends a pull under way.
     const down = (e: TouchEvent) => {
       if (start || pulling) end(false);
       if (busy.current || e.touches.length !== 1 || el.scrollTop >= 1 || elsewhere() || innerScrolled(e.target, el)) return;
@@ -124,7 +124,7 @@ export function Pull({ box, refresh, on = true, atTop = false, children }: { box
     const move = (e: TouchEvent) => {
       if (!start) return;
       const f = [...e.touches].find((x) => x.identifier === start!.id);
-      if (!f || e.touches.length > 1) return end(false);
+      if (!f || e.touches.length > 1 || elsewhere()) return end(false);
       const dx = f.clientX - start.x;
       const dy = f.clientY - start.y;
       if (!pulling) {
