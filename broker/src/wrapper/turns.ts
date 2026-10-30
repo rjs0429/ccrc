@@ -87,8 +87,8 @@ export class TurnStore {
     }
   }
 
-  // Notes of sessions that were never opened again.
-  private prune(): void {
+  // Removes the notes of sessions that were never opened again, as a note is written and as the broker starts.
+  prune(): void {
     let names: string[] = [];
     try {
       names = fs.readdirSync(this.o.dir);

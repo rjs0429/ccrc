@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { newConfig, readConfig, writeFileAtomic, type Config } from "./config.ts";
 import { installKind, readInstallInfo, versionsDir, writeInstallInfo, type InstallInfo } from "./install.ts";
+import type { WorkingSession } from "./link/protocol.ts";
+import { askWorking, workingLines } from "./link/working.ts";
 import { paths } from "./paths.ts";
 import { changelogSections, isNewer, latestTag, listTags, quietGitEnv, releaseUrl, updateSource, type UpdateChannel } from "./releases.ts";
 import { run, type Runner } from "./run.ts";
@@ -11,9 +13,10 @@ import { NEEDED_SSH_KEYGEN, gitSshKeygenProblem, sshKeygenFix } from "./ssh-keyg
 import { readUpdateCheck, updateCheckFile, writeUpdateCheck } from "./update-check.ts";
 
 // `ccrc update` and `ccrc rollback` on an install: <dataDir>/versions/<version>/ folders and the <dataDir>/current link.
-// A new version is fetched and built beside the running one, config and state are backed up and migrated by the new
-// version's own code, then the link moves and the service restarts; when the service does not come back as the new
-// version within PING_WAIT_MS, the link and the backup go back.
+// A new version is fetched and built beside the running one. Once the person agrees to stop the broker sessions at work,
+// if any, config and state are backed up and migrated by the new version's own code, then the link moves and the
+// service restarts; when the service does not come back as the new version within PING_WAIT_MS, the link and the
+// backup go back.
 
 export const SIGNERS_FILE = ".ccrc-allowed-signers";
 // git picks the verifier from the kind of signature, not from gpg.format: with the OpenPGP and X.509 programs `false`,
@@ -70,6 +73,8 @@ export interface UpdateDeps {
   pingEveryMs: number;
   // Whether this runs inside ccrc.service, which a restart would stop.
   inService: () => boolean;
+  // The sessions the running broker has at work, which a restart stops; undefined when it does not say.
+  working: () => Promise<WorkingSession[] | undefined>;
 }
 
 export interface UpdateOptions {
@@ -108,6 +113,7 @@ export function defaultDeps(): UpdateDeps {
     pingWaitMs: PING_WAIT_MS,
     pingEveryMs: PING_EVERY_MS,
     inService: () => inBrokerService(),
+    working: () => askWorking(),
   };
 }
 
@@ -280,6 +286,25 @@ class Updater {
     return { state: runsCurrent(exec, this.d.dataDir) ? "current" : "other", exec };
   }
 
+  // Whether to restart the service: yes when the broker has no session at work, or does not say; else the sessions are
+  // listed and the person is asked, or with --yes told.
+  async restartOk(yes: boolean | undefined): Promise<boolean> {
+    const working = await this.d.working();
+    if (working === undefined) {
+      this.d.log("The broker did not say whether sessions it runs are at work; restarting stops any that are.");
+      return true;
+    }
+    if (!working.length) return true;
+    const n = working.length;
+    this.d.log(`The broker runs ${n} session${n === 1 ? "" : "s"} at work, which restarting ${SERVICE} stops:`);
+    for (const line of workingLines(working)) this.d.log(line);
+    if (yes) {
+      this.d.log("Going on (--yes).");
+      return true;
+    }
+    return this.d.ask(`Restart ${SERVICE} and stop ${n === 1 ? "it" : "them"}?`);
+  }
+
   async restart(): Promise<void> {
     const r = await this.d.runner("systemctl", ["--user", "restart", SERVICE], { env: this.d.env, timeoutMs: 60_000 });
     if (r.code !== 0) throw new UpdateError(`systemctl --user restart ${SERVICE} failed: ${lastLine(r.stderr) || `exit code ${r.code}`}`);
@@ -361,9 +386,13 @@ class Updater {
   }
 
   // Backs up, migrates with the new version's code, moves the link and restarts. Returns the exit code.
-  async switchTo(from: string | undefined, to: string): Promise<number> {
+  async switchTo(from: string | undefined, to: string, yes?: boolean): Promise<number> {
     const c = this.config();
     const svc = await this.service();
+    if (svc.state === "current" && !(await this.restartOk(yes))) {
+      this.d.log(`Nothing was switched; ${to} stays in versions/ for the next ccrc update.`);
+      return 0;
+    }
     const fromName = from ? this.nameOf(from) : undefined;
     const fromAnswered = svc.state === "current" && from ? (await this.d.ping(this.pingHost(c), c.port)) === from : false;
     const backupDir = this.backup(`update-${from ?? "none"}-${to}`);
@@ -678,7 +707,7 @@ async function updateFrom(u: Updater, d: UpdateDeps, o: UpdateOptions): Promise<
       throw e;
     }
   }
-  return u.switchTo(current?.version, version);
+  return u.switchTo(current?.version, version, o.yes);
 }
 
 export async function update(o: UpdateOptions, deps: Partial<UpdateDeps> = {}): Promise<number> {
@@ -789,7 +818,7 @@ export async function update(o: UpdateOptions, deps: Partial<UpdateDeps> = {}): 
         fs.rmSync(tmp, { recursive: true, force: true });
         throw e;
       }
-      return await u.switchTo(version, target);
+      return await u.switchTo(version, target, o.yes);
     } finally {
       unlock();
     }
@@ -824,6 +853,10 @@ export async function rollback(o: { yes?: boolean }, deps: Partial<UpdateDeps> =
     try {
       const c = u.config();
       const svc = await u.service();
+      if (svc.state === "current" && !(await u.restartOk(o.yes))) {
+        d.log(`Nothing was switched; ccrc stays ${last.to}.`);
+        return 0;
+      }
       const ownBackup = u.backup(`rollback-${last.to}-${last.from}`);
       d.log(`Config and state as they are now backed up to ${ownBackup}`);
       let migrated: string[] | undefined;

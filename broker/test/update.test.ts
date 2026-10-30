@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { brokerVersion, readInstallInfo, writeInstallInfo } from "../src/install.ts";
+import type { WorkingSession } from "../src/link/protocol.ts";
 import { changelogSections, compareVersions, isNewer, latestTag, parseLsRemote, parseVersion, releaseUrl, updateSource } from "../src/releases.ts";
 import { run, type Runner } from "../src/run.ts";
 import { readUpdateCheck } from "../src/update-check.ts";
@@ -106,6 +107,9 @@ interface World {
   broken?: string;
   failBuild?: boolean;
   service: "current" | "other" | "none";
+  // The broker sessions at work the running broker tells of; null for a broker that does not answer.
+  working: WorkingSession[] | null;
+  asked: string[];
   lines: string[];
   deps: Partial<UpdateDeps>;
 }
@@ -121,7 +125,7 @@ function installed(repo: Repo, version = "v0.7.0"): World {
   fs.symlinkSync(path.join("versions", version), path.join(dataDir, "current"));
   fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ schemaVersion: 1, port: 18999, brokerSessions: "off" }, null, 2) + "\n");
   fs.writeFileSync(path.join(stateDir, "archived.json"), "[]\n");
-  const w: World = { dataDir, configDir, stateDir, root, calls: [], restarts: 0, running: version, service: "current", lines: [], deps: {} };
+  const w: World = { dataDir, configDir, stateDir, root, calls: [], restarts: 0, running: version, service: "current", working: [], asked: [], lines: [], deps: {} };
   const currentVersion = () => readInstallInfo(fs.realpathSync(path.join(dataDir, "current")))?.version;
   const runner: Runner = async (cmd, args, o) => {
     w.calls.push([path.basename(cmd), ...args].join(" "));
@@ -155,11 +159,15 @@ function installed(repo: Repo, version = "v0.7.0"): World {
     env: GIT_ENV,
     runner,
     ping: async () => w.running,
-    ask: async () => true,
+    ask: async (question) => {
+      w.asked.push(question);
+      return true;
+    },
     log: (line) => w.lines.push(line),
     pingWaitMs: 100,
     pingEveryMs: 10,
     inService: () => false,
+    working: async () => w.working ?? undefined,
   };
   return w;
 }
@@ -475,6 +483,80 @@ test("a service that runs something else, or none, is not restarted", async () =
   none.service = "none";
   assert.equal(await update({ yes: true }, none.deps), 0);
   assert.match(output(none), /No ccrc\.service: start `.*current\/bin\/ccrc serve` again/);
+});
+
+const AT_WORK: WorkingSession[] = [
+  { id: "0b7cf2a4-2f5e-4c39-9a51-3f1c2a9d8e11", title: "Fix the invoice export", cwd: "/home/user/billing-api", busy: true, requests: 0, tasks: 0 },
+  { id: "5f0e8a43-6a8b-4a0f-9f6e-2b7d7c1e9a10", cwd: "/home/user/app", busy: false, requests: 1, tasks: 2 },
+];
+
+test("before restarting, update and rollback list the broker sessions at work and ask; no leaves everything as it was", async () => {
+  const repo = makeRepo();
+  const w = installed(repo);
+  w.working = AT_WORK;
+  const answers = [true, false];
+  w.deps.ask = async (question) => {
+    w.asked.push(question);
+    return answers.shift() ?? true;
+  };
+  const before = fs.readFileSync(path.join(w.configDir, "config.json"), "utf8");
+  assert.equal(await update({}, w.deps), 0, output(w));
+  assert.deepEqual(w.asked, ["Update ccrc from v0.7.0 to v0.7.1?", "Restart ccrc.service and stop them?"]);
+  assert.match(
+    output(w),
+    /The broker runs 2 sessions at work, which restarting ccrc\.service stops:\n {2}- Fix the invoice export \(\/home\/user\/billing-api\): answering\n {2}- 5f0e8a43 \(\/home\/user\/app\): waiting for 1 answer, 2 tasks running\nNothing was switched; v0\.7\.1 stays in versions\/ for the next ccrc update\./,
+  );
+  assert.equal(current(w), path.join("versions", "v0.7.0"));
+  assert.equal(w.restarts, 0);
+  assert.equal(fs.readFileSync(path.join(w.configDir, "config.json"), "utf8"), before, "the migrate step did not run");
+  assert.equal(fs.existsSync(path.join(w.dataDir, "history.json")), false);
+  assert.equal(fs.existsSync(path.join(w.stateDir, "backup")), false, "no backup made");
+
+  // Asked again, the copy built the first time is used.
+  w.lines.length = 0;
+  w.calls.length = 0;
+  w.working = [];
+  assert.equal(await update({}, w.deps), 0, output(w));
+  assert.match(output(w), /Using the copy already in versions\/v0\.7\.1/);
+  assert.equal(current(w), path.join("versions", "v0.7.1"));
+  assert.equal(w.restarts, 1);
+  assert.doesNotMatch(output(w), /at work/);
+
+  w.lines.length = 0;
+  w.asked.length = 0;
+  w.working = AT_WORK.slice(1);
+  w.deps.ask = async (question) => {
+    w.asked.push(question);
+    return !question.startsWith("Restart");
+  };
+  assert.equal(await rollback({}, w.deps), 0, output(w));
+  assert.deepEqual(w.asked, ["Go back from v0.7.1 to v0.7.0?", "Restart ccrc.service and stop it?"]);
+  assert.match(output(w), /The broker runs 1 session at work, which restarting ccrc\.service stops:\n {2}- 5f0e8a43 .*\nNothing was switched; ccrc stays v0\.7\.1\./);
+  assert.equal(current(w), path.join("versions", "v0.7.1"));
+  assert.equal(w.restarts, 1);
+  assert.equal(history(w).length, 1, "no rollback recorded");
+});
+
+test("with --yes the sessions at work are listed and the restart goes on; a broker that does not say does not stop it", async () => {
+  const repo = makeRepo();
+  const w = installed(repo);
+  w.working = AT_WORK.slice(0, 1);
+  assert.equal(await update({ yes: true }, w.deps), 0, output(w));
+  assert.deepEqual(w.asked, []);
+  assert.match(output(w), /The broker runs 1 session at work, which restarting ccrc\.service stops:\n {2}- Fix the invoice export .*: answering\nGoing on \(--yes\)\./);
+  assert.equal(w.restarts, 1);
+
+  w.lines.length = 0;
+  w.working = null;
+  assert.equal(await rollback({ yes: true }, w.deps), 0, output(w));
+  assert.match(output(w), /The broker did not say whether sessions it runs are at work; restarting stops any that are\./);
+  assert.equal(w.restarts, 2);
+
+  const other = installed(repo);
+  other.service = "other";
+  other.working = AT_WORK;
+  assert.equal(await update({ yes: true }, other.deps), 0);
+  assert.doesNotMatch(output(other), /at work/, "a service that is not restarted stops nothing");
 });
 
 test("with allowed signers in the install, a tag must carry a signature from one of them", async (t) => {

@@ -87,7 +87,7 @@ function setup(prefs: Partial<PushPrefs> = {}, more: Subscription[] = []) {
   const notifier = new Notifier(manager as unknown as SessionManager, hub as unknown as Hub, {
     subscriptions: () => subs,
     deliver: (sub, payload, urgency) => sent.push({ endpoint: sub.endpoint, payload, urgency }),
-    timing: { ownedMs: 10, secondMs: 2, recheckMs: 20, doneMs: 15, retryMs: 10, recentMs: 150 },
+    timing: { ownedMs: 10, secondMs: 2, recheckMs: 20, doneMs: 15, retryMs: [10], recentMs: 150 },
     log: () => {},
     now: () => NOW,
   });

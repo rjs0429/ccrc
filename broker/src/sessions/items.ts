@@ -97,6 +97,11 @@ function clipped(text: string, limit: number): string {
 const record = (v: unknown): Record<string, unknown> | undefined =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
 
+// The blocks of a message's content; anything in it that is not an object is left out.
+const blockList = (content: unknown): Block[] => (Array.isArray(content) ? content.filter((b): b is Block => record(b) !== undefined) : []);
+
+const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
 function firstLine(text: string): string {
   const line = text.split("\n").find((l) => l.trim()) ?? "";
   return clipText(line.trim(), SUMMARY_LIMIT).text;
@@ -171,8 +176,8 @@ export function summarizeTool(name: string, input: unknown, cwd: string): string
 function resultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return content == null ? "" : JSON.stringify(content);
-  return content
-    .map((b: Block) => (b.type === "text" ? String(b.text ?? "") : b.type === "image" ? "[image]" : ""))
+  return blockList(content)
+    .map((b) => (b.type === "text" ? String(b.text ?? "") : b.type === "image" ? "[image]" : ""))
     .filter(Boolean)
     .join("\n");
 }
@@ -439,7 +444,7 @@ export class ItemBuilder {
   }
 
   add(m: RawMessage, fallbackTs?: string): DisplayItem[] {
-    const ts = m.timestamp ?? fallbackTs;
+    const ts = str(m.timestamp) ?? fallbackTs;
     if (m.parent_tool_use_id) return this.subagent(m, m.parent_tool_use_id, ts);
     switch (m.type) {
       case "user":
@@ -458,7 +463,7 @@ export class ItemBuilder {
   private user(m: RawMessage, ts?: string): DisplayItem[] {
     const out: DisplayItem[] = [];
     const content = m.message?.content;
-    const blocks: Block[] = typeof content === "string" ? [{ type: "text", text: content }] : (content ?? []);
+    const blocks: Block[] = typeof content === "string" ? [{ type: "text", text: content }] : blockList(content);
     const texts: string[] = [];
     const attachments = attachmentsOf(blocks);
     const results = blocks.filter((b) => b.type === "tool_result").length;
@@ -508,7 +513,7 @@ export class ItemBuilder {
 
   private assistant(m: RawMessage, ts?: string): DisplayItem[] {
     const out: DisplayItem[] = [];
-    const blocks = Array.isArray(m.message?.content) ? m.message.content : [];
+    const blocks = blockList(m.message?.content);
     if (m.local_command_run || typeof m.local_command_source === "string" || m.usage_report || m.context_usage) {
       const text = blocks.map((b) => (b.type === "text" ? String(b.text ?? "") : "")).join("\n");
       // The transcript keeps the result under the same uuid, so a reload finds the same item.
@@ -559,11 +564,11 @@ export class ItemBuilder {
   private subagent(m: RawMessage, parentId: string, ts?: string): DisplayItem[] {
     const owner = this.tool(this.subCalls.get(parentId) ?? parentId);
     if (owner && m.type === "user") return this.subagentResults(m);
-    if (!owner || m.type !== "assistant" || !Array.isArray(m.message?.content)) return [];
+    if (!owner || m.type !== "assistant") return [];
     let sub: SubagentActivity = owner.sub ?? { tools: 0, recent: [] };
     let changed = false;
     const sent: DisplayItem[] = [];
-    for (const b of m.message.content) {
+    for (const b of blockList(m.message?.content)) {
       if (b.type === "tool_use") {
         const id = String(b.id);
         if (this.subCalls.has(id)) continue;
@@ -584,14 +589,15 @@ export class ItemBuilder {
 
   // The results of the calls a subagent made that show as items of their own.
   private subagentResults(m: RawMessage): DisplayItem[] {
-    const blocks = Array.isArray(m.message?.content) ? m.message.content.filter((b) => b.type === "tool_result") : [];
+    const blocks = blockList(m.message?.content).filter((b) => b.type === "tool_result");
     const output = blocks.length === 1 ? (m.tool_use_result ?? m.toolUseResult) : undefined;
     return blocks.filter((b) => this.tool(String(b.tool_use_id))?.by).map((b) => this.toolResult(b, output));
   }
 
   private system(m: RawMessage, ts?: string): DisplayItem[] {
     let item: DisplayItem | undefined;
-    const output = m.subtype === "local_command_output" || m.subtype === "local_command" ? (commandOutput(m.content ?? "") ?? m.content?.trim()) : undefined;
+    const content = str(m.content) ?? "";
+    const output = m.subtype === "local_command_output" || m.subtype === "local_command" ? (commandOutput(content) ?? content.trim()) : undefined;
     if (m.subtype === "compact_boundary") item = this.note("compacted", undefined, ts, m.uuid);
     else if (output) item = this.put(commandResult(m.uuid ?? `note-${++this.noteCount}`, ts, output, m));
     else if ((m.subtype === "task_progress" || m.subtype === "task_notification") && m.tool_use_id) item = this.taskTools(m.tool_use_id, m.usage?.tool_uses);
@@ -650,7 +656,8 @@ export class ItemBuilder {
   private result(m: RawMessage, ts?: string): DisplayItem[] {
     if (!m.is_error) return [];
     const stopped = typeof m.terminal_reason === "string" ? classify({ ...m }, {}).outcome === "interrupted" : m.subtype === "error_during_execution";
-    const item = stopped ? this.note("interrupted", undefined, ts) : this.note("error", m.result || m.errors?.join("\n") || m.subtype, ts);
+    const errors = Array.isArray(m.errors) ? m.errors.filter((e) => typeof e === "string").join("\n") : "";
+    const item = stopped ? this.note("interrupted", undefined, ts) : this.note("error", str(m.result) || errors || str(m.subtype), ts);
     return item ? [item] : [];
   }
 }

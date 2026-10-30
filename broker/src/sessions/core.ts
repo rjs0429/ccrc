@@ -774,7 +774,7 @@ export abstract class SessionCore extends EventEmitter {
     noteFact(this.facts, m);
     this.noteCache(m, Date.parse(at));
     if (m.type === "stream_event") {
-      if (!m.parent_tool_use_id) this.onStream(m.event as StreamEvent);
+      if (!m.parent_tool_use_id && isObj(m.event)) this.onStream(m.event as unknown as StreamEvent);
       return;
     }
     if (m.type === "command_lifecycle") {

@@ -9,7 +9,8 @@ import { ClaudeCli, type CliChoice } from "../claude-cli.ts";
 import { claudeSettingsFile } from "../claude-settings.ts";
 import { brokerSessionsOf, paths, writeFileAtomic, type Config } from "../config.ts";
 import { isLang, type Lang } from "../lang.ts";
-import type { Hello } from "../link/protocol.ts";
+import { guarded, lineKind } from "../link/guard.ts";
+import type { Hello, WorkingSession } from "../link/protocol.ts";
 import type { Link } from "../link/server.ts";
 import type { ClaudeNotice } from "../push/rules.ts";
 import {
@@ -63,7 +64,9 @@ import { liveProcesses, type LiveProcess } from "./live.ts";
 import { modelCaps } from "./model-caps.ts";
 import type { TurnEnd } from "./outcome.ts";
 import { historyFind, historyPage, snapshotPart } from "./pages.ts";
+import { paced } from "./paced.ts";
 import { lastCache } from "./prompt-cache.ts";
+import { ReadQueue } from "./read-queue.ts";
 import { MODEL_NAME, StartStore } from "./start-store.ts";
 import { SentIndex, sentCall, type SentCall } from "./sent-files.ts";
 import { SessionCwds } from "./session-cwd.ts";
@@ -82,6 +85,7 @@ type LaunchEnv = Record<string, string | undefined>;
 const EXACT_KEEP = 500;
 const SWEEP_MS = 60_000;
 const WATCH_INTERVAL_MS = 2000;
+const REREAD_PACE = 3;
 // Handing a session to VS Code: how long the broker's running turn may go on before it is interrupted,
 // and how long to wait for any other process that still holds the session to end. A resting tab answers at once
 // whether it hands the session over.
@@ -89,6 +93,7 @@ const HANDOFF_TURN_MS = 10_000;
 const HANDOFF_OTHER_MS = 9_000;
 const HAND_OVER_ASK_MS = 3000;
 const EARLY_LINES_MAX = 500;
+const ATTACH_READS = 2;
 const ENDED_KEEP_MS = 10 * 60_000;
 const CRASHED_KEEP_MS = 24 * 3600_000;
 const USAGE_KEEP_MS = 30_000;
@@ -242,6 +247,8 @@ export class SessionManager extends EventEmitter {
   private sideEnded = new Map<string, { ask: string; answer?: SideAnswer; error?: string }>();
   private sent = new SentIndex();
   private cwds = new SessionCwds();
+  // The transcripts of VS Code sessions attaching, as after a restart, are read a few at a time, the phone's first.
+  private attachReads = new ReadQueue(ATTACH_READS, () => this.viewed);
   // Where plan limits come from when no running process can say: (cwd, Claude Code path).
   usageProbe: (cwd: string, claudePath?: string, env?: LaunchEnv) => Promise<UsageInfo> = probeUsage;
   causesProbe: (cwd: string, claudePath?: string, env?: LaunchEnv) => Promise<UsageCauses> = probeUsageCauses;
@@ -270,7 +277,7 @@ export class SessionManager extends EventEmitter {
     this.audit = audit;
     this.timing = { handoffTurnMs: HANDOFF_TURN_MS, handoffOtherMs: HANDOFF_OTHER_MS, handOverAskMs: HAND_OVER_ASK_MS, probeRetryMs: PROBE_RETRY_MS, worktreeStartMs: WORKTREE_START_MS, ...timing };
     this.cli = new ClaudeCli({ setting: cfg.claudePath });
-    this.sweeper = setInterval(() => void this.sweep(), SWEEP_MS);
+    this.sweeper = setInterval(() => void this.sweep().catch(() => {}), SWEEP_MS);
     this.sweeper.unref();
   }
 
@@ -526,7 +533,7 @@ export class SessionManager extends EventEmitter {
   private async idleState(sessionId: string, cwd: string, title: string): Promise<LiveState> {
     const l = liveProcesses({ fresh: true }).find((p) => p.sessionId === sessionId);
     const ended = this.ended.get(sessionId);
-    const context = await this.lastGauge(sessionId, cwd, () => void this.restate(sessionId));
+    const context = await this.lastGauge(sessionId, cwd, () => void this.restate(sessionId).catch(() => {}));
     const file = transcriptPath(sessionId, cwd);
     const cache = file ? await lastCache(file).catch(() => undefined) : undefined;
     const start = l ? undefined : this.starts.get(sessionId);
@@ -615,29 +622,39 @@ export class SessionManager extends EventEmitter {
   // A session started or reached here shows the prompt cache its transcript last left until a response comes.
   private seedCache(s: SessionCore): void {
     const file = transcriptPath(s.id, s.cwd);
-    if (file) void lastCache(file).then((c) => this.current(s) && s.seedCache(c), () => {});
+    if (!file) return;
+    void lastCache(file)
+      .then((c) => this.current(s) && s.seedCache(c))
+      .catch(() => {});
   }
 
   // A session started or reached here shows the transcript's last gauge until Claude Code counts.
   private seedGauge(s: SessionCore): void {
     const fill = (): void =>
-      void this.lastGauge(s.id, s.cwd, fill).then((g) => {
-        if (!g || s.context || !this.current(s)) return;
-        s.context = g;
-        s.emit("state");
-      });
+      void this.lastGauge(s.id, s.cwd, fill)
+        .then((g) => {
+          if (!g || s.context || !this.current(s)) return;
+          s.context = g;
+          s.emit("state");
+        })
+        .catch(() => {});
     fill();
   }
 
-  // Calls back whenever the transcript of a session without a process this broker drives changes.
-  watch(sessionId: string, onChange: () => void): () => void {
+  // Calls back whenever the transcript of a session without a process this broker drives changes, waiting after each call
+  // three times as long as it took (paced.ts): a call reads the whole transcript again.
+  watch(sessionId: string, onChange: () => unknown): () => void {
     const file = transcriptPath(sessionId);
     if (!file) return () => {};
+    const changed = paced(onChange, REREAD_PACE);
     const listener = (cur: fs.Stats, prev: fs.Stats) => {
-      if (cur.mtimeMs !== prev.mtimeMs && !this.isControlled(sessionId)) onChange();
+      if (cur.mtimeMs !== prev.mtimeMs && !this.isControlled(sessionId)) changed.run();
     };
     fs.watchFile(file, { interval: WATCH_INTERVAL_MS }, listener);
-    return () => fs.unwatchFile(file, listener);
+    return () => {
+      changed.stop();
+      fs.unwatchFile(file, listener);
+    };
   }
 
   private get(sessionId: string): SessionCore {
@@ -1452,21 +1469,25 @@ export class SessionManager extends EventEmitter {
       prev?.end("replaced");
       this.adopt(s);
       for (const h of early) {
-        if (h.from === "out") s.onOut(h.v as Record<string, unknown>, h.at);
-        else if (h.from === "in") s.onIn(h.v as Record<string, unknown>);
-        else if (h.from === "held") s.onHeld(h.v);
-        else s.onSettled(h.v);
+        guarded(lineKind(h.from, h.v), () => {
+          if (h.from === "out") s.onOut(h.v as Record<string, unknown>, h.at);
+          else if (h.from === "in") s.onIn(h.v as Record<string, unknown>);
+          else if (h.from === "held") s.onHeld(h.v);
+          else s.onSettled(h.v);
+        });
       }
       early = [];
       this.audit?.log("attach", { sessionId: id, wpid: link.hello?.wpid });
-      void loadHistory(id, cwd)
+      void this.attachReads
+        .run(id, () => loadHistory(id, cwd))
         .catch(() => [])
         .then((history) => {
           s.seed(history);
           this.seedGauge(s);
           this.seedCache(s);
           if (this.current(s)) this.emit("attached", id);
-        });
+        })
+        .catch((e: unknown) => console.error(`ccrc: attaching ${id} failed: ${e instanceof Error ? e.message : String(e)}`));
     };
     const keep = (from: "out" | "in" | "settled" | "held", v: unknown) => {
       if (early.length < EARLY_LINES_MAX) early.push({ from, v, at: new Date().toISOString() });
@@ -1487,14 +1508,18 @@ export class SessionManager extends EventEmitter {
       void this.claim(id, link)
         .catch((): Claim => ({ fork: false }))
         .then(({ fork, holder, title, notice }) => {
-          link.send({ t: "claim_ok", ...(fork ? { fork: true } : {}), ...(title ? { title } : {}), ...(notice ? { notice } : {}) });
-          if (fork) {
-            link.sessionId = undefined;
-            copyHolder = holder ?? "";
-          } else if (link.sessionId) bind(link.sessionId);
-          claiming = false;
-          this.claiming.delete(id);
-        });
+          try {
+            link.send({ t: "claim_ok", ...(fork ? { fork: true } : {}), ...(title ? { title } : {}), ...(notice ? { notice } : {}) });
+            if (fork) {
+              link.sessionId = undefined;
+              copyHolder = holder ?? "";
+            } else if (link.sessionId) bind(link.sessionId);
+          } finally {
+            claiming = false;
+            this.claiming.delete(id);
+          }
+        })
+        .catch((e: unknown) => console.error(`ccrc: opening ${id} in VS Code failed: ${e instanceof Error ? e.message : String(e)}`));
     });
     link.on("session", (id: string) => {
       if (!claiming) bind(id);
@@ -1510,6 +1535,21 @@ export class SessionManager extends EventEmitter {
       this.pushLinks.delete(link);
       session?.end("vscode_closed");
     });
+    link.on("ask_working", () => link.send({ t: "working", sessions: this.working() }));
+  }
+
+  // The sessions this broker runs that are at work: a restart of the broker stops them.
+  working(): WorkingSession[] {
+    return [...this.owned.values()]
+      .filter((s) => !s.closed && (s.busy || s.pending.size > 0 || s.tasks.running()))
+      .map((s) => ({
+        id: s.id,
+        ...(s.title ? { title: s.title } : {}),
+        cwd: s.cwd,
+        busy: s.busy,
+        requests: s.pending.size,
+        tasks: s.tasks.values().filter((t) => t.status === "running").length,
+      }));
   }
 
   // Lets a VS Code launch that resumes `sessionId` start: the broker's own process for it is closed once
@@ -1643,7 +1683,7 @@ export class SessionManager extends EventEmitter {
       this.sent.add(s.id, s.builder.items);
       this.catalog = undefined;
       this.emit("event", s.id, { t: "state", sessionId: s.id, state: s.state() });
-      if (!isFolder(s.cwd)) void this.restate(s.id);
+      if (!isFolder(s.cwd)) void this.restate(s.id).catch(() => {});
       this.emit("changed");
       this.emit("detached", s.id);
     });

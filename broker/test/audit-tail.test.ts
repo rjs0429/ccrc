@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
+import { Audit } from "../src/audit.ts";
 import { readAuditTail } from "../src/routes/audit.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -48,4 +49,49 @@ test("a missing or empty log has no entries", async () => {
   assert.deepEqual(await readAuditTail(path.join(dir, "empty.jsonl"), 10), { entries: [] });
   fs.writeFileSync(path.join(dir, "one.jsonl"), line(5) + "\n");
   assert.deepEqual(await readAuditTail(path.join(dir, "one.jsonl"), 10, 10_000), { entries: [JSON.parse(line(5))] });
+});
+
+test("pages go on from the log into the one rotated before it, newest first", async () => {
+  const file = path.join(tempDir(), "audit.jsonl");
+  fs.writeFileSync(`${file}.1`, Array.from({ length: 30 }, (_, i) => line(i)).join("\n") + "\n");
+  fs.writeFileSync(file, Array.from({ length: 25 }, (_, i) => line(30 + i)).join("\n") + "\n");
+  const expected = Array.from({ length: 55 }, (_, i) => 54 - i);
+  for (const [limit, chunk] of [
+    [10, 7],
+    [25, undefined],
+    [100, 50],
+  ] as const) {
+    assert.deepEqual((await all(file, limit, chunk)).seen, expected, `limit ${limit}, chunk ${chunk}`);
+  }
+  fs.writeFileSync(file, "");
+  assert.deepEqual((await all(file, 20)).seen, expected.slice(25), "just after a rotation the rotated log shows");
+});
+
+test("the audit log moves aside once it grows past its limit, and the activity screen still reads it", async () => {
+  const file = path.join(tempDir(), "audit.jsonl");
+  const audit = new Audit(file, 1000);
+  for (let n = 0; n < 30; n++) audit.log("send", { n });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(fs.existsSync(`${file}.1`));
+  assert.ok(fs.statSync(file).size <= 1000);
+  assert.ok(fs.statSync(`${file}.1`).size <= 1000);
+  const { seen } = await all(file, 50);
+  assert.deepEqual(seen, seen.toSorted((a, b) => b - a), "newest first");
+  assert.equal(seen[0], 29);
+  assert.ok(seen.length >= 10, `${seen.length} entries kept`);
+});
+
+test("two writers of one audit log rotate it by its size on disk, not by what each wrote", () => {
+  const file = path.join(tempDir(), "audit.jsonl");
+  const pad = "x".repeat(60);
+  const broker = new Audit(file, 1000);
+  for (let n = 10; n < 18; n++) broker.log("send", { n, pad });
+  const other = new Audit(file, 1000);
+  other.log("send", { n: 18, pad });
+  assert.ok(fs.existsSync(`${file}.1`), "the other writer rotated it");
+  const rotated = fs.readFileSync(`${file}.1`, "utf8");
+  broker.log("send", { n: 19, pad });
+  assert.equal(fs.readFileSync(`${file}.1`, "utf8"), rotated, "the broker does not rotate the small new log again");
+  const n = fs.readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l).n);
+  assert.deepEqual(n, [18, 19]);
 });

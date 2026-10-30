@@ -26,6 +26,7 @@ function sizeOf(source: Block | undefined): number {
 // Images and documents of a user message in block order; a block's position here is its index in the route.
 export function attachmentsOf(blocks: readonly Block[]): UserAttachment[] {
   const out: UserAttachment[] = [];
+  if (!Array.isArray(blocks)) return out;
   for (const b of blocks) {
     if (b?.type !== "image" && b?.type !== "document") continue;
     const source = record(b.source);

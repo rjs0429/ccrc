@@ -50,17 +50,40 @@ export type AuditEvent =
   | "passkey_removed"
   | "passkey_reset";
 
-// Records who did what; message text and tool input are not recorded.
+const ROTATE_BYTES = 5 * 1024 * 1024;
+
+// The file the log moves to once it grows past ROTATE_BYTES, replacing the one moved before.
+export const rotatedAudit = (file: string) => `${file}.1`;
+
+// Records who did what; message text and tool input are not recorded. The size is read from the file each time, as
+// commands such as ccrc passkey write to the same log.
 export class Audit {
   readonly file: string;
+  private rotateBytes: number;
 
-  constructor(file = paths.auditFile) {
+  constructor(file = paths.auditFile, rotateBytes = ROTATE_BYTES) {
     this.file = file;
+    this.rotateBytes = rotateBytes;
     ensureDir(path.dirname(file));
   }
 
   log(event: AuditEvent, detail: Record<string, unknown> = {}): void {
     const line = JSON.stringify({ ts: new Date().toISOString(), event, ...detail }) + "\n";
-    fs.appendFile(this.file, line, { mode: 0o600 }, () => {});
+    if (fileSize(this.file) + Buffer.byteLength(line) > this.rotateBytes) {
+      try {
+        fs.renameSync(this.file, rotatedAudit(this.file));
+      } catch {}
+    }
+    try {
+      fs.appendFileSync(this.file, line, { mode: 0o600 });
+    } catch {}
+  }
+}
+
+function fileSize(file: string): number {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
   }
 }

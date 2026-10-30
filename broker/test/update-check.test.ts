@@ -13,7 +13,7 @@ import { tempDir } from "./helpers.ts";
 const SHA = "0".repeat(40);
 const lsRemote = (...tags: string[]) => tags.map((t) => `${SHA}\trefs/tags/${t}`).join("\n") + "\n";
 
-function setup(o: { tags?: string[]; version?: string; source?: string; kind?: "installed" | "git" } = {}) {
+function setup(o: { tags?: string[]; version?: string; source?: string; kind?: "installed" | "git"; retryMs?: number } = {}) {
   const stateDir = tempDir();
   const file = path.join(stateDir, "update-check.json");
   const config: Pick<Config, "updateCheck" | "updateChannel" | "updateRepo" | "updateNotify"> = { updateCheck: true, updateChannel: "stable", updateNotify: true };
@@ -40,6 +40,7 @@ function setup(o: { tags?: string[]; version?: string; source?: string; kind?: "
       return reach;
     },
     log: (line) => lines.push(line),
+    ...(o.retryMs ? { retryMs: o.retryMs } : {}),
   });
   return {
     check,
@@ -114,6 +115,33 @@ test("a new version is announced once, and only when updateNotify is on and a de
   await checkout.check.check();
   assert.deepEqual(checkout.notified, [], "a development checkout is updated with git, not told to run ccrc update");
   assert.equal(checkout.check.info().available, true, "the settings screen still names the release");
+});
+
+test("a failed look is made again shortly until one works, a new error alone logged, and closing stops it", async () => {
+  const s = setup({ retryMs: 40 });
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  s.setFail("unable to access 'https://github.com/rjs0429/ccrc.git/': Could not resolve host: github.com");
+  await s.check.check();
+  await sleep(110);
+  assert.ok(s.asked.length >= 3, `${s.asked.length} looks`);
+  assert.equal(s.lines.length, 1, s.lines.join("\n"));
+  assert.match(s.lines[0], /looking for a new version failed: .*Could not resolve host: github\.com; looking again every 0 minutes until it works$/);
+  s.setFail("Repository not found.");
+  await sleep(60);
+  assert.equal(s.lines.length, 2, "a different error is logged");
+  s.setFail(undefined);
+  await sleep(60);
+  const looks = s.asked.length;
+  await sleep(120);
+  assert.equal(s.asked.length, looks, "no more looks once one worked");
+  assert.equal(s.check.info().error, undefined);
+
+  const closed = setup({ retryMs: 30 });
+  closed.setFail("Could not resolve host: github.com");
+  await closed.check.check();
+  closed.check.close();
+  await sleep(90);
+  assert.equal(closed.asked.length, 1);
 });
 
 test("a failed look is recorded, keeps the release seen before, and updateCheck off skips looking", async () => {

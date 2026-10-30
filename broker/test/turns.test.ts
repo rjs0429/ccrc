@@ -52,6 +52,17 @@ test("session ids that are not plain names are ignored", async () => {
   assert.equal(await s.continueEnv("../escape", 2), undefined);
 });
 
+test("notes older than a day are removed when the broker starts, which writes none", () => {
+  const dir = tempDir();
+  store(new Set([2]), undefined, dir).cut("old", 1);
+  store(new Set([2]), undefined, dir).cut("recent", 1);
+  const day = 25 * 60 * 60;
+  fs.utimesSync(path.join(dir, "old.json"), Date.now() / 1000 - day, Date.now() / 1000 - day);
+  new TurnStore({ dir }).prune();
+  assert.deepEqual(fs.readdirSync(dir), ["recent.json"]);
+  assert.doesNotThrow(() => new TurnStore({ dir: path.join(dir, "missing") }).prune());
+});
+
 test("notes older than a day are removed when a new one is written", () => {
   const dir = tempDir();
   const s = store(new Set([2]), undefined, dir);
