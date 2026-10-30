@@ -13,9 +13,9 @@ export const CALM_MS = 800;
 // rest once iOS's own scroll of the tap has ended.
 const DECIDE_MS = 60;
 const BACK_MS = 400;
-// A list further from its top than this many screens jumps there and fades in rather than scrolls.
-const FAR_SCREENS = 4;
-const FADE_MS = 180;
+// A list going further than FAR_SCREENS jumps to NEAR_SCREENS from where it goes, and scrolls the rest smoothly.
+const FAR_SCREENS = 2;
+const NEAR_SCREENS = 1.5;
 
 export interface Moment {
   fingers: number;
@@ -31,18 +31,27 @@ export function statusTap(m: Moment, left: number): boolean {
   return !m.fingers && !m.typing && !m.keyboard && !m.layer && left - m.touchedAt >= QUIET_MS && left - m.calmAt >= CALM_MS;
 }
 
-export function glideTop(el: HTMLElement | null): void {
-  if (!el || el.scrollTop < 1) return;
+// Takes a list to a position (top, or where `top()` says then) with the browser's smooth scroll, or at once when motion
+// is to be reduced. After a step the smooth part starts on the next frame, unless `on()` has turned false by then.
+export function glideTo(el: HTMLElement, top: number | (() => number), on: () => boolean = () => true): void {
+  const target = () => Math.max(0, Math.min(typeof top === "number" ? top : top(), el.scrollHeight - el.clientHeight));
+  const to = target();
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    el.scrollTop = 0;
+    el.scrollTop = to;
     return;
   }
-  if (el.scrollTop <= el.clientHeight * FAR_SCREENS) {
-    el.scrollTo({ top: 0, behavior: "smooth" });
+  if (Math.abs(to - el.scrollTop) <= el.clientHeight * FAR_SCREENS) {
+    el.scrollTo({ top: to, behavior: "smooth" });
     return;
   }
-  el.scrollTop = 0;
-  el.animate([{ opacity: 0.25 }, { opacity: 1 }], { duration: FADE_MS, easing: "ease-out" });
+  const near = el.clientHeight * NEAR_SCREENS;
+  el.scrollTop = to + (el.scrollTop > to ? near : -near);
+  requestAnimationFrame(() => on() && el.scrollTo({ top: target(), behavior: "smooth" }));
+}
+
+// A list's way up to its top; going: whether it is still under way.
+export function glideTop(el: HTMLElement | null, going?: () => boolean): void {
+  if (el && el.scrollTop >= 1) glideTo(el, 0, going);
 }
 
 // The screen on show, the last one to say how its list goes to the top.

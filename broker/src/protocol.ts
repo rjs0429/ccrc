@@ -946,6 +946,10 @@ export type ClientMsg =
   | { t: "visibility"; visible: boolean }
   // The phone no longer shows what it followed.
   | { t: "unfollow"; id: string }
+  // The conversation list reached its bottom from more than a screen above it by nothing the user did: what moved it, the
+  // gap below it before, its height and item counts before and after, its own height, the state it was in and its last
+  // happenings as [what, ms before, times]. Sent only to a broker that names "diag", which logs it.
+  | { t: "diag"; what: "list_bottom"; why: string; gap: number; height: number[]; items: number[]; view: number; flags: string; trail: [string, number, number][] }
   | { t: "ping" };
 
 // Items a snapshot leaves out between a far-back focused part and the latest items, which start at `before`.
@@ -967,7 +971,8 @@ export interface SnapshotPart {
 // The meta tag in the web app's index.html that names its build, which the broker says in ready for the page to compare.
 export const BUILD_META = "ccrc-build";
 // What a broker does beyond one that names nothing in ready. sent: it takes a send with an id once and answers it.
-export const PHONE_CAPS = ["sent"];
+// diag: it logs what the page reports of its own screen.
+export const PHONE_CAPS = ["sent", "diag"];
 
 export type ServerMsg =
   // build: the web app the broker serves now. A page leaves alone what it does not know of caps.

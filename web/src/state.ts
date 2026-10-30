@@ -485,6 +485,19 @@ function newId(): string {
 
 // What the broker said it does beyond older brokers, at the last ready.
 let caps = new Set<string>();
+
+// What the conversation list tells of reaching its bottom by itself, for the broker's log: to a broker that logs it,
+// at most once every DIAG_EVERY_MS.
+export type ListBottom = Omit<Extract<ClientMsg, { t: "diag" }>, "t" | "what">;
+const DIAG_EVERY_MS = 30_000;
+let diagAt = -Infinity;
+
+export function listBottom(note: ListBottom): void {
+  const now = performance.now();
+  if (!caps.has("diag") || now - diagAt < DIAG_EVERY_MS) return;
+  if (send({ t: "diag", what: "list_bottom", ...note })) diagAt = now;
+}
+
 // The broker keeps a message's id this long; one unheard of for longer goes back to its composer.
 const SEND_KEEP_MS = 10 * 60_000;
 const sentHooks = new Set<(o: Outgoing) => void>();
@@ -852,7 +865,7 @@ function updateChat(sessionId: string, fn: (c: Chat) => Partial<Chat> | undefine
   });
 }
 
-// A thought that ended leaves with the next item or state of its session, or after this long.
+// A thought or reply that ended leaves with the next item or state of its session, or after this long.
 const ENDED_THOUGHT_MS = 1000;
 const settled = (c: Chat, patch: Partial<Chat> | undefined): Partial<Chat> | undefined => (c.stream?.ended ? { ...patch, stream: undefined } : patch);
 

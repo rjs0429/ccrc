@@ -102,14 +102,15 @@ test("what is kept of streaming thoughts stays small", async () => {
   assert.equal(c.thoughtChoice("long:1", `${long}The end.`, "z"), false);
 });
 
-test("a thought that ends stays until what comes next takes its place", () => {
+test("a thought or reply that ends stays until what comes next takes its place", () => {
   const thought = streamed(undefined, "Let me", true);
   assert.deepEqual(thought, { text: "Let me", thinking: true });
   const ended = streamed(thought, "", false);
   assert.deepEqual(ended, { text: "Let me", thinking: true, ended: true });
   assert.equal(streamed(ended, "", false), ended);
   assert.deepEqual(streamed(ended, "The answer", false), { text: "The answer", thinking: false });
-  assert.equal(streamed({ text: "The answer", thinking: false }, "", false), undefined);
+  assert.deepEqual(streamed({ text: "The answer", thinking: false }, "", false), { text: "The answer", thinking: false, ended: true });
   assert.equal(streamed({ text: "", thinking: true }, "", false), undefined);
+  assert.equal(streamed({ text: "", thinking: false }, "", false), undefined);
   assert.equal(streamed(undefined, "", false), undefined);
 });
