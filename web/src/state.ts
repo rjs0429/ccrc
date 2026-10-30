@@ -17,16 +17,11 @@ import { api, ApiError, onPasskeyDue, type Me, type Options } from "./api.ts";
 import { t } from "./i18n/index.ts";
 import { isIos, lastTap, recentRequest, syncAttention, syncPushLang } from "./push.ts";
 import { joined, placed, streamed, type Streamed } from "./chatItems.ts";
+import { listen, nav, parseRoute, type Route, type SettingsPage, type SettingsPart } from "./nav.ts";
 import { copyLoggedOut, copyLogin, copyPasskeyDue, copySignedIn, flushContact, keepCopy, noteHeard, noteLost, noteSent } from "./offline.ts";
 import { bindSent } from "./sentPreviews.ts";
 
-export type SettingsPage = "claude" | "alerts" | "account" | "status";
-export type SettingsPart = "permissions";
-export type Route =
-  | { name: "home" }
-  | { name: "chat"; sessionId: string }
-  | { name: "new" }
-  | { name: "settings"; page?: SettingsPage; part?: SettingsPart };
+export type { Route, SettingsPage, SettingsPart } from "./nav.ts";
 export type Conn = "idle" | "connecting" | "ready" | "conflict" | "taken" | "offline";
 
 export interface Chat {
@@ -146,43 +141,12 @@ export function composerInsert(text: string, replace = false): void {
   setState({ insert: { text, at: Date.now(), ...(replace ? { replace } : {}) } });
 }
 
-function parseRoute(): Route {
-  const h = location.hash.replace(/^#/, "");
-  const m = h.match(/^\/s\/([0-9a-f-]{36})$/);
-  if (m) return { name: "chat", sessionId: m[1] };
-  if (h === "/new") return { name: "new" };
-  if (h === "/settings") return { name: "settings" };
-  const p = h.match(/^\/settings\/(claude|alerts|account|status)(?:\/(permissions))?$/);
-  if (p) return { name: "settings", page: p[1] as SettingsPage, ...(p[2] ? { part: p[2] as SettingsPart } : {}) };
-  return { name: "home" };
-}
+// Opens a screen over the one shown (nav.open).
+export const navigate = nav.open;
 
-export function navigate(route: Route): void {
-  const hash =
-    route.name === "chat"
-      ? `#/s/${route.sessionId}`
-      : route.name === "home"
-        ? "#/"
-        : route.name === "settings" && route.page
-          ? `#/settings/${route.page}${route.part ? `/${route.part}` : ""}`
-          : `#/${route.name}`;
-  if (location.hash !== hash) location.hash = hash;
-  else onRoute();
-}
-
-// Where the settings page opened by a "/" command returns to.
-let settingsReturn: string | undefined;
-
+// Settings opened by a "/" command stand over the screen it was typed in, which the back returns to.
 export function openSettingsFrom(page: SettingsPage, part?: SettingsPart): void {
-  settingsReturn = location.hash;
-  navigate({ name: "settings", page, ...(part ? { part } : {}) });
-}
-
-export function leaveSettings(page?: SettingsPage): void {
-  const back = settingsReturn;
-  settingsReturn = undefined;
-  if (back && page) location.hash = back;
-  else navigate(page ? { name: "settings" } : { name: "home" });
+  nav.open({ name: "settings", page, ...(part ? { part } : {}) });
 }
 
 // Asking again for the chat it shows, the phone keeps the part it holds.
@@ -200,7 +164,7 @@ export function refreshChat(): void {
 // Opens a session at one of its items.
 export function openAt(sessionId: string, itemId?: string, earlier?: boolean): void {
   setState({ chat: { sessionId, loaded: false, items: [], pending: [], hasMore: false, focus: itemId, ...(earlier ? { focusEarlier: true } : {}) } });
-  navigate({ name: "chat", sessionId });
+  nav.open({ name: "chat", sessionId });
 }
 
 export function focusDone(sessionId: string): void {
@@ -211,11 +175,11 @@ export function requestShown(sessionId: string): void {
   updateChat(sessionId, () => ({ focusRequest: undefined }));
 }
 
-// Opens a session at a request waiting for an answer.
+// Opens a session at a request waiting for an answer, right over home whatever was open.
 export function openRequest(sessionId: string, requestId: string): void {
   if (state.chat?.sessionId === sessionId) updateChat(sessionId, () => ({ focusRequest: requestId }));
   else setState({ chat: { sessionId, loaded: false, items: [], pending: [], hasMore: false, focusRequest: requestId } });
-  navigate({ name: "chat", sessionId });
+  nav.top({ name: "chat", sessionId });
 }
 
 const SHOWN_REQUEST_KEY = "ccrc.shownRequest";
@@ -253,7 +217,6 @@ async function toNotifiedRequest(front: number): Promise<void> {
 function onRoute(): void {
   if (copyTimer !== undefined) copyNow();
   const route = parseRoute();
-  if (route.name !== "settings") settingsReturn = undefined;
   setState({ route });
   const viewing = route.name === "chat" ? route.sessionId : null;
   if (viewing && state.chat?.sessionId !== viewing) {
@@ -264,7 +227,7 @@ function onRoute(): void {
   if (state.me?.loggedIn && (route.name === "home" || route.name === "new")) void refreshSessions();
   badgeSoon();
 }
-window.addEventListener("hashchange", onRoute);
+listen(onRoute);
 
 // The app icon's number is asked for a moment after something changed, once the broker has taken the new view, which
 // counts as opening that session; the notifications that no longer count close with it, and those of the session the
@@ -971,7 +934,8 @@ function onServer(msg: ServerMsg): void {
         else startDone();
       }
       setState({ chat: { sessionId: msg.sessionId, loaded: false, items: [], pending: [], hasMore: false } });
-      navigate({ name: "chat", sessionId: msg.sessionId });
+      // The conversation takes the new-session screen's place; from anywhere else it opens right over home.
+      (state.route.name === "new" ? nav.replace : nav.top)({ name: "chat", sessionId: msg.sessionId });
       return;
     }
     case "sessions_changed":

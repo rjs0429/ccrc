@@ -2,6 +2,7 @@ import { settled } from "../../broker/src/push/attention.ts";
 import type { PushBadge, PushPrefs, PushRecent, PushStatus } from "../../broker/src/push/types.ts";
 import { ApiError, request } from "./api.ts";
 import { lang, t } from "./i18n/index.ts";
+import { nav, parseRoute } from "./nav.ts";
 
 const SW = "/sw.js";
 const READY_MS = 10_000;
@@ -32,7 +33,8 @@ export function lastTap(): { at: number; hash: string } | undefined {
   return tap;
 }
 
-// The service worker shows the notifications; tapping one while the app is open sends the app to its session.
+// The service worker shows the notifications; tapping one while the app is open sends the app to its session, right
+// over home.
 export function registerServiceWorker(): void {
   if (!window.isSecureContext || !("serviceWorker" in navigator)) return;
   const opened = new URL(location.href);
@@ -58,7 +60,7 @@ export function registerServiceWorker(): void {
     const url = new URL(msg.url, location.origin);
     if (url.origin !== location.origin) return;
     tap = { at: Date.now(), hash: url.hash };
-    if (url.hash.startsWith("#/")) location.hash = url.hash;
+    if (url.hash.startsWith("#/")) nav.top(parseRoute(url.hash));
   });
 }
 

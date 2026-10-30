@@ -2,16 +2,18 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { DateLine, ItemView, shownItems } from "../components/Items.tsx";
 import { FileLinks, FileRoots } from "../components/fileLinks.ts";
 import { LAPTOP_ONLY, OfflineView } from "../components/offlineView.ts";
+import { ScrollArea } from "../components/ScrollArea.tsx";
 import { ReplySheet, type Reply } from "../components/sheets/Reply.tsx";
 import { dayLines } from "../components/stamps.ts";
 import { TitleText } from "../components/TitleText.tsx";
 import { Button, Icon, Spinner } from "../components/ui.tsx";
 import { t } from "../i18n/index.ts";
 import { dayClock, relTime, sessionTitle } from "../labels.ts";
+import { nav } from "../nav.ts";
 import { copyEnd, copyEnded, forgetCopies, onCopies, savedCopies, savedCopy } from "../offline.ts";
 import type { SavedChat } from "../offlineCopy.ts";
 import { getPrefs } from "../prefs.ts";
-import { navigate, reconnect, toast, useApp } from "../state.ts";
+import { reconnect, toast, useApp } from "../state.ts";
 import { placeLabel } from "../worktree.ts";
 
 const openNothing = () => toast(t(LAPTOP_ONLY));
@@ -53,7 +55,7 @@ export function OfflineHome({ reason }: { reason: "unreachable" | "denied" }) {
           </h1>
         </div>
       </header>
-      <main className="pb-safe flex-1 overflow-y-auto px-safe-0">
+      <ScrollArea className="pb-safe px-safe-0">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-4">
           <div className="flex items-start gap-3 rounded-xl bg-surface-2 p-3.5 text-sm" data-offline={reason}>
             <p className="min-w-0 flex-1 break-keep text-pretty">
@@ -88,7 +90,7 @@ export function OfflineHome({ reason }: { reason: "unreachable" | "denied" }) {
                   {chats.map((c) => (
                     <button
                       key={c.sessionId}
-                      onClick={() => navigate({ name: "chat", sessionId: c.sessionId })}
+                      onClick={() => nav.open({ name: "chat", sessionId: c.sessionId })}
                       className="flex w-full items-start gap-3 border-b border-line px-4 py-3 text-left last:border-b-0 active:bg-surface-2"
                       data-copy-row={c.sessionId}
                     >
@@ -114,7 +116,7 @@ export function OfflineHome({ reason }: { reason: "unreachable" | "denied" }) {
             </section>
           )}
         </div>
-      </main>
+      </ScrollArea>
     </div>
   );
 }
@@ -141,7 +143,7 @@ export function OfflineChat({ sessionId }: { sessionId: string }) {
     <div className="flex h-dvh flex-col">
       <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
-          <button onClick={() => navigate({ name: "home" })} aria-label={t("뒤로")} className="-m-1 rounded-lg p-3">
+          <button onClick={nav.back} aria-label={t("뒤로")} className="-m-1 rounded-lg p-3">
             <Icon.back />
           </button>
           <div className="min-w-0 flex-1 py-2">

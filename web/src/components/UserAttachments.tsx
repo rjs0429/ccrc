@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { UserAttachment } from "../../../broker/src/protocol.ts";
 import { t } from "../i18n/index.ts";
 import { sizeText } from "../labels.ts";
+import { useLayer } from "../nav.ts";
 import { sentPreview } from "../sentPreviews.ts";
 import { useApp } from "../state.ts";
 import { SERVED_IMAGES, messageImageUrl } from "./composer/attachments.ts";
@@ -126,6 +127,7 @@ function ImageViewer({ images, start, onClose }: { images: Shown[]; start: numbe
   const shown = images[at];
   const local = !gone.has(at) && shown.local;
   const src = local || shown.remote;
+  const dismiss = useLayer(onClose);
   const go = (d: number) => {
     const next = at + d;
     if (next < 0 || next >= images.length) return;
@@ -135,8 +137,7 @@ function ImageViewer({ images, start, onClose }: { images: Shown[]; start: numbe
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "ArrowLeft") go(-1);
+      if (e.key === "ArrowLeft") go(-1);
       else if (e.key === "ArrowRight") go(1);
     };
     window.addEventListener("keydown", onKey);
@@ -161,7 +162,7 @@ function ImageViewer({ images, start, onClose }: { images: Shown[]; start: numbe
           {images.length > 1 ? `${at + 1} / ${images.length}` : t("이미지")}
           {shown.size > 0 && ` · ${sizeText(shown.size)}`}
         </div>
-        <button onClick={onClose} aria-label={t("닫기")} className="rounded-lg p-2">
+        <button onClick={dismiss} aria-label={t("닫기")} className="rounded-lg p-2">
           <Icon.x />
         </button>
       </header>

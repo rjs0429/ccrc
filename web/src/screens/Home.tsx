@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSummary } from "../../../broker/src/protocol.ts";
 import type { Mark, SearchResponse, SearchResult, SearchSnippet } from "../../../broker/src/search-protocol.ts";
 import { ApiError, api } from "../api.ts";
+import { ScrollArea } from "../components/ScrollArea.tsx";
 import { ArchivedBadge, SessionActions, setArchived } from "../components/SessionActions.tsx";
 import { Icon, Spinner } from "../components/ui.tsx";
 import { UpdateBanner } from "../components/UpdateBanner.tsx";
@@ -9,11 +10,14 @@ import { TitleText } from "../components/TitleText.tsx";
 import { useLongPress } from "../components/useLongPress.ts";
 import { t, tc } from "../i18n/index.ts";
 import { baseName, brokerSessionsBlocked, hostLabel, relTime, sessionTitle, shortPath } from "../labels.ts";
-import { loggedOut, navigate, openAt, refreshSessions, useApp } from "../state.ts";
+import { nav, useKept } from "../nav.ts";
+import { loggedOut, openAt, refreshSessions, useApp } from "../state.ts";
 import { groupFolder, placeLabel, shownBranch } from "../worktree.ts";
 
 // "all" leaves archived sessions out; what runs, waits for input or is unread shows archived or not.
 type Filter = "all" | "running" | "waiting" | "unread" | "archived";
+type Tab = "sessions" | "folders";
+const FILTERS: Filter[] = ["all", "running", "waiting", "unread", "archived"];
 const PAGE = 80;
 const REFRESH_MS = 10_000;
 const SEARCH_DELAY_MS = 250;
@@ -25,6 +29,11 @@ const CARD = "border-b border-line sm:rounded-xl sm:border sm:bg-surface";
 
 // The last search stays when the user opens a result and comes back.
 let lastSearch: { q: string; found?: SearchResponse } = { q: "" };
+
+const isTab = (v: unknown): v is Tab => v === "sessions" || v === "folders";
+const isFilter = (v: unknown): v is Filter => FILTERS.includes(v as Filter);
+const isFolder = (v: unknown): v is string | null => v === null || typeof v === "string";
+const isLimit = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= PAGE;
 
 function Marked({ text, marks }: { text: string; marks: Mark[] }) {
   const parts: React.ReactNode[] = [];
@@ -146,7 +155,7 @@ function SessionRow({ s, view, onActions }: { s: SessionSummary; view: Filter; o
   const row = (
     <button
       {...press}
-      onClick={() => navigate({ name: "chat", sessionId: s.id })}
+      onClick={() => nav.open({ name: "chat", sessionId: s.id })}
       className={`flex w-full items-start gap-3 px-4 py-3 text-left select-none [-webkit-touch-callout:none] active:bg-surface-2 ${restore ? "min-w-0 flex-1 sm:rounded-xl" : CARD}`}
     >
       <span className={`mt-1.5 size-2.5 shrink-0 rounded-full ${st.dot}`} />
@@ -190,10 +199,11 @@ export function Home() {
   const sessions = useApp((s) => s.sessions);
   const conn = useApp((s) => s.conn);
   const brokerOff = brokerSessionsBlocked(useApp((s) => s.options?.brokerSessions));
-  const [tab, setTab] = useState<"sessions" | "folders">("sessions");
-  const [filter, setFilter] = useState<Filter>("all");
-  const [folder, setFolder] = useState<string | null>(null);
-  const [limit, setLimit] = useState(PAGE);
+  // The list comes back from a screen opened on it as it was left: tab, filter, folder and how much of it was shown.
+  const [tab, setTab] = useKept<Tab>("home.tab", "sessions", isTab);
+  const [filter, setFilter] = useKept<Filter>("home.filter", "all", isFilter);
+  const [folder, setFolder] = useKept<string | null>("home.folder", null, isFolder);
+  const [limit, setLimit] = useKept("home.limit", PAGE, isLimit);
   const [q, setQ] = useState(lastSearch.q);
   const [actions, setActions] = useState<string | null>(null);
   const searching = Boolean(q.trim());
@@ -242,7 +252,7 @@ export function Home() {
             <span className={`ml-2 inline-block size-2 rounded-full align-middle ${conn === "ready" ? "bg-ok" : "bg-warn"}`} title={conn} />
           </h1>
           <button
-            onClick={() => navigate({ name: "new" })}
+            onClick={() => nav.open({ name: "new" })}
             title={brokerOff}
             data-broker-off={brokerOff ? "" : undefined}
             className={`order-2 flex shrink-0 items-center gap-1 rounded-xl px-3 py-2 text-sm font-medium short:order-5 short:ml-auto ${brokerOff ? "bg-surface-2 text-muted" : "bg-accent text-white"}`}
@@ -250,7 +260,7 @@ export function Home() {
             <Icon.plus className="size-4" />
             {t("새 세션")}
           </button>
-          <button onClick={() => navigate({ name: "settings" })} aria-label={t("설정")} className="order-3 mr-1 shrink-0 rounded-lg p-2 text-muted short:order-6">
+          <button onClick={() => nav.open({ name: "settings" })} aria-label={t("설정")} className="order-3 mr-1 shrink-0 rounded-lg p-2 text-muted short:order-6">
             <Icon.gear />
           </button>
           <div className="order-4 flex basis-full items-center gap-2 rounded-xl border border-line bg-surface px-3 short:order-3 short:max-w-xl short:min-w-0 short:flex-1 short:basis-0">
@@ -292,7 +302,7 @@ export function Home() {
       </header>
       <UpdateBanner />
 
-      <main className="pb-safe flex-1 overflow-y-auto px-safe-0">
+      <ScrollArea className="pb-safe px-safe-0">
         {!sessions && (
           <div className="flex justify-center py-12 text-muted">
             <Spinner className="size-6" />
@@ -391,7 +401,7 @@ export function Home() {
             ))}
           </div>
         )}
-      </main>
+      </ScrollArea>
       {target && <SessionActions session={target} step="menu" onClose={() => setActions(null)} />}
     </div>
   );

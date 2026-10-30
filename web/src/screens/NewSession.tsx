@@ -4,14 +4,16 @@ import type { EffortName, ModelOption, StartSettings } from "../../../broker/src
 import { Composer, saveDraft } from "../components/Composer.tsx";
 import { commandSheet } from "../components/commandSheets.ts";
 import { NEW_SESSION_SCOPE, takeAttachments } from "../components/composer/attachments.ts";
+import { ScrollArea } from "../components/ScrollArea.tsx";
 import { UsageSheet } from "../components/sheets/Usage.tsx";
 import { Icon, Sheet, Spinner } from "../components/ui.tsx";
 import { WorktreeOption, worktreeBlocked, worktreeChoice, type FolderGit, type WorktreeDraft } from "../components/WorktreeOption.tsx";
 import { k, t, tc, type Placed } from "../i18n/index.ts";
 import { brokerSessionsBlocked, errorText, shortPath } from "../labels.ts";
+import { nav } from "../nav.ts";
 import { rememberSent } from "../sentPreviews.ts";
 import { offeredFolder, placeLabel } from "../worktree.ts";
-import { callFolder, navigate, onDraftFailed, onDraftStarted, openSettingsFrom, startNewSession, toast, useApp } from "../state.ts";
+import { callFolder, onDraftFailed, onDraftStarted, openSettingsFrom, startNewSession, toast, useApp } from "../state.ts";
 
 const EFFORTS: EffortName[] = ["low", "medium", "high", "xhigh", "max"];
 const NO_MODELS: ModelOption[] = [];
@@ -62,7 +64,7 @@ export function openNewSession(cwd: string, text: string, start: StartSettings =
   kept = { cwd, start, ...(worktree ? { worktree } : {}) };
   saveKept(kept);
   saveDraft(NEW_SESSION_SCOPE, text);
-  navigate({ name: "new" });
+  nav.open({ name: "new" });
 }
 
 function modelNamed(models: ModelOption[], name: string): ModelOption | undefined {
@@ -237,7 +239,7 @@ export function NewSession() {
     <div className="flex h-dvh flex-col">
       <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
-          <button onClick={() => navigate({ name: "home" })} aria-label={t("뒤로")} className="-m-1 rounded-lg p-3">
+          <button onClick={nav.back} aria-label={t("뒤로")} className="-m-1 rounded-lg p-3">
             <Icon.back />
           </button>
           <div className="min-w-0 flex-1 short:flex short:items-baseline short:gap-2">
@@ -254,7 +256,7 @@ export function NewSession() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto overscroll-contain px-safe-0">
+      <ScrollArea className="px-safe-0">
         <div className="mx-auto max-w-2xl px-4 py-4 short:py-2">
           <div className="mb-2 text-sm font-semibold text-muted">{t("폴더")}</div>
           <div className="mb-2 flex items-center gap-2 rounded-xl border border-line bg-surface px-3">
@@ -283,7 +285,7 @@ export function NewSession() {
             {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">{tc("folder list", "폴더가 없습니다")}</div>}
           </div>
         </div>
-      </main>
+      </ScrollArea>
 
       <Composer
         draft={{ cwd: cwd ?? undefined, start }}

@@ -3,7 +3,8 @@ import type { DisplayItem, RewindConversationResult, RewindResult } from "../../
 import { dateTime } from "../../i18n/format.ts";
 import { k, t } from "../../i18n/index.ts";
 import { clock, errorText, hostLabel, shortPath } from "../../labels.ts";
-import { call, composerInsert, navigate, toast, useApp } from "../../state.ts";
+import { nav } from "../../nav.ts";
+import { call, composerInsert, toast, useApp } from "../../state.ts";
 import { openNewSession } from "../../screens/NewSession.tsx";
 import { loadDraft, saveDraft } from "../Composer.tsx";
 import { NEW_SESSION_SCOPE, reattachMessage, useAttachments } from "../composer/attachments.ts";
@@ -165,7 +166,7 @@ export function RewindSheet({ sessionId, initial, onClose }: SheetProps & { init
       if (r.mode === "draft") openNewSession(r.cwd, r.prefill, startOf(st));
       else {
         saveDraft(r.sessionId, r.prefill);
-        navigate({ name: "chat", sessionId: r.sessionId });
+        nav.replace({ name: "chat", sessionId: r.sessionId });
       }
       const opened =
         r.mode === "draft"

@@ -1,4 +1,5 @@
 import { useId, type ReactNode, type Ref } from "react";
+import { useLayer } from "../nav.ts";
 
 type IconProps = { className?: string };
 
@@ -121,10 +122,12 @@ export function Spinner({ className = "size-4" }: IconProps) {
 }
 
 // wide: room for two columns on a landscape screen. tall: the whole height of a portrait screen below its status bar,
-// with a header of the content's own in place of the title there.
+// with a header of the content's own in place of the title there. A sheet is a layer of the history: a tap beside it
+// closes it as the back does.
 export function Sheet({ title, onClose, children, wide, tall }: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean; tall?: boolean }) {
+  const dismiss = useLayer(onClose);
   return (
-    <div className="overlay fixed inset-0 z-40" onClick={onClose}>
+    <div className="overlay fixed inset-0 z-40" onClick={dismiss}>
       <div className="sheet-dim sheet-dim-top" aria-hidden />
       <div className="sheet-dim" aria-hidden />
       <div className="sheet-frame flex items-end justify-center sm:items-center">

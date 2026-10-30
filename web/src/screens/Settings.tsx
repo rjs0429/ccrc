@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { api, ApiError } from "../api.ts";
+import { ScrollArea } from "../components/ScrollArea.tsx";
 import { Button, Icon, Row } from "../components/ui.tsx";
 import { k, t } from "../i18n/index.ts";
+import { nav } from "../nav.ts";
 import { forgetCopies } from "../offline.ts";
 import { getPrefs } from "../prefs.ts";
 import { loadDevice, turnOff } from "../push.ts";
-import { leaveSettings, loggedOut, meAgain, navigate, toast, useApp, type SettingsPage, type SettingsPart } from "../state.ts";
+import { loggedOut, meAgain, toast, useApp, type SettingsPage, type SettingsPart } from "../state.ts";
 import { AuditSection } from "./settings/Audit.tsx";
 import { ClaudeSettingsSection } from "./settings/ClaudeSettings.tsx";
 import { CopySection } from "./settings/Copy.tsx";
@@ -32,19 +34,19 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
     <div className="flex h-dvh flex-col">
       <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
-          <button onClick={() => leaveSettings(page)} aria-label={t("뒤로")} className="-m-1 rounded-lg p-3">
+          <button onClick={nav.back} aria-label={t("뒤로")} className="-m-1 rounded-lg p-3">
             <Icon.back />
           </button>
           <div className="flex-1 text-[15px] font-semibold">{title}</div>
         </div>
       </header>
-      <main className="pb-safe flex-1 overflow-y-auto px-safe-0">
+      <ScrollArea className="pb-safe px-safe-0">
         <div className="mx-auto max-w-md space-y-6 px-4 py-5">
           {!page && (
             <>
               <div>
                 {PAGES.map((p) => (
-                  <Row key={p.page} label={t(p.title)} value={p.page === "account" ? device : undefined} onClick={() => navigate({ name: "settings", page: p.page })} />
+                  <Row key={p.page} label={t(p.title)} value={p.page === "account" ? device : undefined} onClick={() => nav.open({ name: "settings", page: p.page })} />
                 ))}
                 <LanguageRow />
               </div>
@@ -84,7 +86,7 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
           )}
           {page === "status" && <HealthSection />}
         </div>
-      </main>
+      </ScrollArea>
     </div>
   );
 }

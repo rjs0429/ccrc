@@ -47,6 +47,12 @@ your version and the new one, and the lines under "Breaking" separately.
   replaces a newer one.
 - The broker compresses its JSON answers, and the web app's files are compressed when it is built, so the session list
   and the first load take less over a slow network.
+- Back (the phone's edge swipe, the browser's back) goes the way the screens were opened: it closes the sheet or the
+  file or photo viewer on top first, then the screen, up to the home screen, where it stops. It no longer walks back
+  through the sessions and settings pages passed on the way. The header's back button and Escape do the same. A
+  conversation opened from a notification has the home screen under it, and settings opened with /config go back to the
+  conversation. The home screen comes back as you left it: tab, filter, folder, how much of the list was shown and where
+  it was scrolled.
 
 ### Fixed
 
