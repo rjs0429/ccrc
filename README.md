@@ -575,6 +575,9 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
   only as messages from another session; their prompts, model, mode and turns stay there.
 - In `apiKey` mode, commands Claude runs in a broker session (the Bash tool, for example) inherit Claude Code's
   environment and so can read the key.
+- With VS Code's telemetry setting off, the Claude Code extension (2.1.312 and later) starts Claude with
+  `DISABLE_TELEMETRY=1`, and Claude then fetches no feature flags and has no PushNotification tool. Those sessions send
+  no Claude notifications to the phone; broker sessions do.
 - The installer is new. ccrc has run daily on Ubuntu 24.04. On 2026-10-18 `install.sh` from GitHub installed v0.7.0
   over an existing 0.6 setup on Ubuntu 24.04: setup kept the settings, the phone's notifications and `tailscale serve`
   as they were, and moved only the service and the VS Code wrapper to the install. Installs on other distributions

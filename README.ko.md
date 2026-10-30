@@ -353,6 +353,7 @@ setup 이 돌 때 `CCRC_CONFIG_DIR`, `CCRC_STATE_DIR`, `CCRC_DATA_DIR`, `CLAUDE_
 - 컴퓨터 하나에 사용자 한 명, 원격 로그인은 한 번에 하나.
 - 세션은 컴퓨터에서 돌기 때문에 컴퓨터가 켜져 있고 온라인이어야 한다. 그렇지 않을 때 휴대폰은 마지막으로 보여 준 대화의 읽기 전용 사본만 보여 준다. 터미널이나 다른 프로그램에서 연 세션은 휴대폰의 글을 다른 세션의 메시지로만 받는다. 그 세션의 요청, 모델, 모드, 턴은 그쪽에 남는다.
 - `apiKey` 모드에서 Claude 가 브로커 세션에서 실행하는 명령(예: Bash 도구)은 Claude Code 의 환경을 물려받으므로 키를 읽을 수 있다.
+- VS Code 의 텔레메트리 설정이 꺼져 있으면 Claude Code 확장(2.1.312 이상)은 Claude 를 `DISABLE_TELEMETRY=1` 로 띄운다. 그러면 Claude 는 기능 플래그를 받지 않아 PushNotification 도구가 없고, 그 세션은 Claude 의 알림을 휴대폰에 보내지 않는다. 브로커 세션은 보낸다.
 - 설치 프로그램은 새것이다. ccrc 는 Ubuntu 24.04 에서 매일 써 왔다. 2026-10-18 에 GitHub 의 `install.sh` 로 Ubuntu 24.04 의 기존 0.6 위에 v0.7.0 을 설치했다. setup 은 설정, 휴대폰 알림, `tailscale serve` 를 그대로 두고 서비스와 VS Code 래퍼만 설치본으로 옮겼다. 다른 배포판(Debian, Fedora, Arch, openSUSE)과 새 컴퓨터에는 아직 설치해 보지 않았다.
 
 ## 개발
