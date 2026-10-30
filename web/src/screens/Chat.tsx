@@ -278,7 +278,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const movedAt = useRef(0);
   // When the touch on the list began and ended, where the list stood as it began (a finger that has not moved it since
   // is resting on it), the moment it has held the list (HOLD_MS), and the list's position when its speed was last
-  // looked at.
+  // looked at. fresh: no finger is on the list, so the next touch begins anew, also one that stops a fling.
+  const fresh = useRef(true);
   const touchAt = useRef(0);
   const touchTop = useRef(0);
   const liftAt = useRef(0);
@@ -751,16 +752,19 @@ export function Chat({ sessionId }: { sessionId: string }) {
     }, ms);
   };
 
-  const startScroll = () => {
+  const startScroll = (touch = false) => {
     if (!scrolling.current) {
       scrolled.current = false;
       paused.current = pinned.current;
+    }
+    if (!scrolling.current || (touch && fresh.current)) {
       touchAt.current = performance.now();
       touchTop.current = listRef.current?.scrollTop ?? 0;
       note("touch");
       clearTimeout(holdTimer.current);
       holdTimer.current = window.setTimeout(() => holding() && owed.current.follow && shownHeld(), HOLD_MS);
     }
+    if (touch) fresh.current = false;
     scrolling.current = true;
     restSoon();
   };
@@ -770,6 +774,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const el = listRef.current;
     fingers.current = fingersOn(el, (e as TouchEvent).touches);
     if (fingers.current) return;
+    fresh.current = true;
     liftAt.current = performance.now();
     if (!scrolled.current && el && Math.abs(el.scrollTop - lastTop.current) < 0.5) settleNow.current();
     else restNow.current();
@@ -1284,14 +1289,14 @@ export function Chat({ sessionId }: { sessionId: string }) {
             if (!inList(e)) return;
             endGlide();
             touch(e);
-            if (e.pointerType === "touch") startScroll();
+            if (e.pointerType === "touch") startScroll(true);
           }}
           onTouchStart={(e) => {
             if (!inList(e)) return;
             fingers.current = fingersOn(e.currentTarget, e.nativeEvent.touches);
             e.target.addEventListener("touchend", lifted);
             e.target.addEventListener("touchcancel", lifted);
-            startScroll();
+            startScroll(true);
           }}
           onKeyDown={(e) => inList(e) && touch(e)}
           onWheel={(e) => {
