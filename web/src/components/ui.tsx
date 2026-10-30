@@ -1,5 +1,6 @@
-import { useId, type ReactNode, type Ref } from "react";
+import { useId, useRef, type ReactNode, type Ref } from "react";
 import { useLayer } from "../nav.ts";
+import { useDragClose } from "./useDragClose.ts";
 
 type IconProps = { className?: string };
 
@@ -130,20 +131,35 @@ export function Spinner({ className = "size-4" }: IconProps) {
 
 // wide: room for two columns on a landscape screen. tall: the whole height of a portrait screen below its status bar,
 // with a header of the content's own in place of the title there. A sheet is a layer of the history: a tap beside it
-// closes it as the back does.
+// closes it as the back does, and so does a drag down, from its handle and title or from its content at the top.
 export function Sheet({ title, onClose, children, wide, tall }: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean; tall?: boolean }) {
   const dismiss = useLayer(onClose);
+  const panel = useRef<HTMLDivElement>(null);
+  const handle = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLDivElement>(null);
+  const dimTop = useRef<HTMLDivElement>(null);
+  const dim = useRef<HTMLDivElement>(null);
+  useDragClose(panel, [handle, heading], [dimTop, dim], dismiss, Boolean(title));
   return (
     <div className="overlay fixed inset-0 z-40" onClick={dismiss}>
-      <div className="sheet-dim sheet-dim-top" aria-hidden />
-      <div className="sheet-dim" aria-hidden />
+      <div ref={dimTop} className="sheet-dim sheet-dim-top" aria-hidden />
+      <div ref={dim} className="sheet-dim" aria-hidden />
       <div className="sheet-frame flex items-end justify-center sm:items-center">
         <div
+          ref={panel}
           className={`pb-safe ${tall ? "h-[calc(100%+12px-var(--sat)-0.5rem)] sm:h-auto" : "max-h-[85%]"} w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 shadow-xl sm:max-h-full sm:rounded-2xl ${wide ? "sm:max-w-3xl" : ""}`}
           onClick={(e) => e.stopPropagation()}
           role="dialog"
         >
-          {title && <div className={`mb-3 text-sm font-semibold text-muted ${tall ? "hidden sm:block" : ""}`}>{title}</div>}
+          {/* The handle stays on top of the panel's padding while its content scrolls under it. */}
+          <div ref={handle} className="sticky -top-4 z-20 -mx-4 -mt-4 h-4 bg-surface" aria-hidden data-sheet-handle>
+            <span className="absolute top-1.5 left-1/2 hidden h-[5px] w-9 -translate-x-1/2 rounded-full bg-muted/40 pointer-coarse:max-sm:block" />
+          </div>
+          {title && (
+            <div ref={heading} className={`mb-3 text-sm font-semibold text-muted ${tall ? "hidden sm:block" : ""}`} data-sheet-title>
+              {title}
+            </div>
+          )}
           {children}
         </div>
       </div>

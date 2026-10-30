@@ -231,7 +231,6 @@ export const g3: Record<string, string> = {
   "대화 내보내기": "Export conversation",
   "연결되면 보냅니다": "Sends once connected",
   "보내는 중": "Sending",
-  "폴더: {name}": "Folder: {name}",
   "{model}, 다른 모델이 답했습니다": "{model}, another model answered",
   "마지막 답은 {model} 모델이 했습니다.": "The latest response came from {model}.",
   "{from} 모델의 안전장치가 메시지를 막아 이 세션을 {to} 모델로 바꿨습니다.": "{from}'s safeguards flagged a message and switched this session to {to}.",

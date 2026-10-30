@@ -204,7 +204,7 @@ export function Transcript({ sessionId, target, active, startAt, running, roots,
 
   return (
     <div ref={rootRef} hidden={!active} onPointerDown={endGlide} onWheel={endGlide} data-transcript={h?.agentId || target.agentId || target.toolUseId}>
-      <div className="sticky -top-4 z-10 -mx-4 -mt-4 mb-3 border-b border-line bg-surface px-4 pt-2 pb-2 sm:top-0 sm:mx-0 sm:mt-0 sm:px-0 sm:pt-0" data-transcript-head>
+      <div className="sticky top-0 z-10 -mx-4 mb-3 border-b border-line bg-surface px-4 pb-2 sm:mx-0 sm:px-0" data-transcript-head>
         <div className="flex items-start gap-1">
           <button onClick={onBack} aria-label={t("뒤로")} className="-ml-2 flex size-11 shrink-0 items-center justify-center rounded-lg text-accent" data-transcript-back>
             <Icon.back className="size-5" />
