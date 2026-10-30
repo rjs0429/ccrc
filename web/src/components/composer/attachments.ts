@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ReattachResult, UploadInfo, UserAttachment } from "../../../../broker/src/protocol.ts";
 import { ApiError, api } from "../../api.ts";
 import { t } from "../../i18n/index.ts";
-import { call, loggedOut, toast } from "../../state.ts";
+import { call, holdReload, loggedOut, toast } from "../../state.ts";
 import type { ReattachFailure } from "../messageActions.ts";
 
 type Kind = UploadInfo["kind"];
@@ -47,6 +47,7 @@ const aborts = new Map<number, AbortController>();
 const listeners = new Set<() => void>();
 const NONE: Attachment[] = [];
 let seq = 0;
+holdReload(() => lists.size > 0);
 
 function set(sessionId: string, list: Attachment[]): void {
   if (list.length) lists.set(sessionId, list);

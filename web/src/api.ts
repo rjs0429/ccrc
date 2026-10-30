@@ -70,19 +70,39 @@ function failure(status: number, body: Record<string, unknown>): ApiError {
   return new ApiError(PASSKEY_DUE, body);
 }
 
-export async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+// A request the broker has not answered in this long fails as "no answer", as a network that dropped it says nothing.
+const REQUEST_MS = 15_000;
+
+export async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal, ms = REQUEST_MS): Promise<T> {
   const at = Date.now();
-  const res = await fetch(url, {
-    method,
-    credentials: "same-origin",
-    headers: body === undefined ? {} : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal,
-  });
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) throw failure(res.status, data);
-  noteAnswered(at);
-  return data as T;
+  const ctl = new AbortController();
+  let late = false;
+  const timer = setTimeout(() => {
+    late = true;
+    ctl.abort();
+  }, ms);
+  const pass = () => ctl.abort(signal?.reason);
+  if (signal?.aborted) pass();
+  else signal?.addEventListener("abort", pass, { once: true });
+  try {
+    const res = await fetch(url, {
+      method,
+      credentials: "same-origin",
+      headers: body === undefined ? {} : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: ctl.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (late) throw Error("no answer");
+    if (!res.ok) throw failure(res.status, data);
+    noteAnswered(at);
+    return data as T;
+  } catch (e) {
+    throw late ? Error("no answer") : e;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", pass);
+  }
 }
 
 // Sends a file as the raw body; XMLHttpRequest because fetch cannot report upload progress.

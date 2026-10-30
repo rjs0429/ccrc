@@ -217,3 +217,11 @@ test("a new worker drops the caches of an older one", async () => {
   assert.deepEqual(await sw.caches.keys(), ["other"]);
   assert.equal(sw.claims(), 1);
 });
+
+test("the app's page given in place of a file under /assets/ reaches the page but is never kept as that file", async () => {
+  const sw = load(async () => html(["/assets/a1.js"]));
+  const res = (await sw.fire("fetch", get("/assets/Viewer-gone.js"))) as Response;
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type") ?? "", /text\/html/);
+  assert.deepEqual(await held(sw), []);
+});

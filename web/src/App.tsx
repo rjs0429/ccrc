@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AppBoundary } from "./components/Boundary.tsx";
 import { Notice, Spinner } from "./components/ui.tsx";
 import { t } from "./i18n/index.ts";
 import { useLangKey } from "./i18n/react.ts";
@@ -10,7 +11,7 @@ import { NewSession } from "./screens/NewSession.tsx";
 import { OfflineChat, OfflineHome } from "./screens/Offline.tsx";
 import { Settings } from "./screens/Settings.tsx";
 import { Verify } from "./screens/Verify.tsx";
-import { takeWindow, useApp } from "./state.ts";
+import { reloadApp, takeWindow, useApp, type Route } from "./state.ts";
 
 const TOAST_MS = 4000;
 // A toast with a button stays long enough to reach for it.
@@ -53,9 +54,37 @@ function Toast() {
   );
 }
 
-// A new language or locale draws every screen again from the start.
+const routeKey = (r: Route): string => (r.name === "chat" ? `chat/${r.sessionId}` : r.name === "settings" ? `settings/${r.page ?? ""}/${r.part ?? ""}` : r.name);
+
+// A new language or locale draws every screen again from the start; a screen that cannot be drawn leaves the rest of the
+// app to go to.
 export function App() {
-  return <Screens key={useLangKey()} />;
+  const shown = useApp((s) => routeKey(s.route));
+  return (
+    <AppBoundary resetKey={shown}>
+      <Screens key={useLangKey()} />
+    </AppBoundary>
+  );
+}
+
+// A new build to load, across the top of every screen, which moves down by its height.
+function BuildBand() {
+  useEffect(() => {
+    document.documentElement.setAttribute("data-band", "");
+    return () => document.documentElement.removeAttribute("data-band");
+  }, []);
+  return (
+    <button
+      onClick={reloadApp}
+      className="fixed inset-x-0 top-0 z-30 flex flex-col bg-accent pt-[env(safe-area-inset-top,0px)] text-white"
+      data-new-build
+    >
+      <span className="flex h-9 w-full items-center justify-center gap-2 px-safe-4 text-[13px]">
+        <span className="truncate">{t("새 버전이 설치되었습니다")}</span>
+        <span className="shrink-0 font-semibold">{t("새로고침")}</span>
+      </span>
+    </button>
+  );
 }
 
 function Screens() {
@@ -63,6 +92,7 @@ function Screens() {
   const offline = useApp((s) => s.offline);
   const route = useApp((s) => s.route);
   const conn = useApp((s) => s.conn);
+  const newBuild = useApp((s) => s.newBuild);
   const shown = useApp((s) => s.route.name === "chat" && s.chat?.sessionId === s.route.sessionId && s.chat.loaded);
 
   if (!me) {
@@ -102,6 +132,7 @@ function Screens() {
       {conn === "offline" && (
         <div className="pt-safe fixed inset-x-0 top-0 z-30 bg-warn/90 px-safe-4 py-1.5 text-center text-xs text-white">{t("연결이 끊겼습니다. 다시 연결하는 중…")}</div>
       )}
+      {conn !== "offline" && newBuild && <BuildBand />}
       {conn === "conflict" && (
         <Notice title={t("다른 창에서 사용 중입니다")} body={t("이 창에서 계속하면 다른 창의 연결은 끊깁니다.")} action={t("이 창에서 계속")} onAction={takeWindow} />
       )}

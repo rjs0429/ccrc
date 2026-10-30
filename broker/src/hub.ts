@@ -7,6 +7,7 @@ import {
   CALL_OPS,
   FOLDER_OPS,
   PERMISSION_MODES,
+  PHONE_CAPS,
   SIDE_THREAD_BYTES,
   type Answer,
   type CallOp,
@@ -48,8 +49,10 @@ const TITLE_ARG_MAX = 2000;
 const DENIED_LOG_MS = 60_000;
 const DENIED_KEEP = 100;
 const DRAFT_ID = /^[A-Za-z0-9-]{1,64}$/;
-// A start asked for again with the same draftId in this long gets the session already started.
+// A start asked for again with the same draftId in this long gets the session already started; a message sent again with
+// the same id, the answer of the first.
 const DRAFT_KEEP_MS = 10 * 60_000;
+const SENDS_KEPT = 500;
 // A side question and the thread it is asked in, as the wrapper takes them, and the phone's id for it.
 const QUESTION_MAX = 10_000;
 const ANSWER_MAX = 100_000;
@@ -103,8 +106,16 @@ function sid(v: unknown): string {
   return s;
 }
 
+// A page's name for itself and the number of its connection, from /ws?w=&n=.
+export interface WindowTag {
+  id: string;
+  seq: number;
+}
+
 // Exactly one browser window drives the broker at a time. A second window with the same login
-// waits until its user chooses to take over, which disconnects the first window.
+// waits until its user chooses to take over, which disconnects the first window. A page that connects again replaces
+// the connection it had at once, whether that one still answers or not; a connection numbered before its latest is late
+// and goes.
 export class Hub {
   private manager: SessionManager;
   private leases: Leases;
@@ -131,10 +142,14 @@ export class Hub {
   private alive = new WeakSet<WebSocket>();
   private deniedLogged = new Map<string, number>();
   private drafts = new Map<string, { at: number; started: Promise<string> }>();
+  private sends = new Map<string, { at: number; done: Promise<void> }>();
+  private windows = new WeakMap<WebSocket, WindowTag>();
   // What the window follows of the session it shows, sent to it as it changes.
   private follows: Follows;
   // Whether a passkey has to confirm the login of a window on this device before it is answered again.
   passkeyDue?: (device: string) => boolean;
+  // The build of the web app served now, told to each window as it becomes the one in use.
+  webBuild?: () => string | undefined;
 
   constructor(manager: SessionManager, leases: Leases, audit: Audit, uploads: Uploads, activity = new RemoteActivity()) {
     this.manager = manager;
@@ -166,7 +181,18 @@ export class Hub {
     this.pinger.unref();
   }
 
-  attach(ws: WebSocket, device: string, token: string): void {
+  attach(ws: WebSocket, device: string, token: string, tag?: WindowTag): void {
+    const earlier = tag ? [this.active, ...this.standby.keys()].filter((o): o is WebSocket => o !== undefined && this.windows.get(o)?.id === tag.id) : [];
+    if (tag && earlier.some((o) => this.windows.get(o)!.seq >= tag.seq)) {
+      ws.terminate();
+      return;
+    }
+    if (tag) this.windows.set(ws, tag);
+    const replaced = this.active !== undefined && earlier.includes(this.active);
+    for (const o of earlier) {
+      this.standby.delete(o);
+      o.terminate();
+    }
     this.tokens.set(ws, token);
     this.alive.add(ws);
     ws.on("pong", () => this.alive.add(ws));
@@ -178,7 +204,7 @@ export class Hub {
         void this.setView(null);
       }
     });
-    if (!this.active) this.activate(ws, device);
+    if (!this.active || replaced) this.activate(ws, device);
     else {
       this.standby.set(ws, device);
       send(ws, { t: "window_conflict" });
@@ -216,7 +242,8 @@ export class Hub {
     this.device = device;
     this.visible = true;
     this.tellViewed();
-    send(ws, { t: "ready" });
+    const build = this.webBuild?.();
+    send(ws, { t: "ready", caps: PHONE_CAPS, ...(build ? { build } : {}) });
   }
 
   private tellViewed(): void {
@@ -276,12 +303,18 @@ export class Hub {
     } catch {
       return;
     }
-    if (!this.leases.validate(this.tokens.get(ws))) {
+    // A page asks whether its connection still carries anything; that is not the user's activity.
+    const ping = msg.t === "ping";
+    if (!this.leases.validate(this.tokens.get(ws), Date.now(), !ping)) {
       send(ws, { t: "lease_revoked", reason: "expired" });
       ws.close(4001, "lease expired");
       return;
     }
     if (this.confirmDue(ws)) return;
+    if (ping) {
+      send(ws, { t: "pong" });
+      return;
+    }
     if (ws !== this.active) {
       const device = this.standby.get(ws);
       if (msg.t !== "take_window" || device === undefined) return;
@@ -297,10 +330,11 @@ export class Hub {
     }
     const sessionId = "sessionId" in msg && typeof msg.sessionId === "string" ? msg.sessionId : undefined;
     const draftId = msg.t === "new_session" && typeof msg.draftId === "string" && DRAFT_ID.test(msg.draftId) ? msg.draftId : undefined;
+    const sendId = msg.t === "send" && typeof msg.id === "string" && DRAFT_ID.test(msg.id) ? msg.id : undefined;
     try {
       await this.dispatch(msg, ws);
     } catch (e) {
-      send(ws, { t: "error", message: e instanceof Error ? e.message : String(e), sessionId, ...(draftId ? { draftId } : {}) });
+      send(ws, { t: "error", message: e instanceof Error ? e.message : String(e), sessionId, ...(draftId ? { draftId } : {}), ...(sendId ? { sendId } : {}) });
     }
   }
 
@@ -331,13 +365,33 @@ export class Hub {
     return s.id;
   }
 
+  private async deliver(sessionId: string, text: string, ids: unknown[], device: string): Promise<void> {
+    const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
+    const wasControlled = this.manager.isControlled(sessionId);
+    this.audit.log("send", { device, sessionId, chars: text.length, ...(ids.length ? { attachments: ids.length } : {}) });
+    this.noteRemoteActivity(sessionId);
+    await this.manager.send(sessionId, text, blocks);
+    if (!wasControlled && this.viewing === sessionId) await this.setView(sessionId);
+    this.changed();
+  }
+
+  // A message that failed is forgotten, so the page may send it again.
+  private keepSend(sendId: string, done: Promise<void>): void {
+    const now = Date.now();
+    for (const [k, s] of this.sends) {
+      if (now - s.at <= DRAFT_KEEP_MS && this.sends.size < SENDS_KEPT) break;
+      this.sends.delete(k);
+    }
+    this.sends.set(sendId, { at: now, done });
+    done.catch(() => {
+      if (this.sends.get(sendId)?.done === done) this.sends.delete(sendId);
+    });
+  }
+
   private async dispatch(msg: ClientMsg, ws: WebSocket): Promise<void> {
     const m = this.manager;
     const device = this.device;
     switch (msg.t) {
-      case "ping":
-        if (this.active) send(this.active, { t: "pong" });
-        return;
       case "view":
         if (msg.focus !== undefined) str(msg.focus, 128);
         if (msg.from !== undefined) str(msg.from, 128);
@@ -354,18 +408,21 @@ export class Hub {
       case "unfollow":
         this.follows.stop(str(msg.id, 64));
         return;
+      // A message the page names comes again after each reconnect until it hears sent; the first one is the one taken.
       case "send": {
         const id = sid(msg.sessionId);
         const ids = msg.attachments === undefined ? [] : msg.attachments;
         if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENTS) throw Error("invalid request");
+        if (msg.id !== undefined && (typeof msg.id !== "string" || !DRAFT_ID.test(msg.id))) throw Error("invalid request");
         const text = ids.length && msg.text === "" ? "" : str(msg.text, MAX_TEXT);
-        const blocks = ids.length ? await this.uploads.blocks(ids.map((a) => str(a, 64))) : undefined;
-        const wasControlled = m.isControlled(id);
-        this.audit.log("send", { device, sessionId: id, chars: text.length, ...(ids.length ? { attachments: ids.length } : {}) });
-        this.noteRemoteActivity(id);
-        await m.send(id, text, blocks);
-        if (!wasControlled && this.viewing === id) await this.setView(id);
-        this.changed();
+        const sendId = msg.id;
+        let done = sendId === undefined ? undefined : this.sends.get(sendId)?.done;
+        if (!done) {
+          done = this.deliver(id, text, ids, device);
+          if (sendId !== undefined) this.keepSend(sendId, done);
+        }
+        await done;
+        if (sendId !== undefined) send(ws, { t: "sent", id: sendId });
         return;
       }
       // The attachments are checked before the session is made, so a bad one starts nothing.

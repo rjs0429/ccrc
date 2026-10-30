@@ -7,6 +7,8 @@ import { brokerSessionsLabel } from "../../labels.ts";
 import { SectionTitle, dateTime, showError } from "./common.tsx";
 
 const RECHECK_MS = 3000;
+// A check runs Claude Code through each of its steps, each with its own time limit.
+const CHECK_WAIT_MS = 180_000;
 
 const CHECK_LABEL: Record<string, string> = {
   extension: k("VS Code 확장"),
@@ -126,7 +128,7 @@ export function HealthSection() {
   const check = async () => {
     setChecking(true);
     try {
-      setInfo(await request<HealthInfo>("POST", "/api/health/check", {}));
+      setInfo(await request<HealthInfo>("POST", "/api/health/check", {}, undefined, CHECK_WAIT_MS));
     } catch (e) {
       showError(e);
     } finally {
