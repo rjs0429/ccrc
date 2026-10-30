@@ -221,8 +221,6 @@ interface Props {
   // A session open in another program that takes text from here only as a message from another session: the text,
   // with notes on what becomes of it above, and no attachments, chips, commands or stop button.
   peer?: { notes: PeerNote[] };
-  // The new-session screen's folder, on a chip right above the text, which opens the list of folders.
-  folder?: { name: string; onOpen: () => void };
 }
 
 export function Composer({
@@ -251,7 +249,6 @@ export function Composer({
   agents,
   onAgents,
   peer,
-  folder,
 }: Props) {
   const scope = sessionId ?? (draft ? NEW_SESSION_SCOPE : undefined);
   const [text, setText] = useState(() => loadDraft(scope));
@@ -718,19 +715,6 @@ export function Composer({
                 </span>
               )}
             </div>
-          )}
-          {folder && (
-            <button
-              onClick={folder.onOpen}
-              disabled={locked}
-              aria-label={t("폴더: {name}", { name: folder.name })}
-              className="-mt-1 mb-1 -ml-1.5 flex min-h-8 max-w-full min-w-0 items-center gap-1 rounded-lg px-1.5 py-1 text-[13px] text-muted hover:bg-surface-2 disabled:opacity-50 short:-mt-0.5 short:mb-0.5 short:min-h-7"
-              data-folder-chip
-            >
-              <Icon.folder className="size-3.5 shrink-0" />
-              <span className="truncate">{folder.name}</span>
-              <Icon.chevronDown className="size-3 shrink-0" />
-            </button>
           )}
           {scope && <AttachmentChips scope={scope} items={attachments} locked={locked || Boolean(sending)} />}
           {field}

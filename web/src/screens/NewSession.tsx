@@ -153,7 +153,6 @@ export function NewSession() {
   }, [fallback, sessions, all]);
   const listed = lastPicked && (!options || !sessions || all.includes(lastPicked)) ? lastPicked : null;
   const cwd = chosen ?? listed ?? fallback ?? all[0] ?? null;
-  const [folderSheet, setFolderSheet] = useState(false);
   const choose = (f: string) => {
     setChosen(f);
     pickFolder(f);
@@ -286,8 +285,9 @@ export function NewSession() {
     return true;
   };
 
+  // With the keyboard up the screen fills what is left in view, so the header keeps the folder there over the composer.
   return (
-    <div className="flex h-dvh flex-col">
+    <div className="flex h-dvh flex-col keyboard:fixed keyboard:inset-x-0 keyboard:top-(--vv-top) keyboard:h-(--vv-height)">
       <header className="screen-header pt-safe border-b border-line bg-bg">
         <div className="flex items-center gap-1 px-safe-2 py-2 short:py-0.5">
           <button onClick={nav.back} aria-label={t("뒤로")} className="-m-1 rounded-lg p-3">
@@ -347,29 +347,8 @@ export function NewSession() {
         onReset={reset}
         onCommand={openCommand}
         openSheet={composerSheet}
-        folder={cwd ? { name: placeLabel(cwd), onOpen: () => setFolderSheet(true) } : undefined}
       />
 
-      {folderSheet && (
-        <Sheet title={t("폴더")} onClose={() => setFolderSheet(false)}>
-          <FolderSearch query={query} onChange={setQuery} />
-          <div className="overflow-hidden rounded-xl border border-line" data-folder-sheet>
-            {folders.map((f) => (
-              <FolderRow
-                key={f}
-                folder={f}
-                current={cwd === f}
-                disabled={starting}
-                onPick={() => {
-                  choose(f);
-                  setFolderSheet(false);
-                }}
-              />
-            ))}
-            {folders.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">{tc("folder list", "폴더가 없습니다")}</div>}
-          </div>
-        </Sheet>
-      )}
       {usage && cwd && <UsageSheet cwd={cwd} onClose={() => setUsage(false)} />}
       {later && (
         <Sheet title={t(later.title)} onClose={() => setLater(null)}>

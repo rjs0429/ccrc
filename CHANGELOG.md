@@ -8,6 +8,13 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Added
+
+- Every sheet (model, Effort, Context, the ⋯ menu and the rest) closes with a drag down, as the photo viewer does: it
+  follows your finger, the screen behind it brightens as it goes, and a short drag springs back while a longer or quick
+  one slides it away, the same as going back. Its handle and title take the drag at any time, its content once it is
+  scrolled to the top; a list scrolled down scrolls first.
+
 ### Changed
 
 - In a conversation, the jump button and a tap on the status bar scroll with the browser's own smooth scroll: from far
@@ -23,6 +30,9 @@ your version and the new one, and the lines under "Breaking" separately.
   is no longer lost.
 - A reply that ends stays on screen until its message takes its place, as a thought does, so the conversation does not
   shrink under you for a moment.
+- The new-session screen has one folder choice again: the folder list, which starts on the folder last picked on this
+  phone. The chip above the text and its folder sheet are gone. The header names the folder and stays in view while the
+  keyboard is up.
 
 ### Fixed
 

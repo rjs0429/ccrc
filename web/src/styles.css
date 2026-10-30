@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
 @custom-variant short (@media (max-height: 30rem));
+/* The iOS keyboard is up (viewport.ts): it covers the bottom of the page and leaves --vv-top and --vv-height in view. */
+@custom-variant keyboard ([data-keyboard] &);
 /* A layout viewport that short, or the visible area the iOS keyboard leaves (it shrinks only the visual viewport). */
 @custom-variant tiny {
   @media (max-height: 15rem) {

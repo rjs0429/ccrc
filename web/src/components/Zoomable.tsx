@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
+import { CLOSE_SHARE, EDGE_PX, FADE_SHARE, FLICK, RUBBER, SETTLE_MS, SLOP_PX, SPEED_MS, clamp, cleared, closes, follow, speedOf, type Mark } from "./dragClose.ts";
 
 // A pinch zooms between 1x and MAX_SCALE, a long picture to half again its filling scale when that is more. A double tap
 // goes to TAP_SCALE or to the filling scale, whichever is larger.
@@ -7,22 +8,11 @@ const MAX_SCALE = 5;
 const TAP_SCALE = 2.5;
 const TAP_MS = 300;
 const TAP_PX = 20;
-// A finger that moves less than this is still a tap.
-const SLOP_PX = 8;
-// iOS takes a swipe from the screen's left edge for its back; a gesture that starts there is left to it.
-const EDGE_PX = 20;
-// Past its limits a picture follows the finger at this share and springs back once let go.
-const RUBBER = 0.3;
 const GAP_PX = 16;
-const SETTLE_MS = 200;
 const COAST_MS = 300;
-// A swipe turns past TURN_SHARE of the stage's width, a drag down closes past CLOSE_SHARE of its height, either at FLICK
-// px/ms; the parts that dim are clear at FADE_SHARE. A finger's speed is taken over its last SPEED_MS.
+// A swipe turns past TURN_SHARE of the stage's width or at FLICK px/ms. Past its limits a picture follows the finger at
+// RUBBER and springs back once let go; a drag down closes by the measures the sheets share (dragClose.ts).
 const TURN_SHARE = 0.25;
-const CLOSE_SHARE = 0.15;
-const FADE_SHARE = 0.4;
-const FLICK = 0.4;
-const SPEED_MS = 100;
 const WHEEL_STEP = 0.5;
 
 interface View {
@@ -57,7 +47,6 @@ interface Live {
 type Mode = "wait" | "pan" | "pinch" | "swipe" | "drop" | "off";
 
 const ONE: View = { s: 1, x: 0, y: 0 };
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const rubber = (v: number, lo: number, hi: number) => (v < lo ? lo - (lo - v) * RUBBER : v > hi ? hi + (v - hi) * RUBBER : v);
 
 // The gestures on a stage. The picture shown is the img of the slide marked data-zoom-current; the track holds the slides.
@@ -74,7 +63,7 @@ function control(stage: HTMLElement, track: HTMLElement, live: () => Live) {
   // q: the point of the picture, from its centre at 1x, under the fingers' centre c.
   let pinch = { d: 1, s: 1, qx: 0, qy: 0, cx: 0, cy: 0 };
   let geo: Geo = { left: 0, right: 0, top: 0, bottom: 0, w: 0, h: 0, cx: 0, cy: 0, w0: 0, h0: 0, own: 1 };
-  let trail: { t: number; x: number; y: number }[] = [];
+  let trail: Mark[] = [];
   let tap: { t: number; x: number; y: number } | null = null;
   let twice = false;
   let anim: { timer: number; track: boolean } | null = null;
@@ -140,7 +129,7 @@ function control(stage: HTMLElement, track: HTMLElement, live: () => Live) {
   }
   function paintLift(): void {
     const img = picture();
-    const k = clamp(lift.y / (geo.h * FADE_SHARE), 0, 1);
+    const k = cleared(lift.y, geo.h * FADE_SHARE);
     if (img) img.style.transform = `translate(${lift.x}px, ${lift.y}px) scale(${1 - k / 4})`;
     for (const el of dims()) el.style.opacity = String(1 - k);
   }
@@ -170,13 +159,7 @@ function control(stage: HTMLElement, track: HTMLElement, live: () => Live) {
     paintTrack();
   }
 
-  function speed(): { x: number; y: number } {
-    const end = trail.at(-1);
-    const recent = trail.filter((p) => end && end.t - p.t <= SPEED_MS);
-    const a = recent[0];
-    const dt = end && a ? end.t - a.t : 0;
-    return end && a && dt > 0 ? { x: (end.x - a.x) / dt, y: (end.y - a.y) / dt } : { x: 0, y: 0 };
-  }
+  const speed = () => speedOf(trail);
 
   function pinchStart(): void {
     const [a, b] = [...pts.values()];
@@ -262,7 +245,7 @@ function control(stage: HTMLElement, track: HTMLElement, live: () => Live) {
       shift = rubber(from.shift + dx, index < count - 1 ? -Infinity : 0, index > 0 ? Infinity : 0);
       paintTrack();
     } else if (mode === "drop") {
-      lift = { x: dx, y: dy > 0 ? dy : dy * RUBBER };
+      lift = { x: dx, y: follow(dy) };
       paintLift();
     }
   }
@@ -339,7 +322,7 @@ function control(stage: HTMLElement, track: HTMLElement, live: () => Live) {
   }
 
   function drop(): void {
-    if (lift.y > geo.h * CLOSE_SHARE || (speed().y > FLICK && lift.y > SLOP_PX)) return live().onClose?.();
+    if (closes(lift.y, speed().y, geo.h * CLOSE_SHARE)) return live().onClose?.();
     settle();
   }
 
