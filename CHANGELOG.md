@@ -8,6 +8,14 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Added
+
+- Photos zoom. Pinch up to 5x (a long screenshot further, until it fills the width), double tap to zoom in and back out,
+  and drag a zoomed photo around; past its edges it gives a little and springs back. At 1x the next photo follows your
+  finger as you swipe, and a drag down closes the viewer. Picture files in the file viewer and pictures in Markdown
+  files (tap one to open it large) zoom the same way. On a computer, Ctrl with the wheel or a trackpad pinch zooms and
+  the wheel pans.
+
 ### Changed
 
 - `ccrc update` and `ccrc rollback` ask before they restart the service while broker sessions are at work (a turn under
@@ -59,11 +67,6 @@ your version and the new one, and the lines under "Breaking" separately.
   down, the conversation follows Claude again only once you reach the very bottom.
 - The jump-to-bottom button takes no tap while the conversation still moves from your fling, or for a moment after it
   stops: a tap meant to stop the fling no longer pulls the list down.
-- Photos zoom. Pinch up to 5x (a long screenshot further, until it fills the width), double tap to zoom in and back out,
-  and drag a zoomed photo around; past its edges it gives a little and springs back. At 1x the next photo follows your
-  finger as you swipe, and a drag down closes the viewer. Picture files in the file viewer and pictures in Markdown
-  files (tap one to open it large) zoom the same way. On a computer, Ctrl with the wheel or a trackpad pinch zooms and
-  the wheel pans.
 
 ### Fixed
 

@@ -78,6 +78,8 @@ function control(stage: HTMLElement, track: HTMLElement, live: () => Live) {
   let tap: { t: number; x: number; y: number } | null = null;
   let twice = false;
   let anim: { timer: number; track: boolean } | null = null;
+  // The scale a Mac's gesture events had reached; 0 outside one.
+  let gesture = 0;
 
   const picture = () => track.querySelector<HTMLElement>("[data-zoom-current] img");
   const dims = () => (live().dim ?? []).flatMap((r) => (r.current ? [r.current] : []));
@@ -382,22 +384,28 @@ function control(stage: HTMLElement, track: HTMLElement, live: () => Live) {
     });
   }
 
+  function zoomAt(x: number, y: number, to: number): void {
+    const s = clamp(to, 1, most());
+    const qx = (x - geo.cx - view.x) / view.s;
+    const qy = (y - geo.cy - view.y) / view.s;
+    const l = limits(s);
+    view = s === 1 ? ONE : { s, x: clamp(x - geo.cx - s * qx, l.x0, l.x1), y: clamp(y - geo.cy - s * qy, l.y0, l.y1) };
+    paint();
+  }
+
   // A trackpad's pinch comes as the wheel with ctrl, as does ctrl with a mouse wheel, whose notch zooms by at most
-  // WHEEL_STEP (an exponent). The wheel alone pans a picture zoomed in.
+  // WHEEL_STEP (an exponent); in Safari on a Mac it comes as gesture events, and the wheel waits while one lasts. The
+  // wheel alone pans a picture zoomed in.
   function wheel(e: WheelEvent): void {
     if (pts.size) return;
+    if (gesture) return e.preventDefault();
     settleNow();
     geo = measure();
     if (!geo.w0) return;
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? geo.h : 1;
     if (e.ctrlKey) {
       e.preventDefault();
-      const s = clamp(view.s * Math.exp(clamp(-e.deltaY * unit * 0.01, -WHEEL_STEP, WHEEL_STEP)), 1, most());
-      const qx = (e.clientX - geo.cx - view.x) / view.s;
-      const qy = (e.clientY - geo.cy - view.y) / view.s;
-      const l = limits(s);
-      view = s === 1 ? ONE : { s, x: clamp(e.clientX - geo.cx - s * qx, l.x0, l.x1), y: clamp(e.clientY - geo.cy - s * qy, l.y0, l.y1) };
-      paint();
+      zoomAt(e.clientX, e.clientY, view.s * Math.exp(clamp(-e.deltaY * unit * 0.01, -WHEEL_STEP, WHEEL_STEP)));
     } else if (view.s > 1.001) {
       e.preventDefault();
       const l = limits(view.s);
@@ -416,6 +424,7 @@ function control(stage: HTMLElement, track: HTMLElement, live: () => Live) {
     }
     view = ONE;
     lift = { x: 0, y: 0 };
+    for (const el of dims()) el.style.opacity = "";
     if (pts.size) mode = "off";
     stage.dataset.scale = "1";
     const c = carry;
@@ -434,17 +443,34 @@ function control(stage: HTMLElement, track: HTMLElement, live: () => Live) {
     paint();
     paintTrack();
   });
+  // Safari zooms the page on its gesture events unless they are held back. On a Mac they carry a trackpad's pinch, with
+  // no finger on the stage, and zoom the picture as the wheel with ctrl does.
+  function gestureStart(e: Event): void {
+    e.preventDefault();
+    if (pts.size) return;
+    settleNow();
+    geo = measure();
+    gesture = geo.w0 ? 1 : 0;
+  }
+  function gestureChange(e: Event): void {
+    e.preventDefault();
+    const g = e as Event & { scale?: number; clientX?: number; clientY?: number };
+    if (pts.size || !gesture || !g.scale || g.clientX === undefined || g.clientY === undefined) return;
+    zoomAt(g.clientX, g.clientY, (view.s * g.scale) / gesture);
+    gesture = g.scale;
+  }
+  const gestureEnd = () => (gesture = 0);
+
   const cancel = (e: PointerEvent) => up(e, true);
   const lifted = (e: PointerEvent) => up(e);
-  const hold = (e: Event) => e.preventDefault();
   stage.addEventListener("pointerdown", down);
   stage.addEventListener("pointermove", move);
   stage.addEventListener("pointerup", lifted);
   stage.addEventListener("pointercancel", cancel);
   stage.addEventListener("wheel", wheel, { passive: false });
-  // iOS zooms the page on its own gesture events unless they are held back.
-  stage.addEventListener("gesturestart", hold, { passive: false });
-  stage.addEventListener("gesturechange", hold, { passive: false });
+  stage.addEventListener("gesturestart", gestureStart, { passive: false });
+  stage.addEventListener("gesturechange", gestureChange, { passive: false });
+  stage.addEventListener("gestureend", gestureEnd);
   resized.observe(stage);
   return {
     turned,
@@ -456,8 +482,9 @@ function control(stage: HTMLElement, track: HTMLElement, live: () => Live) {
       stage.removeEventListener("pointerup", lifted);
       stage.removeEventListener("pointercancel", cancel);
       stage.removeEventListener("wheel", wheel);
-      stage.removeEventListener("gesturestart", hold);
-      stage.removeEventListener("gesturechange", hold);
+      stage.removeEventListener("gesturestart", gestureStart);
+      stage.removeEventListener("gesturechange", gestureChange);
+      stage.removeEventListener("gestureend", gestureEnd);
     },
   };
 }
