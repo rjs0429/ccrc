@@ -1,4 +1,4 @@
-import { Suspense, lazy, useContext, useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { SENT_MAX_BYTES, type DisplayItem, type FileView, type SentFile, type SentRef } from "../../../../broker/src/protocol.ts";
 import { ApiError, request } from "../../api.ts";
@@ -11,9 +11,8 @@ import { Icon, Spinner } from "../ui.tsx";
 import { BIG_IMAGE_BYTES, useNear } from "../UserAttachments.tsx";
 import { PREVIEW_MAX_BYTES, SENT_ERROR_TEXT, sentUrl } from "../viewer/sent.ts";
 import type { FileTarget } from "../viewer/FileViewer.tsx";
+import { FileViewer } from "../viewer/lazy.ts";
 import { Folded, fileHref, record, str } from "./parts.tsx";
-
-const FileViewer = lazy(() => import("../viewer/FileViewer.tsx"));
 
 type ToolItem = Extract<DisplayItem, { kind: "tool" }>;
 
@@ -324,21 +323,13 @@ export function SentFiles({ item, running }: { item: ToolItem; running: boolean 
       {target &&
         sessionId &&
         createPortal(
-          <Suspense
-            fallback={
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg text-muted">
-                <Spinner className="size-6" />
-              </div>
-            }
-          >
-            <FileViewer
-              sessionId={sessionId}
-              cwd={cwd}
-              target={target}
-              onClose={close}
-              onError={(code) => viewing !== null && setFailed((s) => ({ ...s, [viewing]: code }))}
-            />
-          </Suspense>,
+          <FileViewer
+            sessionId={sessionId}
+            cwd={cwd}
+            target={target}
+            onClose={close}
+            onError={(code) => viewing !== null && setFailed((s) => ({ ...s, [viewing]: code }))}
+          />,
           document.body,
         )}
     </div>

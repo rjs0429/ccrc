@@ -44,12 +44,13 @@ export class Leases extends EventEmitter {
     return token;
   }
 
-  validate(token: string | undefined, now = Date.now()): boolean {
+  // touch false: the request checks the login without counting as activity, as a page's own liveness check.
+  validate(token: string | undefined, now = Date.now(), touch = true): boolean {
     const lease = this.current(now);
     if (!lease || !token) return false;
     const expected = Buffer.from(lease.tokenHash, "hex");
     if (!timingSafeEqual(digest(token), expected)) return false;
-    if (now - lease.lastSeen > TOUCH_SAVE_MS) {
+    if (touch && now - lease.lastSeen > TOUCH_SAVE_MS) {
       lease.lastSeen = now;
       this.store.save();
     }

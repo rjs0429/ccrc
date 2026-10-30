@@ -6,7 +6,7 @@ import { MODE_LABEL, baseName, effortLabel, effortLevels, fastReasonText, findMo
 import { Switch } from "../screens/settings/common.tsx";
 import { usePrefs } from "../prefs.ts";
 import { rememberSent } from "../sentPreviews.ts";
-import { toast, useApp } from "../state.ts";
+import { cancelSend, getState, holdReload, onSent, toast, useApp } from "../state.ts";
 import { commandName, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import { bareCommandSheet, withPhoneCommands } from "./commandSheets.ts";
 import { CacheClock } from "./CacheClock.tsx";
@@ -38,6 +38,8 @@ const OLD_WRAPPER = k("VS Code에서 Claude Code를 다시 띄우면 바꿀 수 
 
 // Each composerInsert request is applied once, by the composer that is mounted when it arrives.
 let appliedInsert = 0;
+// A message the broker has not confirmed yet shows as being sent once it has waited this long, at once while offline.
+const SENDING_SHOWN_MS = 300;
 
 export function loadDraft(scope?: string): string {
   if (!scope) return "";
@@ -55,6 +57,22 @@ export function saveDraft(scope: string | undefined, text: string): void {
     else sessionStorage.removeItem(DRAFT_KEY + scope);
   } catch {}
 }
+
+// What a composer holds once the broker took the message it sent: anything typed after it.
+const unsent = (draft: string, sent: string): string =>
+  draft.trim() === sent ? "" : draft.trimStart().startsWith(sent) ? draft.trimStart().slice(sent.length).trimStart() : draft;
+
+// A message the broker took leaves its session's draft and attachments, also when no composer shows them.
+onSent((o) => {
+  saveDraft(o.sessionId, unsent(loadDraft(o.sessionId), o.text));
+  rememberSent(o.sessionId, o.text, takeAttachments(o.sessionId));
+});
+
+// The draft of the screen in front is still being written.
+holdReload(() => {
+  const r = getState().route;
+  return Boolean(loadDraft(r.name === "chat" ? r.sessionId : r.name === "new" ? NEW_SESSION_SCOPE : undefined).trim());
+});
 
 // Sessions where turning Fast mode on mid-conversation was confirmed on this device; it is asked once per session.
 function fastAsked(): string[] {
@@ -173,8 +191,9 @@ interface Props {
   starting?: boolean;
   disabledReason?: string;
   placeholder: string;
-  // attachments: upload ids, in the order they were added. Returns whether the message went out.
-  onSend: (text: string, attachments: string[]) => boolean;
+  // attachments: upload ids, in the order they were added. Returns whether the message went out, or the id it waits for
+  // the broker to confirm under; the text and attachments stay until it does.
+  onSend: (text: string, attachments: string[]) => boolean | string;
   onStop: () => void;
   onMode: (mode: PermissionModeName) => void;
   onModel: (model: string) => void;
@@ -282,10 +301,33 @@ export function Composer({
   // Claude Code holds such a model at High while Thinking is off.
   const capped = offers.capped && (effort === "xhigh" || effort === "max");
   const uploading = attachments.some((a) => !a.uploaded);
+  const conn = useApp((s) => s.conn);
+  // A message to this session the broker has not confirmed: its text and attachments stay, it shows as being sent once
+  // it has waited a moment, and while the connection is down the text stays as it was sent.
+  const sending = useApp((s) => (sessionId && !draft && !peer ? s.sending?.find((o) => o.sessionId === sessionId) : undefined));
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!sending) return;
+    const timer = setTimeout(() => setSlow(true), SENDING_SHOWN_MS);
+    return () => clearTimeout(timer);
+  }, [sending?.id]);
+  const waiting = sending && (slow || conn !== "ready") ? sending : undefined;
+  useEffect(
+    () =>
+      onSent((o) => {
+        if (o.sessionId !== sessionId) return;
+        setText((was) => unsent(was, o.text));
+        setDismissed(false);
+      }),
+    [sessionId],
+  );
   // While a new session starts, its first message stays as it was sent.
-  const locked = Boolean(draft && starting);
+  const firstStarts = Boolean(draft && starting);
+  const locked = firstStarts || Boolean(waiting && conn !== "ready");
+  const spinning = firstStarts || Boolean(waiting);
   const filled = text.trim() !== "" || (!peer && attachments.length > 0);
-  const canSend = (Boolean(peer) || !uploading) && !locked && filled;
+  const canSend = (Boolean(peer) || !uploading) && !locked && !sending && filled;
   // One round button: stop while a turn runs and there is nothing to send, else send, which queues during a turn.
   const stops = !peer && busy && !filled;
 
@@ -518,9 +560,11 @@ export function Composer({
     if (taken) return opened();
     const total = attachments.reduce((n, a) => n + (a.uploaded?.size ?? 0), 0);
     if (total > MAX_MESSAGE_BYTES) return toast("attachments too large");
-    if (!onSend(text.trim(), attachments.map((a) => a.uploaded!.id))) return toast("not connected");
+    const sent = onSend(text.trim(), attachments.map((a) => a.uploaded!.id));
+    if (!sent) return toast("not connected");
     if (draft) return ref.current?.blur();
     if (!attachments.length && isDialogCommand(parseCommand(text)?.name)) ref.current?.blur();
+    if (sent !== true) return;
     setText("");
     setDismissed(false);
     if (sessionId) rememberSent(sessionId, text.trim(), takeAttachments(sessionId));
@@ -670,8 +714,18 @@ export function Composer({
               )}
             </div>
           )}
-          {scope && <AttachmentChips scope={scope} items={attachments} locked={locked} />}
+          {scope && <AttachmentChips scope={scope} items={attachments} locked={locked || Boolean(sending)} />}
           {field}
+          {waiting && (
+            <div className="mt-1 flex items-center gap-2 text-[12px] text-muted" data-send-wait={conn === "ready" ? "sending" : "offline"}>
+              <span className="min-w-0 flex-1">{conn === "ready" ? t("보내는 중…") : t("연결되면 보냅니다")}</span>
+              {conn !== "ready" && (
+                <button onClick={() => cancelSend(waiting.id)} className="relative shrink-0 font-medium text-accent after:absolute after:-inset-x-2 after:-inset-y-3">
+                  {t("보내지 않기")}
+                </button>
+              )}
+            </div>
+          )}
           {chosen && (
             <div className="mt-1 text-[11px] text-muted" data-start-hint>
               {t("고른 값은 여기서 시작할 때 적용됩니다")}
@@ -685,7 +739,7 @@ export function Composer({
                     <button
                       aria-label={t("파일 첨부")}
                       onClick={attach}
-                      disabled={locked}
+                      disabled={locked || Boolean(sending)}
                       className="flex size-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2 disabled:opacity-50"
                     >
                       <Icon.paperclip className="size-[18px]" />
@@ -697,7 +751,7 @@ export function Composer({
                       accept={ATTACH_ACCEPT}
                       tabIndex={-1}
                       aria-hidden
-                      disabled={locked}
+                      disabled={locked || Boolean(sending)}
                       onChange={(e) => {
                         const picked = [...(e.target.files ?? [])];
                         e.target.value = "";
@@ -738,11 +792,12 @@ export function Composer({
                 onPointerCancel={() => (pressed.current = null)}
                 onClick={tapRound}
                 disabled={!stops && !canSend}
-                aria-label={locked ? t("시작하는 중") : stops ? t("중지") : draft ? t("시작") : busy ? t("대기열에 추가") : t("보내기")}
-                data-starting={locked || undefined}
-                className={`ml-0.5 flex size-8 shrink-0 items-center justify-center rounded-full ${ROUND_TAP} ${two ? "col-start-3 row-start-2" : ""} ${stops ? "bg-surface-2 text-fg" : `bg-accent text-white ${locked ? "" : "disabled:opacity-30"}`}`}
+                aria-label={firstStarts ? t("시작하는 중") : waiting ? t("보내는 중") : stops ? t("중지") : draft ? t("시작") : busy ? t("대기열에 추가") : t("보내기")}
+                data-starting={firstStarts || undefined}
+                data-sending={sending ? (waiting ? "waiting" : "") : undefined}
+                className={`ml-0.5 flex size-8 shrink-0 items-center justify-center rounded-full ${ROUND_TAP} ${two ? "col-start-3 row-start-2" : ""} ${stops ? "bg-surface-2 text-fg" : `bg-accent text-white ${spinning ? "" : "disabled:opacity-30"}`}`}
               >
-                {locked ? <Spinner className="size-4" /> : stops ? <Icon.stop className="size-5" /> : <Icon.send className="size-4 [stroke-width:2.5]" />}
+                {spinning ? <Spinner className="size-4" /> : stops ? <Icon.stop className="size-5" /> : <Icon.send className="size-4 [stroke-width:2.5]" />}
               </button>
             </div>
           </div>

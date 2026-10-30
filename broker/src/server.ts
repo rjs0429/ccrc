@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
+import zlib from "node:zlib";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
@@ -11,10 +13,10 @@ import type { ClaudeSettings } from "./claude-settings.ts";
 import { DeviceGate } from "./devices.ts";
 import type { Doctor } from "./doctor.ts";
 import type { UpdateCheck } from "./update-check.ts";
-import type { Hub } from "./hub.ts";
+import type { Hub, WindowTag } from "./hub.ts";
 import type { Leases } from "./lease.ts";
 import { PASSKEY_CLOSE, type Passkeys } from "./passkeys.ts";
-import { PERMISSION_MODES } from "./protocol.ts";
+import { BUILD_META, PERMISSION_MODES } from "./protocol.ts";
 import type { Push } from "./push/index.ts";
 import { registerAttachments } from "./routes/attachments.ts";
 import { registerAudit } from "./routes/audit.ts";
@@ -97,6 +99,46 @@ function sameOrigin(req: FastifyRequest): boolean {
   });
 }
 
+const WINDOW_ID = /^[A-Za-z0-9-]{8,64}$/;
+
+// A page names itself and numbers its connections in /ws?w=&n=; a page that does not is a window like any other.
+function windowTag(q: { w?: unknown; n?: unknown }): WindowTag | undefined {
+  const seq = Number(q.n);
+  return typeof q.w === "string" && WINDOW_ID.test(q.w) && typeof q.n === "string" && Number.isSafeInteger(seq) && seq >= 0 ? { id: q.w, seq } : undefined;
+}
+
+// The build index.html names, read again whenever the file changes, as a build may replace it while the broker runs.
+function webBuild(webDir: string): () => string | undefined {
+  const file = path.join(webDir, "index.html");
+  const meta = new RegExp(`<meta name="${BUILD_META}" content="([^"]+)"`);
+  let last: { mtimeMs: number; build?: string } | undefined;
+  return () => {
+    try {
+      const { mtimeMs } = fs.statSync(file);
+      if (last?.mtimeMs !== mtimeMs) last = { mtimeMs, build: fs.readFileSync(file, "utf8").match(meta)?.[1] };
+      return last.build;
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+const COMPRESS_MIN = 1024;
+const brotli = promisify(zlib.brotliCompress);
+const gzip = promisify(zlib.gzip);
+
+// The encoding a request accepts, brotli first; q=0 refuses one.
+function encodingFor(req: FastifyRequest): "br" | "gzip" | undefined {
+  const accepted = new Set(
+    String(req.headers["accept-encoding"] ?? "")
+      .split(",")
+      .map((part) => part.trim().split(";"))
+      .filter(([, q]) => !/^\s*q=0(\.0*)?\s*$/.test(q ?? ""))
+      .map(([name]) => name.trim().toLowerCase()),
+  );
+  return accepted.has("br") ? "br" : accepted.has("gzip") ? "gzip" : undefined;
+}
+
 export async function buildServer(d: ServerDeps) {
   const app = Fastify({
     logger: {
@@ -112,6 +154,8 @@ export async function buildServer(d: ServerDeps) {
   await app.register(websocket, { options: { maxPayload: 512 * 1024, perMessageDeflate: { threshold: 1024 } } });
   app.decorateRequest("device", "");
 
+  d.hub.webBuild ??= webBuild(d.webDir);
+
   app.addHook("onRequest", async (req, reply) => {
     // The installer and `ccrc update` ask for the version on this machine whether or not allowLocal lets it in.
     if (req.method === "GET" && req.url.split("?")[0] === "/api/ping" && DeviceGate.direct(req.socket.remoteAddress, req.headers["x-forwarded-for"])) {
@@ -125,13 +169,27 @@ export async function buildServer(d: ServerDeps) {
     }
     req.device = check.device;
     const unsafe = req.method !== "GET" && req.method !== "HEAD";
-    if ((unsafe || req.url === "/ws") && !sameOrigin(req)) return reply.code(403).send({ error: "bad_origin" });
+    if ((unsafe || req.routeOptions.url === "/ws") && !sameOrigin(req)) return reply.code(403).send({ error: "bad_origin" });
   });
 
   app.addHook("onSend", async (_req, reply) => {
     if (!reply.hasHeader("Content-Security-Policy")) reply.header("Content-Security-Policy", CSP);
     reply.header("X-Content-Type-Options", "nosniff");
     reply.header("Referrer-Policy", "no-referrer");
+  });
+
+  // Answers in JSON go compressed to a browser that takes it; the web app's files are compressed when it is built.
+  app.addHook("onSend", async (req, reply, payload) => {
+    if (typeof payload !== "string" || payload.length < COMPRESS_MIN || reply.hasHeader("content-encoding")) return payload;
+    if (!String(reply.getHeader("content-type") ?? "").startsWith("application/json")) return payload;
+    const vary = reply.getHeader("vary");
+    reply.header("vary", vary ? `${String(vary)}, Accept-Encoding` : "Accept-Encoding");
+    const encoding = encodingFor(req);
+    if (!encoding) return payload;
+    reply.header("content-encoding", encoding);
+    reply.removeHeader("content-length");
+    const size = Buffer.byteLength(payload);
+    return encoding === "br" ? brotli(payload, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: size } }) : gzip(payload);
   });
 
   const token = (req: FastifyRequest): string | undefined => req.cookies[COOKIE];
@@ -248,7 +306,7 @@ export async function buildServer(d: ServerDeps) {
   await registerAttachments(app, routes);
   await registerSearch(app, routes, d.search);
 
-  app.get("/ws", { websocket: true }, (socket, req) => {
+  app.get<{ Querystring: { w?: string; n?: string } }>("/ws", { websocket: true }, (socket, req) => {
     const t = token(req);
     if (!t || !d.leases.validate(t)) {
       socket.close(4001, "unauthorized");
@@ -258,19 +316,22 @@ export async function buildServer(d: ServerDeps) {
       socket.close(PASSKEY_CLOSE, "passkey required");
       return;
     }
-    d.hub.attach(socket, req.device, t);
+    d.hub.attach(socket, req.device, t, windowTag(req.query));
   });
 
   if (fs.existsSync(path.join(d.webDir, "index.html"))) {
     await app.register(fastifyStatic, {
       root: d.webDir,
       prefix: "/",
+      preCompressed: true,
       setHeaders: (res, file) => {
         res.header("Cache-Control", file.includes(`${path.sep}assets${path.sep}`) ? "public, max-age=31536000, immutable" : "no-cache");
       },
     });
+    // A file under /assets/ that this build does not have is missing, never the page: a page of another build asks for it.
     app.setNotFoundHandler((req, reply) => {
-      if (req.method === "GET" && !req.url.startsWith("/api/")) return reply.header("Cache-Control", "no-cache").sendFile("index.html");
+      const route = req.url.split("?")[0];
+      if (req.method === "GET" && !route.startsWith("/api/") && !route.startsWith("/assets/")) return reply.header("Cache-Control", "no-cache").sendFile("index.html");
       return reply.code(404).send({ error: "not_found" });
     });
   } else {

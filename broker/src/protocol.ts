@@ -882,8 +882,10 @@ export type ClientMsg =
   // focus: an item to include, when it lies before the latest items a snapshot holds. from: the first item the phone
   // holds, for a snapshot that keeps holding from there.
   | { t: "view"; sessionId: string | null; focus?: string; from?: string }
-  // attachments: ids from POST /api/upload, sent before the text as Claude Code content blocks.
-  | { t: "send"; sessionId: string; text: string; attachments?: string[] }
+  // attachments: ids from POST /api/upload, sent before the text as Claude Code content blocks. id: the page's name for
+  // the message, which it sends again with it after a reconnect; a broker with the "sent" capability takes it once and
+  // answers sent, or an error with sendId.
+  | { t: "send"; sessionId: string; text: string; attachments?: string[]; id?: string }
   // draftId: the phone's name for the start, returned with session_started or an error about it.
   | {
       t: "new_session";
@@ -932,8 +934,14 @@ export interface SnapshotPart {
   earlierInGap?: number;
 }
 
+// The meta tag in the web app's index.html that names its build, which the broker says in ready for the page to compare.
+export const BUILD_META = "ccrc-build";
+// What a broker does beyond one that names nothing in ready. sent: it takes a send with an id once and answers it.
+export const PHONE_CAPS = ["sent"];
+
 export type ServerMsg =
-  | { t: "ready" }
+  // build: the web app the broker serves now. A page leaves alone what it does not know of caps.
+  | { t: "ready"; build?: string; caps?: string[] }
   | { t: "window_conflict" }
   | { t: "window_taken" }
   | { t: "lease_revoked"; reason: string }
@@ -951,7 +959,9 @@ export type ServerMsg =
   // What /api/me tells of the login changed while the broker runs (`ccrc passwd`, leaseIdleMinutes, passkeyHours, the
   // first passkey or the last one gone): the window asks it again.
   | { t: "login_changed" }
-  | { t: "error"; message: string; sessionId?: string; draftId?: string }
+  | { t: "error"; message: string; sessionId?: string; draftId?: string; sendId?: string }
+  // The send with this id reached its session.
+  | { t: "sent"; id: string }
   | { t: "call_result"; id: number; ok: boolean; data?: unknown; error?: string }
   // A change in what the phone follows: the transcript since `base`, where the broker's last word left it, or the output
   // as it stands. follow_end: the broker no longer watches it.

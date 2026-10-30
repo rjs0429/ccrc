@@ -1,4 +1,4 @@
-import { Fragment, Suspense, lazy, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { commandName, dialogResult, isDialogCommand, parseCommand } from "../../../broker/src/dialog-commands.ts";
 import type { DisplayItem, ModelOption, QueuedMessage } from "../../../broker/src/protocol.ts";
@@ -38,14 +38,13 @@ import { selectedIn } from "../components/streamSelection.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { brokerSessionsBlocked, closedText, errorText, hostLabel, inboxNotes, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
-import { call, composerInsert, dropParked, focusDone, getState, joinParked, loadMore, navigate, openAt, openSettingsFrom, refreshChat, requestShown, send, toast, useApp } from "../state.ts";
+import { call, composerInsert, dropParked, focusDone, getState, joinParked, loadMore, navigate, openAt, openSettingsFrom, refreshChat, requestShown, send, sendMessage, toast, useApp } from "../state.ts";
 import { withEarlier } from "../chatItems.ts";
 import { markShown, newest, type PeerSent } from "../peerSent.ts";
 import { takeSent } from "../sentPreviews.ts";
 import { worktreeOf } from "../../../broker/src/worktree-names.ts";
 import { placeLabel, shownBranch } from "../worktree.ts";
-
-const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
+import { FileViewer } from "../components/viewer/lazy.ts";
 
 // Within PIN_PX of the bottom the list stays at the bottom through any change; within NEAR_BOTTOM_PX new messages
 // scroll into view.
@@ -568,7 +567,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
       return true;
     }
     const before = new Set((chat?.items ?? []).filter((i) => i.kind === "command").map((i) => i.id));
-    const ok = send({ t: "send", sessionId, text, ...(attachments.length ? { attachments } : {}) });
+    const ok = sendMessage(sessionId, text, attachments);
     if (ok) {
       unread();
       follow(true);
@@ -1108,17 +1107,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           )}
         </Sheet>
       )}
-      {file && (
-        <Suspense
-          fallback={
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg text-muted">
-              <Spinner className="size-6" />
-            </div>
-          }
-        >
-          <FileViewer sessionId={sessionId} cwd={cwd} target={file} onClose={() => setFile(null)} />
-        </Suspense>
-      )}
+      {file && <FileViewer sessionId={sessionId} cwd={cwd} target={file} onClose={() => setFile(null)} />}
       {thread && <ThreadSheet thread={thread} onClose={() => setThread(null)} />}
       {renaming && <SessionActions session={renameTarget} step="rename" onClose={() => setRenaming(false)} />}
       {archiving && <SessionActions session={renameTarget} step="archive" onClose={() => setArchiving(false)} />}

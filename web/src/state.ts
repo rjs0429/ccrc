@@ -1,18 +1,20 @@
 import { useSyncExternalStore } from "react";
-import type {
-  CallMap,
-  CallOp,
-  ClientMsg,
-  FolderOp,
-  DisplayItem,
-  HistoryPage,
-  LiveState,
-  PendingRequest,
-  ServerMsg,
-  SessionSummary,
-  SnapshotGap,
+import {
+  BUILD_META,
+  type CallMap,
+  type CallOp,
+  type ClientMsg,
+  type FolderOp,
+  type DisplayItem,
+  type HistoryPage,
+  type LiveState,
+  type PendingRequest,
+  type ServerMsg,
+  type SessionSummary,
+  type SnapshotGap,
 } from "../../broker/src/protocol.ts";
 import { api, ApiError, onPasskeyDue, type Me, type Options } from "./api.ts";
+import { t } from "./i18n/index.ts";
 import { isIos, lastTap, recentRequest, syncAttention, syncPushLang } from "./push.ts";
 import { joined, placed, streamed, type Streamed } from "./chatItems.ts";
 import { copyLoggedOut, copyLogin, copyPasskeyDue, copySignedIn, flushContact, keepCopy, noteHeard, noteLost, noteSent } from "./offline.ts";
@@ -71,6 +73,18 @@ export interface AppState {
   insert?: { text: string; at: number; replace?: boolean };
   // A new session asked for from here and not yet started or refused.
   starting?: string;
+  // Messages sent from here the broker has not yet said it took (sendMessage).
+  sending?: Outgoing[];
+  // The build the broker serves when it is not this page's: a reload brings it.
+  newBuild?: string;
+}
+
+export interface Outgoing {
+  id: string;
+  sessionId: string;
+  text: string;
+  attachments: string[];
+  at: number;
 }
 
 type Listener = () => void;
@@ -274,11 +288,20 @@ async function syncBadge(): Promise<void> {
   if (wait > 0 && document.visibilityState === "visible" && state.me?.loggedIn) againTimer = window.setTimeout(() => void syncBadge(), wait);
 }
 
+// Lists asked for close together may answer out of order: an answer older than the one shown is dropped, and only the
+// latest request's failure is told.
+let listAsked = 0;
+let listShown = 0;
+
 export async function refreshSessions(): Promise<void> {
+  const n = ++listAsked;
   try {
-    setState({ sessions: await api.sessions() });
+    const sessions = await api.sessions();
+    if (n < listShown) return;
+    listShown = n;
+    setState({ sessions });
   } catch (e) {
-    handleApiError(e);
+    if (n === listAsked) handleApiError(e);
   }
 }
 
@@ -287,11 +310,18 @@ export function patchSession(sessionId: string, patch: Partial<SessionSummary>):
   setState((s) => (s.sessions ? { sessions: s.sessions.map((x) => (x.id === sessionId ? { ...x, ...patch } : x)) } : {}));
 }
 
+let optionsAsked = 0;
+let optionsShown = 0;
+
 export async function refreshOptions(): Promise<void> {
+  const n = ++optionsAsked;
   try {
-    setState({ options: await api.options() });
+    const options = await api.options();
+    if (n < optionsShown) return;
+    optionsShown = n;
+    setState({ options });
   } catch (e) {
-    handleApiError(e);
+    if (n === optionsAsked) handleApiError(e);
   }
 }
 
@@ -382,7 +412,7 @@ export function loggedOut(reason: string): void {
   clearTimeout(copyTimer);
   copyTimer = undefined;
   copyLoggedOut();
-  setState((s) => ({ me: s.me ? { ...s.me, loggedIn: false } : s.me, conn: "idle", loggedOutReason: reason, chat: emptyChat(s.route) }));
+  setState((s) => ({ me: s.me ? { ...s.me, loggedIn: false } : s.me, conn: "idle", loggedOutReason: reason, chat: emptyChat(s.route), sending: undefined }));
 }
 
 // The broker does not let this device in: what the phone kept goes, and the page asks again now and then.
@@ -396,7 +426,7 @@ function denied(): void {
   clearTimeout(copyTimer);
   copyTimer = undefined;
   copyLoggedOut();
-  setState((s) => ({ me: undefined, offline: "denied", conn: "idle", chat: emptyChat(s.route) }));
+  setState((s) => ({ me: undefined, offline: "denied", conn: "idle", chat: emptyChat(s.route), sending: undefined }));
   clearTimeout(meTimer);
   meTimer = window.setTimeout(() => void loadMe(), ME_RETRY_MS.at(-1));
 }
@@ -415,7 +445,8 @@ async function probe(): Promise<void> {
   }
 }
 
-// Tries the broker again at once: the login while it is unknown, else the connection.
+// Tries the broker again at once: the login while it is unknown, else the connection, or asks whether the one it has
+// still carries anything.
 export function reconnect(): void {
   if (!state.me) {
     meTries = 0;
@@ -423,7 +454,7 @@ export function reconnect(): void {
   } else if (state.conn === "offline") {
     retry = 0;
     connect();
-  }
+  } else checkAlive();
 }
 
 let socket: WebSocket | undefined;
@@ -436,6 +467,122 @@ export function send(msg: ClientMsg): boolean {
   socket.send(JSON.stringify(msg));
   noteSent();
   return true;
+}
+
+function newId(): string {
+  return typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+// What the broker said it does beyond older brokers, at the last ready.
+let caps = new Set<string>();
+// The broker keeps a message's id this long; one unheard of for longer goes back to its composer.
+const SEND_KEEP_MS = 10 * 60_000;
+const sentHooks = new Set<(o: Outgoing) => void>();
+
+// Called when the broker took a message sendMessage kept.
+export function onSent(fn: (o: Outgoing) => void): () => void {
+  sentHooks.add(fn);
+  return () => sentHooks.delete(fn);
+}
+
+function sendMsg(o: Omit<Outgoing, "at" | "id"> & { id?: string }): ClientMsg {
+  return { t: "send", sessionId: o.sessionId, text: o.text, ...(o.attachments.length ? { attachments: o.attachments } : {}), ...(o.id ? { id: o.id } : {}) };
+}
+
+// Sends a message to a session: false when it could not go, true when it went to a broker that does not confirm, else
+// its id, kept in `sending` until the broker took it; it goes again with the same id after each reconnect.
+export function sendMessage(sessionId: string, text: string, attachments: string[]): boolean | string {
+  if (!caps.has("sent")) return send(sendMsg({ sessionId, text, attachments }));
+  if (state.sending?.some((o) => o.sessionId === sessionId)) return false;
+  const o: Outgoing = { id: newId(), sessionId, text, attachments, at: Date.now() };
+  if (!send(sendMsg(o))) return false;
+  setState((s) => ({ sending: [...(s.sending ?? []), o] }));
+  checkAlive();
+  return o.id;
+}
+
+// The page stops sending a message it has not heard of; it may have reached its session all the same.
+export function cancelSend(id: string): void {
+  settle(id, false);
+}
+
+function settle(id: string, took: boolean): void {
+  const o = state.sending?.find((x) => x.id === id);
+  if (!o) return;
+  setState((s) => ({ sending: s.sending?.filter((x) => x.id !== id) }));
+  if (!took) return;
+  for (const fn of sentHooks) fn(o);
+  // A message that came back before the broker's word gets the images the hooks kept of it.
+  const c = state.chat;
+  if (c?.sessionId === o.sessionId) for (const item of [...(c.state?.queued ?? []), ...c.items.slice(-20).reverse()]) bindSent(o.sessionId, item);
+}
+
+// After a reconnect the messages not heard of go again; without a broker that confirms them, or once it may have
+// forgotten their ids, they go back to their composers.
+function sendAgain(): void {
+  const now = Date.now();
+  for (const o of state.sending ?? []) {
+    if (caps.has("sent") && now - o.at < SEND_KEEP_MS) send(sendMsg(o));
+    else {
+      settle(o.id, false);
+      toast(t("보냈는지 확인하지 못했습니다. 대화를 보고 다시 보내세요"));
+    }
+  }
+}
+
+// The page asks whether its connection still carries anything as it comes to the front or sends, and every PING_MS while
+// it shows if the broker names caps (it does not count pings as activity). No word in PONG_WAIT_MS connects again, as
+// does a connection the broker has not taken in CONNECT_WAIT_MS.
+const PING_MS = 20_000;
+const PONG_WAIT_MS = 5000;
+const CONNECT_WAIT_MS = 10_000;
+// A network slow enough to hold back one message that long gets twice the wait next time, up to PONG_WAIT_MAX_MS, until
+// an answer comes within PONG_WAIT_MS again; a new connection is asked at once while the wait is longer.
+const PONG_WAIT_MAX_MS = 20_000;
+let pongWait = PONG_WAIT_MS;
+let pongAsked = 0;
+// The page's name for itself and the number of its latest connection: the broker lets a later connection of the same
+// page take the place of an earlier one instead of asking which window to use.
+const WINDOW = newId();
+let connections = 0;
+let heardAt = 0;
+let pongTimer: number | undefined;
+let connectTimer: number | undefined;
+
+function checkAlive(): void {
+  const ws = socket;
+  if (!ws || ws.readyState !== WebSocket.OPEN || state.conn !== "ready" || pongTimer !== undefined) return;
+  const asked = (pongAsked = Date.now());
+  ws.send(JSON.stringify({ t: "ping" } satisfies ClientMsg));
+  pongTimer = window.setTimeout(() => {
+    pongTimer = undefined;
+    if (heardAt > asked) return;
+    pongWait = Math.min(pongWait * 2, PONG_WAIT_MAX_MS);
+    lost(ws);
+  }, pongWait);
+}
+
+window.setInterval(() => document.visibilityState === "visible" && caps.size > 0 && checkAlive(), PING_MS);
+
+// The connection closed, or stopped carrying anything: what waited on it fails, and the page connects again unless the
+// broker said why it ended it.
+function lost(ws: WebSocket, code?: number): void {
+  if (ws !== socket) return;
+  socket = undefined;
+  ws.onmessage = ws.onclose = null;
+  ws.close();
+  clearTimeout(connectTimer);
+  clearTimeout(pongTimer);
+  pongTimer = undefined;
+  noteLost();
+  settleCalls();
+  endFollows();
+  if (code === 4001) return loggedOut(state.loggedOutReason ?? "expired");
+  if (code === 4003) return passkeyNeeded();
+  if (code === 4000) return setState({ conn: "taken" });
+  setState({ conn: "offline" });
+  retryTimer = window.setTimeout(connect, Math.min(1000 * 2 ** retry++, 15000));
+  void probe();
 }
 
 const CALL_TIMEOUT_MS = 30_000;
@@ -571,49 +718,60 @@ function endFollows(): void {
   for (const f of all) f.end();
 }
 
+// A take-over the broker does not answer in time goes on a new connection.
 export function takeWindow(): void {
-  if (state.conn === "conflict") socket?.send(JSON.stringify({ t: "take_window" } satisfies ClientMsg));
-  else if (state.conn === "taken" || state.conn === "offline") connect();
+  const ws = socket;
+  if (state.conn === "conflict" && ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ t: "take_window" } satisfies ClientMsg));
+    clearTimeout(connectTimer);
+    connectTimer = window.setTimeout(() => lost(ws), CONNECT_WAIT_MS);
+  } else if (state.conn === "taken" || state.conn === "offline" || state.conn === "conflict") connect();
 }
 
 export function connect(): void {
   if (!state.me?.loggedIn || state.me.passkey) return;
   clearTimeout(retryTimer);
-  socket?.close();
-  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  clearTimeout(connectTimer);
+  clearTimeout(pongTimer);
+  pongTimer = undefined;
+  const old = socket;
+  if (old) {
+    old.onmessage = old.onclose = null;
+    old.close();
+  }
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?w=${WINDOW}&n=${++connections}`);
   socket = ws;
   noteSent();
   // While it tries again after a drop, the page stays offline, so what shows does not flicker with each try.
   setState({ conn: state.conn === "offline" ? "offline" : "connecting" });
+  connectTimer = window.setTimeout(() => lost(ws), CONNECT_WAIT_MS);
   ws.onmessage = (e) => {
     if (ws !== socket) return;
+    heardAt = Date.now();
+    if (pongTimer !== undefined && heardAt - pongAsked < PONG_WAIT_MS) pongWait = PONG_WAIT_MS;
+    clearTimeout(pongTimer);
+    pongTimer = undefined;
     noteHeard();
     onServer(JSON.parse(String(e.data)) as ServerMsg);
   };
-  ws.onclose = (e) => {
-    if (ws !== socket) return;
-    noteLost();
-    settleCalls();
-    endFollows();
-    if (e.code === 4001) return loggedOut(state.loggedOutReason ?? "expired");
-    if (e.code === 4003) return passkeyNeeded();
-    if (e.code === 4000) return setState({ conn: "taken" });
-    setState({ conn: "offline" });
-    retryTimer = window.setTimeout(connect, Math.min(1000 * 2 ** retry++, 15000));
-    void probe();
-  };
+  ws.onclose = (e) => lost(ws, e.code);
 }
 
-// iOS suspends pages in the background; reconnect as soon as the page is visible again.
+// iOS suspends pages in the background; reconnect as soon as the page is visible again, or check that the connection
+// still carries anything, and load a new build the broker serves.
 document.addEventListener("visibilitychange", () => {
   send({ t: "visibility", visible: document.visibilityState === "visible" });
   if (document.visibilityState === "visible") {
+    frontAt = Date.now();
+    if (reloadIfIdle()) return;
     reconnect();
     badgeSoon();
     void toNotifiedRequest(Date.now());
   }
   if (document.visibilityState === "hidden") {
     clearTimeout(againTimer);
+    clearTimeout(pongTimer);
+    pongTimer = undefined;
     leaving();
   }
 });
@@ -624,6 +782,55 @@ function leaving(): void {
   if (copyTimer !== undefined) copyNow();
   flushContact();
 }
+
+// The page's build, named in its index.html; ready names the broker's. When they differ the page loads again as it
+// comes to the front, or as it learns of it just after, once per build and only while nothing would be lost; until
+// then a band offers it.
+const PAGE_BUILD = document.querySelector<HTMLMetaElement>(`meta[name="${BUILD_META}"]`)?.content || undefined;
+const RELOADED_KEY = "ccrc.reloadedFor";
+const FRONT_FRESH_MS = 15_000;
+let frontAt = Date.now();
+const reloadHolds = new Set<() => boolean>();
+
+// A part of the app that holds work a reload would lose says so while it does.
+export function holdReload(fn: () => boolean): () => void {
+  reloadHolds.add(fn);
+  return () => reloadHolds.delete(fn);
+}
+
+function learnBuild(build?: string): void {
+  const other = build && PAGE_BUILD && build !== PAGE_BUILD ? build : undefined;
+  if (other !== state.newBuild) setState({ newBuild: other });
+  if (other && Date.now() - frontAt < FRONT_FRESH_MS) reloadIfIdle();
+}
+
+function idle(): boolean {
+  if (state.conn !== "ready" || state.sending?.length || state.starting) return false;
+  const el = document.activeElement;
+  if (el instanceof HTMLElement && (el.isContentEditable || el.matches("textarea, select, input:not([type=checkbox]):not([type=radio])"))) return false;
+  return !document.querySelector('[role="dialog"]') && ![...reloadHolds].some((fn) => fn());
+}
+
+function reloadIfIdle(): boolean {
+  const build = state.newBuild;
+  let tried: string | null = null;
+  try {
+    tried = sessionStorage.getItem(RELOADED_KEY);
+  } catch {}
+  if (!build || tried === build || !idle()) return false;
+  reloadApp();
+  return true;
+}
+
+export function reloadApp(): void {
+  try {
+    if (state.newBuild) sessionStorage.setItem(RELOADED_KEY, state.newBuild);
+  } catch {}
+  location.reload();
+}
+
+// A part of the app whose code did not come may be of a build the broker no longer serves: the page asks it now.
+window.addEventListener("vite:preloadError", reconnect);
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -689,6 +896,8 @@ function onServer(msg: ServerMsg): void {
   switch (msg.t) {
     case "ready":
       retry = 0;
+      clearTimeout(connectTimer);
+      caps = new Set(Array.isArray(msg.caps) ? msg.caps : []);
       // A new window follows nothing yet.
       endFollows();
       setState({ conn: "ready" });
@@ -698,10 +907,14 @@ function onServer(msg: ServerMsg): void {
       send({ t: "visibility", visible: document.visibilityState === "visible" });
       send(viewMsg());
       if (startingSent) send(startingSent.msg);
+      sendAgain();
+      if (pongWait > PONG_WAIT_MS) checkAlive();
       badgeSoon();
       for (const fn of connectedHooks) fn();
+      learnBuild(msg.build);
       return;
     case "window_conflict":
+      clearTimeout(connectTimer);
       setState({ conn: "conflict" });
       return;
     case "window_taken":
@@ -774,9 +987,13 @@ function onServer(msg: ServerMsg): void {
       const failed = msg.draftId ? [startingSent, unanswered].find((d) => d?.id === msg.draftId) : undefined;
       if (msg.draftId && msg.draftId === startingSent?.id) startDone();
       if (msg.draftId && msg.draftId === unanswered?.id) unanswered = undefined;
+      if (msg.sendId) settle(msg.sendId, false);
       if (!(failed && draftFailed?.(msg.message, failed.msg))) toast(msg.message);
       return;
     }
+    case "sent":
+      settle(msg.id, true);
+      return;
     case "call_result": {
       const c = calls.get(msg.id);
       if (!c) return;

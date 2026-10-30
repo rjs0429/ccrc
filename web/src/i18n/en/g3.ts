@@ -225,4 +225,6 @@ export const g3: Record<string, string> = {
   "server list|MCP 서버": "MCP servers",
   "파일 첨부": "Attach files",
   "대화 내보내기": "Export conversation",
+  "연결되면 보냅니다": "Sends once connected",
+  "보내는 중": "Sending",
 };

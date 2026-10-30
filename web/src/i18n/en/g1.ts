@@ -540,4 +540,15 @@ export const g1: Record<string, string> = {
   "audit|패스키 등록": "Passkey registered",
   "audit|패스키로 확인": "Confirmed with passkey",
   "audit|이어서 실행": "Resumed",
+
+  "보냈는지 확인하지 못했습니다. 대화를 보고 다시 보내세요": "Couldn't confirm the message was sent. Check the conversation and send it again",
+  "새 버전이 설치되었습니다": "A new version is installed",
+  "화면을 그리지 못했습니다": "Couldn't show this screen",
+  "앱을 다시 불러오면 대부분 돌아옵니다.": "Reloading the app usually brings it back.",
+  "다시 불러오기": "Reload",
+  홈으로: "Go to Home",
+  "열지 못했습니다": "Couldn't open",
+  "새 버전이 설치되었습니다. 새로고침하면 열립니다.": "A new version is installed. Refresh to open it.",
+  "다시 시도해도 열리지 않으면 앱을 새로고침하세요.": "If it still doesn't open, refresh the app.",
+  "네트워크를 확인하고 다시 시도하세요.": "Check the network and try again.",
 };

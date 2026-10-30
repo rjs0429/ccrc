@@ -33,6 +33,20 @@ your version and the new one, and the lines under "Breaking" separately.
   open on the phone first.
 - A session followed through its transcript (a terminal, or VS Code without the wrapper) is read again no sooner than
   three times as long as its last reading took, so a very long transcript no longer keeps the broker busy.
+- A message you send stays in the composer until the broker says it reached the session; "Sending…" shows once that
+  takes a moment. If the connection drops meanwhile, the phone sends it again once it reconnects and it arrives once;
+  while offline the composer says it sends once connected, and "Don't send" gives the text back.
+- The phone notices a connection that stopped carrying anything (the laptop asleep, a network that went quiet): it asks
+  the broker as the app comes to the front, as you send, and every 20 seconds while it shows, and connects again when
+  nothing answers within 5 seconds; a connection that is not taken within 10 seconds is tried again. These checks do
+  not count as activity for the login's idle time.
+- After an update, an app left open says "A new version is installed" across the top and loads the new version as it
+  comes to the front, unless a message is being written, a sheet is open or a message waits to be sent; a tap on the
+  band loads it at once. The worker that keeps the app is also checked again as the app comes to the front.
+- Requests from the phone give up after 15 seconds ("No answer"), and an older answer of the session list no longer
+  replaces a newer one.
+- The broker compresses its JSON answers, and the web app's files are compressed when it is built, so the session list
+  and the first load take less over a slow network.
 
 ### Fixed
 
@@ -43,6 +57,13 @@ your version and the new one, and the lines under "Breaking" separately.
   conversation is built past such blocks.
 - A failed promise nothing waited for ended the broker. It is now logged, once a minute for each error, and the broker
   goes on; an exception nothing catches is logged before the broker stops, and systemd starts it again.
+- The app went blank when the file viewer's code could not be loaded (a network that dropped, or a page left open
+  across an update). The viewer now says it could not open, with Try again and Close; a screen that fails to draw
+  offers Reload and Go to Home, and the rest of the app stays usable.
+- The same phone connecting again (after the app was in the background, or on another network) showed "In use in
+  another window". It now takes its place at once; another window or device still asks before it takes over.
+- A file under `/assets/` that the broker does not have answered with the app's page; it is now a 404, and the
+  service worker never keeps a page in place of a file.
 
 ## [0.8.2] - 2026-10-23
 

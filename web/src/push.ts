@@ -5,6 +5,7 @@ import { lang, t } from "./i18n/index.ts";
 
 const SW = "/sw.js";
 const READY_MS = 10_000;
+const WORKER_CHECK_MS = 60_000;
 
 // Why this browser cannot receive push notifications, when it cannot.
 export type PushBlock = "insecure" | "ios_install" | "ios_update" | "unsupported";
@@ -41,6 +42,16 @@ export function registerServiceWorker(): void {
     history.replaceState(history.state, "", `${opened.pathname}${opened.search}${opened.hash}`);
   }
   navigator.serviceWorker.register(SW).catch(() => {});
+  // An app left open across an update gets the new worker as it comes to the front, not only when it opens again.
+  let updated = Date.now();
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || Date.now() - updated < WORKER_CHECK_MS) return;
+    updated = Date.now();
+    void navigator.serviceWorker
+      .getRegistration()
+      .then((r) => r?.update())
+      .catch(() => {});
+  });
   navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
     const msg = e.data as { t?: unknown; url?: unknown } | null;
     if (msg?.t !== "navigate" || typeof msg.url !== "string") return;
@@ -221,9 +232,12 @@ export async function savePrefs(device: PushDevice, prefs: Partial<PushPrefs>): 
   return (await request<{ prefs: PushPrefs }>("POST", "/api/push/prefs", { endpoint: device.sub.endpoint, prefs })).prefs;
 }
 
+// The broker answers once the push service has.
+const TEST_WAIT_MS = 30_000;
+
 export async function sendTest(device: PushDevice): Promise<void> {
   if (!device.sub) throw Error("not_subscribed");
-  await request("POST", "/api/push/test", { endpoint: device.sub.endpoint });
+  await request("POST", "/api/push/test", { endpoint: device.sub.endpoint }, undefined, TEST_WAIT_MS);
 }
 
 // A failed push request as a message for toast(), which words the broker's codes (labels.ts).
