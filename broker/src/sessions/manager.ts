@@ -489,7 +489,7 @@ export class SessionManager extends EventEmitter {
   }
 
   // The part of the conversation a phone opening it gets (see snapshotPart), its open requests and its state.
-  async snapshot(sessionId: string, opts: { focus?: string; from?: string } = {}): Promise<Snapshot> {
+  async snapshot(sessionId: string, opts: { focus?: string; from?: string; keep?: readonly string[] } = {}): Promise<Snapshot> {
     const s = this.controlled(sessionId);
     if (s) return { ...snapshotPart(s.builder.items, opts), pending: [...s.pending.values()].map((e) => e.request), state: s.state() };
     const { items, state } = await this.idle(sessionId);

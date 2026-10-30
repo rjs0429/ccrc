@@ -37,6 +37,7 @@ class FakeManager extends EventEmitter {
   watchers = 0;
   focuses: (string | undefined)[] = [];
   froms: (string | undefined)[] = [];
+  keeps: (readonly string[] | undefined)[] = [];
   seen: string[] = [];
   // What snapshots hold, the whole conversation, and the transcript watch's callback.
   part: Partial<Snapshot> = {};
@@ -49,9 +50,10 @@ class FakeManager extends EventEmitter {
   isControlled(): boolean {
     return this.controlled;
   }
-  async snapshot(sessionId: string, opts: { focus?: string; from?: string } = {}): Promise<Snapshot> {
+  async snapshot(sessionId: string, opts: { focus?: string; from?: string; keep?: readonly string[] } = {}): Promise<Snapshot> {
     this.focuses.push(opts.focus);
     this.froms.push(opts.from);
+    this.keeps.push(opts.keep);
     const state = this.controlled ? "attached" : "inactive";
     await new Promise((r) => setTimeout(r, this.delay));
     return { items: [], pending: [], hasMore: false, state: { sessionId, cwd: "/", state, busy: false }, ...this.part };
@@ -307,6 +309,22 @@ test("a view asked for again keeps the part the phone holds, the pages it loaded
   await sleep(20);
   assert.deepEqual(manager.froms, [undefined, "i2", "i3", undefined]);
   assert.ok(ws.sent.some((m) => m.t === "call_result" && m.id === 2 && !m.ok));
+  hub.close();
+});
+
+test("the items a view names as read shape its own snapshot only, and a bad list of them is refused", async () => {
+  const { manager, hub, ws } = setup();
+  ws.emit("message", JSON.stringify({ t: "view", sessionId: A, from: "i3", keep: ["i5", "i6"] }));
+  await sleep(20);
+  manager.emit("attached", A);
+  await sleep(20);
+  ws.emit("message", JSON.stringify({ t: "view", sessionId: A, keep: [] }));
+  await sleep(20);
+  for (const keep of ["i5", [5], [""], Array.from({ length: 9 }, (_, n) => `i${n}`)]) ws.emit("message", JSON.stringify({ t: "view", sessionId: A, keep }));
+  await sleep(20);
+  assert.deepEqual(manager.keeps, [["i5", "i6"], undefined, undefined]);
+  assert.deepEqual(manager.froms, ["i3", undefined, undefined]);
+  assert.equal(ws.sent.filter((m) => m.t === "error" && m.message === "invalid request").length, 4);
   hub.close();
 });
 

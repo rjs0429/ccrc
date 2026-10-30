@@ -38,7 +38,24 @@ import { selectedIn } from "../components/streamSelection.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { brokerSessionsBlocked, closedText, errorText, hostLabel, inboxNotes, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
-import { call, composerInsert, dropParked, focusDone, getState, joinParked, loadMore, navigate, openAt, openSettingsFrom, refreshChat, requestShown, send, toast, useApp } from "../state.ts";
+import {
+  call,
+  composerInsert,
+  dropParked,
+  focusDone,
+  getState,
+  joinParked,
+  loadMore,
+  navigate,
+  onReading,
+  openAt,
+  openSettingsFrom,
+  refreshChat,
+  requestShown,
+  send,
+  toast,
+  useApp,
+} from "../state.ts";
 import { withEarlier } from "../chatItems.ts";
 import { markShown, newest, type PeerSent } from "../peerSent.ts";
 import { takeSent } from "../sentPreviews.ts";
@@ -47,10 +64,27 @@ import { placeLabel, shownBranch } from "../worktree.ts";
 
 const FileViewer = lazy(() => import("../components/viewer/FileViewer.tsx"));
 
-// Within PIN_PX of the bottom the list stays at the bottom through any change; within NEAR_BOTTOM_PX new messages
-// scroll into view.
+// Within PIN_PX of the bottom the list stays at the bottom through any change, and a list scrolled down there follows
+// new messages again; one that follows them goes on while it rests within NEAR_BOTTOM_PX of the bottom.
 const PIN_PX = 2;
 const NEAR_BOTTOM_PX = 160;
+// What came while a finger or a selection held the list at its bottom is followed, smoothly, while the way down is
+// shorter than this share of the list's height; else the list stays and the jump button marks it.
+const RESUME_SHARE = 1 / 3;
+// The jump button takes a press only once the list has not moved under the user's scroll (a drag or its fling) for this
+// long: a tap meant to stop a fling can land on it.
+const JUMP_GUARD_MS = 300;
+// How many items in view, and above them, a change of the conversation tries to keep in place, the first still there.
+const ANCHORS_IN_VIEW = 4;
+const ANCHORS_ABOVE = 4;
+// A change of the list's width (a rotation) keeps the text read at the list's top there: the character found
+// MARK_X_PX in from the content's left edge (past its padding) and MARK_Y_PX below the list's top, when its line is
+// within MARK_NEAR_PX of that point, else the block there. The width has settled once it stays for TURN_MS.
+const MARK_X_PX = 24;
+const MARK_Y_PX = 8;
+const MARK_NEAR_PX = 40;
+const BLOCKS = "p, li, pre, tr, h1, h2, h3, h4, h5, h6, blockquote, [data-item]";
+const TURN_MS = 300;
 // Earlier items load while the top of the list is less than this many screens away, and so does a gap's next part.
 const LOAD_SCREENS = 1.5;
 // A change of size this soon after a touch on the list comes from the touch: the touched item keeps its place.
@@ -62,6 +96,27 @@ const fingersOn = (el: Element | null, touches: TouchList) => [...touches].filte
 // An ended session's conversation ends with the notes of messages Claude Code never took in; what its transcript gains
 // later comes in before them.
 const lastSaid = (items: DisplayItem[]) => items.findLast((i) => i.kind !== "note" || i.code !== "unsent")?.id;
+
+function caretAt(x: number, y: number): { node: Node; offset: number } | undefined {
+  const r = document.caretRangeFromPoint?.(x, y);
+  if (r) return { node: r.startContainer, offset: r.startOffset };
+  const p = document.caretPositionFromPoint?.(x, y);
+  return p ? { node: p.offsetNode, offset: p.offset } : undefined;
+}
+
+// The top of a text node's character at offset, or of the first one after it that is not a space, whose box keeps to
+// its line where the line wraps; undefined for a node that is not text.
+function charTop(node: Node, offset: number): number | undefined {
+  const text = node.nodeType === Node.TEXT_NODE ? (node.textContent ?? "") : "";
+  if (!text) return undefined;
+  let at = Math.max(0, Math.min(offset, text.length - 1));
+  while (at < text.length - 1 && /\s/.test(text[at])) at++;
+  const r = document.createRange();
+  r.setStart(node, at);
+  r.setEnd(node, at + 1);
+  const box = r.getBoundingClientRect();
+  return box.height ? box.top : undefined;
+}
 const FLASH_MS = 2500;
 const NO_MODELS: ModelOption[] = [];
 // How long a command sent from here may take before its sheet says it gave no result, once the session is idle.
@@ -174,8 +229,15 @@ export function Chat({ sessionId }: { sessionId: string }) {
   // stops it where it is, since browsers do not all cancel a smooth scroll for one. A write to the position would stop
   // it short, so a change on the way sends it on to the new bottom, and no part loads meanwhile.
   const glide = useRef(false);
-  // The first item in view and how far its top is below the list's top: any other change keeps it there.
-  const anchor = useRef<{ id: string; top: number } | null>(null);
+  // The items in view and those above them, the top one first, each with how far its top is below the list's top: any
+  // other change keeps the first of them still in the list where it was.
+  const anchors = useRef<{ id: string; top: number }[]>([]);
+  // A character of the text at the list's top (offset -1: the block there) and how far it is below the list's top. A
+  // change of the list's width keeps it there; until the width settles (turning) it is not taken again.
+  const mark = useRef<{ node: Node; offset: number; top: number } | null>(null);
+  const width = useRef(0);
+  const turning = useRef(false);
+  const turnTimer = useRef<number | undefined>(undefined);
   const touched = useRef(0);
   // Where the list was last scrolled to; only a scroll up from there leaves the bottom.
   const lastTop = useRef(0);
@@ -194,6 +256,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const scrolledAt = useRef(0);
   const owed = useRef<{ follow?: boolean; hold?: boolean }>({});
   const restTimer = useRef<number | undefined>(undefined);
+  const movedAt = useRef(0);
+  // Whether the list was at its bottom when a finger or a selection began to hold it, or the user's scroll took it there.
+  const paused = useRef(false);
   const frame = useRef(0);
   // While text in the list is selected the list follows nothing and keeps what is in view in place, as for a scroll;
   // it follows once nothing there is selected.
@@ -216,40 +281,120 @@ export function Chat({ sessionId }: { sessionId: string }) {
     setAway(true);
   };
 
+  // Once a finger or a selection lets go of the list, it glides down to what came or grew meanwhile if it was at its
+  // bottom then and the way is short; else it stays, follows no more, and the jump button marks what came. held: a
+  // change of size waited too.
+  const resume = (held = false) => {
+    const el = listRef.current;
+    if (!el) return;
+    const gap = gapBelow(el);
+    if (glide.current || gap < PIN_PX || (paused.current && gap < el.clientHeight * RESUME_SHARE)) {
+      glide.current = gap >= PIN_PX && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+      follow(true);
+      toBottom();
+      return;
+    }
+    pinned.current = false;
+    follow(false);
+    setUnseen(true);
+    if (held) hold();
+  };
+
+  // A new snapshot holds none of the items read: the list stays where it is and says so.
+  const lost = () => {
+    const el = listRef.current;
+    if (!el) return;
+    lastTop.current = el.scrollTop;
+    pinned.current = gapBelow(el) < PIN_PX;
+    follow(pinned.current);
+    takeAnchor();
+    toast(t("대화가 바뀌었습니다"));
+  };
+
   const browserAnchors = () => {
     const el = listRef.current;
     if (anchoring.current === undefined && el) anchoring.current = CSS.supports("overflow-anchor", "auto") && getComputedStyle(el).overflowAnchor !== "none";
     return Boolean(anchoring.current);
   };
 
+  // A touched row alone, else the rows in view and above them.
   const takeAnchor = (row?: HTMLElement | null) => {
     const el = listRef.current;
     if (!el?.clientHeight) return;
-    const top = el.getBoundingClientRect().top;
-    if (!row) {
-      const rows = [...(contentRef.current?.children ?? [])].filter((r): r is HTMLElement => r instanceof HTMLElement && r.dataset.item !== undefined);
-      let lo = 0;
-      let hi = rows.length - 1;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (rows[mid].getBoundingClientRect().bottom > top) {
-          row = rows[mid];
-          hi = mid - 1;
-        } else lo = mid + 1;
-      }
+    const box = el.getBoundingClientRect();
+    const at = (r: HTMLElement) => ({ id: r.dataset.item!, top: r.getBoundingClientRect().top - box.top });
+    if (row?.dataset.item) {
+      anchors.current = [at(row)];
+      return;
     }
-    anchor.current = row?.dataset.item ? { id: row.dataset.item, top: row.getBoundingClientRect().top - top } : null;
+    const rows = [...(contentRef.current?.children ?? [])].filter((r): r is HTMLElement => r instanceof HTMLElement && r.dataset.item !== undefined);
+    let first = rows.length;
+    let lo = 0;
+    let hi = rows.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid].getBoundingClientRect().bottom > box.top) {
+        first = mid;
+        hi = mid - 1;
+      } else lo = mid + 1;
+    }
+    const shown = rows.slice(first, first + ANCHORS_IN_VIEW).filter((r, n) => n === 0 || r.getBoundingClientRect().top < box.bottom);
+    anchors.current = [...shown, ...rows.slice(Math.max(0, first - ANCHORS_ABOVE), first).reverse()].map(at);
+    if (!turning.current) takeMark();
   };
 
-  // False when the anchored item is not in the list. Where the browser keeps the view in place itself, only a part put
-  // in before the item in view or what a touch opened (force) is set right here.
+  // False when none of the anchored items is in the list. Where the browser keeps the view in place itself, only a part
+  // put in before the item in view, a new snapshot or what a touch opened (force) is set right here.
   const keepAnchor = (force = false): boolean => {
     const el = listRef.current;
-    const a = anchor.current;
-    const row = a && el?.querySelector<HTMLElement>(`[data-item="${CSS.escape(a.id)}"]`);
-    if (!el || !a || !row) return false;
-    if (scrolling.current || (!force && browserAnchors())) return true;
-    const moved = row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top;
+    if (!el) return false;
+    for (const a of anchors.current) {
+      const row = el.querySelector<HTMLElement>(`[data-item="${CSS.escape(a.id)}"]`);
+      if (!row) continue;
+      if (scrolling.current || (!force && browserAnchors())) return true;
+      const moved = row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top;
+      if (Math.abs(moved) > 0.5) el.scrollBy(0, moved);
+      lastTop.current = el.scrollTop;
+      return true;
+    }
+    return false;
+  };
+
+  // The character marked stays while its line is near the list's top, so a width that changes and comes back keeps the
+  // same text there.
+  const takeMark = () => {
+    const el = listRef.current;
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const box = el.getBoundingClientRect();
+    const x = content.getBoundingClientRect().left + MARK_X_PX;
+    const y = box.top + MARK_Y_PX;
+    const m = mark.current;
+    const still = m && m.offset >= 0 && m.node.isConnected && content.contains(m.node) ? charTop(m.node, m.offset) : undefined;
+    if (m && still !== undefined && Math.abs(still - y) < MARK_NEAR_PX) {
+      mark.current = { ...m, top: still - box.top };
+      return;
+    }
+    const caret = caretAt(x, y);
+    if (caret && content.contains(caret.node)) {
+      const top = charTop(caret.node, caret.offset);
+      if (top !== undefined && Math.abs(top - y) < MARK_NEAR_PX) {
+        mark.current = { ...caret, top: top - box.top };
+        return;
+      }
+    }
+    const block = document.elementFromPoint(x, y)?.closest(BLOCKS);
+    mark.current = block && content.contains(block) ? { node: block, offset: -1, top: block.getBoundingClientRect().top - box.top } : null;
+  };
+
+  // Puts the text read at the list's top back where it was; false when it has left the list.
+  const keepMark = (): boolean => {
+    const el = listRef.current;
+    const m = mark.current;
+    if (!el || !m?.node.isConnected || !contentRef.current?.contains(m.node)) return false;
+    const now = m.offset < 0 ? (m.node as Element).getBoundingClientRect().top : charTop(m.node, m.offset);
+    if (now === undefined) return false;
+    const moved = now - el.getBoundingClientRect().top - m.top;
     if (Math.abs(moved) > 0.5) el.scrollBy(0, moved);
     lastTop.current = el.scrollTop;
     return true;
@@ -266,8 +411,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
     }
   };
 
-  // After any change of size: the bottom while the list is pinned there, else the item in view where it was. A list
-  // with no height shows nothing to hold.
+  // After any change of size: the bottom while the list is pinned there, else the item in view where it was, or while
+  // its width settles the text read at its top. A list with no height shows nothing to hold.
   const hold = (force = false) => {
     const el = listRef.current;
     if (!el?.clientHeight) return;
@@ -279,7 +424,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const tapped = performance.now() - touched.current <= TOUCH_MS;
     if (glide.current || (pinned.current && !tapped && !reading.current)) toBottom();
     else {
-      keepAnchor(force || tapped);
+      if (!(turning.current && keepMark())) keepAnchor(force || tapped);
       if (!reading.current) pinned.current = gapBelow(el) < PIN_PX;
     }
   };
@@ -302,7 +447,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   };
 
   const jump = () => {
-    if (!listRef.current) return;
+    if (!listRef.current || performance.now() - movedAt.current < JUMP_GUARD_MS) return;
     stopScroll();
     glide.current = !matchMedia("(prefers-reduced-motion: reduce)").matches;
     follow(true);
@@ -350,7 +495,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
     lastTop.current = el.scrollTop;
     if (gap < PIN_PX) glide.current = false;
     pinned.current = gap < PIN_PX || (pinned.current && !up);
-    const near = gap < NEAR_BOTTOM_PX || (stick.current && !up);
+    if (scrolling.current && pinned.current) paused.current = true;
+    const near = gap < PIN_PX || (stick.current && (gap < NEAR_BOTTOM_PX || !up));
     if (near !== stick.current && (near || !glide.current)) follow(near);
     else if (reading.current && gap < PIN_PX) follow(true);
     if (!scrolling.current && (!pinned.current || reading.current)) takeAnchor();
@@ -371,32 +517,32 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (scrolled.current) takeAnchor();
     const { follow: news, hold: held } = owed.current;
     owed.current = {};
-    if (news && (glide.current || (stick.current && !reading.current))) {
-      toBottom();
-      follow(true);
-    } else {
+    const grew = held && pinned.current && performance.now() - touched.current > TOUCH_MS;
+    if ((news || grew) && (glide.current || (stick.current && !reading.current))) resume(held);
+    else {
       if (news) unfollowed();
       if (held) hold();
     }
     if (!joinParked(sessionId)) loadParts(false);
   };
 
-  // Text selected in the list holds it from where it is. Once nothing there is selected, the list follows what came
-  // meanwhile or goes back to the bottom it was at, ahead of the tap that unselected it; during the user's scroll, that
-  // waits for the rest.
+  // Text selected in the list holds it from where it is. Once nothing there is selected, the list takes up what came
+  // meanwhile (resume) or goes back to the bottom it was at, ahead of the tap that unselected it; during the user's
+  // scroll, that waits for the rest.
   const selected = () => {
     const now = Boolean(selectedIn(contentRef.current));
     if (now === reading.current) return;
     reading.current = now;
     if (scrolling.current) return;
-    if (now) return takeAnchor();
+    if (now) {
+      paused.current = pinned.current;
+      return takeAnchor();
+    }
     const news = owed.current.follow;
     owed.current = {};
-    if (stick.current && (news || pinned.current)) {
-      touched.current = 0;
-      toBottom();
-      follow(true);
-    }
+    if (!stick.current || !(news || pinned.current)) return;
+    touched.current = 0;
+    resume();
   };
 
   const restSoon = (ms = REST_MS) => {
@@ -414,7 +560,10 @@ export function Chat({ sessionId }: { sessionId: string }) {
   };
 
   const startScroll = () => {
-    if (!scrolling.current) scrolled.current = false;
+    if (!scrolling.current) {
+      scrolled.current = false;
+      paused.current = pinned.current;
+    }
     scrolling.current = true;
     restSoon();
   };
@@ -690,6 +839,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
 
   // Only a message, request or reply added at the end is new: it scrolls into view near the bottom and is marked
   // away from it. Any other change keeps the list at the bottom while it is pinned there, else the item in view in place.
+  // A new snapshot goes by where the list was before it: the change of height it makes can move the list by itself.
   useLayoutEffect(() => {
     const el = listRef.current;
     if (!el || !chat?.loaded) return;
@@ -706,16 +856,19 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const was = ends.current;
     ends.current = now;
     if (chat.focus) return;
+    if (was && was.snaps !== now.snaps) {
+      if (scrolling.current) owed.current.hold = true;
+      else if (glide.current || (pinned.current && !reading.current)) {
+        toBottom();
+        follow(true);
+      } else if (!keepAnchor(true)) lost();
+      loadParts(false);
+      return;
+    }
     catchUp();
     if (!was) {
       toBottom();
       follow(true);
-    } else if (was.snaps !== now.snaps) {
-      if (scrolling.current) owed.current.hold = true;
-      else if (glide.current || (pinned.current && !reading.current) || !keepAnchor(true)) {
-        toBottom();
-        follow(true);
-      }
     } else {
       const came = (id?: string, before?: string) => id !== before && (before === undefined || items.some((i) => i.id === before));
       const added =
@@ -735,10 +888,34 @@ export function Chat({ sessionId }: { sessionId: string }) {
     loadParts(false);
   });
 
-  // A change of the list's size (rotation, a taller composer or to-do panel) or of what it holds that no render made
-  // (an image that loaded, an item opened) is held the same way.
+  // The list's width changed, as on a rotation: the text read at its top stays there at each step and once more when the
+  // width has settled; the item in view stands in for text that left the list.
+  const reflowed = () => {
+    const el = listRef.current;
+    if (!el?.clientHeight) return;
+    turning.current = true;
+    clearTimeout(turnTimer.current);
+    turnTimer.current = window.setTimeout(() => {
+      turning.current = false;
+      if (!scrolling.current && !glide.current && !pinned.current) keepMark();
+      takeAnchor();
+    }, TURN_MS);
+    catchUp();
+    if (scrolling.current) owed.current.hold = true;
+    else if (glide.current || (pinned.current && !reading.current)) toBottom();
+    else if (!keepMark()) keepAnchor(true);
+  };
+
+  // A change of the list's size (a taller composer or to-do panel) or of what it holds that no render made (an image
+  // that loaded, an item opened) is held the same way.
   useEffect(() => {
-    const resized = new ResizeObserver(() => hold());
+    const resized = new ResizeObserver(() => {
+      const w = listRef.current?.clientWidth ?? 0;
+      const turned = width.current > 0 && w > 0 && w !== width.current;
+      width.current = w;
+      if (turned) reflowed();
+      else hold();
+    });
     resized.observe(listRef.current!);
     resized.observe(contentRef.current!);
     const hidden = () => {
@@ -748,12 +925,21 @@ export function Chat({ sessionId }: { sessionId: string }) {
     };
     document.addEventListener("visibilitychange", hidden);
     document.addEventListener("selectionchange", selected);
+    // A snapshot sent again keeps what the list reads, unless it shows the end of the conversation.
+    const unregister = onReading(() => {
+      const el = listRef.current;
+      if (!el?.clientHeight || glide.current || ((pinned.current || gapBelow(el) < PIN_PX) && !reading.current)) return undefined;
+      takeAnchor();
+      return anchors.current.map((a) => a.id);
+    });
     return () => {
       resized.disconnect();
+      unregister();
       document.removeEventListener("visibilitychange", hidden);
       document.removeEventListener("selectionchange", selected);
       cancelAnimationFrame(frame.current);
       clearTimeout(restTimer.current);
+      clearTimeout(turnTimer.current);
     };
   }, []);
 
@@ -860,6 +1046,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
           scrolledAt.current = performance.now();
           if (scrolling.current) {
             scrolled.current = true;
+            movedAt.current = scrolledAt.current;
             if (!fingers.current) restSoon();
           }
           frame.current ||= requestAnimationFrame(() => {
