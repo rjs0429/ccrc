@@ -6,6 +6,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-10-31
+
 ### 추가
 
 - 모든 시트(모델, Effort, Context, ⋯ 메뉴 등)를 사진 보기처럼 아래로 끌어 닫는다. 시트가 손가락을 따라 내려가며 뒤 화면이 점점 밝아지고, 짧게 끌면 돌아오고 길게 또는 빠르게 끌면 내려가 닫힌다(뒤로와 같다). 손잡이와 제목은 언제나, 내용은 맨 위까지 올라가 있을 때 끌린다. 내려 본 목록은 먼저 스크롤된다.
@@ -380,7 +382,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 - 쉬는 브로커 세션 프로세스는 15분 뒤 닫는다. 메시지 내용 없는 감사 로그. 라이트·다크 테마.
 - `ccrc serve | passwd | status | logout` 과 `deploy/install-service.sh`.
 
-[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/rjs0429/ccrc/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/rjs0429/ccrc/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/rjs0429/ccrc/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/rjs0429/ccrc/compare/v0.8.0...v0.8.1
