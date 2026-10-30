@@ -9,6 +9,7 @@ import { useApp } from "../state.ts";
 import { SERVED_IMAGES, messageImageUrl } from "./composer/attachments.ts";
 import { OfflineView } from "./offlineView.ts";
 import { Icon, Spinner } from "./ui.tsx";
+import { Zoomable } from "./Zoomable.tsx";
 
 // Larger images wait for a tap before they are fetched.
 export const BIG_IMAGE_BYTES = 1024 * 1024;
@@ -18,7 +19,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RETRY_MS = [2000, 5000, 15_000, 30_000, 60_000];
 // Thumbnails load while within this distance of the visible part of the conversation and are let go beyond it.
 const NEAR_MARGIN = "600px 0px";
-const SWIPE_PX = 50;
 
 // Images opened in the large view; their thumbnails show from then on, from the browser's cache.
 const opened = new Set<string>();
@@ -119,22 +119,75 @@ function DocumentChip({ a }: { a: UserAttachment }) {
   );
 }
 
-export function ImageViewer({ images, start, onClose }: { images: Shown[]; start: number; onClose: () => void }) {
-  const [at, setAt] = useState(start);
+// One picture of the large view. A large one beside the picture shown waits until it is shown itself.
+function Slide({ shown, current }: { shown: Shown; current: boolean }) {
   const [state, setState] = useState<"loading" | "loaded" | "failed">("loading");
   const [attempt, setAttempt] = useState(0);
-  const [gone, setGone] = useState<Set<number>>(new Set());
-  const touch = useRef<number | null>(null);
-  const shown = images[at];
-  const local = !gone.has(at) && shown.local;
+  const [gone, setGone] = useState(false);
+  const local = !gone && shown.local;
   const src = local || shown.remote;
+  const wait = !current && !local && shown.size > BIG_IMAGE_BYTES && !(src && opened.has(src));
+  if (src && wait) {
+    return (
+      <span className="flex flex-col items-center gap-2 text-sm text-white/70">
+        <Icon.image className="size-10 opacity-60" />
+        {sizeText(shown.size)}
+      </span>
+    );
+  }
+  return (
+    <>
+      {src && state !== "failed" && (
+        <img
+          key={`${attempt}-${src}`}
+          src={src}
+          alt=""
+          draggable={false}
+          className={`max-h-full max-w-full object-contain [-webkit-touch-callout:default] ${state === "loaded" ? "" : "opacity-0"}`}
+          onLoad={() => {
+            setState("loaded");
+            opened.add(src);
+          }}
+          onError={() => (local ? setGone(true) : setState("failed"))}
+        />
+      )}
+      {src && state === "loading" && (
+        <span className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-white/70">
+          <Spinner className="size-6" />
+          {shown.size > BIG_IMAGE_BYTES && sizeText(shown.size)}
+        </span>
+      )}
+      {(!src || state === "failed") && (
+        <div className="flex flex-col items-center gap-3 px-6 text-center text-sm text-white/80">
+          <Icon.image className="size-10 opacity-60" />
+          {src ? t("이미지를 불러오지 못했습니다.") : t("이 이미지는 미리 볼 수 없습니다.")}
+          {src && (
+            <button
+              onClick={() => {
+                setAttempt((n) => n + 1);
+                setState("loading");
+              }}
+              className="rounded-xl bg-white/15 px-4 py-2 font-medium"
+            >
+              {t("다시 시도")}
+            </button>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+// The large view of pictures, a layer of the history: they zoom and turn on its stage, and a drag down closes it as the
+// back does. label names the view (the message's attached images by default).
+export function ImageViewer({ images, start, onClose, label }: { images: Shown[]; start: number; onClose: () => void; label?: string }) {
+  const [at, setAt] = useState(start);
+  const backdrop = useRef<HTMLDivElement>(null);
+  const header = useRef<HTMLElement>(null);
+  const arrows = useRef<HTMLDivElement>(null);
+  const shown = images[at];
   const dismiss = useLayer(onClose);
-  const go = (d: number) => {
-    const next = at + d;
-    if (next < 0 || next >= images.length) return;
-    setAt(next);
-    setState("loading");
-  };
+  const go = (d: number) => setAt((n) => Math.min(images.length - 1, Math.max(0, n + d)));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -146,19 +199,9 @@ export function ImageViewer({ images, start, onClose }: { images: Shown[]; start
   });
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex flex-col bg-black text-white"
-      role="dialog"
-      aria-label={t("첨부 이미지")}
-      onTouchStart={(e) => (touch.current = e.touches[0]?.clientX ?? null)}
-      onTouchEnd={(e) => {
-        const from = touch.current;
-        const to = e.changedTouches[0]?.clientX;
-        touch.current = null;
-        if (from !== null && to !== undefined && Math.abs(to - from) > SWIPE_PX) go(to < from ? 1 : -1);
-      }}
-    >
-      <header className="screen-header pt-safe flex items-center gap-2 bg-black px-safe-2 py-2">
+    <div className="fixed inset-0 z-50 flex flex-col text-white" role="dialog" aria-label={label ?? t("첨부 이미지")}>
+      <div ref={backdrop} className="absolute inset-0 -z-10 bg-black" aria-hidden />
+      <header ref={header} className="screen-header pt-safe flex items-center gap-2 bg-black px-safe-2 py-2">
         <div className="min-w-0 flex-1 px-2 text-sm text-white/80">
           {images.length > 1 ? `${at + 1} / ${images.length}` : t("이미지")}
           {shown.size > 0 && ` · ${sizeText(shown.size)}`}
@@ -167,53 +210,29 @@ export function ImageViewer({ images, start, onClose }: { images: Shown[]; start
           <Icon.x />
         </button>
       </header>
-      <div className="pb-safe relative flex min-h-0 flex-1 items-center justify-center px-safe-0">
-        {src && state !== "failed" && (
-          <img
-            key={`${at}-${attempt}-${src}`}
-            src={src}
-            alt=""
-            className={`max-h-full max-w-full object-contain ${state === "loaded" ? "" : "opacity-0"}`}
-            onLoad={() => {
-              setState("loaded");
-              opened.add(src);
-            }}
-            onError={() => (local ? setGone((g) => new Set(g).add(at)) : setState("failed"))}
-          />
-        )}
-        {src && state === "loading" && (
-          <span className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-white/70">
-            <Spinner className="size-6" />
-            {shown.size > BIG_IMAGE_BYTES && sizeText(shown.size)}
-          </span>
-        )}
-        {(!src || state === "failed") && (
-          <div className="flex flex-col items-center gap-3 px-6 text-center text-sm text-white/80">
-            <Icon.image className="size-10 opacity-60" />
-            {src ? t("이미지를 불러오지 못했습니다.") : t("이 이미지는 미리 볼 수 없습니다.")}
-            {src && (
-              <button
-                onClick={() => {
-                  setAttempt((n) => n + 1);
-                  setState("loading");
-                }}
-                className="rounded-xl bg-white/15 px-4 py-2 font-medium"
-              >
-                {t("다시 시도")}
-              </button>
-            )}
-          </div>
-        )}
-        {at > 0 && (
-          <button onClick={() => go(-1)} aria-label={t("이전 이미지")} className="absolute left-1 rounded-full bg-white/15 p-2">
-            <Icon.back />
-          </button>
-        )}
-        {at < images.length - 1 && (
-          <button onClick={() => go(1)} aria-label={t("다음 이미지")} className="absolute right-1 rounded-full bg-white/15 p-2">
-            <Icon.chevronRight />
-          </button>
-        )}
+      <div className="relative min-h-0 flex-1">
+        <Zoomable
+          className="absolute inset-0"
+          pad="pb-safe px-safe-0"
+          count={images.length}
+          index={at}
+          onIndex={setAt}
+          onClose={dismiss}
+          dim={[backdrop, header, arrows]}
+          render={(i) => <Slide shown={images[i]} current={i === at} />}
+        />
+        <div ref={arrows} className="pointer-events-none absolute inset-0">
+          {at > 0 && (
+            <button onClick={() => go(-1)} aria-label={t("이전 이미지")} className="pointer-events-auto absolute top-1/2 left-1 -translate-y-1/2 rounded-full bg-white/15 p-2">
+              <Icon.back />
+            </button>
+          )}
+          {at < images.length - 1 && (
+            <button onClick={() => go(1)} aria-label={t("다음 이미지")} className="pointer-events-auto absolute top-1/2 right-1 -translate-y-1/2 rounded-full bg-white/15 p-2">
+              <Icon.chevronRight />
+            </button>
+          )}
+        </div>
       </div>
     </div>,
     document.body,

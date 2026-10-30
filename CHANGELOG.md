@@ -18,6 +18,11 @@ your version and the new one, and the lines under "Breaking" separately.
 - Pictures in a tool's result, such as a Playwright screenshot or an image Claude read, show as thumbnails on the
   tool's card, where they read "[image]", and open in the photo viewer. They are read from the transcript when they
   come into view, a large one once tapped, and the phone's copy of a conversation keeps none.
+- Photos zoom. Pinch up to 5x (a long screenshot further, until it fills the width), double tap to zoom in and back out,
+  and drag a zoomed photo around; past its edges it gives a little and springs back. At 1x the next photo follows your
+  finger as you swipe, and a drag down closes the viewer. Picture files in the file viewer and pictures in Markdown
+  files (tap one to open it large) zoom the same way. On a computer, Ctrl with the wheel or a trackpad pinch zooms and
+  the wheel pans.
 
 ### Changed
 
