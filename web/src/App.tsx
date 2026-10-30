@@ -67,7 +67,7 @@ export function App() {
   );
 }
 
-// A new build to load, across the top of every screen, which moves down by its height.
+// A new build to load, across the top of every screen and layer, which move down by its height.
 function BuildBand() {
   useEffect(() => {
     document.documentElement.setAttribute("data-band", "");
@@ -76,7 +76,7 @@ function BuildBand() {
   return (
     <button
       onClick={reloadApp}
-      className="fixed inset-x-0 top-0 z-30 flex flex-col bg-accent pt-[env(safe-area-inset-top,0px)] text-white"
+      className="fixed inset-x-0 top-0 z-[60] flex flex-col bg-accent pt-[env(safe-area-inset-top,0px)] text-white"
       data-new-build
     >
       <span className="flex h-9 w-full items-center justify-center gap-2 px-safe-4 text-[13px]">

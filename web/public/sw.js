@@ -52,11 +52,11 @@ async function page(net) {
 
 // Files under /assets/ carry their content's hash in their names, so a kept one never goes stale. Without a cache to
 // keep them in, they come from the network as they would without this worker. A page in place of a file is never kept
-// under the file's name: an older broker answers a name it does not have with the app's page.
+// or given as the file: an older broker answers a name it does not have with the app's page.
 async function asset(event) {
   const cache = await caches.open(SHELL).catch(() => undefined);
   const kept = await cache?.match(event.request, { ignoreVary: true }).catch(() => undefined);
-  if (kept) return kept;
+  if (kept && !isPage(kept)) return kept;
   const res = await fetch(event.request);
   if (res.ok && !isPage(res) && cache) event.waitUntil(cache.put(event.request, res.clone()).catch(() => {}));
   return res;
