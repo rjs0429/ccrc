@@ -108,7 +108,8 @@ function show(again = false): void {
 
 function save(): void {
   if (stack.length || moving || !keepers.size) return;
-  write({ ...cur, keep: Object.fromEntries([...keepers].map(([k, get]) => [k, get()])) }, location.href, false);
+  const keep = Object.fromEntries([...keepers].map(([k, get]) => [k, get()]));
+  if (JSON.stringify(keep) !== JSON.stringify(cur.keep)) write({ ...cur, keep }, location.href, false);
 }
 
 function put(route: Route, entry: Entry, push: boolean): void {
@@ -254,7 +255,7 @@ export const nav = {
 };
 
 function dismiss(l: Layer): void {
-  if (l.closing || !live.includes(l)) return;
+  if (l.closing) return;
   if (!moving && live.at(-1) === l && stack.at(-1) === l.key) {
     l.closing = true;
     step(-1);
