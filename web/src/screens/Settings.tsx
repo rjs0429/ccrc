@@ -77,8 +77,8 @@ export function Settings({ page, part }: { page?: SettingsPage; part?: SettingsP
             <>
               <section className="space-y-2">
                 <div className="text-sm font-semibold text-muted">{t("이 기기")}</div>
-                <div className="flex items-center gap-2 rounded-xl bg-surface py-1 pr-1 pl-3.5 text-[15px] font-medium" data-device-name>
-                  <span className="min-w-0 flex-1 truncate">{device}</span>
+                <div className="flex min-h-13 items-center gap-2 rounded-xl bg-surface py-1 pr-1 pl-3.5 text-[15px] font-medium" data-device-name>
+                  <span className="min-w-0 flex-1 break-words">{device}</span>
                   {device && <CopyButton text={device} label={t("기기 이름 복사")} done={t("기기 이름을 복사했습니다")} />}
                 </div>
               </section>

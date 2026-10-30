@@ -477,7 +477,7 @@ function ElicitHead({ info }: { info: ElicitInfo }) {
     <>
       {info.title && <div className="text-sm font-medium">{info.title}</div>}
       {info.description && <div className="text-xs text-muted">{info.description}</div>}
-      {info.message && <div className="text-[15px] whitespace-pre-wrap">{info.message}</div>}
+      {info.message && <div className="selectable text-[15px] whitespace-pre-wrap">{info.message}</div>}
     </>
   );
 }
