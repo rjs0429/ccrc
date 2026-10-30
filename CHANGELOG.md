@@ -8,6 +8,32 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Changed
+
+- In a conversation, the jump button and a tap on the status bar scroll with the browser's own smooth scroll: from far
+  away the list first steps to a screen and a half from where it goes, then glides the rest, with no fade. A glide is
+  not started over each time Claude writes; what came on the way is taken once it ends. The status-bar tap on the
+  session list and in settings moves the same way.
+- A finger resting on the conversation, or text selected in it, holds it still. What Claude adds meanwhile is no longer
+  followed when you let go, not even a short addition: once you have held the list for a moment, the jump button turns
+  into a "New content" chip as soon as something comes, and a tap on it glides to the bottom, where the chip goes away.
+  A quick tap at the bottom still lets the list follow on. Something growing above what you read, such as a picture
+  that loads, no longer moves the text under your finger where the browser does not keep it in place itself.
+- The jump button ignores a press only while a fling moves fast and a moment after, so a press as the list slows down
+  is no longer lost.
+- A reply that ends stays on screen until its message takes its place, as a thought does, so the conversation does not
+  shrink under you for a moment.
+
+### Fixed
+
+- Reading further up a conversation, you could be taken to its bottom when it changed under you, such as a VS Code
+  session that came back without what you were reading or a conversation compacted elsewhere. The list now keeps its
+  distance from the end, or goes to the top of what it holds now, and says that the conversation changed.
+- A part loaded at the top always goes in above what you read, wherever the list was.
+- If the conversation still goes to its bottom by itself from more than a screen up, the phone tells the laptop, and
+  the service log gets one line with what moved the list, its sizes and its last few events, with no text of the
+  conversation, to find the cause.
+
 ## [0.8.3] - 2026-10-30
 
 ### Added

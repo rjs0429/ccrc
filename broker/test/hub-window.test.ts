@@ -192,3 +192,23 @@ test("a message that failed says so under its id and may be sent again; one with
   );
   hub.close();
 });
+
+test("a page's report of its own screen is taken without an answer, a bad one too", async () => {
+  const { hub, attach } = setup();
+  const ws = attach();
+  const logged: string[] = [];
+  const error = console.error;
+  console.error = (line: string) => void logged.push(line);
+  try {
+    ws.say({ t: "diag", what: "list_bottom", why: "snapshot", gap: 900, height: [5000, 1200], items: [120, 40], view: 650, flags: "stick", trail: [["snap", 10, 1]] });
+    ws.say({ t: "diag", what: "list_bottom", why: "snapshot", gap: 900, height: [5000, 1200], items: [120, 40], view: 650, flags: "", trail: [] });
+    ws.say({ t: "diag", what: "anything", text: "a sentence" });
+    await sleep(20);
+  } finally {
+    console.error = error;
+  }
+  assert.deepEqual(ws.got("error"), []);
+  assert.equal(logged.length, 1, "once in a while");
+  assert.match(logged[0], /went to its bottom by itself \(snapshot\): from 900px above it/);
+  hub.close();
+});

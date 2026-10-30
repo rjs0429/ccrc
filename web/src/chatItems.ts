@@ -60,17 +60,17 @@ export function joined(c: Held, part: "earlier" | "gap", page: HistoryPage): Par
   return { items: [...c.items.slice(0, at), ...fresh, ...c.items.slice(at)], gap, ...aside };
 }
 
-// What Claude is writing now. ended: a thought that has ended and stays on screen until its item comes.
+// What Claude is writing now. ended: a thought or reply that has ended and stays on screen until its item comes.
 export interface Streamed {
   text: string;
   thinking: boolean;
   ended?: boolean;
 }
 
-// What a stream message makes of the stream on screen. A thought that ends stays until what comes next (its item
-// first) takes its place, so the conversation does not shrink between the two.
+// What a stream message makes of the stream on screen. A thought or reply that ends stays until what comes next (its
+// item first) takes its place, so the conversation does not shrink between the two.
 export function streamed(cur: Streamed | undefined, text: string, thinking: boolean): Streamed | undefined {
   if (text || thinking) return { text, thinking };
   if (cur?.ended) return cur;
-  return cur?.thinking && cur.text ? { ...cur, ended: true } : undefined;
+  return cur?.text ? { ...cur, ended: true } : undefined;
 }

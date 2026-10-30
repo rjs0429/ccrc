@@ -8,6 +8,7 @@ export const g3: Record<string, string> = {
   불러오기: "Load",
   "맨 아래로": "Scroll to bottom",
   "새 내용이 있습니다": "New content below",
+  "새 내용": "New content",
   "대화가 바뀌었습니다": "The conversation changed",
   "답할 요청이 있습니다": "A request is waiting for your answer",
   "작업 폴더가 없어 이 세션을 시작할 수 없습니다: {folder}": "The working folder is missing, so this session can't start: {folder}",

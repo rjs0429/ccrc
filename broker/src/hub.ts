@@ -3,6 +3,7 @@ import type { Audit } from "./audit.ts";
 import { isLang } from "./lang.ts";
 import type { Leases } from "./lease.ts";
 import { PASSKEY_CLOSE } from "./passkeys.ts";
+import { phoneNotes } from "./phone-notes.ts";
 import {
   CALL_OPS,
   FOLDER_OPS,
@@ -153,6 +154,7 @@ export class Hub {
   private windows = new WeakMap<WebSocket, WindowTag>();
   // What the window follows of the session it shows, sent to it as it changes.
   private follows: Follows;
+  private notePhone = phoneNotes();
   // Whether a passkey has to confirm the login of a window on this device before it is answered again.
   passkeyDue?: (device: string) => boolean;
   // The build of the web app served now, told to each window as it becomes the one in use.
@@ -416,6 +418,9 @@ export class Hub {
         return;
       case "unfollow":
         this.follows.stop(str(msg.id, 64));
+        return;
+      case "diag":
+        this.notePhone(msg);
         return;
       // A message the page names comes again after each reconnect until it hears sent; the first one is the one taken.
       case "send": {

@@ -41,11 +41,11 @@ import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { brokerSessionsBlocked, closedText, errorText, hostLabel, inboxNotes, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
 import { nav } from "../nav.ts";
-import { call, composerInsert, dropParked, focusDone, getState, joinParked, loadMore, onReading, openAt, openSettingsFrom, refreshChat, requestShown, send, sendMessage, toast, useApp } from "../state.ts";
+import { call, composerInsert, dropParked, focusDone, getState, joinParked, listBottom, loadMore, onReading, openAt, openSettingsFrom, refreshChat, requestShown, send, sendMessage, toast, useApp } from "../state.ts";
 import { withEarlier } from "../chatItems.ts";
 import { markShown, newest, type PeerSent } from "../peerSent.ts";
 import { takeSent } from "../sentPreviews.ts";
-import { glideTop, useToTop } from "../topTap.ts";
+import { glideTo, glideTop, useToTop } from "../topTap.ts";
 import { worktreeOf } from "../../../broker/src/worktree-names.ts";
 import { placeLabel, shownBranch } from "../worktree.ts";
 import { FileViewer } from "../components/viewer/lazy.ts";
@@ -54,14 +54,26 @@ import { FileViewer } from "../components/viewer/lazy.ts";
 // new messages again; one that follows them goes on while it rests within NEAR_BOTTOM_PX of the bottom.
 const PIN_PX = 2;
 const NEAR_BOTTOM_PX = 160;
-// What came while a finger or a selection held the list at its bottom is followed, smoothly, while the way down is
-// shorter than this share of the list's height; else the list stays and the jump button marks it.
-const RESUME_SHARE = 1 / 3;
-// The jump button takes a press only once the list has not moved under the user's scroll (a drag or its fling) for this
-// long: a tap meant to stop a fling can land on it.
+// A finger that stays on the list HOLD_MS holds it, as a selection in it does: nothing moves the list, what comes
+// meanwhile is not followed and the jump button shows it with its chip. After a shorter touch, or a fling, that began or
+// ended at the bottom, what came is followed smoothly while the way down is shorter than FOLLOW_SHARE of the list.
+const HOLD_MS = 300;
+const FOLLOW_SHARE = 1;
+// The jump button takes no press while the user's scroll (a drag or its fling) moves the list faster than FLING_PX_MS,
+// as measured over at least SPEED_MS of whole pixels, nor for JUMP_GUARD_MS after: a tap meant to stop a fling can land
+// on it.
+const FLING_PX_MS = 0.1;
+const SPEED_MS = 50;
 const JUMP_GUARD_MS = 300;
 // A way up to the top that has not got there by then, its scroll cut short, lets the parts in where it is.
 const RISE_MS = 1500;
+// A smooth scroll to the bottom has ended once the list stays still for GLIDE_REST_MS (looked at every GLIDE_CHECK_MS).
+const GLIDE_CHECK_MS = 80;
+const GLIDE_REST_MS = 160;
+// The bottom reached from more than a screen away by nothing the user did or asked for in the ASKED_MS before is
+// recorded with what led there (the last TRAIL_MAX happenings).
+const ASKED_MS = 4000;
+const TRAIL_MAX = 10;
 // How many items in view, and above them, a change of the conversation tries to keep in place, the first still there.
 const ANCHORS_IN_VIEW = 4;
 const ANCHORS_ABOVE = 4;
@@ -80,6 +92,7 @@ const TOUCH_MS = 600;
 // The user's scroll ends once no finger is on the list and it has not scrolled for this long.
 const REST_MS = 150;
 const gapBelow = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight;
+const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const fingersOn = (el: Element | null, touches: TouchList) => [...touches].filter((t) => el?.contains(t.target as Node)).length;
 // A viewer an item opens over the page through a portal (a photo, a sent file) hands its React events up through the
 // item; its touches, wheel and keys are not the list's.
@@ -155,7 +168,8 @@ function PartLoader({ part, skipped, loading, failed, onLoad }: { part: "earlier
   );
 }
 
-// Hangs from the top edge of the to-do panel and composer, so it floats just above them whatever their height.
+// Hangs from the top edge of the to-do panel and composer, so it floats just above them whatever their height. Content
+// the list did not follow turns it into a chip that says so.
 function JumpButton({ unseen, onClick }: { unseen: boolean; onClick: () => void }) {
   return (
     <div className="relative h-0 tiny:hidden">
@@ -163,12 +177,20 @@ function JumpButton({ unseen, onClick }: { unseen: boolean; onClick: () => void 
         onClick={onClick}
         onMouseDown={(e) => e.preventDefault()}
         aria-label={t("맨 아래로")}
-        className="group absolute bottom-2 left-1/2 z-10 flex size-11 -translate-x-1/2 items-center justify-center"
+        title={unseen ? t("새 내용이 있습니다") : undefined}
+        className="group absolute bottom-2 left-1/2 z-10 flex h-11 min-w-11 -translate-x-1/2 items-center justify-center"
+        data-jump
       >
-        <span className="relative flex size-9 items-center justify-center rounded-full border border-line bg-surface text-fg shadow-md group-active:bg-surface-2">
-          <Icon.arrowDown className="size-[18px]" />
-          {unseen && <span className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-accent ring-2 ring-bg" title={t("새 내용이 있습니다")} data-unseen />}
-        </span>
+        {unseen ? (
+          <span className="flex h-9 items-center gap-1 rounded-full bg-accent pr-3.5 pl-2.5 text-[13px] font-medium whitespace-nowrap text-white shadow-md group-active:opacity-80" data-unseen>
+            <Icon.arrowDown className="size-4" />
+            {t("새 내용")}
+          </span>
+        ) : (
+          <span className="flex size-9 items-center justify-center rounded-full border border-line bg-surface text-fg shadow-md group-active:bg-surface-2">
+            <Icon.arrowDown className="size-[18px]" />
+          </span>
+        )}
       </button>
     </div>
   );
@@ -216,10 +238,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const stick = useRef(true);
-  // A smooth scroll to the bottom from the jump button, until it lands or the user touches the list; a touch
-  // stops it where it is, since browsers do not all cancel a smooth scroll for one. A write to the position would stop
-  // it short, so a change on the way sends it on to the new bottom, and no part loads meanwhile.
+  // A smooth scroll to the bottom (the jump button, a tap's way down) until it lands or a touch stops it where it is; no
+  // part loads meanwhile. One under way (gliding) is never started again, which stutters: what came on the way is taken
+  // from where it ends.
   const glide = useRef(false);
+  const gliding = useRef<{ at: number; top: number; from: number } | null>(null);
+  const glideTimer = useRef<number | undefined>(undefined);
   // The way up to the top of what the list holds, for a tap on the status bar: no part goes in on the way, and one that
   // loaded waits for the top; a touch stops it as it does a glide.
   const rising = useRef(false);
@@ -252,14 +276,78 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const owed = useRef<{ follow?: boolean; hold?: boolean }>({});
   const restTimer = useRef<number | undefined>(undefined);
   const movedAt = useRef(0);
+  // When the touch on the list began and ended, where the list stood as it began (a finger that has not moved it since
+  // is resting on it), the moment it has held the list (HOLD_MS), and the list's position when its speed was last
+  // looked at.
+  const touchAt = useRef(0);
+  const touchTop = useRef(0);
+  const liftAt = useRef(0);
+  const holdTimer = useRef<number | undefined>(undefined);
+  const seenAt = useRef({ at: 0, top: 0 });
   // Whether the list was at its bottom when a finger or a selection began to hold it, or the user's scroll took it there.
   const paused = useRef(false);
   const frame = useRef(0);
-  // While text in the list is selected the list follows nothing and keeps what is in view in place, as for a scroll;
-  // it follows once nothing there is selected.
+  // While text in the list is selected the list follows nothing and keeps what is in view in place, as for a scroll.
   const reading = useRef(false);
   const [away, setAway] = useState(false);
   const [unseen, setUnseen] = useState(false);
+  // For the record of the list reaching its bottom unasked: the gap below it, its height and state as last seen, what
+  // last moved it other than the user, when the user last asked for the bottom, and what happened to it lately.
+  const seenGap = useRef(0);
+  const seenHeight = useRef(0);
+  const seenItems = useRef(0);
+  const seenFlags = useRef("");
+  const shownCount = useRef(0);
+  const movedBy = useRef<{ why: string; at: number } | null>(null);
+  const askedAt = useRef(0);
+  const trail = useRef<{ k: string; at: number; n: number }[]>([]);
+
+  const movedFor = (why: string) => {
+    movedBy.current = { why, at: performance.now() };
+  };
+  // Keeping to the bottom and following what comes hold only for a list last seen near its bottom, or just asked to go
+  // there (a message sent, the jump button).
+  const nearEnd = () => seenGap.current < NEAR_BOTTOM_PX || performance.now() - askedAt.current < ASKED_MS;
+  const note = (k: string) => {
+    const at = performance.now();
+    const last = trail.current.at(-1);
+    if (last?.k === k) {
+      last.at = at;
+      last.n++;
+      return;
+    }
+    trail.current.push({ k, at, n: 1 });
+    if (trail.current.length > TRAIL_MAX) trail.current.shift();
+  };
+
+  // The bottom reached from more than a screen above it with nothing the user did or asked for goes to the broker's log,
+  // with what moved the list there and what happened before; a list the content of which shrank under it says so.
+  const watchBottom = () => {
+    const el = listRef.current;
+    if (!el?.clientHeight) return;
+    const gap = gapBelow(el);
+    const was = { gap: seenGap.current, height: seenHeight.current, items: seenItems.current, flags: seenFlags.current };
+    const flag = (k: string, on: boolean) => (on ? k : "");
+    seenGap.current = gap;
+    seenHeight.current = el.scrollHeight;
+    seenItems.current = shownCount.current;
+    seenFlags.current = [flag("pinned", pinned.current), flag("stick", stick.current), flag("glide", glide.current), flag("rise", rising.current), flag("scroll", scrolling.current), flag("finger", fingers.current > 0), flag("select", reading.current)]
+      .filter(Boolean)
+      .join(" ");
+    if (was.gap <= el.clientHeight || gap >= PIN_PX) return;
+    const now = performance.now();
+    const by = movedBy.current && now - movedBy.current.at < 1000 ? movedBy.current.why : undefined;
+    if (now - askedAt.current < ASKED_MS || (!by && scrolling.current && scrolled.current)) return;
+    listBottom({
+      why: by ?? (el.scrollHeight < was.height - el.clientHeight ? "shrink" : "unknown"),
+      gap: Math.round(was.gap),
+      height: [Math.round(was.height), Math.round(el.scrollHeight)],
+      items: [was.items, shownCount.current],
+      view: Math.round(el.clientHeight),
+      flags: was.flags,
+      trail: trail.current.map((e) => [e.k, Math.round(now - e.at), e.n]),
+    });
+  };
 
   // The list follows new content while it sticks to the bottom; the jump button shows while it does not.
   const follow = (on: boolean) => {
@@ -268,7 +356,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (on) setUnseen(false);
   };
 
-  // New content the list does not follow shows on the jump button; while text is selected it waits there to be followed.
+  // New content the list does not follow shows on the jump button, what comes while text is selected too.
   const unfollowed = () => {
     setUnseen(true);
     if (!stick.current) return;
@@ -276,17 +364,23 @@ export function Chat({ sessionId }: { sessionId: string }) {
     setAway(true);
   };
 
-  // Once a finger or a selection lets go of the list, it glides down to what came or grew meanwhile if it was at its
-  // bottom then and the way is short; else it stays, follows no more, and the jump button marks what came. held: a
-  // change of size waited too.
-  const resume = (held = false) => {
+  const holding = () => fingers.current > 0 && performance.now() - touchAt.current >= HOLD_MS;
+  const shownHeld = () => {
+    setAway(true);
+    setUnseen(true);
+  };
+
+  // Once a finger or a selection lets go of the list: at its bottom it follows again, and unless it was held (free) it
+  // glides down to what came meanwhile while the way is short; else it stays, follows no more, and the jump button marks
+  // what came. held: a change of size waited too.
+  const resume = (held = false, free = false) => {
     const el = listRef.current;
     if (!el) return;
     const gap = gapBelow(el);
-    if (glide.current || gap < PIN_PX || (paused.current && gap < el.clientHeight * RESUME_SHARE)) {
-      glide.current = gap >= PIN_PX && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (glide.current || gap < PIN_PX || (free && paused.current && gap < el.clientHeight * FOLLOW_SHARE)) {
+      glide.current = gap >= PIN_PX && !reduced();
       follow(true);
-      toBottom();
+      toBottom("resume");
       return;
     }
     pinned.current = false;
@@ -295,10 +389,17 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (held) hold();
   };
 
-  // A new snapshot holds none of the items read: the list stays where it is and says so.
-  const lost = () => {
+  // A new snapshot holds none of the items read: the list keeps the distance from its end it had before (before), at
+  // most up to the top of what it holds now, and says so.
+  const lost = (before: number) => {
     const el = listRef.current;
     if (!el) return;
+    const top = Math.max(0, el.scrollHeight - el.clientHeight - before);
+    if (Math.abs(el.scrollTop - top) > 0.5) {
+      movedFor("lost");
+      el.scrollTop = top;
+    }
+    note("lost");
     lastTop.current = el.scrollTop;
     pinned.current = gapBelow(el) < PIN_PX;
     follow(pinned.current);
@@ -339,16 +440,20 @@ export function Chat({ sessionId }: { sessionId: string }) {
   };
 
   // False when none of the anchored items is in the list. Where the browser keeps the view in place itself, only a part
-  // put in before the item in view, a new snapshot or what a touch opened (force) is set right here.
-  const keepAnchor = (force = false): boolean => {
+  // put in before the item in view, a new snapshot or what a touch opened (force) is set right here. During the user's
+  // scroll nothing is, but for a finger resting on the list (still).
+  const keepAnchor = (force = false, still = false): boolean => {
     const el = listRef.current;
     if (!el) return false;
     for (const a of anchors.current) {
       const row = el.querySelector<HTMLElement>(`[data-item="${CSS.escape(a.id)}"]`);
       if (!row) continue;
-      if (scrolling.current || (!force && browserAnchors())) return true;
+      if ((scrolling.current && !still) || (!force && browserAnchors())) return true;
       const moved = row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top;
-      if (Math.abs(moved) > 0.5) el.scrollBy(0, moved);
+      if (Math.abs(moved) > 0.5) {
+        movedFor("keep");
+        el.scrollBy(0, moved);
+      }
       lastTop.current = el.scrollTop;
       return true;
     }
@@ -390,34 +495,83 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const now = m.offset < 0 ? (m.node as Element).getBoundingClientRect().top : charTop(m.node, m.offset);
     if (now === undefined) return false;
     const moved = now - el.getBoundingClientRect().top - m.top;
-    if (Math.abs(moved) > 0.5) el.scrollBy(0, moved);
+    if (Math.abs(moved) > 0.5) {
+      movedFor("mark");
+      el.scrollBy(0, moved);
+    }
     lastTop.current = el.scrollTop;
     return true;
   };
 
-  const toBottom = () => {
+  // why: what moves the list there, for the record of the bottom reached unasked.
+  const toBottom = (why: string) => {
     const el = listRef.current;
     if (!el) return;
-    if (glide.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    else {
-      if (gapBelow(el) > 0.5) el.scrollTop = el.scrollHeight;
-      lastTop.current = el.scrollTop;
-      pinned.current = true;
+    if (glide.current) return glideDown();
+    if (gapBelow(el) > 0.5) {
+      movedFor(why);
+      el.scrollTop = el.scrollHeight;
     }
+    lastTop.current = el.scrollTop;
+    pinned.current = true;
+  };
+
+  // Starts the smooth scroll to the bottom unless one is under way.
+  const glideDown = () => {
+    const el = listRef.current;
+    if (!el || gliding.current) return;
+    if (gapBelow(el) < PIN_PX) return landed();
+    gliding.current = { at: performance.now(), top: el.scrollTop, from: el.scrollTop };
+    movedFor("glide");
+    note("glide");
+    glideTo(el, () => el.scrollHeight, () => glide.current);
+    clearTimeout(glideTimer.current);
+    glideTimer.current = window.setTimeout(glided, GLIDE_CHECK_MS);
+  };
+
+  // Once the smooth scroll stays still it has ended, short of a bottom that grew on the way or cut short: the rest is
+  // taken at once while short (as following does), else glided again from there.
+  const glided = () => {
+    const el = listRef.current;
+    const g = gliding.current;
+    if (!el || !g || !glide.current) return;
+    const now = performance.now();
+    if (Math.abs(el.scrollTop - g.top) > 0.5) {
+      g.top = el.scrollTop;
+      g.at = now;
+    } else if (now - g.at >= GLIDE_REST_MS) {
+      gliding.current = null;
+      if (gapBelow(el) >= NEAR_BOTTOM_PX && Math.abs(el.scrollTop - g.from) > 0.5) return glideDown();
+      glide.current = false;
+      toBottom("glide");
+      return landed();
+    }
+    glideTimer.current = window.setTimeout(glided, GLIDE_CHECK_MS);
+  };
+
+  // The way down has reached the bottom: the list follows from there.
+  const landed = () => {
+    glide.current = false;
+    gliding.current = null;
+    clearTimeout(glideTimer.current);
+    pinned.current = true;
+    follow(true);
   };
 
   // After any change of size: the bottom while the list is pinned there, else the item in view where it was, or while
-  // its width settles the text read at its top. A list with no height shows nothing to hold.
+  // its width settles the text read at its top; a part put in before the item in view (force) keeps that item where it
+  // was even at the bottom. A list with no height shows nothing to hold.
   const hold = (force = false) => {
     const el = listRef.current;
     if (!el?.clientHeight || turned()) return;
     catchUp();
     if (scrolling.current) {
       owed.current.hold = true;
+      if (fingers.current && Math.abs(el.scrollTop - touchTop.current) < 0.5 && keepAnchor(false, true)) touchTop.current = el.scrollTop;
       return;
     }
     const tapped = performance.now() - touched.current <= TOUCH_MS;
-    if (glide.current || (pinned.current && !tapped && !reading.current)) toBottom();
+    if (!force && (glide.current || (pinned.current && nearEnd() && !tapped && !reading.current))) toBottom("hold");
     else {
       if (!(turning.current && keepMark())) keepAnchor(force || tapped);
       if (!reading.current) pinned.current = gapBelow(el) < PIN_PX;
@@ -445,15 +599,19 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const jump = () => {
     if (!listRef.current || performance.now() - movedAt.current < JUMP_GUARD_MS) return;
     stopScroll();
-    glide.current = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    askedAt.current = performance.now();
+    note("jump");
+    glide.current = !reduced();
     follow(true);
-    toBottom();
+    toBottom("jump");
   };
 
   const endGlide = () => {
     const el = listRef.current;
     if (!(glide.current || rising.current) || !el) return;
     glide.current = false;
+    gliding.current = null;
+    clearTimeout(glideTimer.current);
     rising.current = false;
     el.scrollTo({ top: el.scrollTop });
   };
@@ -462,6 +620,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const arrived = () => {
     rising.current = false;
     clearTimeout(riseTimer.current);
+    note("arrive");
     if (!joinParked(sessionId)) loadParts(true);
   };
 
@@ -469,12 +628,15 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const el = listRef.current;
     if (!el || el.scrollTop < 1 || scrolling.current) return;
     glide.current = false;
+    gliding.current = null;
+    clearTimeout(glideTimer.current);
     rising.current = true;
     pinned.current = false;
     follow(false);
+    note("rise");
     clearTimeout(riseTimer.current);
     riseTimer.current = window.setTimeout(() => rising.current && arrived(), RISE_MS);
-    glideTop(el);
+    glideTop(el, () => rising.current);
   };
   useToTop(rise);
 
@@ -484,11 +646,12 @@ export function Chat({ sessionId }: { sessionId: string }) {
     takeAnchor((e.target as HTMLElement).closest<HTMLElement>("[data-item]"));
   };
 
-  // A loaded part goes in only while the list rests, from where the user is reading then.
+  // A loaded part goes in only while the list rests, from where the user is reading then, even at the bottom.
   const canJoin = () => {
     if (scrolling.current || rising.current) return false;
     catchUp();
-    if (!pinned.current) takeAnchor();
+    takeAnchor();
+    note("join");
     return true;
   };
 
@@ -509,8 +672,14 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (!el || turned()) return;
     const gap = gapBelow(el);
     const up = el.scrollTop < lastTop.current - 0.5;
+    const now = performance.now();
+    const dt = now - seenAt.current.at;
+    if (dt >= SPEED_MS) {
+      if (scrolling.current && Math.abs(el.scrollTop - seenAt.current.top) > FLING_PX_MS * dt) movedAt.current = now;
+      seenAt.current = { at: now, top: el.scrollTop };
+    }
     lastTop.current = el.scrollTop;
-    if (gap < PIN_PX) glide.current = false;
+    if (gap < PIN_PX && glide.current) landed();
     pinned.current = gap < PIN_PX || (pinned.current && !up);
     if (scrolling.current && pinned.current) paused.current = true;
     const near = gap < PIN_PX || (stick.current && (gap < NEAR_BOTTOM_PX || !up));
@@ -519,6 +688,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (!scrolling.current && (!pinned.current || reading.current)) takeAnchor();
     if (rising.current && el.scrollTop < 1) arrived();
     else loadParts(true);
+    watchBottom();
   };
 
   // A scroll whose event is still to come is looked at before anything here acts, so nothing undoes it.
@@ -530,13 +700,16 @@ export function Chat({ sessionId }: { sessionId: string }) {
   // The user's scroll has ended: what waited for it happens now, from where they stopped.
   const settle = () => {
     clearTimeout(restTimer.current);
+    clearTimeout(holdTimer.current);
     if (!scrolling.current) return;
     scrolling.current = false;
+    note("rest");
     if (scrolled.current) takeAnchor();
     const { follow: news, hold: held } = owed.current;
     owed.current = {};
     const grew = held && pinned.current && performance.now() - touched.current > TOUCH_MS;
-    if ((news || grew) && (glide.current || (stick.current && !reading.current))) resume(held);
+    const free = liftAt.current - touchAt.current < HOLD_MS;
+    if ((news || grew) && (glide.current || (stick.current && !reading.current))) resume(held, free);
     else {
       if (news) unfollowed();
       if (held) hold();
@@ -544,13 +717,14 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (!joinParked(sessionId)) loadParts(false);
   };
 
-  // Text selected in the list holds it from where it is. Once nothing there is selected, the list takes up what came
-  // meanwhile (resume) or goes back to the bottom it was at, ahead of the tap that unselected it; during the user's
-  // scroll, that waits for the rest.
+  // Text selected in the list holds it from where it is. Once nothing there is selected, the list follows again from
+  // the bottom it was at, ahead of the tap that unselected it, and leaves what came meanwhile to the jump button
+  // (resume); during the user's scroll, that waits for the rest.
   const selected = () => {
     const now = Boolean(selectedIn(contentRef.current));
     if (now === reading.current) return;
     reading.current = now;
+    note(now ? "select" : "unselect");
     if (scrolling.current) return;
     if (now) {
       paused.current = pinned.current;
@@ -581,6 +755,11 @@ export function Chat({ sessionId }: { sessionId: string }) {
     if (!scrolling.current) {
       scrolled.current = false;
       paused.current = pinned.current;
+      touchAt.current = performance.now();
+      touchTop.current = listRef.current?.scrollTop ?? 0;
+      note("touch");
+      clearTimeout(holdTimer.current);
+      holdTimer.current = window.setTimeout(() => holding() && owed.current.follow && shownHeld(), HOLD_MS);
     }
     scrolling.current = true;
     restSoon();
@@ -591,6 +770,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const el = listRef.current;
     fingers.current = fingersOn(el, (e as TouchEvent).touches);
     if (fingers.current) return;
+    liftAt.current = performance.now();
     if (!scrolled.current && el && Math.abs(el.scrollTop - lastTop.current) < 0.5) settleNow.current();
     else restNow.current();
   }).current;
@@ -703,6 +883,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const id = `peer-${Date.now()}-${peerSent.length}`;
     setPeerSent((list) => [...list, { id, ts: new Date().toISOString(), text, from: "remote", since: newest(chat?.items ?? []) }]);
     unread();
+    askedAt.current = performance.now();
     follow(true);
     call(sessionId, "inbox_send", { text, lang: lang() }).then(
       ({ msgId }) => {
@@ -738,6 +919,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     const ok = sendMessage(sessionId, text, attachments);
     if (ok) {
       unread();
+      askedAt.current = performance.now();
       follow(true);
     }
     if (ok && c && isDialogCommand(c.name)) setAwaited({ title: text.trim(), name: commandName(c.name), before, late: false });
@@ -818,6 +1000,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const reveal = (el: Element) => {
     const list = listRef.current!;
     stopScroll();
+    askedAt.current = performance.now();
     el.scrollIntoView({ block: "center" });
     glide.current = false;
     pinned.current = gapBelow(list) < PIN_PX;
@@ -855,12 +1038,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
   };
   const roots = useMemo(() => (cwd ? [cwd] : []), [cwd]);
 
-  // Only a message, request or reply added at the end is new: it scrolls into view near the bottom and is marked
-  // away from it. Any other change keeps the list at the bottom while it is pinned there, else the item in view in place.
-  // A new snapshot goes by where the list was before it: the change of height it makes can move the list by itself.
+  // Only a message, request or reply added at the end is new: it scrolls into view near the bottom unless a finger holds
+  // the list, and is marked away from it. Any other change keeps the list pinned at the bottom, else the item in view in
+  // place. A new snapshot goes by where the list was before it, since the change of height it makes can move the list.
   useLayoutEffect(() => {
     const el = listRef.current;
     if (!el || !chat?.loaded) return;
+    shownCount.current = items.length;
     const now = {
       snaps: chat.snaps,
       first: items[0]?.id,
@@ -875,17 +1059,24 @@ export function Chat({ sessionId }: { sessionId: string }) {
     ends.current = now;
     if (chat.focus) return;
     if (was && was.snaps !== now.snaps) {
-      if (scrolling.current) owed.current.hold = true;
-      else if (glide.current || (pinned.current && !reading.current)) {
-        toBottom();
+      note("snap");
+      const before = seenGap.current;
+      if (scrolling.current) {
+        if (keepAnchor(true)) owed.current.hold = true;
+        else lost(before);
+      } else if (glide.current || (pinned.current && nearEnd() && !reading.current)) {
+        toBottom("snapshot");
         follow(true);
-      } else if (!keepAnchor(true)) lost();
+      } else if (!keepAnchor(true)) lost(before);
       loadParts(false);
+      watchBottom();
       return;
     }
     catchUp();
     if (!was) {
-      toBottom();
+      askedAt.current = performance.now();
+      note("open");
+      toBottom("open");
       follow(true);
     } else {
       const came = (id?: string, before?: string) => id !== before && (before === undefined || items.some((i) => i.id === before));
@@ -895,15 +1086,20 @@ export function Chat({ sessionId }: { sessionId: string }) {
         now.stream > was.stream ||
         now.pending > was.pending ||
         now.queued > was.queued;
-      if (added && (glide.current || (stick.current && !reading.current))) {
-        if (scrolling.current) owed.current.follow = true;
-        else toBottom();
+      if (added) note("end");
+      if (added && (glide.current || (stick.current && nearEnd() && !reading.current))) {
+        if (!scrolling.current) toBottom("follow");
+        else {
+          owed.current.follow = true;
+          if (holding()) shownHeld();
+        }
       } else {
         if (added) unfollowed();
         hold(now.first !== was.first || now.gap !== was.gap);
       }
     }
     loadParts(false);
+    watchBottom();
   });
 
   // The list's width changed, as on a rotation: the text read at its top stays there at each step and once more when the
@@ -920,7 +1116,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
     }, TURN_MS);
     catchUp();
     if (scrolling.current) owed.current.hold = true;
-    else if (glide.current || (pinned.current && !reading.current)) toBottom();
+    else if (glide.current || (pinned.current && nearEnd() && !reading.current)) toBottom("turn");
     else if (!keepMark()) keepAnchor(true);
   };
 
@@ -966,6 +1162,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
       clearTimeout(restTimer.current);
       clearTimeout(turnTimer.current);
       clearTimeout(riseTimer.current);
+      clearTimeout(glideTimer.current);
+      clearTimeout(holdTimer.current);
     };
   }, []);
 
@@ -976,7 +1174,8 @@ export function Chat({ sessionId }: { sessionId: string }) {
     focusDone(sessionId);
     const el = listRef.current?.querySelector(`[data-item="${CSS.escape(focus)}"]`);
     if (!el) {
-      toBottom();
+      askedAt.current = performance.now();
+      toBottom("focus");
       follow(true);
       api.thread(sessionId, focus).then(
         (t) => setThread({ ...t, ...(focusEarlier ? { earlier: true } : {}) }),
@@ -1074,7 +1273,6 @@ export function Chat({ sessionId }: { sessionId: string }) {
             scrolledAt.current = performance.now();
             if (scrolling.current) {
               scrolled.current = true;
-              movedAt.current = scrolledAt.current;
               if (!fingers.current) restSoon();
             }
             frame.current ||= requestAnimationFrame(() => {
