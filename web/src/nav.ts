@@ -356,11 +356,11 @@ function onKey(e: KeyboardEvent): void {
 }
 
 // The app opened at an address of its own: home first, then each screen down to it, so a back goes up to home. One
-// reloaded over a layer steps back to its screen.
+// reloaded over a layer steps back to its screen; one whose entries below are gone from the history starts over.
 export function startNav(): void {
   history.scrollRestoration = "manual";
   const st: unknown = history.state;
-  if (isEntry(st)) {
+  if (isEntry(st) && history.length > st.below) {
     cur = st;
     stack = Array.from({ length: st.layers ?? 0 }, () => "");
     later();

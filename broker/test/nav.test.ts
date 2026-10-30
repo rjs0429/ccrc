@@ -18,6 +18,9 @@ class Browser {
   get state(): unknown {
     return structuredClone(this.entries[this.index].state);
   }
+  get length(): number {
+    return this.entries.length;
+  }
   url(u: string): string {
     return new URL(u, this.href).href;
   }
@@ -261,6 +264,14 @@ test("a reload over a layer steps back to its screen", async () => {
   m.nav.back();
   await idle();
   assert.equal(b.index, 0);
+});
+
+test("a page whose entries below are gone starts over from home", async () => {
+  const { b, m } = await page("http://app.example.com/#/settings/claude", { ccrc: 1, below: 2 });
+  assert.deepEqual(b.hashes(), ["#/", "#/settings", "#/settings/claude"]);
+  m.nav.back();
+  await idle();
+  assert.equal(new URL(b.href).hash, "#/settings");
 });
 
 test("an address set from outside shows its screen, whose back goes to its parent", async () => {
