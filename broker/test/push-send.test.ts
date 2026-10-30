@@ -48,7 +48,7 @@ async function pushService(answers: number[] = []) {
   return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, received };
 }
 
-function setup(dir = tempDir(), retryMs = 30) {
+function setup(dir = tempDir(), retryMs = [30]) {
   const logs: string[] = [];
   const push = new Push(dir, {
     allow: (url) => url.hostname === "127.0.0.1",
@@ -204,37 +204,100 @@ test("a subscription the push service no longer knows is removed", async () => {
   }
 });
 
-test("a busy push service gets one more try a little later, and only one", async () => {
-  const service = await pushService([503, 201, 500, 500]);
-  const { push, logs } = setup(tempDir(), 120);
-  const endpoint = `${service.origin}/push/busy`;
-  push.subscribe({ endpoint, keys: newBrowser().keys }, undefined, { device: "phone" });
-  const manager = Object.assign(new EventEmitter(), { list: async () => [], waitingSessions: () => [A], unreadSessions: () => [], setClaudePush: () => {} });
-  push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteActivity: () => undefined } as unknown as Hub);
+// A session manager with a request of session A waiting, and a way to ask another.
+function asking(waiting = [A]) {
+  const manager = Object.assign(new EventEmitter(), { list: async () => [], waitingSessions: () => waiting, unreadSessions: () => [], setClaudePush: () => {} });
   const ask = (id: string) =>
     manager.emit("event", A, { t: "pending_add", sessionId: A, request: { id, kind: "question", toolName: "AskUserQuestion", input: {}, allowAlways: false } } satisfies ServerMsg);
+  return { manager, ask };
+}
+
+test("a busy push service gets the notification again as the retry schedule says, and no more", async () => {
+  const service = await pushService([503, 201, 500, 500, 500]);
+  const { push, logs } = setup(tempDir(), [40, 60]);
+  const endpoint = `${service.origin}/push/busy`;
+  push.subscribe({ endpoint, keys: newBrowser().keys }, undefined, { device: "phone" });
+  const { manager, ask } = asking();
+  push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteActivity: () => undefined } as unknown as Hub);
 
   ask("r1");
-  await until(() => service.received.length === 1, "the first try");
-  await until(() => service.received.length === 2, "the retry");
-  await until(() => push.status(endpoint).lastSent !== undefined, "the retry's answer");
+  await until(() => service.received.length === 2, "the second try");
+  await until(() => push.status(endpoint).lastSent !== undefined, "the second try's answer");
   assert.equal(push.status(endpoint).lastError, undefined);
+  const host = new URL(service.origin).host;
+  assert.deepEqual(logs, [`push: ${host} answered 503; trying again in 0 s`, `push: ${host} took it on try 2`]);
 
   ask("r2");
-  await until(() => push.status(endpoint).lastError?.status === 500 && service.received.length === 4, "two failed tries");
+  await until(() => service.received.length === 5, "three failed tries");
   await sleep(300);
-  assert.equal(service.received.length, 4, "the retry is not retried");
+  assert.equal(service.received.length, 5, "the last try is not tried again");
   assert.equal(push.status(endpoint).lastError?.status, 500);
   assert.equal(push.status(endpoint).subscribed, true);
+  assert.equal(logs.at(-1), `push: ${host} answered 500; gave up after 3 tries`);
   assert.ok(logs.every((l) => !l.includes("질문")), "logs carry no notification text");
 });
 
-test("an unreachable push service counts as a failed send", async () => {
-  const { push } = setup();
-  const endpoint = "http://127.0.0.1:1/push/none";
+test("a try that is due is left out once a newer notification of its tag went, or its request was answered", async () => {
+  const service = await pushService([503]);
+  const { push, logs } = setup(tempDir(), [150]);
+  const endpoint = `${service.origin}/push/later`;
+  push.subscribe({ endpoint, keys: newBrowser().keys }, undefined, { device: "phone" });
+  const waiting = [A];
+  const { manager, ask } = asking(waiting);
+  push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteActivity: () => undefined } as unknown as Hub);
+  const host = new URL(service.origin).host;
+
+  ask("r1");
+  await until(() => service.received.length === 1, "the first try");
+  ask("r2");
+  await until(() => service.received.length === 2, "the newer notification");
+  await sleep(300);
+  assert.equal(service.received.length, 2, "the older one is not tried again");
+  assert.equal(logs.at(-1), `push: not trying ${host} again: a newer notification replaced it`);
+
+  const second = await pushService([503]);
+  const other = `${second.origin}/push/answered`;
+  push.subscribe({ endpoint: other, keys: newBrowser().keys }, undefined, { device: "tablet" });
+  push.unsubscribe(endpoint);
+  ask("r3");
+  await until(() => second.received.length === 1, "the first try");
+  waiting.length = 0;
+  await sleep(300);
+  assert.equal(second.received.length, 1, "an answered request is not notified again");
+  assert.equal(logs.at(-1), `push: not trying ${new URL(second.origin).host} again: it no longer counts`);
+});
+
+test("a try that is due goes out stamped anew, with the sessions counted by then", async () => {
+  const service = await pushService([503]);
+  const { push } = setup(tempDir(), [60]);
+  const browser = newBrowser();
+  const endpoint = `${service.origin}/push/stamped`;
+  push.subscribe({ endpoint, keys: browser.keys }, undefined, { device: "phone", origin: APP });
+  const waiting = [A];
+  const { manager, ask } = asking(waiting);
+  push.watch(manager as unknown as SessionManager, { isWatching: () => false, remoteActivity: () => undefined } as unknown as Hub);
+  ask("r1");
+  await until(() => service.received.length === 1, "the first try");
+  waiting.push(B);
+  await until(() => service.received.length === 2, "the second try");
+  const [first, again] = service.received.map((r) => JSON.parse(decrypt(r.body, browser.privateKey, browser.auth).toString()));
+  assert.equal(again.tag, first.tag);
+  assert.ok(again.data.at > first.data.at, "made again");
+  assert.deepEqual([first.badge, again.badge], [1, 2]);
+  assert.deepEqual(again.attention.waiting, [A, B]);
+});
+
+test("an unreachable push service counts as a failed send, logged with the network's code for it", async () => {
+  const { push, logs } = setup();
+  const closed = http.createServer();
+  await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+  const { port } = closed.address() as AddressInfo;
+  await new Promise((resolve) => closed.close(resolve));
+  const endpoint = `http://127.0.0.1:${port}/push/none`;
   push.subscribe({ endpoint, keys: newBrowser().keys }, undefined, { device: "local" });
   await assert.rejects(push.test(endpoint), (e: unknown) => e instanceof PushError && e.status === 0);
   assert.equal(push.status(endpoint).lastError?.status, 0);
+  assert.deepEqual(logs, [`push: 127.0.0.1:${port} answered nothing (fetch failed, ECONNREFUSED)`]);
 });
 
 test("a device counts as reachable by notification only through its own subscription whose last send worked", async () => {

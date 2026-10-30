@@ -451,7 +451,7 @@ const service: Step = {
     return { ok: true, detail: `${s.version ?? "running"}${s.linger ? "" : `; stops when you log out (optional: loginctl enable-linger ${ctx.at.user})`}` };
   },
   plan: (ctx) => [
-    `write ${unitFile(ctx.at.xdgConfigHome)}: ExecStart=${ctx.at.ccrc} serve, CCRC_NODE=${ctx.at.node}, Restart=on-failure; Environment lines of a unit already there that setup does not set are kept`,
+    `write ${unitFile(ctx.at.xdgConfigHome)}: ExecStart=${ctx.at.ccrc} serve, CCRC_NODE=${ctx.at.node}, Restart=on-failure, OOMPolicy=continue; Environment lines of a unit already there that setup does not set are kept`,
     `systemctl --user daemon-reload, enable ${SERVICE}, and (re)start it`,
     `when linger is off, ask whether to turn it on (loginctl enable-linger ${ctx.at.user}) so the broker runs while you are logged out; --yes leaves it off`,
     `check http://127.0.0.1:${brokerPort(ctx)}/api/ping`,

@@ -9,6 +9,7 @@ import { run, type Runner } from "./run.ts";
 
 const FIRST_DELAY_MS = 60_000;
 const INTERVAL_MS = 24 * 3600_000;
+const RETRY_MS = 15 * 60_000;
 // After updateChannel or updateRepo changes, so a few edits in a row make one look.
 const RECHECK_DELAY_MS = 5000;
 
@@ -35,6 +36,8 @@ export interface UpdateCheckOptions {
   notify?: (tag: string, url: string | undefined) => boolean;
   firstDelayMs?: number;
   intervalMs?: number;
+  // How soon a look that failed is made again.
+  retryMs?: number;
   log?: (line: string) => void;
 }
 
@@ -55,11 +58,15 @@ export function writeUpdateCheck(state: UpdateCheckState, file = updateCheckFile
   writeFileAtomic(file, JSON.stringify(state, null, 2) + "\n");
 }
 
-// Looks for a release newer than this ccrc a minute after the broker starts and once a day, while updateCheck is on.
+// Looks for a release newer than this ccrc a minute after the broker starts and once a day, while updateCheck is on, and
+// every retryMs after a look that failed until one works. Of failures in a row only a new error is logged.
 export class UpdateCheck {
   private o: Required<Omit<UpdateCheckOptions, "notify" | "installSource">> & Pick<UpdateCheckOptions, "notify" | "installSource">;
   private timers: NodeJS.Timeout[] = [];
   private soon?: NodeJS.Timeout;
+  private retry?: NodeJS.Timeout;
+  private closed = false;
+  private failed?: string;
   private running?: Promise<UpdateCheckState>;
 
   constructor(options: UpdateCheckOptions) {
@@ -74,20 +81,23 @@ export class UpdateCheck {
       now: () => new Date(),
       firstDelayMs: FIRST_DELAY_MS,
       intervalMs: INTERVAL_MS,
+      retryMs: RETRY_MS,
       log: (line) => console.log(line),
       ...options,
     };
   }
 
   start(): void {
-    const tick = () => void this.checkIfOn();
+    const tick = () => void this.checkIfOn().catch(() => {});
     this.timers.push(setTimeout(tick, this.o.firstDelayMs), setInterval(tick, this.o.intervalMs));
     for (const t of this.timers) t.unref();
   }
 
   close(): void {
+    this.closed = true;
     for (const t of this.timers) clearTimeout(t);
     clearTimeout(this.soon);
+    clearTimeout(this.retry);
     this.timers = [];
   }
 
@@ -95,7 +105,7 @@ export class UpdateCheck {
   configChanged(keys: string[]): void {
     if (!keys.some((k) => k === "updateCheck" || k === "updateChannel" || k === "updateRepo")) return;
     clearTimeout(this.soon);
-    this.soon = setTimeout(() => void this.checkIfOn(), RECHECK_DELAY_MS);
+    this.soon = setTimeout(() => void this.checkIfOn().catch(() => {}), RECHECK_DELAY_MS);
     this.soon.unref();
   }
 
@@ -149,7 +159,13 @@ export class UpdateCheck {
     } catch (e) {
       state.error = e instanceof Error ? e.message : String(e);
       if (before.source === source && before.channel === channel && before.latest) state.latest = before.latest;
-      this.o.log(`ccrc: looking for a new version failed: ${state.error}`);
+      if (state.error !== this.failed) this.o.log(`ccrc: looking for a new version failed: ${state.error}; looking again every ${Math.round(this.o.retryMs / 60_000)} minutes until it works`);
+    }
+    this.failed = state.error;
+    clearTimeout(this.retry);
+    if (state.error && !this.closed) {
+      this.retry = setTimeout(() => void this.checkIfOn().catch(() => {}), this.o.retryMs);
+      this.retry.unref();
     }
     // Only an install is told: a development checkout is updated with git, not ccrc update.
     if (state.latest && !state.error && this.o.kind() === "installed" && isNewer(state.latest, this.o.version()) && !state.notified?.includes(state.latest)) {

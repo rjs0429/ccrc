@@ -175,7 +175,7 @@ export class Hub {
       this.standby.delete(ws);
       if (ws === this.active) {
         this.active = undefined;
-        void this.setView(null);
+        void this.setView(null).catch(() => {});
       }
     });
     if (!this.active) this.activate(ws, device);
@@ -689,7 +689,7 @@ export class Hub {
     if (!controlled && this.manager.isControlled(sessionId)) return;
     this.sent(snap);
     send(this.active, { t: "snapshot", sessionId, ...snap });
-    if (!controlled) this.unwatch = this.manager.watch(sessionId, () => void this.pushChanges(sessionId, seq).catch(() => {}));
+    if (!controlled) this.unwatch = this.manager.watch(sessionId, () => this.pushChanges(sessionId, seq).catch(() => {}));
   }
 
   private sent(snap: SnapshotPart): void {

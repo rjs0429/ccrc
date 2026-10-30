@@ -106,7 +106,7 @@ setup 은 단계마다 확인하고 빠진 것만 한다. 그래서 다시 돌�
 | `devices` | 이 컴퓨터가 속한 Tailscale 사용자(`tailscale status --json` 의 `UserID`)의 iOS·Android 기기를 `allowedDevices` 후보로 보여 준다. tailnet 의 다른 사용자 휴대폰은 보여 주지 않는다. `--yes` 면 내 휴대폰이 정확히 하나일 때만 그것을 추가하고, 아니면 아무것도 추가하지 않고 내 휴대폰을 추가하는 법을 알려 준다. 태그가 붙은 컴퓨터나 사용자를 알려 주지 않는 Tailscale 에서는 후보가 없다. 이때는 `ccrc config set allowedDevices '["phone"]'` 처럼 이름을 적는다. config.json 에 이미 목록이 있으면 그대로 둔다 |
 | `account` | ccrc 로그인 ID 와 비밀번호를 정한다(`ccrc passwd`) |
 | `config` | 새 세션을 시작할 수 있는 폴더를 묻고(기본은 홈. `none` 이면 이미 세션이 있는 폴더만), `claudePath` 를 정하고, 브로커 세션의 로그인 방식을 묻는다(`off`, 키를 가려서 입력하는 `apiKey`, `subscription`). config.json 에 이미 있는 설정은 그대로 둔다. 빈 `roots` 목록도 그대로 둔다 |
-| `service` | `~/.config/systemd/user/ccrc.service` 를 쓰고(찾은 Node 로 `<dataDir>/current/bin/ccrc serve` 를 돌린다), 켜서 시작한 뒤 `/api/ping` 을 확인한다. 바꾸는 유닛은 먼저 백업하고, setup 이 직접 쓰지 않는 `Environment` 줄(프록시 등)은 그대로 둔다. linger 는 선택이다. 꺼져 있으면 로그아웃한 동안에도 브로커가 돌도록 켤지 묻는다(`--yes` 면 꺼 둔다). 브로커 세션 안에서는 돌지 않는다([업데이트와 되돌리기](#업데이트와-되돌리기) 참고) |
+| `service` | `~/.config/systemd/user/ccrc.service` 를 쓰고(찾은 Node 로 `<dataDir>/current/bin/ccrc serve` 를 돌린다. `OOMPolicy=continue` 라서 브로커 세션의 프로세스 하나가 메모리가 모자라 끝나도 그것만 끝난다), 켜서 시작한 뒤 `/api/ping` 을 확인한다. 바꾸는 유닛은 먼저 백업하고, setup 이 직접 쓰지 않는 `Environment` 줄(프록시 등)은 그대로 둔다. linger 는 선택이다. 꺼져 있으면 로그아웃한 동안에도 브로커가 돌도록 켤지 묻는다(`--yes` 면 꺼 둔다). 브로커 세션 안에서는 돌지 않는다([업데이트와 되돌리기](#업데이트와-되돌리기) 참고) |
 | `serve` | `tailscale serve --bg --https=8443 http://127.0.0.1:8737` 을 걸고(다시 시작해도 남는다) 휴대폰에서 열 주소를 보여 준다 |
 | `vscode` | 묻고, 백업한 뒤 VS Code 의 `settings.json` 에 `claudeCode.claudeProcessWrapper` 를 넣는다. 주석과 배치는 그대로 둔다 |
 | `phone` | 주소(`qrencode` 가 있으면 터미널 QR 코드도)와 휴대폰에서 할 일을 보여 준다 |
@@ -187,17 +187,18 @@ ccrc rollback              # 마지막 업데이트 전 버전으로
 1. 최신 릴리스 태그를 찾는다(릴리스 후보는 `--channel rc` 나 `updateChannel: "rc"` 일 때만 센다).
 2. 그 태그를 `versions/<version>` 에 받고, `CHANGELOG.md` 의 그 버전 절을 보여 준 뒤(호환성이 깨지는 변경은 따로) 진행할지 묻는다. 0.7.2 부터 설치본에는 `.ccrc-allowed-signers` 가 있고, 태그의 SSH 서명이 그 파일과 맞아야 한다(`git verify-tag`). [릴리스 확인하기](#릴리스-확인하기) 참고. `versions/<version>` 에 이미 있는 사본(`install.sh` 나 이전 업데이트가 남긴 것)은 같은 확인을 통과할 때만 쓰고, 아니면 다시 받는다.
 3. 돌고 있는 버전 옆에서 빌드한다(`npm ci`, `npm run build`). 그동안 서비스는 계속 돈다.
-4. 설정과 상태를 `~/.local/state/ccrc/backup/update-<old>-<new>-<time>/` 에 백업하고, 새 버전의 코드로 옮긴다(migrate).
-5. 전환을 `~/.local/share/ccrc/history.json` 에 기록하고, `current` 링크를 옮기고, `ccrc.service` 를 다시 시작한 뒤 `/api/ping` 이 새 버전을 알릴 때까지 최대 30초 기다린다.
-6. 알리지 않으면 링크를 되돌리고, 백업을 복원하고, 옛 버전을 다시 시작한 뒤 종료 코드 3 으로 끝난다.
-7. 이전 버전은 남기고(열린 VS Code 탭이 아직 그 래퍼를 쓸 수 있다) 더 오래된 버전은 지운다.
-8. 더 할 일을 알려 준다. 래퍼 프로토콜이 바뀌었거나 새 래퍼에 새 기능이 있으면(기능 이름을 알려 준다) VS Code 창을 다시 불러오고, 휴대폰의 홈 화면 앱을 완전히 닫았다 다시 연다. 이 안내는 업데이트하기 전 버전이 한다. 0.7 은 프로토콜 변경만 알려 주므로 [변경 기록](CHANGELOG.ko.md#07-에서-업데이트할-때)의 "0.7 에서 업데이트할 때"를 본다.
+4. 돌고 있는 브로커에 래퍼 소켓으로 일하는 세션(턴이 도는 중, 답을 기다리는 요청, 백그라운드에서 도는 작업)을 묻는다. 서비스를 다시 시작하면 그 세션들이 멈춘다. 있으면 폴더와 함께 보여 주고 계속할지 묻는다. `--yes` 면 보여 주고 계속한다. 아니라고 답하면 아무것도 바꾸지 않고, 새 버전은 다음 실행을 위해 `versions/` 에 남긴다. 0.8.3 전 브로커는 답하지 않는다. 그때는 그렇다고 알리고 계속한다.
+5. 설정과 상태를 `~/.local/state/ccrc/backup/update-<old>-<new>-<time>/` 에 백업하고, 새 버전의 코드로 옮긴다(migrate).
+6. 전환을 `~/.local/share/ccrc/history.json` 에 기록하고, `current` 링크를 옮기고, `ccrc.service` 를 다시 시작한 뒤 `/api/ping` 이 새 버전을 알릴 때까지 최대 30초 기다린다.
+7. 알리지 않으면 링크를 되돌리고, 백업을 복원하고, 옛 버전을 다시 시작한 뒤 종료 코드 3 으로 끝난다.
+8. 이전 버전은 남기고(열린 VS Code 탭이 아직 그 래퍼를 쓸 수 있다) 더 오래된 버전은 지운다.
+9. 더 할 일을 알려 준다. 래퍼 프로토콜이 바뀌었거나 새 래퍼에 새 기능이 있으면(기능 이름을 알려 준다) VS Code 창을 다시 불러오고, 휴대폰의 홈 화면 앱을 완전히 닫았다 다시 연다. 이 안내는 업데이트하기 전 버전이 한다. 0.7 은 프로토콜 변경만 알려 주므로 [변경 기록](CHANGELOG.ko.md#07-에서-업데이트할-때)의 "0.7 에서 업데이트할 때"를 본다.
 
 `ccrc update`, `ccrc rollback`, setup 의 `service` 단계, `ccrc uninstall` 은 브로커 세션 안에서는 돌지 않는다(예: 휴대폰에서 Claude 에게 실행을 시킬 때). 그런 세션은 `ccrc.service` 안에서 돌기 때문에, 서비스를 다시 시작하면 명령이 새 버전을 확인하거나 되돌리기 전에 중간에서 멈춘다.
 
 종료 코드: 0 끝남 또는 할 일 없음, 1 아무것도 바꾸기 전에 멈춤, 3 업데이트가 실패해 옛 버전으로 돌아감, 4 되돌린 뒤 옛 버전을 확인하지 못함(`systemctl --user status ccrc.service` 를 확인한다). `ccrc rollback` 은 서비스를 다시 시작하지 못하면 4 로 끝난다.
 
-`ccrc rollback` 은 마지막 업데이트 전 버전으로 돌아가고, 그 업데이트의 migrate 가 바꿨다고 알린 설정·상태 파일만 되돌린다(지금 파일은 먼저 백업한다). 그래서 그 뒤에 바꾼 비밀번호와 알림 구독은 남는다. 전환을 확인하는 동안에는 Ctrl-C 를 미뤄 두므로, 중간에 끊긴 실행도 되돌릴 수 있다. 0.7.x 로 돌아가면 패스키 확인이 꺼진다. 0.7 은 `passkeys.json` 을 읽지 않아 비밀번호만으로 로그인된다. 패스키는 남아 있으므로 다시 업데이트하면 확인이 돌아온다.
+`ccrc rollback` 은 마지막 업데이트 전 버전으로 돌아가고, 그 업데이트의 migrate 가 바꿨다고 알린 설정·상태 파일만 되돌린다(지금 파일은 먼저 백업한다). 그래서 그 뒤에 바꾼 비밀번호와 알림 구독은 남는다. `ccrc update` 처럼 다시 시작하기 전에 일하는 브로커 세션을 보여 주고 묻는다. 전환을 확인하는 동안에는 Ctrl-C 를 미뤄 두므로, 중간에 끊긴 실행도 되돌릴 수 있다. 0.7.x 로 돌아가면 패스키 확인이 꺼진다. 0.7 은 `passkeys.json` 을 읽지 않아 비밀번호만으로 로그인된다. 패스키는 남아 있으므로 다시 업데이트하면 확인이 돌아온다.
 
 버전은 `install.sh --version` 이 아니라 `ccrc update` 로 바꾼다. `install.sh` 는 전환을 `history.json` 에 기록하지 않아 `ccrc rollback` 으로 되돌릴 수 없다.
 
@@ -296,10 +297,11 @@ setup 이 돌 때 `CCRC_CONFIG_DIR`, `CCRC_STATE_DIR`, `CCRC_DATA_DIR`, `CLAUDE_
 | `~/.config/ccrc/passkeys.json` | 휴대폰들의 패스키: 자격 증명 id 와 공개 키, 각 패스키를 만든 호스트 이름, 등록한 기기, 등록한 때와 마지막으로 쓴 때. 비밀은 없다. 첫 패스키를 등록할 때 만든다 |
 | `~/.config/ccrc/anthropic-api-key` | `brokerSessions: "apiKey"` 에 쓰는 API 키(0600) |
 | `~/.config/systemd/user/ccrc.service` | 서비스 |
-| `~/.local/state/ccrc/audit.jsonl` | 감사 로그 |
+| `~/.config/systemd/user/ccrc.service.d/oom-policy.conf` | 0.8.3 전에 쓴 유닛의 `OOMPolicy=continue`. 브로커가 서비스로 처음 시작할 때 더한다(setup 은 유닛에 직접 쓴다) |
+| `~/.local/state/ccrc/audit.jsonl`, `audit.jsonl.1` | 감사 로그. 5MB 를 넘으면 `audit.jsonl.1` 로 옮기고, 활동 화면은 거기까지 이어 읽는다 |
 | `~/.local/state/ccrc/backup/` | 백업: 설정 migrate, 업데이트, 되돌리기, VS Code 설정, 서비스 유닛, 고쳐 쓴 대화 기록. 업데이트와 되돌리기 백업은 설정 폴더를 통째로 복사하므로 API 키, 비밀번호 해시, Web Push 키가 들어 있다. 가장 새 백업 셋과 마지막 업데이트 세 번의 백업만 남긴다 |
 | `~/.local/state/ccrc/update-check.json` | 마지막 새 릴리스 확인 |
-| `~/.local/state/ccrc/install.log`, `wrapper.log` | `install.sh` 와 래퍼의 로그(대화 내용은 없다) |
+| `~/.local/state/ccrc/install.log`, `wrapper.log` | `install.sh` 와 래퍼의 로그(대화 내용은 없다). `wrapper.log` 는 1MB 를 넘으면 `wrapper.log.1` 로 옮긴다 |
 | `~/.local/state/ccrc/uploads/` | 휴대폰 첨부. 24시간 둔다 |
 | `~/.local/state/ccrc/*.json`, `turns/`, `cli/`, `doctor/` | 작업 상태: 보관한 세션과 읽지 않은 세션, VS Code 보관에서 꺼낸 세션, 최근 원격 활동, 시작 설정, 모델과 context window 목록, 마지막 호환성 점검, 끊긴 턴 |
 | `$XDG_RUNTIME_DIR/ccrc/link.sock` | 래퍼와 브로커의 소켓 |

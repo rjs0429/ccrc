@@ -3,6 +3,7 @@ import net from "node:net";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { guarded, lineKind } from "./guard.ts";
 import { LineSplitter, parseLine } from "./lines.ts";
 import { LINK_VERSION, REMOTE_PREFIX, isPrivateDir, type BrokerFrame, type Hello } from "./protocol.ts";
 
@@ -29,7 +30,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
 // One wrapper connection, that is one Claude Code conversation process started by VS Code.
 // Events: hello (Hello), session (id, when a line names a session other than the known one),
 // out (msg), in (msg), settled (id, by), held (id), dropped (id, from, by), rejected (id, reason),
-// spawned (cpid), exit (code, signal, hostLeft, running), close.
+// spawned (cpid), exit (code, signal, hostLeft, running), close; ask_working from a command on this machine.
 export class Link extends EventEmitter {
   hello?: Hello;
   cpid?: number;
@@ -119,7 +120,10 @@ export class Link extends EventEmitter {
 
   private onLine(line: Buffer): void {
     const f = parseLine(line);
-    if (!f) return;
+    if (f) guarded(lineKind(f.t, f.m), () => this.handle(f));
+  }
+
+  private handle(f: Record<string, unknown>): void {
     switch (f.t) {
       case "hello": {
         if (this.hello || f.v !== LINK_VERSION || typeof f.wpid !== "number" || typeof f.cwd !== "string" || !Array.isArray(f.args)) {
@@ -182,6 +186,9 @@ export class Link extends EventEmitter {
       case "exit":
         this.exited = true;
         this.emit("exit", f.code, f.signal, f.hostLeft, f.running);
+        return;
+      case "ask_working":
+        if (!this.hello) this.emit("ask_working");
         return;
     }
   }

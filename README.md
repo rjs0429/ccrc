@@ -148,7 +148,7 @@ Steps that need sudo are asked separately (see [sudo](#sudo)).
 | `devices` | Offers the iOS and Android machines of your Tailscale user, the one this machine belongs to (`UserID` in `tailscale status --json`), for `allowedDevices`; other users' phones in the tailnet are not offered. With `--yes` it adds your phone only when you have exactly one, and otherwise adds none and says how to add yours. A tagged machine, or a Tailscale that does not report users, gets none offered: name yours with `ccrc config set allowedDevices '["phone"]'`. A list already in config.json is left as it is |
 | `account` | Sets the ccrc login ID and password (`ccrc passwd`) |
 | `config` | Asks which folders new sessions may start in (default: home; `none` for only folders that already have sessions), sets `claudePath`, and asks how broker sessions sign in (`off`, `apiKey` with the key typed hidden, or `subscription`). Settings already in config.json are kept, an empty `roots` list too |
-| `service` | Writes `~/.config/systemd/user/ccrc.service` (runs `<dataDir>/current/bin/ccrc serve` with the Node found), enables and starts it, and checks `/api/ping`. A replaced unit is backed up first, and its `Environment` lines that setup does not write itself (a proxy, say) are kept. Linger is optional: when it is off, setup asks whether to turn it on so the broker runs while you are logged out (`--yes` leaves it off). Refuses to run inside a broker session (see [Update and roll back](#update-and-roll-back)) |
+| `service` | Writes `~/.config/systemd/user/ccrc.service` (runs `<dataDir>/current/bin/ccrc serve` with the Node found; with `OOMPolicy=continue`, so a process of a broker session that runs out of memory ends alone), enables and starts it, and checks `/api/ping`. A replaced unit is backed up first, and its `Environment` lines that setup does not write itself (a proxy, say) are kept. Linger is optional: when it is off, setup asks whether to turn it on so the broker runs while you are logged out (`--yes` leaves it off). Refuses to run inside a broker session (see [Update and roll back](#update-and-roll-back)) |
 | `serve` | `tailscale serve --bg --https=8443 http://127.0.0.1:8737` (kept across restarts) and shows the phone's address |
 | `vscode` | Asks, backs up, then sets `claudeCode.claudeProcessWrapper` in VS Code's `settings.json`, keeping its comments and layout |
 | `phone` | Shows the address (and a terminal QR code when `qrencode` is installed) and what to do on the phone |
@@ -296,13 +296,17 @@ ccrc rollback              # back to the version before the last update
    (`git verify-tag`); see [Verifying a release](#verifying-a-release). A copy already in `versions/<version>`
    (left by `install.sh` or an earlier update) is used only when it passes the same check, and fetched again otherwise.
 3. Builds it beside the running version (`npm ci`, `npm run build`); the service keeps running meanwhile.
-4. Backs up config and state to `~/.local/state/ccrc/backup/update-<old>-<new>-<time>/` and migrates them with the
+4. Asks the running broker, on the wrappers' socket, which of its sessions are at work (a turn under way, a request
+   waiting for an answer, a task running in the background): restarting the service stops them. It lists them with
+   their folders and asks whether to go on; `--yes` lists them and goes on. Told no, it switches nothing and keeps the
+   new version in `versions/` for the next run. A broker before 0.8.3 does not answer; the command says so and goes on.
+5. Backs up config and state to `~/.local/state/ccrc/backup/update-<old>-<new>-<time>/` and migrates them with the
    new version's code.
-5. Records the switch in `~/.local/share/ccrc/history.json`, moves the `current` link, restarts `ccrc.service`, and
+6. Records the switch in `~/.local/share/ccrc/history.json`, moves the `current` link, restarts `ccrc.service`, and
    waits up to 30 seconds for `/api/ping` to report the new version.
-6. If it does not, it moves the link back, restores the backup, restarts the old version, and exits with code 3.
-7. Keeps the previous version (open VS Code tabs may still run its wrapper) and removes older ones.
-8. Tells you what else to do: reload VS Code windows when the wrapper's protocol changed or the new wrapper has new
+7. If it does not, it moves the link back, restores the backup, restarts the old version, and exits with code 3.
+8. Keeps the previous version (open VS Code tabs may still run its wrapper) and removes older ones.
+9. Tells you what else to do: reload VS Code windows when the wrapper's protocol changed or the new wrapper has new
    features (it names them), and fully close and reopen the phone's home screen app. The version you update from gives
    this advice: from 0.7 it tells of a protocol change only, so see "Upgrading from 0.7" in the
    [CHANGELOG](CHANGELOG.md#upgrading-from-07).
@@ -317,7 +321,8 @@ ccrc.service`). `ccrc rollback` exits with 4 when the service cannot be restarte
 
 `ccrc rollback` returns to the version before the last update and puts back the config and state files that update's
 migration reported changing (the current ones are backed up first), so later password changes and notification
-subscriptions are kept. Ctrl-C is held while a switch is being confirmed, so a cut-off run can still be rolled back.
+subscriptions are kept. Like `ccrc update`, it first lists the broker sessions at work and asks before restarting.
+Ctrl-C is held while a switch is being confirmed, so a cut-off run can still be rolled back.
 Going back to 0.7.x turns the passkey confirmation off: 0.7 does not read `passkeys.json`, so the password alone logs
 in. The passkeys stay, and updating again brings the confirmation back.
 
@@ -433,10 +438,11 @@ while setup runs, setup writes it into the service unit too.
 | `~/.config/ccrc/passkeys.json` | The phones' passkeys: credential ids and public keys, the host name each was made for, the device that registered it, and when it was registered and last used. No secrets; made when the first passkey is registered |
 | `~/.config/ccrc/anthropic-api-key` | The API key for `brokerSessions: "apiKey"` (0600) |
 | `~/.config/systemd/user/ccrc.service` | The service |
-| `~/.local/state/ccrc/audit.jsonl` | Audit log |
+| `~/.config/systemd/user/ccrc.service.d/oom-policy.conf` | `OOMPolicy=continue` for a unit written before 0.8.3, added by the broker the first time it starts as the service (setup writes the line in the unit itself) |
+| `~/.local/state/ccrc/audit.jsonl`, `audit.jsonl.1` | Audit log; past 5 MB it moves to `audit.jsonl.1`, and the activity screen reads on into it |
 | `~/.local/state/ccrc/backup/` | Backups: config migrations, updates, rollbacks, VS Code settings, the service unit, rewritten transcripts. Update and rollback backups copy the whole config folder, with the API key, the password hash and the Web Push keys; the newest three and those of the last three updates are kept |
 | `~/.local/state/ccrc/update-check.json` | The last new-release check |
-| `~/.local/state/ccrc/install.log`, `wrapper.log` | Logs of `install.sh` and the wrapper (no conversation content) |
+| `~/.local/state/ccrc/install.log`, `wrapper.log` | Logs of `install.sh` and the wrapper (no conversation content); past 1 MB `wrapper.log` moves to `wrapper.log.1` |
 | `~/.local/state/ccrc/uploads/` | Phone attachments, kept 24 hours |
 | `~/.local/state/ccrc/*.json`, `turns/`, `cli/`, `doctor/` | Working state: archived and unread sessions, sessions brought back from VS Code's archive, recent remote activity, start settings, model and context window lists, the last compatibility check, cut-off turns |
 | `$XDG_RUNTIME_DIR/ccrc/link.sock` | Wrapper and broker socket |

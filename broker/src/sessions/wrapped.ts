@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { answerable, dialogInfo, type DialogResult } from "../dialogs.ts";
 import { elicitInfo } from "../elicit.ts";
+import { guarded, lineKind } from "../link/guard.ts";
 import type { Link } from "../link/server.ts";
 import type {
   ContextDetail,
@@ -120,9 +121,11 @@ export class WrappedSession extends SessionCore {
     const held = this.backlog ?? [];
     this.backlog = null;
     for (const h of held) {
-      if (h.from === "out") this.onOut(h.v as Obj, h.at);
-      else if (h.from === "in") this.onIn(h.v as Obj);
-      else this.onSettled(h.v);
+      guarded(lineKind(h.from, h.v), () => {
+        if (h.from === "out") this.onOut(h.v as Obj, h.at);
+        else if (h.from === "in") this.onIn(h.v as Obj);
+        else this.onSettled(h.v);
+      });
     }
   }
 

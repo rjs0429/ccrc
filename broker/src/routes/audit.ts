@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import type { FastifyInstance } from "fastify";
 import type { AuditEntry, AuditPage } from "../admin-protocol.ts";
+import { rotatedAudit } from "../audit.ts";
 import { parseLine } from "../link/lines.ts";
 import type { RouteDeps } from "./types.ts";
 
@@ -14,9 +15,26 @@ function entry(line: Buffer): AuditEntry | undefined {
   return v && typeof v.ts === "string" && typeof v.event === "string" ? (v as AuditEntry) : undefined;
 }
 
-// The entries of a JSONL log that end before byte `before` (the end of the file without it), newest
-// first. The file is read backwards in chunks, and a line too long to be an entry is skipped unread.
+// The entries of the audit log that end before byte `before` (the end of the log without it), newest first. The log
+// is the rotated file followed by the current one, and offsets count through both.
 export async function readAuditTail(file: string, limit: number, before?: number, chunkSize = CHUNK): Promise<AuditPage> {
+  const older = rotatedAudit(file);
+  const olderSize = await fs.promises.stat(older).then(
+    (s) => s.size,
+    () => 0,
+  );
+  if (before !== undefined && before <= olderSize) return readTail(older, limit, before, chunkSize);
+  const page = await readTail(file, limit, before === undefined ? undefined : before - olderSize, chunkSize);
+  if (page.next !== undefined) return { entries: page.entries, next: page.next + olderSize };
+  if (!olderSize) return page;
+  if (page.entries.length >= limit) return { entries: page.entries, next: olderSize };
+  const rest = await readTail(older, limit - page.entries.length, undefined, chunkSize);
+  return { entries: [...page.entries, ...rest.entries], ...(rest.next !== undefined ? { next: rest.next } : {}) };
+}
+
+// The entries of a JSONL file that end before byte `before` (the end of the file without it), newest first. The file
+// is read backwards in chunks, and a line too long to be an entry is skipped unread.
+async function readTail(file: string, limit: number, before?: number, chunkSize = CHUNK): Promise<AuditPage> {
   let fh: fs.promises.FileHandle;
   try {
     fh = await fs.promises.open(file, "r");

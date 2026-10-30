@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { inServiceRefusal } from "../service-cgroup.ts";
 import type { Ctx } from "./engine.ts";
-import { SERVICE, unitFile, unitProgram } from "./service.ts";
+import { SERVICE, dropInFile, unitFile, unitProgram } from "./service.ts";
 import { brokerPort } from "./steps.ts";
 import { reachesBroker, servedPorts } from "./tailscale.ts";
 import { WRAPPER_SETTING, changeSetting, readSettingsFile, settingsFile } from "./vscode-settings.ts";
@@ -58,6 +58,7 @@ const OWN: Record<Kind, { names: string[]; patterns: RegExp[] }> = {
   state: {
     names: [
       "audit.jsonl",
+      "audit.jsonl.1",
       "backup",
       "uploads",
       "turns",
@@ -161,6 +162,11 @@ export async function runUninstall(ctx: UninstallCtx): Promise<boolean> {
       act: async () => {
         await ctx.run.run("systemctl", ["--user", "disable", "--now", SERVICE]);
         fs.rmSync(unit, { force: true });
+        const dropIn = dropInFile(at.xdgConfigHome);
+        fs.rmSync(dropIn, { force: true });
+        try {
+          fs.rmdirSync(path.dirname(dropIn));
+        } catch {}
         await ctx.run.run("systemctl", ["--user", "daemon-reload"]);
       },
     });

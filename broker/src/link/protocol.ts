@@ -48,7 +48,21 @@ export type WrapperFrame =
   // The wrapper closed its Claude Code's input as hand_over asked; a refusal comes as rejected with the same id.
   | { t: "handed_over"; id: string }
   // hostLeft: VS Code closed Claude Code's input or passed it a signal; running: a turn was under way. Older wrappers send neither.
-  | { t: "exit"; code: number | null; signal: string | null; hostLeft?: boolean; running?: boolean };
+  | { t: "exit"; code: number | null; signal: string | null; hostLeft?: boolean; running?: boolean }
+  // Not a wrapper but a command on this machine (ccrc update, ccrc rollback), instead of hello: which sessions the broker
+  // runs are at work. A broker older than the frame does not answer.
+  | { t: "ask_working" };
+
+// A session the broker runs that restarting the service would stop at work: in a turn, waiting for answers to its
+// requests, or with tasks running in the background.
+export interface WorkingSession {
+  id: string;
+  title?: string;
+  cwd: string;
+  busy: boolean;
+  requests: number;
+  tasks: number;
+}
 
 export type BrokerFrame =
   | { t: "claim_wait"; ms: number }
@@ -63,7 +77,9 @@ export type BrokerFrame =
   | { t: "pass"; id: string }
   // Whether the notifications Claude sends reach a device, and whether the remote user has this session in front of
   // them, so none goes for it; sent after hello and on each change.
-  | { t: "claude_push"; on: boolean; watching?: boolean };
+  | { t: "claude_push"; on: boolean; watching?: boolean }
+  // The answer to ask_working.
+  | { t: "working"; sessions: WorkingSession[] };
 
 // The user's runtime folder when there is one, else the ccrc state folder; never a shared folder such as /tmp.
 export function linkSocketPath(): string {

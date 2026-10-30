@@ -5,7 +5,7 @@ import type { DisplayItem, LiveState, PendingRequest, ServerMsg } from "../proto
 import type { SessionManager } from "../sessions/manager.ts";
 import type { TurnEnd } from "../sessions/outcome.ts";
 import { HOLD_TEXT, holderKind } from "../wrapper/hold.ts";
-import { sessionTag } from "./attention.ts";
+import { sessionTag, settled } from "./attention.ts";
 import type { Subscription } from "./subscriptions.ts";
 import { PUSH_TEXT } from "./text.ts";
 import type { PushAttention, PushPayload } from "./types.ts";
@@ -21,13 +21,13 @@ export interface PushTiming {
   recheckMs: number;
   // How long a finished turn must stay finished before it is notified.
   doneMs: number;
-  // Wait before the one retry after a 429 or 5xx answer.
-  retryMs: number;
+  // Waits before each new try of a notification the push service did not take: no answer, a 429 or a 5xx.
+  retryMs: number[];
   // How long after a request's notification the app, coming to the front, goes to that request.
   recentMs: number;
 }
 
-export const TIMING: PushTiming = { ownedMs: 1000, secondMs: 1000, recheckMs: 15_000, doneMs: 1500, retryMs: 20_000, recentMs: 120_000 };
+export const TIMING: PushTiming = { ownedMs: 1000, secondMs: 1000, recheckMs: 15_000, doneMs: 1500, retryMs: [5000, 30_000, 120_000], recentMs: 120_000 };
 
 // What the remote user did this long before a turn started still makes the turn theirs.
 const REMOTE_WINDOW_MS = 2 * 3600_000;
@@ -141,6 +141,14 @@ export class Notifier {
     const unseen = this.manager.unreadSessions();
     const waiting = this.manager.waitingSessions();
     return { badge: new Set([...waiting, ...unseen]).size, at: this.now(), unseen, waiting };
+  }
+
+  // Whether a notification made earlier still tells the device something: its session is not in front of the user, and
+  // the sessions counted now do not settle it (attention.ts).
+  counts(payload: PushPayload): boolean {
+    const i = payload.tag.indexOf(":");
+    if (i > 0 && this.hub.isWatching(payload.tag.slice(0, i))) return false;
+    return !settled({ tag: payload.tag, data: payload.data }, [], this.attention());
   }
 
   // A notification as it leaves: when it was made, and the number and sessions by which the phone sets its icon and

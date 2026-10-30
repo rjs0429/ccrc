@@ -4,10 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import type { DoctorResult } from "../src/admin-protocol.ts";
+import type { Runner as RunFn } from "../src/run.ts";
 import { SetupUsageError, runSetup, type Ctx, type SetupOptions, type Where } from "../src/setup/engine.ts";
 import { realRunner, withDefaults, type Choice, type Prompt, type RunResult, type Runner } from "../src/setup/io.ts";
 import { parseSetupArgs, rootRefusal } from "../src/setup/cli.ts";
-import { unitMatches, unitProgram, unitText } from "../src/setup/service.ts";
+import { dropInFile, ensureOomPolicy, unitMatches, unitProgram, unitText } from "../src/setup/service.ts";
 import { STEPS } from "../src/setup/steps.ts";
 import { gitSshKeygenProblem, sshKeygenFix, sshKeygenInstall, sshKeygenTooOld } from "../src/ssh-keygen.ts";
 import { phones, reachesBroker, type TsNode } from "../src/setup/tailscale.ts";
@@ -361,6 +362,7 @@ test("a full run on a new machine does every step, and a second run finds nothin
   assert.match(unit, new RegExp(`^ExecStart=${m.at.ccrc} serve$`, "m"));
   assert.match(unit, new RegExp(`^Environment=CCRC_NODE=${m.at.node}$`, "m"));
   assert.match(unit, /^Restart=on-failure$/m);
+  assert.match(unit, /^OOMPolicy=continue$/m);
   assert.ok(m.calls.includes("run systemctl --user daemon-reload"));
   assert.ok(m.calls.includes("run loginctl enable-linger user"));
 
@@ -508,6 +510,51 @@ test("the unit file quotes what systemd would split, and a change of PATH alone 
   assert.equal(unitMatches(text.replace("PATH=/usr/bin:/bin", "PATH=/elsewhere"), spec), true);
   assert.equal(unitMatches(text, { ...spec, node: "/usr/bin/node" }), false);
   assert.equal(unitMatches(undefined, spec), false);
+});
+
+test("a running service whose unit leaves OOMPolicy at the default gets a drop-in once, from its own broker", async () => {
+  const config = tempDir();
+  const units = path.join(config, "systemd", "user");
+  fs.mkdirSync(units, { recursive: true });
+  const fragment = path.join(units, "ccrc.service");
+  fs.writeFileSync(fragment, unitText({ ccrc: "/home/user/ccrc/bin/ccrc", node: "/usr/bin/node", path: "/usr/bin", env: {} }).replace("OOMPolicy=continue\n", ""));
+  let policy = "stop";
+  let dropIns = "";
+  let showCode = 0;
+  const calls: string[] = [];
+  const runner: RunFn = async (cmd, args) => {
+    calls.push([cmd, ...args].join(" "));
+    if (args.includes("show")) return { code: showCode, stdout: `MainPID=4242\nOOMPolicy=${policy}\nFragmentPath=${fragment}\nDropInPaths=${dropIns}\n`, stderr: "" };
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  const logs: string[] = [];
+  const deps = { xdgConfigHome: config, run: runner, log: (l: string) => logs.push(l), pid: 4242 };
+  const dropIn = dropInFile(config);
+
+  assert.equal(await ensureOomPolicy({ ...deps, pid: 7 }), "not_main", "a broker the service does not run as its main process");
+  assert.equal(fs.existsSync(dropIn), false);
+  assert.equal(await ensureOomPolicy(deps), "added");
+  assert.equal(fs.readFileSync(dropIn, "utf8"), "[Service]\nOOMPolicy=continue\n");
+  assert.equal(dropIn, path.join(units, "ccrc.service.d", "oom-policy.conf"));
+  assert.deepEqual(
+    calls.filter((c) => !c.includes(" show ")),
+    ["systemctl --user daemon-reload"],
+  );
+  assert.deepEqual(logs, [`ccrc: ccrc.service goes on when one of its processes runs out of memory: wrote ${dropIn}`]);
+  assert.equal(await ensureOomPolicy(deps), "kept", "written once, whatever systemd makes of it");
+  policy = "continue";
+  dropIns = dropIn;
+  assert.equal(await ensureOomPolicy(deps), "ok");
+
+  fs.rmSync(dropIn);
+  policy = "stop";
+  dropIns = "";
+  fs.writeFileSync(fragment, fs.readFileSync(fragment, "utf8").replace("RestartSec=5", "RestartSec=5\nOOMPolicy=stop"));
+  assert.equal(await ensureOomPolicy(deps), "kept", "a policy the unit names is the person's");
+  assert.equal(fs.existsSync(dropIn), false);
+  showCode = 1;
+  assert.equal(await ensureOomPolicy(deps), "failed");
+  assert.equal(calls.filter((c) => c.endsWith("daemon-reload")).length, 1);
 });
 
 test("config: apiKey asks for the key and keeps it out of what setup prints", async () => {
@@ -996,6 +1043,9 @@ function uninstallCtx(m: Machine, o: { purge?: boolean; dryRun?: boolean; noSyst
 test("uninstall takes VS Code's setting out first, then the service, serve and the install", async () => {
   const m = machine(readyWorld());
   installed(m);
+  const dropIn = dropInFile(m.at.xdgConfigHome);
+  fs.mkdirSync(path.dirname(dropIn), { recursive: true });
+  fs.writeFileSync(dropIn, "[Service]\nOOMPolicy=continue\n");
   m.world.served[9443] = "http://127.0.0.1:3000";
   const order: string[] = [];
   const settings = path.join(m.at.vscodeUserDir, "User", "settings.json");
@@ -1015,6 +1065,7 @@ test("uninstall takes VS Code's setting out first, then the service, serve and t
   assert.deepEqual(order, ["service; wrapper setting there: false"]);
   assert.equal(fs.readFileSync(settings, "utf8"), `{\n  // mine\n  "a": 1\n}\n`);
   assert.ok(!fs.existsSync(path.join(m.at.xdgConfigHome, "systemd", "user", "ccrc.service")));
+  assert.ok(!fs.existsSync(path.dirname(dropIn)), "the drop-in the broker added goes with it");
   assert.deepEqual(m.world.served, { 9443: "http://127.0.0.1:3000" });
   assert.ok(!fs.existsSync(m.at.dataDir));
   assert.ok(!fs.existsSync(path.join(m.at.home, ".local", "bin", "ccrc")));

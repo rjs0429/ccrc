@@ -8,6 +8,42 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Changed
+
+- `ccrc update` and `ccrc rollback` ask before they restart the service while broker sessions are at work (a turn under
+  way, a request waiting for an answer, a task running in the background): they list them with their folders, and
+  told no, switch nothing and keep the new version in `versions/` for the next run. With `--yes` they list them and go
+  on. They ask the broker on the wrappers' socket, which only you can reach; a broker before this version does not
+  answer, and the command says so and goes on as before.
+- The service runs with `OOMPolicy=continue`: when the kernel ends a process of the service for want of memory, such
+  as a build Claude runs in a broker session, that process alone ends, not the broker and every session with it.
+  `ccrc setup` writes the line in the unit. For a unit written before, the broker adds
+  `~/.config/systemd/user/ccrc.service.d/oom-policy.conf` the first time it starts as the service and has systemd
+  reload it, which applies it without a restart; a policy the unit or a drop-in names is kept. `ccrc uninstall`
+  removes the file.
+- A notification the push service does not take (no answer, a 429 or a 5xx) is tried again 5 s, 30 s and 2 min later,
+  where it was tried once after 20 s. A try that comes due once its request is answered, its session read or in front
+  of you, or a newer notification of its kind sent, is left out; one that goes carries the badge as it is then. The log
+  names the network's reason (`fetch failed, ENOTFOUND`) and the try that got through.
+- When looking for a new version fails, as with no network yet just after boot, the broker looks again every 15
+  minutes until it works rather than the next day, and logs only an error it has not logged just before.
+- The activity log moves to `audit.jsonl.1` once it passes 5 MB, replacing the one moved before, and the activity
+  screen reads on into it. Turn notes the wrapper left more than a day ago are removed as the broker starts.
+- VS Code tabs that connect at once, as after a broker restart, have their conversations read two at a time, the one
+  open on the phone first.
+- A session followed through its transcript (a terminal, or VS Code without the wrapper) is read again no sooner than
+  three times as long as its last reading took, so a very long transcript no longer keeps the broker busy.
+
+### Fixed
+
+- A line from Claude Code of a shape the broker did not expect (a message's content that is not a list, a block that
+  is null, a stream event that is not an object) could end the broker, and with it the sessions started from the phone,
+  again and again while VS Code sent the line anew. Each line from a wrapper is now handled on its own: one the broker
+  fails on is dropped, its kind and the error's first line logged once a minute, and the lines after it go on. The
+  conversation is built past such blocks.
+- A failed promise nothing waited for ended the broker. It is now logged, once a minute for each error, and the broker
+  goes on; an exception nothing catches is logged before the broker stops, and systemd starts it again.
+
 ## [0.8.2] - 2026-10-23
 
 ### Added

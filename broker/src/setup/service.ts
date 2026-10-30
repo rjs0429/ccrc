@@ -1,9 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { Runner } from "../run.ts";
 
 // The systemd user service that runs the broker.
 
 export const SERVICE = "ccrc.service";
+
+// The kernel ending one process of the service for want of memory, such as a command Claude runs in a broker session,
+// leaves the broker and the other sessions running.
+const OOM_LINE = "OOMPolicy=continue";
+const OOM_SET = /^\s*OOMPolicy\s*=/m;
+export const OOM_DROP_IN = "oom-policy.conf";
 
 export function unitFile(xdgConfigHome: string): string {
   return path.join(xdgConfigHome, "systemd", "user", SERVICE);
@@ -43,10 +50,55 @@ Environment=CCRC_LOG_LEVEL=warn
 ${nodeLine(s)}
 ${extra.join("")}Restart=on-failure
 RestartSec=5
+${OOM_LINE}
 
 [Install]
 WantedBy=default.target
 `;
+}
+
+export function dropInFile(xdgConfigHome: string, unit = SERVICE): string {
+  return path.join(xdgConfigHome, "systemd", "user", `${unit}.d`, OOM_DROP_IN);
+}
+
+export interface OomDeps {
+  xdgConfigHome: string;
+  run: Runner;
+  log: (line: string) => void;
+  unit?: string;
+  // The process that has to be the unit's main one.
+  pid?: number;
+}
+
+// A unit that leaves OOMPolicy at systemd's default, as units setup wrote before it set the line, gets it from a drop-in
+// when its main process asks, and `systemctl --user daemon-reload` applies it to the running service. A policy the unit
+// or a drop-in names is kept, and the drop-in is written once.
+export async function ensureOomPolicy(d: OomDeps): Promise<"ok" | "kept" | "added" | "failed" | "not_main"> {
+  const unit = d.unit ?? SERVICE;
+  const show = await d.run("systemctl", ["--user", "show", "-p", "MainPID", "-p", "OOMPolicy", "-p", "FragmentPath", "-p", "DropInPaths", unit], { timeoutMs: 10_000 });
+  if (show.code !== 0) return "failed";
+  const value = (key: string) => new RegExp(`^${key}=(.*)$`, "m").exec(show.stdout)?.[1].trim() ?? "";
+  if (value("MainPID") !== String(d.pid ?? process.pid)) return "not_main";
+  if (value("OOMPolicy") === "continue") return "ok";
+  const file = dropInFile(d.xdgConfigHome, unit);
+  const named = [value("FragmentPath"), ...value("DropInPaths").split(/\s+/)].filter(Boolean).some((f) => {
+    try {
+      return OOM_SET.test(fs.readFileSync(f, "utf8"));
+    } catch {
+      return false;
+    }
+  });
+  if (named || fs.existsSync(file)) return "kept";
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `[Service]\n${OOM_LINE}\n`, { mode: 0o644 });
+  } catch (e) {
+    d.log(`ccrc: could not write ${file}: ${e instanceof Error ? e.message : String(e)}`);
+    return "failed";
+  }
+  const reload = await d.run("systemctl", ["--user", "daemon-reload"], { timeoutMs: 30_000 });
+  d.log(`ccrc: ${unit} goes on when one of its processes runs out of memory: wrote ${file}${reload.code === 0 ? "" : "; it applies after systemctl --user daemon-reload"}`);
+  return "added";
 }
 
 // Whether a unit file runs this spec's code with its Node. PATH is not compared: it differs from shell to shell.

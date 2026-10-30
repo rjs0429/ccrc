@@ -27,19 +27,24 @@ import { linkSocketPath } from "./link/protocol.ts";
 import { LinkServer } from "./link/server.ts";
 import { migrateConfigFile } from "./migrate.ts";
 import { DEFAULT_HOURS, Passkeys, passkeysWatch } from "./passkeys.ts";
+import { watchProcessErrors } from "./process-errors.ts";
 import { Push } from "./push/index.ts";
 import { PUSH_TEXT } from "./push/text.ts";
 import { RemoteActivity } from "./remote-activity.ts";
+import { run as runCommand } from "./run.ts";
 import { buildServer } from "./server.ts";
+import { inBrokerService } from "./service-cgroup.ts";
 import { retagTranscripts } from "./sessions/entrypoint.ts";
 import { SessionManager } from "./sessions/manager.ts";
 import { SessionSearch } from "./sessions/search.ts";
+import { ensureOomPolicy } from "./setup/service.ts";
 import { Store } from "./store.ts";
 import { Uploads } from "./uploads.ts";
 import { UPDATE_CHANNELS, type UpdateChannel } from "./releases.ts";
 import { UpdateCheck } from "./update-check.ts";
 import { rollback, update, updateStatus, type UpdateOptions } from "./update.ts";
 import { envLang } from "./wrapper/hold.ts";
+import { TurnStore } from "./wrapper/turns.ts";
 
 const WARM_DELAY_MS = 5000;
 
@@ -77,12 +82,15 @@ function migrate(): void {
 }
 
 async function serve(): Promise<void> {
+  watchProcessErrors();
   const migrated = migrateConfigFile();
   if (migrated?.backupDir) console.log(`ccrc: config moved from format ${migrated.from} to ${migrated.to} (earlier file in ${migrated.backupDir})`);
   const config = loadConfig();
   const store = new Store();
   const leases = new Leases(store, config.leaseIdleMinutes);
   const audit = new Audit();
+  new TurnStore({ dir: path.join(paths.stateDir, "turns") }).prune();
+  if (inBrokerService()) void ensureOomPolicy({ xdgConfigHome: paths.xdgConfigHome, run: runCommand, log: (line) => console.log(line) }).catch(() => {});
   for (const r of retagTranscripts()) console.log(`ccrc: ${r.file} now lists in VS Code (original in ${r.backup})`);
   const manager = new SessionManager(config, audit);
   manager.pruneArchived();
