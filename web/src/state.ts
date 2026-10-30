@@ -141,9 +141,6 @@ export function composerInsert(text: string, replace = false): void {
   setState({ insert: { text, at: Date.now(), ...(replace ? { replace } : {}) } });
 }
 
-// Opens a screen over the one shown (nav.open).
-export const navigate = nav.open;
-
 // Settings opened by a "/" command stand over the screen it was typed in, which the back returns to.
 export function openSettingsFrom(page: SettingsPage, part?: SettingsPart): void {
   nav.open({ name: "settings", page, ...(part ? { part } : {}) });

@@ -1,6 +1,7 @@
 import { Component, Suspense, lazy, useState, type ComponentType, type ReactNode } from "react";
 import { t } from "../i18n/index.ts";
-import { navigate, reloadApp, useApp } from "../state.ts";
+import { nav, useLayer } from "../nav.ts";
+import { reloadApp, useApp } from "../state.ts";
 import { Button, Spinner } from "./ui.tsx";
 
 interface BoundaryProps {
@@ -66,7 +67,7 @@ export function AppBoundary({ resetKey, children }: { resetKey: string; children
           body={t("앱을 다시 불러오면 대부분 돌아옵니다.")}
           primary={t("다시 불러오기")}
           onPrimary={reloadApp}
-          {...(resetKey === "home" ? {} : { secondary: t("홈으로"), onSecondary: () => (navigate({ name: "home" }), again()) })}
+          {...(resetKey === "home" ? {} : { secondary: t("홈으로"), onSecondary: () => (nav.open({ name: "home" }), again()) })}
         />
       )}
     >
@@ -83,6 +84,13 @@ function Loading() {
   );
 }
 
+// What shows in place of a layered screen holds the screen's entry in the history, so the back closes it, and the screen
+// takes the entry over as it comes.
+function Standin({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  useLayer(onClose);
+  return children;
+}
+
 // A screen whose code loads the first time it opens, above the rest: a spinner while it comes, and if it does not, why,
 // with a way to try again or to close it. Code that did not come is asked for again the next time; a build the broker
 // no longer serves is mended only by loading the app again.
@@ -97,24 +105,32 @@ export function lazyScreen<P extends { onClose: () => void }>(load: () => Promis
       <Boundary
         onCatch={anew}
         fallback={(again) => (
-          <Failed
-            title={t("열지 못했습니다")}
-            body={newBuild ? t("새 버전이 설치되었습니다. 새로고침하면 열립니다.") : tries > 0 ? t("다시 시도해도 열리지 않으면 앱을 새로고침하세요.") : t("네트워크를 확인하고 다시 시도하세요.")}
-            primary={reload ? t("새로고침") : t("다시 시도")}
-            onPrimary={
-              reload
-                ? reloadApp
-                : () => {
-                    setTries((n) => n + 1);
-                    again();
-                  }
-            }
-            secondary={t("닫기")}
-            onSecondary={props.onClose}
-          />
+          <Standin onClose={props.onClose}>
+            <Failed
+              title={t("열지 못했습니다")}
+              body={newBuild ? t("새 버전이 설치되었습니다. 새로고침하면 열립니다.") : tries > 0 ? t("다시 시도해도 열리지 않으면 앱을 새로고침하세요.") : t("네트워크를 확인하고 다시 시도하세요.")}
+              primary={reload ? t("새로고침") : t("다시 시도")}
+              onPrimary={
+                reload
+                  ? reloadApp
+                  : () => {
+                      setTries((n) => n + 1);
+                      again();
+                    }
+              }
+              secondary={t("닫기")}
+              onSecondary={props.onClose}
+            />
+          </Standin>
         )}
       >
-        <Suspense fallback={<Loading />}>
+        <Suspense
+          fallback={
+            <Standin onClose={props.onClose}>
+              <Loading />
+            </Standin>
+          }
+        >
           <Part {...props} />
         </Suspense>
       </Boundary>
