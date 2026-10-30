@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { rotatedAudit } from "../audit.ts";
 import { paths } from "../config.ts";
 import { sendFilesEnv } from "../wrapper/send-files.ts";
 import { transcriptPath } from "./history.ts";
@@ -41,12 +42,14 @@ export interface Retagged {
 
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
-// Sessions the broker created, from the audit log's new_session events.
+// Sessions the broker created, from the new_session events of the audit log and the file it last rotated to.
 function createdSessions(auditFile: string): { sessionId: string; cwd?: string }[] {
   let text = "";
-  try {
-    text = fs.readFileSync(auditFile, "utf8");
-  } catch {}
+  for (const file of [rotatedAudit(auditFile), auditFile]) {
+    try {
+      text += fs.readFileSync(file, "utf8") + "\n";
+    } catch {}
+  }
   const found = new Map<string, string | undefined>();
   for (const line of text.split("\n")) {
     if (!line.includes('"new_session"')) continue;

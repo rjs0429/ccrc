@@ -172,7 +172,10 @@ test("transcripts of stopped sessions the broker created are retagged once, afte
     ...[A, B, D, E].map((sessionId) => ({ event: "new_session", device: "phone", sessionId, cwd })),
     { event: "send", sessionId: C, chars: 5 },
   ];
-  fs.writeFileSync(auditFile, events.map((e) => JSON.stringify({ ts: "2026-10-14T03:00:00.000Z", ...e })).join("\n") + "\n");
+  const rows = events.map((e) => JSON.stringify({ ts: "2026-10-14T03:00:00.000Z", ...e }));
+  // A's start is in the file the log rotated to.
+  fs.writeFileSync(`${auditFile}.1`, rows.slice(0, 2).join("\n") + "\n");
+  fs.writeFileSync(auditFile, rows.slice(2).join("\n") + "\n");
   const files = Object.fromEntries([A, B, C, E].map((id) => [id, writeTranscript(id, sdkRows(id))]));
   const past = new Date("2026-10-10T00:00:00.000Z");
   for (const f of Object.values(files)) fs.utimesSync(f, past, past);

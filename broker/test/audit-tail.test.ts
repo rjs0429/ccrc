@@ -80,3 +80,18 @@ test("the audit log moves aside once it grows past its limit, and the activity s
   assert.equal(seen[0], 29);
   assert.ok(seen.length >= 10, `${seen.length} entries kept`);
 });
+
+test("two writers of one audit log rotate it by its size on disk, not by what each wrote", () => {
+  const file = path.join(tempDir(), "audit.jsonl");
+  const pad = "x".repeat(60);
+  const broker = new Audit(file, 1000);
+  for (let n = 10; n < 18; n++) broker.log("send", { n, pad });
+  const other = new Audit(file, 1000);
+  other.log("send", { n: 18, pad });
+  assert.ok(fs.existsSync(`${file}.1`), "the other writer rotated it");
+  const rotated = fs.readFileSync(`${file}.1`, "utf8");
+  broker.log("send", { n: 19, pad });
+  assert.equal(fs.readFileSync(`${file}.1`, "utf8"), rotated, "the broker does not rotate the small new log again");
+  const n = fs.readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l).n);
+  assert.deepEqual(n, [18, 19]);
+});
