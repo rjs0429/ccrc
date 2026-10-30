@@ -113,15 +113,35 @@ export function useDragClose(ref: RefObject<HTMLElement | null>, grabRefs: reado
         }, GONE_MS);
       });
     };
+    // The click of the touch that dragged; the next touch is a tap of its own.
+    let unswallow = () => {};
     const swallow = () => {
       const stop = (e: Event) => {
         e.stopPropagation();
         e.preventDefault();
       };
       panel.addEventListener("click", stop, { capture: true, once: true });
-      window.setTimeout(() => panel.removeEventListener("click", stop, { capture: true }), CLICK_MS);
+      const t = window.setTimeout(() => unswallow(), CLICK_MS);
+      unswallow = () => {
+        clearTimeout(t);
+        panel.removeEventListener("click", stop, { capture: true });
+        unswallow = () => {};
+      };
+    };
+    // A touch's events go to the node it began on even once that node has left the panel, so they are taken there too.
+    let bound: Element | null = null;
+    const bind = (el: Element | null) => {
+      const [onMove, onUp] = [move as EventListener, up as EventListener];
+      bound?.removeEventListener("touchmove", onMove);
+      bound?.removeEventListener("touchend", onUp);
+      bound?.removeEventListener("touchcancel", onUp);
+      bound = el;
+      el?.addEventListener("touchmove", onMove, { passive: false });
+      el?.addEventListener("touchend", onUp, { passive: true });
+      el?.addEventListener("touchcancel", onUp, { passive: true });
     };
     const letGo = () => {
+      bind(null);
       finger = null;
       owned = undefined;
       hold = null;
@@ -130,14 +150,10 @@ export function useDragClose(ref: RefObject<HTMLElement | null>, grabRefs: reado
     };
 
     const down = (e: TouchEvent) => {
+      unswallow();
       if (closing) return;
-      if (e.touches.length > 1) {
-        if (finger) letGo();
-        return;
-      }
-      finger = null;
-      owned = undefined;
-      hold = null;
+      if (finger) letGo();
+      if (e.touches.length > 1) return;
       const f = e.changedTouches[0];
       const at = e.target instanceof Element ? e.target : null;
       if (!f || !at || f.clientX < EDGE_PX) return;
@@ -145,6 +161,7 @@ export function useDragClose(ref: RefObject<HTMLElement | null>, grabRefs: reado
       if (!grab && (!taking || panel.scrollTop >= 1 || typing(at) || at.closest("[data-zoom-stage]") || innerScrolled(at, panel) || selectedIn(panel))) return;
       halt();
       finger = { id: f.identifier, x: f.clientX, y: f.clientY, grab };
+      bind(at);
     };
     const move = (e: TouchEvent) => {
       if (e === last) return;
@@ -183,6 +200,7 @@ export function useDragClose(ref: RefObject<HTMLElement | null>, grabRefs: reado
       if (!finger || !f) return;
       const dragged = hold !== null;
       if (!dragged) return letGo();
+      bind(null);
       finger = null;
       owned = undefined;
       hold = null;
@@ -211,6 +229,8 @@ export function useDragClose(ref: RefObject<HTMLElement | null>, grabRefs: reado
       clearTimeout(gone);
       take(false);
       for (const g of grabs) g.removeEventListener("touchmove", move);
+      bind(null);
+      unswallow();
       panel.removeEventListener("touchstart", down);
       panel.removeEventListener("touchend", up);
       panel.removeEventListener("touchcancel", up);
