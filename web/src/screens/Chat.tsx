@@ -168,8 +168,7 @@ function PartLoader({ part, skipped, loading, failed, onLoad }: { part: "earlier
   );
 }
 
-// Hangs from the top edge of the to-do panel and composer, so it floats just above them whatever their height. Content
-// the list did not follow turns it into a chip that says so.
+// Hangs from the top edge of the to-do panel and composer, so it floats just above them whatever their height.
 function JumpButton({ unseen, onClick }: { unseen: boolean; onClick: () => void }) {
   return (
     <div className="relative h-0 tiny:hidden">
@@ -177,20 +176,13 @@ function JumpButton({ unseen, onClick }: { unseen: boolean; onClick: () => void 
         onClick={onClick}
         onMouseDown={(e) => e.preventDefault()}
         aria-label={t("맨 아래로")}
-        title={unseen ? t("새 내용이 있습니다") : undefined}
-        className="group absolute bottom-2 left-1/2 z-10 flex h-11 min-w-11 -translate-x-1/2 items-center justify-center"
+        className="group absolute bottom-2 left-1/2 z-10 flex size-11 -translate-x-1/2 items-center justify-center"
         data-jump
       >
-        {unseen ? (
-          <span className="flex h-9 items-center gap-1 rounded-full bg-accent pr-3.5 pl-2.5 text-[13px] font-medium whitespace-nowrap text-white shadow-md group-active:opacity-80" data-unseen>
-            <Icon.arrowDown className="size-4" />
-            {t("새 내용")}
-          </span>
-        ) : (
-          <span className="flex size-9 items-center justify-center rounded-full border border-line bg-surface text-fg shadow-md group-active:bg-surface-2">
-            <Icon.arrowDown className="size-[18px]" />
-          </span>
-        )}
+        <span className="relative flex size-9 items-center justify-center rounded-full border border-line bg-surface text-fg shadow-md group-active:bg-surface-2">
+          <Icon.arrowDown className="size-[18px]" />
+          {unseen && <span className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-accent ring-2 ring-bg" title={t("새 내용이 있습니다")} data-unseen />}
+        </span>
       </button>
     </div>
   );

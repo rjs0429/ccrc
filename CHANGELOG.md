@@ -22,9 +22,9 @@ your version and the new one, and the lines under "Breaking" separately.
   not started over each time Claude writes; what came on the way is taken once it ends. The status-bar tap on the
   session list and in settings moves the same way.
 - A finger resting on the conversation, or text selected in it, holds it still. What Claude adds meanwhile is no longer
-  followed when you let go, not even a short addition: once you have held the list for a moment, the jump button turns
-  into a "New content" chip as soon as something comes, and a tap on it glides to the bottom, where the chip goes away.
-  A quick tap at the bottom still lets the list follow on. Something growing above what you read, such as a picture
+  followed when you let go, not even a short addition: once you have held the list for a moment, the jump button shows
+  with its orange dot as soon as something comes, and a tap on it glides to the bottom. A quick tap at the bottom still
+  lets the list follow on. Something growing above what you read, such as a picture
   that loads, no longer moves the text under your finger where the browser does not keep it in place itself.
 - The jump button ignores a press only while a fling moves fast and a moment after, so a press as the list slows down
   is no longer lost.
@@ -43,6 +43,8 @@ your version and the new one, and the lines under "Breaking" separately.
 - If the conversation still goes to its bottom by itself from more than a screen up, the phone tells the laptop, and
   the service log gets one line with what moved the list, its sizes and its last few events, with no text of the
   conversation, to find the cause.
+- A sideways swipe moved the session list, a conversation or a sheet aside with all it showed. Lists that scroll up and
+  down no longer move sideways; code, diffs and the filter chips still scroll sideways in their own boxes.
 
 ## [0.8.3] - 2026-10-30
 
