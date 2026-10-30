@@ -26,9 +26,9 @@ export function Folded({ text, mono, plain }: { text: string; mono?: boolean; pl
     <div>
       <div className={open ? "" : "max-h-48 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]"}>
         {mono ? (
-          <pre className="font-mono text-[12.5px] whitespace-pre-wrap">{text}</pre>
+          <pre className="selectable font-mono text-[12.5px] whitespace-pre-wrap">{text}</pre>
         ) : plain ? (
-          <div className="text-[14px] whitespace-pre-wrap">{text}</div>
+          <div className="selectable text-[14px] whitespace-pre-wrap">{text}</div>
         ) : (
           <Markdown text={text} className="text-[14px]" />
         )}
@@ -60,6 +60,7 @@ export function FileLink({ path, line }: { path: string; line?: number }) {
   const cls = "font-mono text-[12.5px] break-all";
   if (!open || !path) return <div className={`${cls} text-muted`}>{path}</div>;
   const href = fileHref(path, line);
+  // iOS's link menu opens a link without its click, so a link the app opens itself offers none.
   return (
     <a
       href={href}
@@ -67,7 +68,7 @@ export function FileLink({ path, line }: { path: string; line?: number }) {
         e.preventDefault();
         open(href);
       }}
-      className={`block ${cls} text-accent`}
+      className={`block ${cls} text-accent [-webkit-touch-callout:none]`}
     >
       {path}
     </a>

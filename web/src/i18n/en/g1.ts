@@ -240,6 +240,8 @@ export const g1: Record<string, string> = {
   뒤로: "Back",
   로그아웃: "Log out",
   "이 기기": "This device",
+  "기기 이름 복사": "Copy device name",
+  "기기 이름을 복사했습니다": "Device name copied",
   "새 비밀번호가 서로 다릅니다": "The new passwords don't match",
   "비밀번호를 바꿨습니다": "Password changed",
   "비밀번호를 바꿨습니다. 휴대폰에 저장한 대화는 지웠습니다": "Password changed. Conversations saved on the phone were deleted",

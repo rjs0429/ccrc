@@ -163,7 +163,7 @@ export function WorktreeOption({
         </div>
       )}
       {error && (
-        <p role="alert" className="pb-2.5 text-xs break-words text-danger" data-worktree-error>
+        <p role="alert" className="selectable pb-2.5 text-xs break-words text-danger" data-worktree-error>
           {error}
         </p>
       )}

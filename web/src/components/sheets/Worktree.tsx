@@ -174,7 +174,7 @@ export function WorktreeSheet({ sessionId, onClose }: { sessionId: string; onClo
             </p>
           )}
           {failed && (
-            <p role="alert" className="mt-3 px-1 text-sm text-danger" data-worktree-failed>
+            <p role="alert" className="selectable mt-3 px-1 text-sm text-danger" data-worktree-failed>
               {failed}
             </p>
           )}
@@ -299,7 +299,7 @@ export function ArchiveWorktree({ sessionId, onClose }: { sessionId: string; onC
             </>
           )}
           {failed && (
-            <p role="alert" className="mt-3 px-1 text-sm text-danger" data-worktree-failed>
+            <p role="alert" className="selectable mt-3 px-1 text-sm text-danger" data-worktree-failed>
               {failed}
             </p>
           )}

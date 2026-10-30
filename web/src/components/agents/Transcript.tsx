@@ -32,7 +32,7 @@ function Prompt({ text }: { text: string }) {
   return (
     <div className="rounded-xl bg-surface-2 px-3 py-2.5" data-prompt>
       <div className="text-xs font-semibold text-muted">{t("지시")}</div>
-      <div className={`mt-1 text-[14px] leading-relaxed whitespace-pre-wrap ${open ? "" : "line-clamp-12"}`}>{text}</div>
+      <div className={`selectable mt-1 text-[14px] leading-relaxed whitespace-pre-wrap ${open ? "" : "line-clamp-12"}`}>{text}</div>
       {long && (
         <button onClick={() => setOpen(!open)} className="mt-1 min-h-8 text-sm font-medium text-accent">
           {open ? t("접기") : t("더 보기")}
@@ -48,7 +48,7 @@ function Entry({ item, promptId, running }: { item: DisplayItem; promptId?: stri
   return (
     <div className="rounded-xl border border-line px-3 py-2.5" data-agent-message>
       <div className="text-xs font-semibold text-muted">{t("메인 에이전트의 메시지")}</div>
-      <div className="mt-1 text-[14px] leading-relaxed whitespace-pre-wrap">{item.text}</div>
+      <div className="selectable mt-1 text-[14px] leading-relaxed whitespace-pre-wrap">{item.text}</div>
     </div>
   );
 }

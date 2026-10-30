@@ -158,7 +158,7 @@ function ServerRow(props: {
         </span>
       </div>
       {meta && <div className="mt-0.5 text-xs text-muted">{meta}</div>}
-      {server.error && <div className="mt-1 line-clamp-3 text-xs text-danger">{server.error}</div>}
+      {server.error && <div className="selectable mt-1 line-clamp-3 text-xs text-danger">{server.error}</div>}
       {server.status === "needs-auth" && !server.auth && <div className="mt-1 text-xs text-muted">{t("이 서버는 VS Code나 터미널의 /mcp에서 인증하세요")}</div>}
       <div className="mt-2 flex items-center gap-2">
         {signIn && (
@@ -177,7 +177,7 @@ function ServerRow(props: {
         {working && <Spinner className="size-4 text-muted" />}
       </div>
       {props.children}
-      {error && error !== server.error && <div className="mt-1.5 text-xs text-danger">{error}</div>}
+      {error && error !== server.error && <div className="selectable mt-1.5 text-xs text-danger">{error}</div>}
     </div>
   );
 }

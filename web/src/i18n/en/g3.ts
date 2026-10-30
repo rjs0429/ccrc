@@ -19,6 +19,8 @@ export const g3: Record<string, string> = {
   "워크플로 에이전트": "Workflow agent",
   "답을 복사했습니다": "Response copied",
   "복사할 답이 없습니다": "No response to copy",
+  "작업 폴더 경로 복사": "Copy working folder path",
+  "경로를 복사했습니다": "Path copied",
   "찾은 메시지가 지금 대화에 없습니다": "The message found isn't in the current conversation",
   "꺼져 있음": "Not running",
   "{host}에서 열려 있어 지금은 보기만 할 수 있습니다.": "It's open in {host}, so for now it's view only.",

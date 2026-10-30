@@ -33,7 +33,7 @@ function Stamp({ at, className }: { at: Date; className?: string }) {
 
 // The text of a message or reply: a long press selects it with the system's magnifier and copy menu, so their actions
 // open only from the ⋯ button under them.
-const SELECTABLE = "select-text [-webkit-touch-callout:default]";
+const SELECTABLE = "selectable";
 
 // That ⋯ sits on a 16px line 4px under the text; its 44px target reaches up to the text's edge only and down into the
 // room under the item.
@@ -179,7 +179,7 @@ function Thinking({ id, text }: { id?: string; text: string }) {
   );
 }
 
-const THOUGHT_TEXT = "mt-1.5 border-l-2 border-line pl-3 text-sm text-muted whitespace-pre-wrap";
+const THOUGHT_TEXT = "mt-1.5 border-l-2 border-line pl-3 text-sm text-muted whitespace-pre-wrap selectable";
 
 // A thought still streaming keeps text selected in it as a streaming reply does, and its item selects that text again.
 function StreamingThought({ text }: { text: string }) {
@@ -315,7 +315,7 @@ function ToolItem({ item, running }: { item: Extract<DisplayItem, { kind: "tool"
       </button>
       {sub && (active || open) && <SubActivity sub={sub} running={active} />}
       {open && (
-        <div className="space-y-2 border-t border-line px-3 py-2.5">
+        <div className="selectable space-y-2 border-t border-line px-3 py-2.5">
           {item.patch ? (
             <DiffView hunks={item.patch} cut={item.patchCut} />
           ) : item.input != null ? (
@@ -495,7 +495,7 @@ function TaskNote({ item }: { item: Extract<DisplayItem, { kind: "task" }> }) {
 function ShellCard({ item }: { item: Extract<DisplayItem, { kind: "shell" }> }) {
   return (
     <div className="rounded-xl border border-line bg-surface" data-shell>
-      <div className="px-3 py-2 font-mono text-[12.5px] break-all whitespace-pre-wrap text-muted">{item.command ? `! ${item.command}` : t("명령 출력")}</div>
+      <div className={`px-3 py-2 font-mono text-[12.5px] break-all whitespace-pre-wrap text-muted ${item.command ? "selectable" : ""}`}>{item.command ? `! ${item.command}` : t("명령 출력")}</div>
       {item.output && (
         <div className="px-3 pb-3">
           <Folded text={item.output} mono />
@@ -551,7 +551,7 @@ export const ItemView = memo(function ItemView({
       return <ShellCard item={item} />;
     case "note":
       return (
-        <div className={`text-center text-xs whitespace-pre-wrap ${item.code === "error" ? "text-danger" : "text-muted"}`}>
+        <div className={`text-center text-xs whitespace-pre-wrap ${item.code === "error" ? "selectable text-danger" : "text-muted"}`}>
           {noteText(item.code, item.text, item.attachments)}
         </div>
       );
