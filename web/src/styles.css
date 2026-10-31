@@ -89,12 +89,10 @@ html {
 }
 
 /* A list that scrolls up and down never moves sideways; what is wider scrolls in a box of its own (code, diffs, chips).
-   iOS pans sideways unless the touch allows only pan-y. touch-action starts over at each scroll box, so a box inside the
-   list that scrolls sideways still pans both ways. */
+   Its touch-action keeps pan-x: iOS starts a back or forward swipe from inside the page only where pan-x is allowed. */
 .overflow-y-auto:not(.overflow-x-auto) {
   overflow-x: hidden;
   overscroll-behavior-x: none;
-  touch-action: pan-y;
 }
 
 /* In an iOS Home Screen web app the page rests 1px down so that a tap on the status bar has a scroll to take (topTap.ts);
