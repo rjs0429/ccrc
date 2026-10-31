@@ -161,7 +161,8 @@ function SessionRow({ s, view, onActions }: { s: SessionSummary; view: Filter; o
     >
       <span className={`mt-1.5 size-2.5 shrink-0 rounded-full ${st.dot}`} />
       <span className="min-w-0 flex-1">
-        <span className={`block truncate text-[15px] ${s.pendingCount || s.unread ? "font-semibold" : "font-medium"}`}>
+        {/* The sr-only text after the title is absolutely placed; this line contains and clips it, so it cannot widen the page. */}
+        <span className={`relative block truncate text-[15px] ${s.pendingCount || s.unread ? "font-semibold" : "font-medium"}`}>
           <TitleText text={sessionTitle(s)} />
           {s.unread && <span className="sr-only"> · {t("읽지 않음")}</span>}
         </span>

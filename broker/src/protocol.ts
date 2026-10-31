@@ -946,9 +946,10 @@ export type ClientMsg =
   | { t: "visibility"; visible: boolean }
   // The phone no longer shows what it followed.
   | { t: "unfollow"; id: string }
-  // The conversation list reached its bottom from more than a screen above it by nothing the user did: what moved it, the
-  // gap below it before, its height and item counts before and after, its own height, the state it was in and its last
-  // happenings as [what, ms before, times]. Sent only to a broker that names "diag", which logs it.
+  // The conversation list moved more than a screen by nothing the user did (list_bottom: reached its bottom so, from older
+  // pages): what moved it, how far toward its end, its place, height and items before and after, its own height, its
+  // state and last happenings as [what, ms before, times, number?]. Sent only to a broker that names "diag", which logs it.
+  | { t: "diag"; what: "list_moved"; why: string; moved: number; top: number[]; height: number[]; items: number[]; view: number; flags: string; trail: [string, number, number, number?][] }
   | { t: "diag"; what: "list_bottom"; why: string; gap: number; height: number[]; items: number[]; view: number; flags: string; trail: [string, number, number][] }
   | { t: "ping" };
 

@@ -3,7 +3,7 @@ import type { Audit } from "./audit.ts";
 import { isLang } from "./lang.ts";
 import type { Leases } from "./lease.ts";
 import { PASSKEY_CLOSE } from "./passkeys.ts";
-import { phoneNotes } from "./phone-notes.ts";
+import { missedNotes, phoneNotes } from "./phone-notes.ts";
 import {
   CALL_OPS,
   FOLDER_OPS,
@@ -28,6 +28,7 @@ import { messageBlocks } from "./sessions/attachments.ts";
 import type { SideProgress } from "./sessions/core.ts";
 import { Follows } from "./sessions/follow.ts";
 import type { SessionManager } from "./sessions/manager.ts";
+import { HISTORY_CHANGED } from "./sessions/pages.ts";
 import { cleanTitle } from "./titles.ts";
 import type { Uploads } from "./uploads.ts";
 import { WORKTREE_NAME_MAX } from "./worktree-names.ts";
@@ -155,6 +156,7 @@ export class Hub {
   // What the window follows of the session it shows, sent to it as it changes.
   private follows: Follows;
   private notePhone = phoneNotes();
+  private noteMissed = missedNotes();
   // Whether a passkey has to confirm the login of a window on this device before it is answered again.
   passkeyDue?: (device: string) => boolean;
   // The build of the web app served now, told to each window as it becomes the one in use.
@@ -730,7 +732,16 @@ export class Hub {
   // A page of the conversation the phone asked for, which it holds from then on.
   private async history(sessionId: string, args: Record<string, unknown>): Promise<HistoryPage> {
     for (const k of ["before", "after", "until"]) if (args[k] !== undefined) str(args[k], 128);
-    const page = (await this.manager.call(sessionId, "history", args)) as HistoryPage;
+    let page: HistoryPage;
+    try {
+      page = (await this.manager.call(sessionId, "history", args)) as HistoryPage;
+    } catch (e) {
+      if (e instanceof Error && e.message === HISTORY_CHANGED) {
+        const items = await this.manager.conversation(sessionId).then((c) => c.items.length, () => -1);
+        this.noteMissed(sessionId, items);
+      }
+      throw e;
+    }
     if (sessionId === this.viewing) {
       if (args.before !== undefined && page.items.length) this.from = page.items[0].id;
       if (!this.manager.isControlled(sessionId)) for (const i of page.items) this.shown.set(i.id, JSON.stringify(i));
