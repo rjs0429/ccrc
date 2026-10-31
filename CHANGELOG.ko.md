@@ -6,6 +6,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-11-01
+
 ### 변경
 
 - 대화, 세션 목록, 설정의 상태 표시줄 탭과 맨 아래로 단추가 다른 아이폰 앱처럼 거리와 상관없이 시스템의 부드러운 스크롤 한 번으로 끝까지 간다. 먼저 건너뛰거나 페이드하지 않고, Claude 가 쓰는 동안에도 다시 시작하지 않는다.
@@ -395,7 +397,8 @@ ccrc 의 주요 변경을 여기에 적는다. 형식은 [Keep a Changelog](http
 - 쉬는 브로커 세션 프로세스는 15분 뒤 닫는다. 메시지 내용 없는 감사 로그. 라이트·다크 테마.
 - `ccrc serve | passwd | status | logout` 과 `deploy/install-service.sh`.
 
-[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/rjs0429/ccrc/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/rjs0429/ccrc/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/rjs0429/ccrc/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/rjs0429/ccrc/compare/v0.8.1...v0.8.2

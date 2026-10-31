@@ -8,6 +8,8 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-11-01
+
 ### Changed
 
 - A tap on the status bar (in a conversation, the session list or settings) and the jump button go all the way in one
@@ -838,7 +840,8 @@ The first public release: an installer, updates, and the changes needed to run o
 - Idle broker session processes close after 15 minutes; an audit log without message contents; light and dark themes.
 - `ccrc serve | passwd | status | logout` and `deploy/install-service.sh`.
 
-[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/rjs0429/ccrc/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/rjs0429/ccrc/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/rjs0429/ccrc/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/rjs0429/ccrc/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/rjs0429/ccrc/compare/v0.8.1...v0.8.2
