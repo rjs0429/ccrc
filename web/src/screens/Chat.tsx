@@ -753,8 +753,9 @@ export function Chat({ sessionId }: { sessionId: string }) {
     else if (c.gap && !c.failed) nearGap(el);
   };
 
-  // What a scroll changes: whether the list is at or near the bottom, the item in view, the parts to load. It is looked
-  // at once per frame of scrolling, after the browser's scroll events.
+  // What a scroll changes: whether the list is at or near the bottom (not on a way up to the top, which has left it even in
+  // its first frames there), the item in view, the parts to load. It is looked at once per frame of scrolling, after the
+  // browser's scroll events.
   const seen = () => {
     const el = listRef.current;
     if (!el || turned()) return;
@@ -767,11 +768,13 @@ export function Chat({ sessionId }: { sessionId: string }) {
       seenAt.current = { at: now, top: el.scrollTop };
     }
     lastTop.current = el.scrollTop;
-    pinned.current = gap < PIN_PX || (pinned.current && !up);
-    if (scrolling.current && pinned.current) paused.current = true;
-    const near = gap < PIN_PX || (stick.current && (gap < NEAR_BOTTOM_PX || !up));
-    if (near !== stick.current && (near || !glide.current)) follow(near);
-    else if (reading.current && gap < PIN_PX) follow(true);
+    if (!rising.current) {
+      pinned.current = gap < PIN_PX || (pinned.current && !up);
+      if (scrolling.current && pinned.current) paused.current = true;
+      const near = gap < PIN_PX || (stick.current && (gap < NEAR_BOTTOM_PX || !up));
+      if (near !== stick.current && (near || !glide.current)) follow(near);
+      else if (reading.current && gap < PIN_PX) follow(true);
+    }
     if (!scrolling.current && (!pinned.current || reading.current)) takeAnchor();
     loadParts(true);
     seenGap.current = gap;
