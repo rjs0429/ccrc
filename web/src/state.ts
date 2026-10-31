@@ -20,6 +20,7 @@ import { joined, placed, streamed, type Streamed } from "./chatItems.ts";
 import { listen, nav, parseRoute, type Route, type SettingsPage, type SettingsPart } from "./nav.ts";
 import { copyLoggedOut, copyLogin, copyPasskeyDue, copySignedIn, flushContact, keepCopy, noteHeard, noteLost, noteSent } from "./offline.ts";
 import { bindSent } from "./sentPreviews.ts";
+import { note } from "./trail.ts";
 
 export type { Route, SettingsPage, SettingsPart } from "./nav.ts";
 export type Conn = "idle" | "connecting" | "ready" | "conflict" | "taken" | "offline";
@@ -167,6 +168,7 @@ function viewMsg(): ClientMsg {
   const chat = sessionId && state.chat?.sessionId === sessionId ? state.chat : undefined;
   const from = chat?.loaded && !chat.focus ? chat.items[0]?.id : undefined;
   const keep = reading(chat);
+  if (sessionId) note("view", keep?.length ?? 0);
   return { t: "view", sessionId, ...(chat?.focus ? { focus: chat.focus } : {}), ...(from ? { from } : {}), ...(keep ? { keep } : {}) };
 }
 
@@ -486,16 +488,16 @@ function newId(): string {
 // What the broker said it does beyond older brokers, at the last ready.
 let caps = new Set<string>();
 
-// What the conversation list tells of reaching its bottom by itself, for the broker's log: to a broker that logs it,
-// at most once every DIAG_EVERY_MS.
-export type ListBottom = Omit<Extract<ClientMsg, { t: "diag" }>, "t" | "what">;
+// What the conversation list tells of moving by itself, for the broker's log: to a broker that logs it, at most once
+// every DIAG_EVERY_MS.
+export type ListMoved = Omit<Extract<ClientMsg, { t: "diag"; what: "list_moved" }>, "t" | "what">;
 const DIAG_EVERY_MS = 30_000;
 let diagAt = -Infinity;
 
-export function listBottom(note: ListBottom): void {
+export function listMoved(report: ListMoved): void {
   const now = performance.now();
   if (!caps.has("diag") || now - diagAt < DIAG_EVERY_MS) return;
-  if (send({ t: "diag", what: "list_bottom", ...note })) diagAt = now;
+  if (send({ t: "diag", what: "list_moved", ...report })) diagAt = now;
 }
 
 // The broker keeps a message's id this long; one unheard of for longer goes back to its composer.
@@ -572,17 +574,30 @@ let heardAt = 0;
 let pongTimer: number | undefined;
 let connectTimer: number | undefined;
 
+// A wait that ends LATE_MS past its time comes from a page too busy to read its messages (a long render): the answer may
+// be waiting behind it, so it is looked for once more LOOK_AGAIN_MS later.
+const LATE_MS = 1000;
+const LOOK_AGAIN_MS = 250;
+
 function checkAlive(): void {
   const ws = socket;
   if (!ws || ws.readyState !== WebSocket.OPEN || state.conn !== "ready" || pongTimer !== undefined) return;
   const asked = (pongAsked = Date.now());
+  const wait = pongWait;
   ws.send(JSON.stringify({ t: "ping" } satisfies ClientMsg));
-  pongTimer = window.setTimeout(() => {
+  note("ping");
+  const due = (again: boolean) => {
     pongTimer = undefined;
     if (heardAt > asked) return;
+    if (!again && Date.now() - asked > wait + LATE_MS) {
+      note("pong-late");
+      pongTimer = window.setTimeout(() => due(true), LOOK_AGAIN_MS);
+      return;
+    }
     pongWait = Math.min(pongWait * 2, PONG_WAIT_MAX_MS);
     lost(ws);
-  }, pongWait);
+  };
+  pongTimer = window.setTimeout(() => due(false), wait);
 }
 
 window.setInterval(() => document.visibilityState === "visible" && caps.size > 0 && checkAlive(), PING_MS);
@@ -598,6 +613,7 @@ function lost(ws: WebSocket, code?: number): void {
   clearTimeout(pongTimer);
   pongTimer = undefined;
   noteLost();
+  note("reconnect", code ?? 0);
   settleCalls();
   endFollows();
   if (code === 4001) return loggedOut(state.loggedOutReason ?? "expired");
@@ -887,18 +903,21 @@ export async function loadMore(sessionId: string, part: "earlier" | "gap", canJo
   const snaps = c.snaps;
   const args = part === "earlier" ? { before: first! } : { after: c.items[gapAt - 1].id, until: c.gap!.before };
   updateChat(sessionId, () => ({ loading: part, failed: undefined }));
+  note(part === "earlier" ? "history" : "history-gap");
   try {
     const page = await call(sessionId, "history", args);
     if (state.chat?.sessionId === sessionId && state.chat.snaps === snaps && canJoin && !canJoin()) {
       parked = { sessionId, snaps, part, page };
+      note("park", page.items.length);
       return;
     }
     updateChat(sessionId, (c) => (c.snaps !== snaps ? { loading: undefined } : { loading: undefined, ...joined(c, part, page) }));
   } catch (e) {
     updateChat(sessionId, () => ({ loading: undefined, failed: part }));
-    if (!(e instanceof Error && e.message === HISTORY_CHANGED && state.chat?.sessionId === sessionId)) return;
-    const keep = reading(state.chat);
-    send({ t: "view", sessionId, ...(keep ? { keep } : {}) });
+    const changed = e instanceof Error && e.message === HISTORY_CHANGED;
+    note(changed ? "history-changed" : "history-fail");
+    // The phone asks for what it holds again, from its first item and the items it reads.
+    if (changed && state.chat?.sessionId === sessionId && state.route.name === "chat" && state.route.sessionId === sessionId) send(viewMsg());
   }
 }
 
@@ -926,6 +945,7 @@ function onServer(msg: ServerMsg): void {
       clearTimeout(connectTimer);
       caps = new Set(Array.isArray(msg.caps) ? msg.caps : []);
       askedAgain = false;
+      note("ready");
       // A new window follows nothing yet.
       endFollows();
       setState({ conn: "ready" });
@@ -955,9 +975,11 @@ function onServer(msg: ServerMsg): void {
       const keep = state.chat?.sessionId === msg.sessionId && !askedAgain ? reading(state.chat) : undefined;
       if (keep && !msg.items.some((i) => keep.includes(i.id))) {
         askedAgain = true;
+        note("keep-miss", msg.items.length);
         if (send(viewMsg())) return;
       }
       askedAgain = false;
+      note("snap", msg.items.length);
       if (parked?.sessionId === msg.sessionId) parked = undefined;
       for (const item of [...msg.items, ...(msg.state.queued ?? [])]) bindSent(msg.sessionId, item);
       updateChat(msg.sessionId, () => ({

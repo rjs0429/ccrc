@@ -40,10 +40,11 @@ test("a snapshot sends the latest page, and the agent and to-do calls before it"
   assert.deepEqual(snapshotPart([]), { items: [], hasMore: false });
 });
 
-test("a snapshot keeps holding from the phone's first item while that part is not too long", () => {
+test("a snapshot keeps holding from the phone's first item while that part is not too long, or names nothing read", () => {
   const items = list(1000);
   assert.deepEqual(span(snapshotPart(items, { from: "i700" }).items), ["i700", "i999", 300]);
-  assert.deepEqual(span(snapshotPart(items, { from: "i300" }).items), ["i960", "i999", 40]);
+  assert.deepEqual(span(snapshotPart(items, { from: "i300" }).items), ["i300", "i999", 700]);
+  assert.deepEqual(span(snapshotPart(items, { from: "i300", keep: ["gone"] }).items), ["i300", "i999", 700]);
   assert.deepEqual(span(snapshotPart(items, { from: "i980" }).items), ["i960", "i999", 40]);
   assert.deepEqual(span(snapshotPart(items, { from: "gone" }).items), ["i960", "i999", 40]);
 });
@@ -83,13 +84,15 @@ test("after a focused open the part the phone holds wins over the focused item",
   assert.deepEqual(span(snapshotPart(items, { focus: "i100", from: "i200" }).items), ["i960", "i999", 40]);
 });
 
-test("past a held part too long to send again, the snapshot holds the part around the first item read that is still there", () => {
+test("past a held part too long to send again, the snapshot holds the part around the first item read that is still there, to the end while that is short enough", () => {
   const items = list(1000);
   const read = snapshotPart(items, { from: "i200", keep: ["i400", "i401"] });
   assert.deepEqual([read.items[0].id, read.items[229].id, read.items[230].id, read.items.length], ["i200", "i429", "i960", 270]);
   assert.deepEqual([read.gap, read.hasMore], [{ before: "i960", skipped: 960 - 430 }, true]);
   const far = snapshotPart(items, { from: "i0", keep: ["i700"] });
-  assert.deepEqual([far.items[0].id, far.items[39].id, far.items[40].id, far.gap], ["i690", "i729", "i960", { before: "i960", skipped: 960 - 730 }]);
+  assert.deepEqual([span(far.items), far.gap, far.hasMore], [["i690", "i999", 310], undefined, true]);
+  const farther = snapshotPart(items, { from: "i0", keep: ["i300"] });
+  assert.deepEqual([farther.items[0].id, farther.items[329].id, farther.items[330].id, farther.gap], ["i0", "i329", "i960", { before: "i960", skipped: 960 - 330 }]);
   assert.deepEqual(snapshotPart(items, { from: "i0", keep: ["gone", "i500"] }), snapshotPart(items, { from: "i0", focus: "i500" }));
   assert.deepEqual(snapshotPart(items, { from: "i0", keep: ["gone"] }), snapshotPart(items, { from: "i0" }));
   assert.deepEqual(span(snapshotPart(items, { from: "i0", keep: ["i970"] }).items), ["i960", "i999", 40]);

@@ -8,6 +8,23 @@ your version and the new one, and the lines under "Breaking" separately.
 
 ## [Unreleased]
 
+### Changed
+
+- A tap on the status bar (in a conversation, the session list or settings) and the jump button go all the way in one
+  smooth system scroll, however far, as other iPhone apps do: no jump ahead, no fade, and no restart while Claude
+  writes.
+
+### Fixed
+
+- On an iPhone, loading the earlier part of a long conversation at its top could take the list down to its recent
+  part. The part now goes in only once the list has stopped, and what you were reading stays where it was.
+- When the conversation changed on the laptop and an earlier part could not be loaded, the phone now keeps all it held.
+- A phone busy drawing a long part of a conversation no longer drops its connection while the laptop's answer waits.
+- With unread sessions the session list could slide sideways. Lists that scroll up and down now take only up-and-down
+  swipes on iPhone; code, tables, diffs and the filter chips still scroll sideways in their own boxes.
+- If a conversation still moves more than a screen by itself, the service log gets one line with what moved it and its
+  last 20 events, without any text of the conversation.
+
 ## [0.8.4] - 2026-10-31
 
 ### Added
