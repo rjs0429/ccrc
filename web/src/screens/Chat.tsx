@@ -40,7 +40,7 @@ import { selectedIn } from "../components/streamSelection.ts";
 import type { FileTarget } from "../components/viewer/FileViewer.tsx";
 import { brokerSessionsBlocked, closedText, errorText, hostLabel, inboxNotes, sessionTitle, shortPath } from "../labels.ts";
 import { api } from "../api.ts";
-import { nav } from "../nav.ts";
+import { nav, useLayerState } from "../nav.ts";
 import { call, composerInsert, dropParked, focusDone, getState, joinParked, listMoved, loadMore, onReading, openAt, openSettingsFrom, refreshChat, requestShown, send, sendMessage, toast, useApp } from "../state.ts";
 import { withEarlier } from "../chatItems.ts";
 import { markShown, newest, type PeerSent } from "../peerSent.ts";
@@ -215,7 +215,7 @@ export function Chat({ sessionId }: { sessionId: string }) {
   const menuBack = useRef<HTMLButtonElement>(null);
   const menuMore = useRef<HTMLButtonElement>(null);
   const menuTop = useRef(0);
-  const [sheet, setSheet] = useState<SheetName | null>(null);
+  const [sheet, setSheet] = useLayerState<SheetName>("chat");
   const [usageCommand, setUsageCommand] = useState("usage");
   const [stopped, setStopped] = useState<string | null>(null);
   const [composerSheet, setComposerSheet] = useState<{ name: "model" | "effort"; at: number }>();

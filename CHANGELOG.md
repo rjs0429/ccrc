@@ -20,8 +20,10 @@ your version and the new one, and the lines under "Breaking" separately.
   part. The part now goes in only once the list has stopped, and what you were reading stays where it was.
 - When the conversation changed on the laptop and an earlier part could not be loaded, the phone now keeps all it held.
 - A phone busy drawing a long part of a conversation no longer drops its connection while the laptop's answer waits.
-- With unread sessions the session list could slide sideways. Lists that scroll up and down now take only up-and-down
-  swipes on iPhone; code, tables, diffs and the filter chips still scroll sideways in their own boxes.
+- With unread sessions the session list could slide sideways on iPhone.
+- On iPhone, a swipe forward to a sheet you had closed flashed it open and shut. The sheets of a conversation and those
+  of its composer (mode, model, effort, Fast) now open again; other layers, such as the photo and file viewers, still
+  step back as before.
 - If a conversation still moves more than a screen by itself, the service log gets one line with what moved it and its
   last 20 events, without any text of the conversation.
 

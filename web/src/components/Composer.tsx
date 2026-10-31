@@ -4,6 +4,7 @@ import type { EffortName, LiveState, ModelOption, PermissionModeName, StartSetti
 import { k, t } from "../i18n/index.ts";
 import { MODE_LABEL, baseName, effortLabel, effortLevels, fastReasonText, findModel, modelLabel, modeHints, modelOffers, type PeerNote } from "../labels.ts";
 import { Switch } from "../screens/settings/common.tsx";
+import { useLayerState } from "../nav.ts";
 import { usePrefs } from "../prefs.ts";
 import { rememberSent } from "../sentPreviews.ts";
 import { cancelSend, getState, holdReload, onSent, toast, useApp } from "../state.ts";
@@ -255,7 +256,7 @@ export function Composer({
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
-  const [sheet, setSheet] = useState<"mode" | "model" | "effort" | "fast" | null>(null);
+  const [sheet, setSheet] = useLayerState<"mode" | "model" | "effort" | "fast">("composer");
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const picking = useRef(false);

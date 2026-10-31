@@ -47,6 +47,8 @@ interface Entry {
   base?: true;
   // What the screen kept of itself when it was left.
   keep?: Record<string, unknown>;
+  // The state that opened the layer (useLayerState), which opens it again when a step forward comes back to the entry.
+  revive?: string;
 }
 
 interface Layer {
@@ -54,10 +56,17 @@ interface Layer {
   close: () => void;
   // A close asked by the user, waiting for the history to step back over the layer.
   closing: boolean;
+  revive?: string;
 }
 
 // A history step the app asked for gives up waiting after this long.
 const STUCK_MS = 2000;
+// A layer state just set names the layer that opens within REVIVE_MS; an entry stepped forward to waits that long for
+// its layer to open again before the history steps back over it.
+const REVIVE_MS = 1000;
+let opening: { revive: string; at: number } | undefined;
+let reviving: { key: string; revive: string; timer: number } | undefined;
+const revivers = new Map<string, (name: string) => void>();
 const LOAD = Math.random().toString(36).slice(2, 8);
 let seq = 0;
 let cur: Entry = { ccrc: 1, below: 0 };
@@ -135,6 +144,8 @@ function land(state: unknown, stuck = false): void {
   const was = moving;
   moving = undefined;
   if (was) clearTimeout(was.timer);
+  clearTimeout(reviving?.timer);
+  reviving = undefined;
   const away = routeHash(parseRoute()) !== shown;
   const before = stack;
   if (!isEntry(state)) {
@@ -146,7 +157,7 @@ function land(state: unknown, stuck = false): void {
     const n = state.layers ?? 0;
     const known = n <= before.length && (n === 0 || before[n - 1] === state.layer);
     stack = before.slice(0, Math.min(n, before.length));
-    if (!known && !stuck) {
+    if (!known && !stuck && !revive(state, n === before.length + 1 && !away)) {
       // A layer that has closed, or one left by a reload: step on to the entry under it.
       closePopped(before, away);
       step(-1, was?.then);
@@ -161,6 +172,18 @@ function land(state: unknown, stuck = false): void {
   show();
   while (!moving && waiting.length) waiting.shift()!();
   sync();
+}
+
+// A step forward to the entry of a layer that has closed, right over the layers open: the state that opened the layer
+// opens it again, and the layer takes the entry back.
+function revive(state: Entry, over: boolean): boolean {
+  const at = state.revive?.indexOf(":") ?? -1;
+  const open = over && state.layer && at > 0 ? revivers.get(state.revive!.slice(0, at)) : undefined;
+  if (!open) return false;
+  stack.push(state.layer!);
+  reviving = { key: state.layer!, revive: state.revive!, timer: window.setTimeout(() => ((reviving = undefined), sync()), REVIVE_MS) };
+  open(state.revive!.slice(at + 1));
+  return true;
 }
 
 // The layers whose entries the history has stepped back over close; with the screen they go without a word.
@@ -181,7 +204,7 @@ function later(): void {
 
 // Brings the layer entries in line with the layers open: a layer that closes as another opens hands it its entry.
 function sync(): void {
-  if (moving) return;
+  if (moving || reviving) return;
   const want = live.map((l) => l.key);
   let n = 0;
   while (n < stack.length && n < want.length && stack[n] === want[n]) n++;
@@ -194,7 +217,8 @@ function sync(): void {
 function writeLayer(key: string, push: boolean): boolean {
   if (push && !stack.length) save();
   const layers = push ? stack.length + 1 : stack.length;
-  if (!write({ ccrc: 1, below: push ? cur.below + 1 : cur.below, layer: key, layers, ...base() }, location.href, push)) return false;
+  const revive = live.find((l) => l.key === key)?.revive;
+  if (!write({ ccrc: 1, below: push ? cur.below + 1 : cur.below, layer: key, layers, ...base(), ...(revive ? { revive } : {}) }, location.href, push)) return false;
   if (push) stack.push(key);
   else stack[stack.length - 1] = key;
   return true;
@@ -272,7 +296,14 @@ export interface LayerHandle {
 // Gives a layer an entry of its own in the history until it is released: the back and the edge swipe close it with
 // close, and so does Escape.
 export function openLayer(close: () => void): LayerHandle {
-  const layer: Layer = { key: `${LOAD}.${++seq}`, close, closing: false };
+  const revive = opening && performance.now() - opening.at < REVIVE_MS ? opening.revive : undefined;
+  opening = undefined;
+  const back = revive && reviving?.revive === revive ? reviving : undefined;
+  if (back) {
+    clearTimeout(back.timer);
+    reviving = undefined;
+  }
+  const layer: Layer = { key: back?.key ?? `${LOAD}.${++seq}`, close, closing: false, ...(revive ? { revive } : {}) };
   live.push(layer);
   later();
   return {
@@ -299,6 +330,29 @@ export function useLayer(close: () => void): () => void {
     return h.release;
   }, []);
   return useCallback(() => handle.current?.dismiss(), []);
+}
+
+// The name of the sheet a screen shows, kept in the sheet's history entry as `scope:name`: a step forward back to the
+// entry of a sheet that closed opens it again, as the snapshot iOS shows for that step does.
+export function useLayerState<T extends string>(scope: string): [T | null, (name: T | null) => void] {
+  const [name, setName] = useState<T | null>(null);
+  const now = useRef(name);
+  now.current = name;
+  const set = useCallback(
+    (next: T | null) => {
+      if (next !== null && next !== now.current) opening = { revive: `${scope}:${next}`, at: performance.now() };
+      setName(next);
+    },
+    [scope],
+  );
+  useLayoutEffect(() => {
+    const open = (next: string) => set(next as T);
+    revivers.set(scope, open);
+    return () => {
+      if (revivers.get(scope) === open) revivers.delete(scope);
+    };
+  }, [scope, set]);
+  return [name, set];
 }
 
 // Closes the top layer as a back would.
